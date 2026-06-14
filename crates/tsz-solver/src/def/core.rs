@@ -14,15 +14,22 @@
 //! | CLI  | Sequential allocation | Fresh start each compilation |
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 mod content_addressed;
+mod cross_file_cache;
 mod definition_info;
+mod observability;
+mod semantic_construction;
+mod state_flags;
 mod symbol_registration;
 
 pub use content_addressed::ContentAddressedDefIds;
+use cross_file_cache::CrossFileQueryCache;
+pub use observability::StoreStatistics;
+use state_flags::DefStateFlags;
 
 use super::publication_census;
 #[cfg(test)]
 use crate::types::ObjectFlags;
-use crate::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
+use crate::types::{ObjectShape, TypeId, TypeParamInfo};
 use crate::utils::MutexExt;
 use dashmap::{DashMap, DashSet};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -354,49 +361,10 @@ pub struct DefinitionStore {
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
     body_to_alias: DefDashMap<TypeId, DefId>,
 
-    /// Set of body `TypeId`s that were produced by type-level computation
-    /// (intersection reduction, conditional evaluation) and should NOT be
-    /// used to display alias names. tsc does not preserve alias names for
-    /// such computed types (e.g., `type T2 = T1 & ("a"|"b")` evaluates to
-    /// `"a"|"b"` but tsc shows the expanded union, not `T2`).
-    computed_alias_bodies: DefDashSet<TypeId>,
-
-    /// Set of body `TypeId`s that are the constructive body of at least one
-    /// *non-computed* type alias (`type Direct = { a: 1 }`), so they must keep
-    /// their alias name even when an unrelated *computed* alias resolves to the
-    /// same interned shape. Because structurally-identical types share one
-    /// `TypeId`, marking that shape computed (for the computed alias) would
-    /// otherwise strip the name from the directly-written alias too. "Direct
-    /// wins": a shape recorded here is never reported as a computed body.
-    directly_named_alias_bodies: DefDashSet<TypeId>,
-
-    /// Set of type-alias `DefId`s whose instantiation is unconditionally
-    /// infinite (e.g. `type A<T> = T extends infer X ? A<X & B> : never`).
-    /// The checker records these when it emits TS2589 at the alias definition;
-    /// the evaluator then resolves every `Alias<...>` application of a poisoned
-    /// def to the error type so use sites do not cascade into spurious TS2322,
-    /// matching tsc's collapse of the alias to the error type.
-    depth_poisoned_defs: DefDashSet<DefId>,
-
-    /// Mutation-isolation campaign: defs whose shared-store body is
-    /// **frozen** — after the finalized body materialization
-    /// (heritage-merged + augmented lib interface form), later publications
-    /// carrying a *different* body form are dropped instead of overwriting
-    /// (the shared store stays immutable for the def; per-file checkers keep
-    /// using their own `TypeEnvironment` bodies). Populated by the checker's
-    /// finalized-lib-body registration; empty (and skipped via a cheap
-    /// `is_empty` gate) when freezing is disabled.
-    publish_once_defs: DefDashSet<DefId>,
-
-    /// Mutation-isolation campaign experiment
-    /// (`TSZ_EXPERIMENT_LIB_DEF_DEFER_PUBLISH`): defs whose **pre-finalize**
-    /// different-body overwrites are deferred (dropped). The store keeps the
-    /// def's first published form until [`Self::set_body_finalized`]
-    /// overwrites it with the finalized form (which then freezes it via
-    /// `publish_once_defs`). Closes the intermediate-stage publication
-    /// residue (initial -> heritage-merged refinement writes) so the shared
-    /// store only ever observes `first form -> finalized form`.
-    deferred_publish_defs: DefDashSet<DefId>,
+    /// Cross-checker per-definition flag sets (poison / circular /
+    /// publish-isolation / alias-body). See [`DefStateFlags`] for the
+    /// per-set invalidation contract.
+    state_flags: DefStateFlags,
 
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
@@ -459,21 +427,9 @@ pub struct DefinitionStore {
     /// or same-named types in different files), so the value is a `Vec<DefId>`.
     name_to_defs: DefDashMap<Atom, Vec<DefId>>,
 
-    /// Thread-safe cache for cross-file checker queries (interface lowering,
-    /// class instance type, interface member simple types, symbol type),
-    /// keyed by `(kind, file_idx, primary, secondary, args_hash)`. The
-    /// `SYMBOL_TYPE` bucket replaces the previous standalone
-    /// `resolved_symbol_types` map.
-    resolved_cross_file_queries: DefDashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
-
-    /// Program-local scope mixed into source-file symbol-type query keys.
-    /// Batch drivers stamp this from `ProgramContext` so reused shared stores
-    /// cannot read stale entries from an earlier virtual program.
-    source_file_symbol_type_cache_scope: AtomicU64,
-
-    /// Per-file mutual exclusion locks for cross-file type delegation.
-    /// Prevents concurrent delegation to the same target file.
-    file_delegation_locks: DefDashMap<usize, Arc<Mutex<()>>>,
+    /// Cross-file checker query memo, its scope stamp, and per-file delegation
+    /// locks. See [`CrossFileQueryCache`].
+    cross_file_cache: CrossFileQueryCache,
 
     /// Flag indicating that cross-batch heritage resolution and DefId population
     /// have already been completed. When `true`, `apply_to` skips the expensive
@@ -483,140 +439,6 @@ pub struct DefinitionStore {
     /// This prevents O(files * `total_defs`) work when checking many files in parallel,
     /// which was the root cause of hangs on large type libraries like ts-toolbelt.
     fully_populated: std::sync::atomic::AtomicBool,
-
-    /// Set of `DefId`s detected as circular type aliases (shared across checkers).
-    circular_def_ids: DefDashSet<DefId>,
-}
-
-// =============================================================================
-// StoreStatistics - Observability for DefinitionStore
-// =============================================================================
-
-/// Snapshot of `DefinitionStore` sizes and composition.
-///
-/// Provides observability into the store's current state for performance
-/// monitoring, capacity planning, and debugging. All counts are computed
-/// at the time of the `statistics()` call and represent a consistent-ish
-/// snapshot (individual `DashMap` reads are atomic but not globally synchronized).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct StoreStatistics {
-    /// Total number of definitions.
-    pub total_definitions: usize,
-
-    /// Number of definitions by kind.
-    pub type_aliases: usize,
-    /// Number of interface definitions.
-    pub interfaces: usize,
-    /// Number of class definitions.
-    pub classes: usize,
-    /// Number of class constructor definitions.
-    pub class_constructors: usize,
-    /// Number of enum definitions.
-    pub enums: usize,
-    /// Number of namespace definitions.
-    pub namespaces: usize,
-    /// Number of function definitions.
-    pub functions: usize,
-    /// Number of variable definitions.
-    pub variables: usize,
-
-    /// Number of entries in the `TypeId` -> `DefId` reverse index.
-    pub type_to_def_entries: usize,
-    /// Number of entries in the `(SymbolId, file_idx)` -> `DefId` index.
-    pub symbol_def_index_entries: usize,
-    /// Number of entries in the `SymbolId` -> `DefId` (file-agnostic) index.
-    pub symbol_only_index_entries: usize,
-    /// Number of entries in the body `TypeId` -> `DefId` alias index.
-    pub body_to_alias_entries: usize,
-    /// Number of entries in the shape hash -> `DefId` index.
-    pub shape_to_def_entries: usize,
-    /// Number of entries in the class -> constructor companion index.
-    pub class_to_constructor_entries: usize,
-    /// Number of unique names in the name -> `DefId` index.
-    pub name_to_defs_entries: usize,
-    /// Number of files with registered definitions.
-    pub file_count: usize,
-
-    /// Next `DefId` value (high-water mark of allocation).
-    pub next_def_id: u32,
-
-    /// Estimated heap memory footprint of the store in bytes.
-    ///
-    /// Populated by `DefinitionStore::statistics()` using the live
-    /// `estimated_size_bytes()` method. Zero when constructed via `Default`.
-    pub estimated_size_bytes: usize,
-}
-
-impl StoreStatistics {
-    /// Merge another `StoreStatistics` into this one (additive).
-    ///
-    /// Used to aggregate per-file statistics from parallel checking,
-    /// where each checker has its own `DefinitionStore`.
-    pub const fn merge(&mut self, other: &StoreStatistics) {
-        self.total_definitions += other.total_definitions;
-        self.type_aliases += other.type_aliases;
-        self.interfaces += other.interfaces;
-        self.classes += other.classes;
-        self.class_constructors += other.class_constructors;
-        self.enums += other.enums;
-        self.namespaces += other.namespaces;
-        self.functions += other.functions;
-        self.variables += other.variables;
-        self.type_to_def_entries += other.type_to_def_entries;
-        self.symbol_def_index_entries += other.symbol_def_index_entries;
-        self.symbol_only_index_entries += other.symbol_only_index_entries;
-        self.body_to_alias_entries += other.body_to_alias_entries;
-        self.shape_to_def_entries += other.shape_to_def_entries;
-        self.class_to_constructor_entries += other.class_to_constructor_entries;
-        self.name_to_defs_entries += other.name_to_defs_entries;
-        self.file_count += other.file_count;
-        // next_def_id: take the maximum (high-water mark)
-        if other.next_def_id > self.next_def_id {
-            self.next_def_id = other.next_def_id;
-        }
-        self.estimated_size_bytes += other.estimated_size_bytes;
-    }
-}
-
-impl std::fmt::Display for StoreStatistics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "DefinitionStore statistics:")?;
-        writeln!(f, "  definitions: {} total", self.total_definitions)?;
-        writeln!(
-            f,
-            "    type_aliases={}, interfaces={}, classes={}, class_constructors={}",
-            self.type_aliases, self.interfaces, self.classes, self.class_constructors
-        )?;
-        writeln!(
-            f,
-            "    enums={}, namespaces={}, functions={}, variables={}",
-            self.enums, self.namespaces, self.functions, self.variables
-        )?;
-        writeln!(f, "  indices:")?;
-        writeln!(f, "    type_to_def={}", self.type_to_def_entries)?;
-        writeln!(f, "    symbol_def_index={}", self.symbol_def_index_entries)?;
-        writeln!(
-            f,
-            "    symbol_only_index={}",
-            self.symbol_only_index_entries
-        )?;
-        writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
-        writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
-        writeln!(
-            f,
-            "    class_to_constructor={}",
-            self.class_to_constructor_entries
-        )?;
-        writeln!(f, "    name_to_defs={}", self.name_to_defs_entries)?;
-        writeln!(f, "  files: {}", self.file_count)?;
-        writeln!(f, "  next_def_id: {}", self.next_def_id)?;
-        write!(
-            f,
-            "  estimated_size: {} bytes ({:.1} KB)",
-            self.estimated_size_bytes,
-            self.estimated_size_bytes as f64 / 1024.0,
-        )
-    }
 }
 
 impl Default for DefinitionStore {
@@ -655,11 +477,7 @@ impl DefinitionStore {
             symbol_mappings_log_snapshot: Mutex::new(None),
             symbol_mappings_log_invalid: std::sync::atomic::AtomicBool::new(false),
             body_to_alias: DefDashMap::default(),
-            computed_alias_bodies: DefDashSet::default(),
-            directly_named_alias_bodies: DefDashSet::default(),
-            depth_poisoned_defs: DefDashSet::default(),
-            publish_once_defs: DefDashSet::default(),
-            deferred_publish_defs: DefDashSet::default(),
+            state_flags: DefStateFlags::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
@@ -671,11 +489,8 @@ impl DefinitionStore {
                 Default::default(),
             ),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
-            resolved_cross_file_queries: DefDashMap::default(),
-            source_file_symbol_type_cache_scope: AtomicU64::new(1),
-            file_delegation_locks: DefDashMap::default(),
+            cross_file_cache: CrossFileQueryCache::default(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
-            circular_def_ids: DefDashSet::default(),
         }
     }
 
@@ -970,17 +785,14 @@ impl DefinitionStore {
             // sibling checker publication and turn a stale "no body yet"
             // observation into a different-body overwrite.
             let is_different_overwrite = entry.body.is_some_and(|prev| prev != body);
-            let suppressed = is_different_overwrite
-                && !self.publish_once_defs.is_empty()
-                && self.publish_once_defs.contains(&id);
+            let suppressed = is_different_overwrite && self.state_flags.is_publish_once_frozen(id);
             // Deferred-publication experiment: pre-finalize different-body
             // overwrites of marked defs are dropped; only the finalize entry
             // point may replace the first published form.
             let deferred = !suppressed
                 && !finalize
                 && is_different_overwrite
-                && !self.deferred_publish_defs.is_empty()
-                && self.deferred_publish_defs.contains(&id);
+                && self.state_flags.is_deferred_publish(id);
 
             // Mutation-isolation campaign census (env-gated, see
             // `publication_census`): classify this publication against the
@@ -1087,7 +899,7 @@ impl DefinitionStore {
         for entry in &self.definitions {
             let info = entry.value();
             if info.kind == DefKind::Interface && info.file_id == Some(NON_PROGRAM_FILE_SENTINEL) {
-                self.deferred_publish_defs.insert(*entry.key());
+                self.state_flags.mark_deferred_publish(*entry.key());
                 marked += 1;
             }
         }
@@ -1099,7 +911,7 @@ impl DefinitionStore {
     /// published becomes the immutable one. Later different-body
     /// publications are dropped.
     pub fn mark_publish_once(&self, id: DefId) {
-        self.publish_once_defs.insert(id);
+        self.state_flags.mark_publish_once(id);
     }
 
     /// Record that `alias` is an import alias of `target` (see
@@ -1138,21 +950,21 @@ impl DefinitionStore {
     /// instantiation (TS2589). Every later application of this def resolves to
     /// the error type.
     pub fn mark_depth_poisoned(&self, id: DefId) {
-        if self.depth_poisoned_defs.insert(id) {
+        if self.state_flags.mark_depth_poisoned(id) {
             self.bump_generation();
         }
     }
 
     /// Whether the given `DefId` was flagged via [`mark_depth_poisoned`].
     pub fn is_depth_poisoned(&self, id: DefId) -> bool {
-        self.depth_poisoned_defs.contains(&id)
+        self.state_flags.is_depth_poisoned(id)
     }
 
     /// Whether any def has been flagged via [`mark_depth_poisoned`]. Used as a
     /// cheap guard so hot evaluation paths skip per-application poison checks
     /// when nothing is poisoned (the overwhelmingly common case).
     pub fn has_any_depth_poisoned(&self) -> bool {
-        !self.depth_poisoned_defs.is_empty()
+        self.state_flags.has_any_depth_poisoned()
     }
 
     /// Update the type parameters for a definition.
@@ -1175,29 +987,20 @@ impl DefinitionStore {
     }
 
     pub fn init_file_locks(&self, file_count: usize) {
-        for i in 0..file_count {
-            self.file_delegation_locks
-                .entry(i)
-                .or_insert_with(|| Arc::new(Mutex::new(())));
-        }
+        self.cross_file_cache.init_file_locks(file_count);
     }
 
     /// Get the delegation lock for a target file.
     pub fn get_file_delegation_lock(&self, file_idx: usize) -> Option<Arc<Mutex<()>>> {
-        self.file_delegation_locks
-            .get(&file_idx)
-            .map(|r| Arc::clone(r.value()))
+        self.cross_file_cache.file_delegation_lock(file_idx)
     }
 
     pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
-        self.source_file_symbol_type_cache_scope
-            .load(Ordering::Relaxed)
-            .max(1)
+        self.cross_file_cache.scope()
     }
 
     pub fn set_source_file_symbol_type_cache_scope(&self, scope: u64) {
-        self.source_file_symbol_type_cache_scope
-            .store(scope.max(1), Ordering::Relaxed);
+        self.cross_file_cache.set_scope(scope);
     }
 
     /// Look up a previously resolved cross-file query result.
@@ -1213,16 +1016,13 @@ impl DefinitionStore {
         secondary: u32,
         args_hash: u64,
     ) -> Option<(TypeId, Arc<Vec<TypeParamInfo>>)> {
-        self.resolved_cross_file_queries
-            .get(&(kind, file_idx, primary, secondary, args_hash))
-            .map(|entry| {
-                let (type_id, params) = entry.value();
-                (*type_id, Arc::clone(params))
-            })
+        self.cross_file_cache
+            .get(kind, file_idx, primary, secondary, args_hash)
     }
 
     /// Cache a cross-file query result. First writer wins to keep parallel
     /// checking deterministic when equivalent queries race.
+    #[allow(clippy::too_many_arguments)]
     pub fn cache_resolved_cross_file_query(
         &self,
         kind: u8,
@@ -1233,19 +1033,25 @@ impl DefinitionStore {
         type_id: TypeId,
         type_params: Vec<TypeParamInfo>,
     ) {
-        self.resolved_cross_file_queries
-            .entry((kind, file_idx, primary, secondary, args_hash))
-            .or_insert_with(|| (type_id, Arc::new(type_params)));
+        self.cross_file_cache.insert(
+            kind,
+            file_idx,
+            primary,
+            secondary,
+            args_hash,
+            type_id,
+            type_params,
+        );
     }
 
     /// Mark a DefId as participating in a circular type alias cycle.
     pub fn mark_circular_def(&self, def_id: DefId) {
-        self.circular_def_ids.insert(def_id);
+        self.state_flags.mark_circular(def_id);
     }
 
     /// Check whether a DefId has been marked as circular by any checker.
     pub fn is_circular_def(&self, def_id: DefId) -> bool {
-        self.circular_def_ids.contains(&def_id)
+        self.state_flags.is_circular(def_id)
     }
 
     /// This method synchronizes them into the `DefinitionInfo` so that
@@ -1323,8 +1129,7 @@ impl DefinitionStore {
         self.symbol_only_index.clear();
         self.invalidate_symbol_mappings_log();
         self.body_to_alias.clear();
-        self.computed_alias_bodies.clear();
-        self.directly_named_alias_bodies.clear();
+        self.state_flags.clear_alias_bodies();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
@@ -1654,7 +1459,7 @@ impl DefinitionStore {
     /// skips it. Called by the checker when a type alias body is produced by
     /// intersection reduction or conditional evaluation.
     pub fn mark_body_as_computed(&self, body: TypeId) {
-        self.computed_alias_bodies.insert(body);
+        self.state_flags.mark_body_computed(body);
         self.bump_generation();
     }
 
@@ -1662,7 +1467,7 @@ impl DefinitionStore {
     /// it keeps its alias name even if a computed alias resolves to the same
     /// interned shape ("direct wins"). See [`Self::directly_named_alias_bodies`].
     pub fn mark_body_as_directly_named(&self, body: TypeId) {
-        self.directly_named_alias_bodies.insert(body);
+        self.state_flags.mark_body_directly_named(body);
         self.bump_generation();
     }
 
@@ -1673,8 +1478,7 @@ impl DefinitionStore {
     /// its name, and because tsz interns structurally-identical types to one
     /// `TypeId`, the shared shape cannot be reported as computed.
     pub fn is_computed_body(&self, body: TypeId) -> bool {
-        self.computed_alias_bodies.contains(&body)
-            && !self.directly_named_alias_bodies.contains(&body)
+        self.state_flags.is_computed_body(body)
     }
 
     /// Find all `DefId`s registered under the given name.
@@ -1855,426 +1659,6 @@ impl DefinitionStore {
     /// Useful for diagnostics and testing.
     pub fn file_count(&self) -> usize {
         self.file_to_defs.len()
-    }
-
-    /// Compute a snapshot of store sizes and composition.
-    ///
-    /// This iterates all definitions once to count by `DefKind`, plus reads
-    /// the length of each reverse index. Suitable for periodic logging or
-    /// on-demand diagnostics; avoid calling on every type check.
-    pub fn statistics(&self) -> StoreStatistics {
-        let mut stats = StoreStatistics {
-            total_definitions: self.definitions.len(),
-            type_to_def_entries: self.type_to_def.len(),
-            symbol_def_index_entries: self.symbol_def_index.len(),
-            symbol_only_index_entries: self.symbol_only_index.len(),
-            body_to_alias_entries: self.body_to_alias.len(),
-            shape_to_def_entries: self.shape_to_def.len(),
-            class_to_constructor_entries: self.class_to_constructor.len(),
-            name_to_defs_entries: self.name_to_defs.len(),
-            file_count: self.file_to_defs.len(),
-            next_def_id: self.next_id.load(Ordering::Relaxed),
-            ..Default::default()
-        };
-
-        for entry in &self.definitions {
-            match entry.value().kind {
-                DefKind::TypeAlias => stats.type_aliases += 1,
-                DefKind::Interface => stats.interfaces += 1,
-                DefKind::Class => stats.classes += 1,
-                DefKind::ClassConstructor => stats.class_constructors += 1,
-                DefKind::Enum => stats.enums += 1,
-                DefKind::Namespace => stats.namespaces += 1,
-                DefKind::Function => stats.functions += 1,
-                DefKind::Variable => stats.variables += 1,
-            }
-        }
-
-        stats.estimated_size_bytes = self.estimated_size_bytes();
-        stats
-    }
-
-    /// Estimate the heap memory footprint of the store in bytes.
-    ///
-    /// Accounts for the `DashMap` overhead of each index and the `Vec`-backed
-    /// fields inside `DefinitionInfo`. The result is a rough lower bound —
-    /// `DashMap` shard overhead, alignment padding, and allocator metadata are
-    /// not included. Useful for memory pressure tracking and telemetry.
-    #[must_use]
-    pub fn estimated_size_bytes(&self) -> usize {
-        let mut size = std::mem::size_of::<Self>();
-
-        // Per-entry overhead for DashMap: key + value + ~64 bytes bucket/shard overhead.
-        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
-
-        // definitions: DefId -> DefinitionInfo
-        for entry in &self.definitions {
-            let info = entry.value();
-            size += std::mem::size_of::<DefId>() + std::mem::size_of::<DefinitionInfo>();
-            size += DASHMAP_ENTRY_OVERHEAD;
-            // Vec fields inside DefinitionInfo
-            size += info.type_params.capacity() * std::mem::size_of::<TypeParamInfo>();
-            size += info.enum_members.capacity() * std::mem::size_of::<(Atom, EnumMemberValue)>();
-            size += info.implements.capacity() * std::mem::size_of::<DefId>();
-            size += info.exports.capacity() * std::mem::size_of::<(Atom, DefId)>();
-            // Arc<ObjectShape> — count the shape itself (shared, but we include it here)
-            if let Some(ref shape) = info.instance_shape {
-                size += std::mem::size_of::<ObjectShape>();
-                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
-            }
-            if let Some(ref shape) = info.static_shape {
-                size += std::mem::size_of::<ObjectShape>();
-                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
-            }
-        }
-
-        // type_to_def: TypeId -> DefId
-        size += self.type_to_def.len()
-            * (std::mem::size_of::<TypeId>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
-
-        // symbol_def_index: (u32, u32) -> DefId
-        size += self.symbol_def_index.len()
-            * (std::mem::size_of::<(u32, u32)>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
-
-        // symbol_only_index: u32 -> DefId
-        size += self.symbol_only_index.len()
-            * (std::mem::size_of::<u32>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
-
-        // body_to_alias: TypeId -> DefId
-        size += self.body_to_alias.len()
-            * (std::mem::size_of::<TypeId>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
-
-        // shape_to_def: u64 -> DefId
-        size += self.shape_to_def.len()
-            * (std::mem::size_of::<u64>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
-
-        // class_to_constructor: DefId -> DefId
-        size += self.class_to_constructor.len()
-            * (std::mem::size_of::<DefId>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
-
-        // class_to_instance: DefId -> TypeId
-        size += self.class_to_instance.len()
-            * (std::mem::size_of::<DefId>()
-                + std::mem::size_of::<TypeId>()
-                + DASHMAP_ENTRY_OVERHEAD);
-
-        // file_to_defs: u32 -> Vec<DefId>
-        for entry in &self.file_to_defs {
-            size += std::mem::size_of::<u32>() + DASHMAP_ENTRY_OVERHEAD;
-            size += entry.value().capacity() * std::mem::size_of::<DefId>();
-        }
-
-        // name_to_defs: Atom -> Vec<DefId>
-        for entry in &self.name_to_defs {
-            size += std::mem::size_of::<Atom>() + DASHMAP_ENTRY_OVERHEAD;
-            size += entry.value().capacity() * std::mem::size_of::<DefId>();
-        }
-
-        // resolved_cross_file_queries:
-        // (kind, file_idx, primary, secondary, args_hash) -> (TypeId, params)
-        for entry in &self.resolved_cross_file_queries {
-            size += std::mem::size_of::<(u8, u32, u32, u32, u64)>()
-                + std::mem::size_of::<TypeId>()
-                + DASHMAP_ENTRY_OVERHEAD;
-            size += entry.value().1.capacity() * std::mem::size_of::<TypeParamInfo>();
-        }
-
-        size
-    }
-
-    /// Create a pre-populated `DefinitionStore` from binder `SemanticDefEntry` data.
-    ///
-    /// This is the canonical factory for converting binder-owned stable identity
-    /// into solver `DefId`s. It runs as a standalone function (no checker context
-    /// needed), enabling identity creation at merge time or single-file
-    /// construction time rather than as checker-side repair.
-    ///
-    /// The function performs three passes:
-    /// 1. Create `DefId`s and `DefinitionInfo` for each `SemanticDefEntry`.
-    /// 2. Wire namespace exports from `parent_namespace` relationships.
-    /// 3. Resolve heritage names (extends/implements) to `DefId`s.
-    ///
-    /// The `intern_string` callback abstracts over `TypeInterner::intern_string`
-    /// vs `QueryDatabase::intern_string`, so both the merge pipeline and checker
-    /// constructors can use this without coupling to a specific interner type.
-    pub fn from_semantic_defs(
-        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
-        intern_string: impl Fn(&str) -> Atom,
-    ) -> Self {
-        let entries: Vec<_> = semantic_defs
-            .iter()
-            .map(|(&sym_id, entry)| (sym_id, entry))
-            .collect();
-        Self::from_semantic_def_entries(&entries, intern_string)
-    }
-
-    /// Create a pre-populated `DefinitionStore` from a base semantic-def map plus
-    /// per-file overlay maps without cloning the base map or its entries.
-    ///
-    /// Overlay entries take precedence over base entries with the same `SymbolId`,
-    /// matching the previous clone-then-insert construction used by the CLI
-    /// shared-store setup.
-    pub fn from_semantic_defs_with_overlays<'a, I>(
-        base: &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
-        overlays: I,
-        intern_string: impl Fn(&str) -> Atom,
-    ) -> Self
-    where
-        I: IntoIterator<
-            Item = &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
-        >,
-    {
-        let mut overlay_entries: rustc_hash::FxHashMap<
-            tsz_binder::SymbolId,
-            &tsz_binder::SemanticDefEntry,
-        > = rustc_hash::FxHashMap::default();
-        for overlay in overlays {
-            for (&sym_id, entry) in overlay {
-                overlay_entries.insert(sym_id, entry);
-            }
-        }
-
-        let mut entries = Vec::with_capacity(base.len().saturating_add(overlay_entries.len()));
-        entries.extend(
-            base.iter()
-                .filter(|(sym_id, _)| !overlay_entries.contains_key(sym_id))
-                .map(|(&sym_id, entry)| (sym_id, entry)),
-        );
-        entries.extend(overlay_entries);
-
-        Self::from_semantic_def_entries(&entries, intern_string)
-    }
-
-    fn from_semantic_def_entries(
-        semantic_defs: &[(tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry)],
-        intern_string: impl Fn(&str) -> Atom,
-    ) -> Self {
-        let class_count = semantic_defs
-            .iter()
-            .map(|(_, entry)| *entry)
-            .filter(|entry| entry.kind == tsz_binder::SemanticDefKind::Class)
-            .count();
-        let mut file_ids = FxHashSet::default();
-        for (_, entry) in semantic_defs {
-            file_ids.insert(entry.file_id);
-        }
-        let total_definitions = semantic_defs.len() + class_count;
-        let store = Self::with_capacities(total_definitions, file_ids.len());
-
-        if semantic_defs.is_empty() {
-            return store;
-        }
-
-        let mut def_infos = Vec::with_capacity(total_definitions);
-        let mut symbol_to_def: FxHashMap<u32, DefId> = FxHashMap::default();
-        let mut symbol_only_index: FxHashMap<u32, DefId> = FxHashMap::default();
-        let mut symbol_def_index_entries = Vec::with_capacity(semantic_defs.len());
-        let mut file_to_defs: FxHashMap<u32, Vec<DefId>> = FxHashMap::default();
-        let mut name_to_defs: FxHashMap<Atom, Vec<DefId>> = FxHashMap::default();
-        let mut class_to_constructor_entries = Vec::with_capacity(class_count);
-
-        symbol_to_def.reserve(semantic_defs.len());
-        symbol_only_index.reserve(semantic_defs.len());
-        file_to_defs.reserve(file_ids.len());
-        name_to_defs.reserve(semantic_defs.len());
-
-        let mut next_id = DefId::FIRST_VALID;
-
-        const fn info_index(def_id: DefId) -> usize {
-            def_id.0.saturating_sub(DefId::FIRST_VALID) as usize
-        }
-
-        fn preloaded_info(
-            definitions: &[(DefId, DefinitionInfo)],
-            def_id: DefId,
-        ) -> Option<&DefinitionInfo> {
-            definitions
-                .get(info_index(def_id))
-                .and_then(|(stored_id, info)| (*stored_id == def_id).then_some(info))
-        }
-
-        fn preloaded_info_mut(
-            definitions: &mut [(DefId, DefinitionInfo)],
-            def_id: DefId,
-        ) -> Option<&mut DefinitionInfo> {
-            definitions
-                .get_mut(info_index(def_id))
-                .and_then(|(stored_id, info)| (*stored_id == def_id).then_some(info))
-        }
-
-        fn record_preloaded_definition(
-            def_infos: &mut Vec<(DefId, DefinitionInfo)>,
-            file_to_defs: &mut FxHashMap<u32, Vec<DefId>>,
-            name_to_defs: &mut FxHashMap<Atom, Vec<DefId>>,
-            def_id: DefId,
-            info: DefinitionInfo,
-        ) {
-            if let Some(file_id) = info.file_id {
-                file_to_defs.entry(file_id).or_default().push(def_id);
-            }
-            name_to_defs.entry(info.name).or_default().push(def_id);
-            def_infos.push((def_id, info));
-        }
-
-        // Pass 1: Create DefIds and DefinitionInfo for each entry.
-        for (sym_id, entry) in semantic_defs {
-            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern_string);
-            let kind = info.kind;
-
-            let def_id = DefId(next_id);
-            next_id = next_id.saturating_add(1);
-            symbol_to_def.entry(sym_id.0).or_insert(def_id);
-            symbol_only_index.entry(sym_id.0).or_insert(def_id);
-            symbol_def_index_entries.push(((sym_id.0, entry.file_id), def_id));
-            record_preloaded_definition(
-                &mut def_infos,
-                &mut file_to_defs,
-                &mut name_to_defs,
-                def_id,
-                info,
-            );
-
-            if kind == DefKind::Class {
-                let ctor_def_id = DefId(next_id);
-                next_id = next_id.saturating_add(1);
-                let ctor_info = DefinitionInfo::class_constructor_from_semantic_def(
-                    entry,
-                    sym_id.0,
-                    &intern_string,
-                );
-                record_preloaded_definition(
-                    &mut def_infos,
-                    &mut file_to_defs,
-                    &mut name_to_defs,
-                    ctor_def_id,
-                    ctor_info,
-                );
-                class_to_constructor_entries.push((def_id, ctor_def_id));
-            }
-        }
-
-        // Pass 2: Wire namespace exports from parent_namespace relationships.
-        for (sym_id, entry) in semantic_defs {
-            if let Some(parent_sym) = entry.parent_namespace {
-                let child_def = symbol_to_def.get(&sym_id.0).copied();
-                let parent_def = symbol_to_def.get(&parent_sym.0).copied();
-                if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
-                    let Some(name) = preloaded_info(&def_infos, child_def_id).map(|info| info.name)
-                    else {
-                        continue;
-                    };
-                    if let Some(parent_info) = preloaded_info_mut(&mut def_infos, parent_def_id) {
-                        parent_info.add_export(name, child_def_id);
-                    }
-                }
-            }
-        }
-
-        // Pass 3: Resolve heritage names to DefIds.
-        for (sym_id, entry) in semantic_defs {
-            let def_id = match symbol_to_def.get(&sym_id.0).copied() {
-                Some(def_id) => def_id,
-                None => continue,
-            };
-
-            // Resolve extends_names → DefinitionInfo.extends
-            let mut resolved_extends = None;
-            if !entry.extends_names.is_empty() {
-                for name_str in &entry.extends_names {
-                    if name_str.contains('.') {
-                        continue; // property-access names resolved by checker
-                    }
-                    let name_atom = intern_string(name_str);
-                    if let Some(candidates) = name_to_defs.get(&name_atom) {
-                        for &candidate_id in candidates {
-                            if candidate_id == def_id {
-                                continue;
-                            }
-                            if let Some(candidate_info) = preloaded_info(&def_infos, candidate_id)
-                                && matches!(
-                                    candidate_info.kind,
-                                    DefKind::Class | DefKind::Interface
-                                )
-                            {
-                                resolved_extends = Some(candidate_id);
-                                break;
-                            }
-                        }
-                    }
-                    break; // only first extends name for the extends field
-                }
-            }
-            if let Some(extends) = resolved_extends
-                && let Some(info) = preloaded_info_mut(&mut def_infos, def_id)
-            {
-                info.extends = Some(extends);
-            }
-
-            // Resolve implements_names → DefinitionInfo.implements
-            if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
-                for name_str in &entry.implements_names {
-                    if name_str.contains('.') {
-                        continue;
-                    }
-                    let name_atom = intern_string(name_str);
-                    if let Some(candidates) = name_to_defs.get(&name_atom) {
-                        for &candidate_id in candidates {
-                            if candidate_id == def_id {
-                                continue;
-                            }
-                            if let Some(candidate_info) = preloaded_info(&def_infos, candidate_id)
-                                && matches!(
-                                    candidate_info.kind,
-                                    DefKind::Interface | DefKind::Class
-                                )
-                            {
-                                resolved_implements.push(candidate_id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if !resolved_implements.is_empty()
-                    && let Some(info) = preloaded_info_mut(&mut def_infos, def_id)
-                {
-                    info.implements = resolved_implements;
-                }
-            }
-        }
-
-        for (def_id, info) in def_infos {
-            store.definitions.insert(def_id, info);
-        }
-        for (symbol_id, def_id) in symbol_only_index {
-            store.insert_symbol_only_mapping(symbol_id, def_id);
-        }
-        for ((symbol_id, file_id), def_id) in symbol_def_index_entries {
-            store.symbol_def_index.insert((symbol_id, file_id), def_id);
-        }
-        for (file_id, def_ids) in file_to_defs {
-            store.file_to_defs.insert(file_id, def_ids);
-        }
-        for (name, def_ids) in name_to_defs {
-            store.name_to_defs.insert(name, def_ids);
-        }
-        for (class_def, ctor_def) in class_to_constructor_entries {
-            store.class_to_constructor.insert(class_def, ctor_def);
-        }
-        store.next_id.store(next_id, Ordering::SeqCst);
-
-        // Mark as fully populated so parallel checkers skip redundant population.
-        store.mark_fully_populated();
-
-        store
     }
 }
 
