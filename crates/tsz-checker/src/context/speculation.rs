@@ -587,15 +587,20 @@ impl<'a> CheckerContext<'a> {
         // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
         // that are not in the replacement set.
         let truncate_at = self.clamped_diag_len(snap);
-        let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
+        let discarded_has_ts2454 = self.diagnostics[truncate_at..]
             .iter()
-            .filter(|d| d.code == 2454)
-            .map(|d| d.start)
-            .collect();
-        for diag in &self.diagnostics[truncate_at..] {
-            if diag.code == 2454 && !replacement_ts2454_positions.contains(&diag.start) {
-                self.emitted_ts2454_errors
-                    .retain(|&(pos, _)| pos != diag.start);
+            .any(|diag| diag.code == 2454);
+        if discarded_has_ts2454 {
+            let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
+                .iter()
+                .filter(|d| d.code == 2454)
+                .map(|d| d.start)
+                .collect();
+            for diag in &self.diagnostics[truncate_at..] {
+                if diag.code == 2454 && !replacement_ts2454_positions.contains(&diag.start) {
+                    self.emitted_ts2454_errors
+                        .retain(|&(pos, _)| pos != diag.start);
+                }
             }
         }
         self.diagnostics.truncate(truncate_at);
