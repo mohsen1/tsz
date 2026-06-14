@@ -1195,7 +1195,7 @@ impl<'a> CheckerState<'a> {
         }
         checker.propagate_class_delegation_setup(self, sym_id);
         if !delegated_class_is_ambient {
-            self.clear_delegated_symbol_cache_collisions(&mut checker, delegate_binder);
+            self.clear_delegated_symbol_cache_collisions(&mut checker, delegate_binder, sym_id);
         }
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
