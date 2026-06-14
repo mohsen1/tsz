@@ -44,11 +44,74 @@ impl<'a> CheckerState<'a> {
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }
+        let raw_source = source;
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request = crate::query_boundaries::assignability::RelationRequest::assignability_reason(
             source, target,
         );
-        self.execute_relation_request(&request)
+        let outcome = self.execute_relation_request(&request);
+        if !outcome.related
+            && self.deferred_index_access_source_constraint_relation_accepts(raw_source, target)
+        {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+        outcome
+    }
+
+    /// Constraint-widening fallback for a deferred generic indexed-access source.
+    ///
+    /// When `O[K]` is indexed by a bare type parameter `K extends keyof O`, tsc
+    /// keeps it deferred but a deferred `O[K]` is assignable to anything its
+    /// constraint — the value-type union `O[keyof O]` reachable through `K`'s
+    /// constraint — is assignable to (`getConstraintOfIndexedAccess`). This is
+    /// the source-side analogue of the solver's index-access upper-bound check;
+    /// it is needed here because evaluating `O[K]` for the relation may
+    /// mapped-substitute the source (e.g. `Funcs[K]` → `(x: ArgMap[K]) => void`)
+    /// before the solver can recover the index-access shape, so a deferred
+    /// `Funcs[K] <= Funcs[keyof ArgMap]` (correlatedUnions) never reaches that
+    /// check. Widening the *source* to its constraint is sound (the constraint
+    /// is `O[K]`'s upper bound) and only relaxes the source, never the target —
+    /// `123 <= Type[K]` is unaffected because `123` is not an index access.
+    fn deferred_index_access_source_constraint_relation_accepts(
+        &mut self,
+        raw_source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some((object_type, index_type)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, raw_source)
+        else {
+            return false;
+        };
+        let Some(index_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+        else {
+            return false;
+        };
+        let Some(index_constraint) = index_param.constraint else {
+            return false;
+        };
+        self.ensure_relation_input_ready(object_type);
+        let evaluated_object = self.evaluate_type_with_env(object_type);
+        let value_union = self
+            .ctx
+            .types
+            .factory()
+            .index_access(evaluated_object, index_constraint);
+        let value_union = self.evaluate_type_with_env(value_union);
+        if value_union == raw_source
+            || value_union == TypeId::ERROR
+            || crate::query_boundaries::common::is_index_access_type(self.ctx.types, value_union)
+        {
+            return false;
+        }
+        self.is_assignable_to(value_union, target)
     }
 
     /// Execute a diagnostic-bearing type-comparability relation for raw
