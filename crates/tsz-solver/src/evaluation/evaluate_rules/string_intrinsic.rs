@@ -59,38 +59,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // String literal types - apply the transformation
             TypeData::Literal(LiteralValue::String(atom)) => {
                 let s = self.interner().resolve_atom_ref(atom);
-                let transformed = match kind {
-                    StringIntrinsicKind::Uppercase => s.to_uppercase(),
-                    StringIntrinsicKind::Lowercase => s.to_lowercase(),
-                    StringIntrinsicKind::Capitalize => {
-                        if s.is_empty() {
-                            s.to_string()
-                        } else {
-                            let mut chars = s.chars();
-                            match chars.next() {
-                                Some(first) => {
-                                    let upper: String = first.to_uppercase().collect();
-                                    upper + chars.as_str()
-                                }
-                                None => s.to_string(),
-                            }
-                        }
-                    }
-                    StringIntrinsicKind::Uncapitalize => {
-                        if s.is_empty() {
-                            s.to_string()
-                        } else {
-                            let mut chars = s.chars();
-                            match chars.next() {
-                                Some(first) => {
-                                    let lower: String = first.to_lowercase().collect();
-                                    lower + chars.as_str()
-                                }
-                                None => s.to_string(),
-                            }
-                        }
-                    }
-                };
+                let transformed = self.apply_string_transform(kind, &s);
                 self.interner().literal_string(&transformed)
             }
 
