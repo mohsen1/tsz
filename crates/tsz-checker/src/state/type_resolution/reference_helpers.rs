@@ -504,12 +504,13 @@ impl<'a> CheckerState<'a> {
 
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
-        // A declaration whose name matches and that is *syntactically* non-generic
-        // (no type-parameter list) proves the symbol has no type parameters. A
-        // matched declaration that *does* have a type-parameter list but whose
-        // params we failed to extract here must keep the display fallback alive,
-        // so it is tracked separately.
-        let mut matched_non_generic_decl = false;
+        // Track whether any declaration matched `expected_name`, and whether any
+        // matched declaration is generic. A matched declaration that is
+        // *syntactically* non-generic (no type-parameter list) proves the symbol
+        // has no type parameters; one that carries a type-parameter list we failed
+        // to extract here must keep the display fallback alive, so it counts as
+        // generic.
+        let mut matched_any_decl = false;
         let mut matched_generic_decl = false;
         for &decl_idx in &declarations {
             let cross_file_arena = if let Some(file_idx) = effective_file_idx.or_else(|| {
@@ -865,41 +866,15 @@ impl<'a> CheckerState<'a> {
                 let Some(params) = decl_params else {
                     continue;
                 };
+                matched_any_decl = true;
                 if params.is_empty() {
                     // The matched declaration produced no type parameters. Only
-                    // treat this as authoritative (symbol is non-generic) when the
-                    // declaration is syntactically non-generic; if it carries a
-                    // type-parameter list we merely failed to resolve, defer to the
-                    // display fallback by marking it generic.
-                    let syntactically_generic = decl_arena
-                        .get_type_alias(node)
-                        .map(|alias| {
-                            alias
-                                .type_parameters
-                                .as_ref()
-                                .is_some_and(|tp| !tp.nodes.is_empty())
-                        })
-                        .or_else(|| {
-                            decl_arena.get_interface(node).map(|iface| {
-                                iface
-                                    .type_parameters
-                                    .as_ref()
-                                    .is_some_and(|tp| !tp.nodes.is_empty())
-                            })
-                        })
-                        .or_else(|| {
-                            decl_arena.get_class(node).map(|class| {
-                                class
-                                    .type_parameters
-                                    .as_ref()
-                                    .is_some_and(|tp| !tp.nodes.is_empty())
-                            })
-                        })
-                        .unwrap_or(false);
-                    if syntactically_generic {
+                    // treat the symbol as non-generic when the declaration is
+                    // syntactically non-generic; if it carries a type-parameter
+                    // list we merely failed to resolve, mark it generic so the
+                    // display fallback stays available.
+                    if Self::decl_node_is_syntactically_generic(decl_arena, node) {
                         matched_generic_decl = true;
-                    } else {
-                        matched_non_generic_decl = true;
                     }
                     continue;
                 }
@@ -941,7 +916,7 @@ impl<'a> CheckerState<'a> {
         if let Some(jsdoc_params) = jsdoc_fallback {
             return Some(jsdoc_params);
         }
-        if matched_non_generic_decl && !matched_generic_decl {
+        if matched_any_decl && !matched_generic_decl {
             // Every matched declaration is syntactically non-generic: the symbol
             // genuinely has no type parameters. Returning `Some(empty)` keeps
             // callers off the raw-`SymbolId` display/count fallback that can leak a
@@ -951,6 +926,30 @@ impl<'a> CheckerState<'a> {
             return Some(Vec::new());
         }
         None
+    }
+
+    /// Whether the declaration at `decl_idx` carries a non-empty type-parameter
+    /// list (type alias, interface, or class). Used to distinguish a genuinely
+    /// non-generic declaration from one whose type parameters merely failed to
+    /// resolve in the current arena.
+    fn decl_node_is_syntactically_generic(
+        arena: &NodeArena,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        arena
+            .get_type_alias(node)
+            .and_then(|alias| alias.type_parameters.as_ref())
+            .or_else(|| {
+                arena
+                    .get_interface(node)
+                    .and_then(|iface| iface.type_parameters.as_ref())
+            })
+            .or_else(|| {
+                arena
+                    .get_class(node)
+                    .and_then(|class| class.type_parameters.as_ref())
+            })
+            .is_some_and(|type_parameters| !type_parameters.nodes.is_empty())
     }
 
     /// Read leading JSDoc on a JS class declaration and synthesize
