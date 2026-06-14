@@ -158,6 +158,7 @@ impl<'a> FlowAnalyzer<'a> {
             // Falls back to the full per-node walk whenever any gate is uncertain,
             // so narrowing stays byte-identical.
             passthrough_run.clear();
+            let mut passthrough_run_contains_flow_id = false;
             let current_flow = self.chase_linear_passthrough(
                 entry_flow,
                 PassthroughGate {
@@ -172,12 +173,14 @@ impl<'a> FlowAnalyzer<'a> {
                 results,
                 &mut antecedent_defer_memo,
                 &mut passthrough_run,
+                flow_id,
+                &mut passthrough_run_contains_flow_id,
             );
             // If the chase spliced out the entry `flow_id` itself, remember the node
             // it landed on so the final result can be aliased to `flow_id` once that
             // node resolves (possibly after deferrals). Interior spliced nodes are
             // intentionally left untracked so a surviving merge can re-derive them.
-            if current_flow != flow_id && passthrough_run.contains(&flow_id) {
+            if current_flow != flow_id && passthrough_run_contains_flow_id {
                 flow_id_landed_on = Some(current_flow);
             }
             passthrough_run.clear();
@@ -1211,6 +1214,8 @@ impl<'a> FlowAnalyzer<'a> {
         results: &FxHashMap<FlowNodeId, TypeId>,
         antecedent_defer_memo: &mut FxHashMap<FlowNodeId, bool>,
         run: &mut Vec<FlowNodeId>,
+        alias_flow_id: FlowNodeId,
+        run_contains_alias_flow_id: &mut bool,
     ) -> FlowNodeId {
         let PassthroughGate {
             reference,
@@ -1385,6 +1390,9 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             // `current` is a pure pass-through: record it and advance.
+            if current == alias_flow_id {
+                *run_contains_alias_flow_id = true;
+            }
             run.push(current);
             current = ant;
         }
