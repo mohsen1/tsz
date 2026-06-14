@@ -251,6 +251,22 @@ impl NodeTypeCache {
         }
     }
 
+    /// `true` when both caches share the same visible backing storage.
+    ///
+    /// Speculation rollback uses this to prove a return-type inference probe did
+    /// not write to `node_types` before skipping the restore path. Require both
+    /// overlay layers to match: a changed overlay can expose different visible
+    /// entries even when the base snapshot is unchanged.
+    #[inline]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+            && match (&self.base, &other.base) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+
     /// Create an empty speculative write layer whose reads fall through to
     /// this cache's current visible entries. See the type-level docs.
     pub fn overlay(&self) -> Self {
