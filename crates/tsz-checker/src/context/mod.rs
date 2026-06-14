@@ -555,6 +555,21 @@ pub struct FlowSharedCaches {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
 
+    /// Cache the literal `TypeId` of a switch-case clause expression.
+    /// Key: clause-expression `NodeIndex.0` -> its literal `TypeId` (or `None`
+    /// when the expression is not a recognized literal). `literal_type_from_node`
+    /// is a pure function of the immutable post-bind AST node, so entries are
+    /// stable for the whole file check and need no invalidation within a pass.
+    ///
+    /// Reused across `FlowAnalyzer` instances within a single file check. Without
+    /// this, `narrow_by_switch_case_clause` re-derives (and re-interns) every
+    /// predecessor case label on every case, giving O(N^2) string interns for an
+    /// N-arm literal switch (each case body's flow re-walk scans all earlier
+    /// clauses). The cache collapses the per-switch literal materialization to
+    /// O(N) total: each clause expression is interned once, then read as an O(1)
+    /// hash hit.
+    pub flow_switch_case_literal_cache: RefCell<FxHashMap<u32, Option<TypeId>>>,
+
     /// Shared reference-equivalence cache used by flow narrowing.
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
     /// Reused across `FlowAnalyzer` instances within a single file check.
@@ -585,6 +600,7 @@ impl FlowSharedCaches {
             narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            flow_switch_case_literal_cache: RefCell::new(FxHashMap::default()),
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_flow_memo: SymbolFlowMemoCaches::default(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
