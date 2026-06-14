@@ -902,6 +902,26 @@ impl TypePredicateCache for QueryCache<'_> {
             .set_contains_generic_params_root_cache(type_id, result);
     }
 
+    fn is_generic_with_union_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner
+            .is_generic_with_union_constraint_cached(type_id)
+    }
+
+    fn set_is_generic_with_union_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_is_generic_with_union_constraint_cache(type_id, result);
+    }
+
+    fn is_generic_without_nullable_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner
+            .is_generic_without_nullable_constraint_cached(type_id)
+    }
+
+    fn set_is_generic_without_nullable_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_is_generic_without_nullable_constraint_cache(type_id, result);
+    }
+
     fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.eval_contains_infer_cached(type_id)
     }
@@ -1124,6 +1144,14 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
         self.interner.lookup_alloc_order(id)
+    }
+
+    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.widen_type_memo(type_id)
+    }
+
+    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        self.interner.set_widen_type_memo(type_id, result);
     }
 
     fn intern_string(&self, s: &str) -> Atom {

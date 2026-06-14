@@ -124,6 +124,8 @@ pub(crate) enum PredicateCacheKind {
     ContainsGenericParamsRoot = 9,
     EvalContainsInfer = 10,
     ContainsFileRelative = 11,
+    IsGenericWithUnionConstraint = 12,
+    IsGenericWithoutNullableConstraint = 13,
 }
 
 impl PredicateCacheKind {
@@ -192,6 +194,16 @@ pub struct TypeInterner {
     pub(super) applications: ConcurrentValueInterner<TypeApplication>,
     /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
     pub(super) identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Result memo for the canonical semantic `widen_type` entry (flags
+    /// `widen_boolean_intrinsics=true`, all others false). Widening is a pure
+    /// function of the immutable interned type structure, but `widen_type`
+    /// allocates a fresh per-call recursion guard, so widening the same wide
+    /// union once per reference is O(N) repeated — O(N^2) over an N-arm
+    /// discriminated-union switch (#13598). This memo collapses repeats of the
+    /// same root `TypeId` to O(1). Only the `widen_type` entry uses it; the
+    /// `widen_type_deep`/display variants compute different results for the same
+    /// `TypeId` and must not share it.
+    pub(super) widen_type_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Packed per-`TypeId` caches for immutable structural content predicates.
     ///
     /// Each bit records one predicate's known/truthy state. This preserves the
@@ -468,6 +480,7 @@ impl TypeInterner {
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             predicate_cache: DashMap::with_hasher(FxBuildHasher),
+            widen_type_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
@@ -711,6 +724,18 @@ impl TypeInterner {
         let result = is_identity_comparable_type(self, type_id);
         self.identity_comparable_cache.insert(type_id, result);
         result
+    }
+
+    /// Look up the memoized canonical `widen_type` result for `type_id`.
+    #[inline]
+    pub fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        self.widen_type_cache.get(&type_id).map(|v| *v)
+    }
+
+    /// Record the canonical `widen_type` result for `type_id`.
+    #[inline]
+    pub fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        self.widen_type_cache.insert(type_id, result);
     }
 
     /// Intern a string into an Atom.

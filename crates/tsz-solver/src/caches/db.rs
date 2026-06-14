@@ -155,6 +155,26 @@ pub trait TypePredicateCache {
     /// `contains_generic_type_parameters_db` walk. Default no-op.
     fn set_contains_generic_params_root_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached `is_generic_type_with_union_constraint(type_id)` result.
+    /// Default `None`.
+    fn is_generic_with_union_constraint_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record an `is_generic_type_with_union_constraint(type_id)` result.
+    /// Default no-op.
+    fn set_is_generic_with_union_constraint_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `is_generic_type_without_nullable_constraint(type_id)`
+    /// result. Default `None`.
+    fn is_generic_without_nullable_constraint_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record an `is_generic_type_without_nullable_constraint(type_id)` result.
+    /// Default no-op.
+    fn set_is_generic_without_nullable_constraint_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached result of the evaluator's `type_contains_infer`
     /// walk (structural `Infer` nodes only; descends `Application` bases).
     /// Default impl returns `None` (no caching).
@@ -442,6 +462,16 @@ pub trait TypeDatabase:
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
+
+    /// Look up the memoized canonical `widen_type` result for `type_id`.
+    /// Default `None` (no caching). Only the canonical semantic `widen_type`
+    /// entry populates this; see `TypeInterner::widen_type_cache`.
+    fn widen_type_memo(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Record the canonical `widen_type` result for `type_id`. Default no-op.
+    fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
     fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]>;
     fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]>;
@@ -754,6 +784,33 @@ impl TypePredicateCache for TypeInterner {
         );
     }
 
+    fn is_generic_with_union_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::IsGenericWithUnionConstraint)
+    }
+
+    fn set_is_generic_with_union_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::IsGenericWithUnionConstraint,
+            result,
+        );
+    }
+
+    fn is_generic_without_nullable_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(
+            type_id,
+            PredicateCacheKind::IsGenericWithoutNullableConstraint,
+        )
+    }
+
+    fn set_is_generic_without_nullable_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::IsGenericWithoutNullableConstraint,
+            result,
+        );
+    }
+
     fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::EvalContainsInfer)
     }
@@ -878,6 +935,14 @@ impl TypeDatabase for TypeInterner {
 
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
         Self::resolve_atom_ref(self, atom)
+    }
+
+    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::widen_type_memo(self, type_id)
+    }
+
+    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        Self::set_widen_type_memo(self, type_id, result);
     }
 
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
