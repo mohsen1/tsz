@@ -263,6 +263,65 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.db.as_type_database()
     }
 
+    /// True when a property access on a deferred generic indexed access
+    /// `ia_obj[K]` (with `K`'s constraint `constraint`) should stay deferred as
+    /// `(ia_obj[K])["prop"]` rather than distributing through the constraint.
+    ///
+    /// This holds for the *homomorphic* shape the index-access evaluator defers:
+    /// `constraint` is `keyof ia_obj` and `ia_obj` is a concrete object that owns
+    /// the accessed property and has no applicable string/number index signature
+    /// (so the property is a genuine named member, not an index-signature hit).
+    /// Distributing such an access collapses `O[K]["p"]` into the value-union
+    /// member type `O[keyof O]["p"]`, which no longer relates to the deferred
+    /// `O[K]["p"]` the surrounding code (correlated unions) expects.
+    fn deferred_homomorphic_property_access_stays_deferred(
+        &self,
+        ia_obj: TypeId,
+        constraint: TypeId,
+        prop_atom: Atom,
+    ) -> bool {
+        use crate::visitors::visitor::keyof_inner_type;
+
+        // `constraint` must be `keyof <inner>`; accept the evaluated form too.
+        let keyof_inner = keyof_inner_type(self.interner(), constraint).or_else(|| {
+            let evaluated = self
+                .db
+                .evaluate_type_with_options(constraint, self.no_unchecked_indexed_access);
+            (evaluated != constraint)
+                .then(|| keyof_inner_type(self.interner(), evaluated))
+                .flatten()
+        });
+        let Some(keyof_inner) = keyof_inner else {
+            return false;
+        };
+
+        // The keyof's inner must be the same object being indexed (modulo
+        // evaluation), so the deferred key space is exactly `keyof ia_obj`.
+        let eval_obj = self
+            .db
+            .evaluate_type_with_options(ia_obj, self.no_unchecked_indexed_access);
+        let eval_inner = self
+            .db
+            .evaluate_type_with_options(keyof_inner, self.no_unchecked_indexed_access);
+        if eval_inner != eval_obj && keyof_inner != ia_obj {
+            return false;
+        }
+
+        // The object must own the accessed property as a named member and have
+        // no applicable index signature (otherwise the constraint fallback's
+        // `V` resolution is the correct apparent type).
+        let shape_id = match self.interner().lookup(eval_obj) {
+            Some(TypeData::Object(shape_id)) => shape_id,
+            // `ObjectWithIndex` has an applicable index signature: not the
+            // named-member homomorphic shape this rule targets.
+            _ => return false,
+        };
+        let shape = self.interner().object_shape(shape_id);
+        shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().any(|prop| prop.name == prop_atom)
+    }
+
     fn resolver(&self) -> &dyn TypeResolver {
         self.resolver.unwrap_or_else(|| self.db.as_type_resolver())
     }
@@ -942,15 +1001,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.resolve_property_access_inner(evaluated, prop_atom)
                 } else {
                     // Evaluation didn't change the type (still deferred).
-                    // Try resolving the base constraint of the indexed access:
-                    // if the index is a type parameter with a constraint, evaluate
-                    // object[constraint] to get the apparent result type.
-                    // E.g., {[s:string]:V}[K] where K extends keyof T => V
                     if let Some(TypeData::IndexAccess(ia_obj, ia_idx)) =
                         self.interner().lookup(obj_type)
                         && let Some(TypeData::TypeParameter(info)) = self.interner().lookup(ia_idx)
                         && let Some(constraint) = info.constraint
                     {
+                        // Accessing a property `p` on a deferred *homomorphic*
+                        // generic indexed access `O[K]` (K extends keyof O, O an
+                        // object without an applicable index signature) keeps the
+                        // result deferred as `O[K]["p"]`, matching tsc. Resolving
+                        // it through `K`'s constraint here would distribute to the
+                        // value-union property type (`O[keyof O]["p"]`), e.g.
+                        // `myObj.name: MyObj[K]["name"]` collapsing to
+                        // `string | number` (correlatedUnions #47890), which then
+                        // fails to relate to the declared `O[K]["name"]` return.
+                        // Indexing through a string/number index signature
+                        // (`{[s:string]:V}[K]`) is unaffected: it has no named
+                        // properties to keep deferred and still resolves to `V`
+                        // via the constraint fallback below.
+                        if self.deferred_homomorphic_property_access_stays_deferred(
+                            ia_obj, constraint, prop_atom,
+                        ) {
+                            let prop_literal = self.db.literal_string_atom(prop_atom);
+                            return PropertyAccessResult::simple(
+                                self.db.index_access(obj_type, prop_literal),
+                            );
+                        }
+
+                        // Otherwise resolve the base constraint of the indexed
+                        // access: evaluate object[constraint] to get the apparent
+                        // result type. E.g. {[s:string]:V}[K] where K extends
+                        // keyof T => V.
                         let base_constraint = self.db.evaluate_index_access_with_options(
                             ia_obj,
                             constraint,
