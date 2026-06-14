@@ -114,16 +114,32 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let published = self.ctx.definition_store.get_body(def_id)?;
+        // The published body feeds contextual-inference paths only when it
+        // carries a conditional that can surface still-generic during union
+        // normalization (the #13232 resolver-less defect). A callable member
+        // with no conditional in its signature — directly or behind an applied
+        // alias — is inference-inert, so consuming it lets an importing file
+        // resolve members inherited through a method-bearing generic interface
+        // (`interface D<T> extends Base<T>` with a method on `Base`). Detect the
+        // conditional *through* alias applications, since the standard content
+        // walk treats an applied alias base as an opaque leaf.
+        let published_feeds_conditional_inference = {
+            let db = self.ctx.types.as_type_database();
+            let def_store = &self.ctx.definition_store;
+            let mut resolve_lazy = |d: tsz_solver::DefId| def_store.get_body(d);
+            tsz_solver::type_queries::contains_conditional_through_aliases(
+                db,
+                published,
+                &mut resolve_lazy,
+            )
+        };
         if published == TypeId::ERROR
             || published == TypeId::UNKNOWN
             || published == merged
             || crate::query_boundaries::common::lazy_def_id(self.ctx.types, published)
                 == Some(def_id)
             || !self.published_body_covers_local_members(published, merged)
-            || tsz_solver::type_queries::contains_callable_or_conditional(
-                self.ctx.types.as_type_database(),
-                published,
-            )
+            || published_feeds_conditional_inference
         {
             return None;
         }

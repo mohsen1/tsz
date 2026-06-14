@@ -258,21 +258,96 @@ pub fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     contains_content_cached(db, type_id, &ConditionalPredicate)
 }
 
-/// Whether the alias-opaque structure of `type_id` contains a `Callable`
-/// or a `Conditional` node.
+/// Whether the body contains a `Conditional` node reachable through its full
+/// content surface, **resolving alias `Application`/`Lazy` bases** via
+/// `resolve_lazy`.
 ///
-/// Used by the cross-module interface-heritage consumption gate: a published
-/// definition body carrying call/construct signatures or conditional members
-/// feeds contextual-inference paths where a pre-existing resolver-less
-/// evaluation defect (still-generic conditionals mis-distributed during union
-/// normalization) produces false relation failures. Only inference-inert
-/// (data-shaped) bodies are consumed until that defect is fixed. Treats
-/// nested `Lazy`/`Application` bases as opaque leaves, mirroring
-/// [`contains_conditional_type`].
-pub fn contains_callable_or_conditional(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    crate::visitors::visitor_predicates::contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::Callable(_) | TypeData::Conditional(_))
-    })
+/// Unlike [`contains_conditional_type`] — which treats `Lazy`/`Application`
+/// bases as opaque leaves — this walk follows an applied alias
+/// (`MappedResponseType<R, T>`) into its registered body so a conditional
+/// buried behind a generic alias *inside a method signature* is still detected.
+///
+/// Used by the cross-module interface-heritage consumption gate: the #13232
+/// resolver-less union-normalization defect is triggered specifically by a
+/// still-generic conditional surfacing during contextual inference. A published
+/// body whose callable members carry no conditional (directly or through an
+/// applied alias) cannot feed that path, so it is safe to consume — which is
+/// what lets an importing file resolve members inherited through a method-
+/// bearing generic interface (`interface D<T> extends Base<T>` where `Base` has
+/// a method member). Bodies that do reach a conditional stay gated.
+///
+/// `resolve_lazy` maps an alias/interface `DefId` to its registered body; it
+/// returns `None` when no body is registered (treated as "no conditional behind
+/// this alias"). The walk is bounded by a visited set and a depth limit so
+/// recursive aliases terminate.
+pub fn contains_conditional_through_aliases(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    resolve_lazy: &mut dyn FnMut(crate::def::DefId) -> Option<TypeId>,
+) -> bool {
+    let mut visited = FxHashSet::default();
+    contains_conditional_through_aliases_inner(db, type_id, resolve_lazy, &mut visited, 0)
+}
+
+const CONDITIONAL_THROUGH_ALIAS_DEPTH_LIMIT: usize = 64;
+
+fn contains_conditional_through_aliases_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    resolve_lazy: &mut dyn FnMut(crate::def::DefId) -> Option<TypeId>,
+    visited: &mut FxHashSet<TypeId>,
+    depth: usize,
+) -> bool {
+    if depth > CONDITIONAL_THROUGH_ALIAS_DEPTH_LIMIT || type_id.is_intrinsic() {
+        return false;
+    }
+    if !visited.insert(type_id) {
+        return false;
+    }
+    let Some(data) = db.lookup(type_id) else {
+        return false;
+    };
+    if matches!(data, TypeData::Conditional(_)) {
+        return true;
+    }
+    // Follow an applied alias / bare lazy reference into its registered body so
+    // a conditional hidden behind `Alias<Args>` is not missed (the standard
+    // content child policy treats application bases as opaque leaves).
+    let alias_base_def = match &data {
+        TypeData::Application(app_id) => {
+            crate::visitors::visitor_extract::lazy_def_id(db, db.type_application(*app_id).base)
+        }
+        TypeData::Lazy(def_id) => Some(*def_id),
+        _ => None,
+    };
+    if let Some(def_id) = alias_base_def
+        && let Some(body) = resolve_lazy(def_id)
+        && contains_conditional_through_aliases_inner(db, body, resolve_lazy, visited, depth + 1)
+    {
+        return true;
+    }
+    // Descend the standard content surface (object properties, callable/function
+    // signature params + returns, application args, union/intersection members,
+    // conditional arms), short-circuiting on the first conditional found.
+    try_for_each_child_with_policy::<(), _>(
+        db,
+        &data,
+        &ChildPolicy::CONTENT_PREDICATE,
+        &mut |child| {
+            if contains_conditional_through_aliases_inner(
+                db,
+                child,
+                resolve_lazy,
+                visited,
+                depth + 1,
+            ) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        },
+    )
+    .is_break()
 }
 
 /// Whether `superset`'s named object properties include every named property
@@ -1554,5 +1629,94 @@ pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -
             })
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod conditional_through_aliases_tests {
+    use super::contains_conditional_through_aliases;
+    use crate::construction::TypeInterner;
+    use crate::def::DefId;
+    use crate::types::{ConditionalType, FunctionShape, PropertyInfo, TypeId};
+
+    // A generic interface body shaped like `{ m(): void; v?: T }`: a method
+    // member plus a data member, no conditional anywhere. This is the #13554
+    // case that must be consumable cross-file, so the gate must report `false`.
+    #[test]
+    fn plain_method_object_body_has_no_conditional() {
+        let interner = TypeInterner::new();
+        let m = interner.intern_string("m");
+        let v = interner.intern_string("v");
+        let method = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+        let body = interner.object(vec![
+            PropertyInfo::method(m, method),
+            PropertyInfo::opt(v, TypeId::NUMBER),
+        ]);
+        let mut resolve = |_: DefId| None;
+        assert!(!contains_conditional_through_aliases(
+            &interner,
+            body,
+            &mut resolve
+        ));
+    }
+
+    // A method whose return type applies an alias whose body is a conditional
+    // (`read(): MappedResponseType<R, T>`). The standard content walk treats
+    // the application base as an opaque leaf, so resolution must follow the
+    // alias to find the conditional. Detected through both the object property
+    // and the applied alias.
+    #[test]
+    fn method_returning_alias_to_conditional_is_detected() {
+        let interner = TypeInterner::new();
+        let cond = interner.conditional(ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::STRING,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::BOOLEAN,
+            is_distributive: false,
+        });
+        let def = DefId(7);
+        let alias_app = interner.application(interner.lazy(def), vec![TypeId::STRING]);
+        let method = interner.function(FunctionShape::new(vec![], alias_app));
+        let read = interner.intern_string("read");
+        let body = interner.object(vec![PropertyInfo::method(read, method)]);
+
+        let mut resolve = |d: DefId| (d == def).then_some(cond);
+        assert!(contains_conditional_through_aliases(
+            &interner,
+            body,
+            &mut resolve
+        ));
+
+        // When the alias body is unavailable, the conditional behind it cannot
+        // be observed and the body is treated as inert (no false gating).
+        let mut unresolved = |_: DefId| None;
+        assert!(!contains_conditional_through_aliases(
+            &interner,
+            body,
+            &mut unresolved
+        ));
+    }
+
+    // A directly-present conditional member is detected without alias
+    // resolution.
+    #[test]
+    fn direct_conditional_member_is_detected() {
+        let interner = TypeInterner::new();
+        let cond = interner.conditional(ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::STRING,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::BOOLEAN,
+            is_distributive: false,
+        });
+        let p = interner.intern_string("p");
+        let body = interner.object(vec![PropertyInfo::new(p, cond)]);
+        let mut resolve = |_: DefId| None;
+        assert!(contains_conditional_through_aliases(
+            &interner,
+            body,
+            &mut resolve
+        ));
     }
 }
