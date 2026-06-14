@@ -39,6 +39,14 @@ struct TemplateStringCursor {
 struct TemplateStringMatchScratch {
     failed_states: FxHashSet<TemplateStringMatchState>,
     capture_ends: FxHashMap<(usize, usize), Vec<usize>>,
+    constrained_captures: FxHashMap<TemplateStringCaptureKey, Option<TypeId>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TemplateStringCaptureKey {
+    start: usize,
+    end: usize,
+    constraint: u32,
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
@@ -120,28 +128,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => None,
         }
-    }
-
-    fn bind_template_infer_capture(
-        &self,
-        info: &TypeParamInfo,
-        captured: &str,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        let captured_type = self.interner().literal_string(captured);
-        let inferred = if let Some(constraint) = info.constraint {
-            let Some(converted) =
-                self.template_capture_for_constraint(captured, captured_type, constraint, checker)
-            else {
-                return false;
-            };
-            converted
-        } else {
-            captured_type
-        };
-
-        self.bind_infer(info, inferred, bindings, checker)
     }
 
     /// Match a template literal string against a pattern.
@@ -290,6 +276,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let ends = self.candidate_template_capture_ends(source, pos, pattern, index);
         scratch.capture_ends.insert(key, ends.clone());
         ends
+    }
+
+    fn cached_template_capture_for_constraint(
+        &self,
+        source: &str,
+        start: usize,
+        end: usize,
+        constraint: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+        scratch: &mut TemplateStringMatchScratch,
+    ) -> Option<TypeId> {
+        let key = TemplateStringCaptureKey {
+            start,
+            end,
+            constraint: constraint.0,
+        };
+        if let Some(cached) = scratch.constrained_captures.get(&key) {
+            return *cached;
+        }
+
+        let captured = &source[start..end];
+        let captured_type = self.interner().literal_string(captured);
+        let result =
+            self.template_capture_for_constraint(captured, captured_type, constraint, checker);
+        scratch.constrained_captures.insert(key, result);
+        result
+    }
+
+    fn bind_cached_template_infer_capture(
+        &self,
+        info: &TypeParamInfo,
+        source: &str,
+        start: usize,
+        end: usize,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+        scratch: &mut TemplateStringMatchScratch,
+    ) -> bool {
+        let inferred = if let Some(constraint) = info.constraint {
+            let Some(converted) = self.cached_template_capture_for_constraint(
+                source, start, end, constraint, checker, scratch,
+            ) else {
+                return false;
+            };
+            converted
+        } else {
+            self.interner().literal_string(&source[start..end])
+        };
+
+        self.bind_infer(info, inferred, bindings, checker)
     }
 
     /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
@@ -474,12 +510,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         source, pos, pattern, index, scratch,
                     ) {
                         let mut next_bindings = bindings.clone();
-                        let captured = &source[pos..end];
-                        if !self.bind_template_infer_capture(
+                        if !self.bind_cached_template_infer_capture(
                             &info,
-                            captured,
+                            source,
+                            pos,
+                            end,
                             &mut next_bindings,
                             checker,
+                            scratch,
                         ) {
                             continue;
                         }
@@ -530,10 +568,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 for end in self
                     .cached_candidate_template_capture_ends(source, pos, pattern, index, scratch)
                 {
-                    let captured = &source[pos..end];
-                    let captured_type = self.interner().literal_string(captured);
                     if self
-                        .template_capture_for_constraint(captured, captured_type, type_id, checker)
+                        .cached_template_capture_for_constraint(
+                            source, pos, end, type_id, checker, scratch,
+                        )
                         .is_some()
                         && self.match_template_literal_string_from(
                             source,
