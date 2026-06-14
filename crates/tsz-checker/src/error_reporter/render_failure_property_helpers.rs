@@ -247,21 +247,17 @@ impl<'a> CheckerState<'a> {
                 &[&prop_name, &source_str, &target_str],
             );
             let mut diag = Diagnostic::error(
-                file_name.clone(),
+                file_name,
                 start,
                 length,
                 base,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: detail,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                depth: 0,
-            });
+            diag.push_elaboration(
+                detail,
+                diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                0,
+            );
             diag
         } else {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
@@ -413,22 +409,14 @@ impl<'a> CheckerState<'a> {
             &[&source_str, &target_str],
         );
         let mut diag = Diagnostic::error(
-            file_name.clone(),
+            file_name,
             start,
             length,
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
         if let Some(detail) = self.nominal_mismatch_detail(source, target, property_name) {
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: detail,
-                category: DiagnosticCategory::Message,
-                code: reason.diagnostic_code(),
-                depth: 0,
-            });
+            diag.push_elaboration(detail, reason.diagnostic_code(), 0);
         }
         diag
     }
@@ -456,7 +444,7 @@ impl<'a> CheckerState<'a> {
                 &[&source_str, &target_str],
             );
             let mut diag = Diagnostic::error(
-                file_name.clone(),
+                file_name,
                 start,
                 length,
                 base,
@@ -480,30 +468,21 @@ impl<'a> CheckerState<'a> {
                     idx,
                     depth + 1,
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: nested_diag.file,
-                    start: nested_diag.start,
-                    length: nested_diag.length,
-                    message_text: nested_diag.message_text,
-                    category: DiagnosticCategory::Message,
-                    code: nested_diag.code,
-                    depth: 0,
-                });
+                diag.push_elaboration_at(
+                    nested_diag.file,
+                    nested_diag.start,
+                    nested_diag.length,
+                    nested_diag.message_text,
+                    nested_diag.code,
+                    0,
+                );
             } else {
                 let ret_source_str = self.format_type_diagnostic(source_return);
                 let ret_target_str = self.format_type_diagnostic(target_return);
                 let ret_msg = format!(
                     "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: file_name,
-                    start,
-                    length,
-                    message_text: ret_msg,
-                    category: DiagnosticCategory::Message,
-                    code: reason.diagnostic_code(),
-                    depth: 0,
-                });
+                diag.push_elaboration(ret_msg, reason.diagnostic_code(), 0);
             }
 
             diag
@@ -525,15 +504,14 @@ impl<'a> CheckerState<'a> {
                     idx,
                     depth + 1,
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: nested_diag.file,
-                    start: nested_diag.start,
-                    length: nested_diag.length,
-                    message_text: nested_diag.message_text,
-                    category: DiagnosticCategory::Message,
-                    code: nested_diag.code,
-                    depth: 0,
-                });
+                diag.push_elaboration_at(
+                    nested_diag.file,
+                    nested_diag.start,
+                    nested_diag.length,
+                    nested_diag.message_text,
+                    nested_diag.code,
+                    0,
+                );
             }
             diag
         }

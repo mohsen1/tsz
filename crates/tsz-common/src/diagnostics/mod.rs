@@ -65,6 +65,24 @@ pub struct DiagnosticRelatedInformation {
     pub depth: u8,
 }
 
+impl DiagnosticRelatedInformation {
+    /// Return this related entry with its elaboration `depth` shifted by `delta`
+    /// and clamped into the `u8` rendering range (saturating at both ends).
+    ///
+    /// Re-seating a sub-diagnostic's chain at a different nesting level is the
+    /// one place outside [`Diagnostic::push_elaboration_at`] that recomputes a
+    /// related entry's depth; this owns the shift-and-clamp invariant so it is
+    /// not re-spelled (with subtly different arithmetic) at each rebase loop.
+    #[must_use]
+    pub fn with_depth_shift(self, delta: i64) -> Self {
+        let shifted = (i64::from(self.depth) + delta).clamp(0, i64::from(u8::MAX)) as u8;
+        Self {
+            depth: shifted,
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub category: DiagnosticCategory,
@@ -156,16 +174,60 @@ impl Diagnostic {
         length: u32,
         message: impl Into<String>,
     ) -> Self {
-        self.related_information.push(DiagnosticRelatedInformation {
-            category: DiagnosticCategory::Message,
-            code: 0,
-            file: file.into(),
-            start,
-            length,
-            message_text: message.into(),
-            depth: 0,
-        });
+        self.related_information
+            .push(Self::related_message(0, file, start, length, message));
         self
+    }
+
+    /// Append a `Message`-category elaboration line to this diagnostic's
+    /// `related_information`, anchored at an explicit `file`/`start`/`length`.
+    ///
+    /// This is the single home for the parent-span-copy + depth-clamp invariant
+    /// that elaboration sites would otherwise re-spell by hand: it always tags
+    /// the entry `Message` and clamps `depth` into the `u8` rendering range
+    /// internally, so no call site can drop the clamp (and risk a cast panic)
+    /// or mis-tag the category. `depth` is taken as a `u32` because callers
+    /// compute nesting depth in `u32`; `0` is the first elaboration level.
+    pub fn push_elaboration_at(
+        &mut self,
+        file: impl Into<String>,
+        start: u32,
+        length: u32,
+        message: impl Into<String>,
+        code: u32,
+        depth: u32,
+    ) {
+        // Reuse the single `Message`-category constructor and only override the
+        // depth here, so the related-info field shape stays defined in one spot.
+        let mut related = Self::related_message(code, file, start, length, message);
+        related.depth = depth.min(u8::MAX as u32) as u8;
+        self.related_information.push(related);
+    }
+
+    /// Append an elaboration line at an explicit span within *this diagnostic's
+    /// own file*. Reuses `self.file`, so call sites that anchor an elaboration
+    /// on a member/element span inside the same file no longer re-clone the
+    /// file name by hand. Delegates to [`Diagnostic::push_elaboration_at`].
+    pub fn push_elaboration_in_span(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: impl Into<String>,
+        code: u32,
+        depth: u32,
+    ) {
+        let file = self.file.clone();
+        self.push_elaboration_at(file, start, length, message, code, depth);
+    }
+
+    /// Append an elaboration line reusing *this diagnostic's own* file and span.
+    /// This is the common case — a same-span elaboration appended beneath the
+    /// parent diagnostic — and centralizes the `self.file.clone()` /
+    /// `self.start` / `self.length` copy. Delegates to
+    /// [`Diagnostic::push_elaboration_at`].
+    pub fn push_elaboration(&mut self, message: impl Into<String>, code: u32, depth: u32) {
+        let (start, length) = (self.start, self.length);
+        self.push_elaboration_in_span(start, length, message, code, depth);
     }
 
     /// `Span`-based variant of [`Diagnostic::error`]. Converts the
@@ -811,5 +873,42 @@ mod tests {
         let rhs =
             Diagnostic::error("a.ts", 0, 3, "x", 2322).with_related("b.ts", 20, 5, "see here");
         assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn push_elaboration_reuses_own_span_and_tags_message() {
+        let mut diag = Diagnostic::error("a.ts", 7, 4, "headline", 2322);
+        diag.push_elaboration("detail", 2728, 1);
+        assert_eq!(diag.related_information.len(), 1);
+        let related = &diag.related_information[0];
+        assert_eq!(related.file, "a.ts");
+        assert_eq!(related.start, 7);
+        assert_eq!(related.length, 4);
+        assert_eq!(related.message_text, "detail");
+        assert_eq!(related.code, 2728);
+        assert_eq!(related.depth, 1);
+        assert_eq!(related.category, DiagnosticCategory::Message);
+    }
+
+    #[test]
+    fn push_elaboration_in_span_keeps_self_file_but_explicit_span() {
+        let mut diag = Diagnostic::error("a.ts", 7, 4, "headline", 2322);
+        diag.push_elaboration_in_span(40, 9, "member", 2322, 0);
+        let related = &diag.related_information[0];
+        assert_eq!(related.file, "a.ts");
+        assert_eq!((related.start, related.length), (40, 9));
+        assert_eq!(related.depth, 0);
+    }
+
+    #[test]
+    fn push_elaboration_at_clamps_depth_into_u8_range() {
+        let mut diag = Diagnostic::error("a.ts", 0, 1, "headline", 2322);
+        // A depth past `u8::MAX` must clamp rather than panic on the cast.
+        diag.push_elaboration_at("b.ts", 2, 3, "deep", 2322, u32::MAX);
+        let related = &diag.related_information[0];
+        assert_eq!(related.file, "b.ts");
+        assert_eq!((related.start, related.length), (2, 3));
+        assert_eq!(related.depth, u8::MAX);
+        assert_eq!(related.category, DiagnosticCategory::Message);
     }
 }

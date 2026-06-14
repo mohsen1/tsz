@@ -1,4 +1,7 @@
 use super::*;
+use crate::query_boundaries::property_access::{
+    is_bigint_type, is_boolean_type, is_number_type, is_string_type, is_symbol_type,
+};
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::{DefId, FunctionShape, ParamInfo, TupleElement};
 

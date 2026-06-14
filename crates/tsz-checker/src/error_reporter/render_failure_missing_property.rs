@@ -710,15 +710,7 @@ impl<'a> CheckerState<'a> {
                 )
             }
         };
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: diag.file.clone(),
-            start,
-            length,
-            message_text: message,
-            category: DiagnosticCategory::Message,
-            code,
-            depth: 0,
-        });
+        diag.push_elaboration_in_span(start, length, message, code, 0);
     }
 
     /// For TS2739 source display, unfold wrapper aliases like

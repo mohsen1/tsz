@@ -1,9 +1,6 @@
 //! Render `SubtypeFailureReason` values into diagnostics.
 //! Split from `assignability.rs` for maintainability.
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
@@ -211,15 +208,11 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
             &[&source_name, &target_name],
         );
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: diag.file.clone(),
-            start: diag.start,
-            length: diag.length,
-            message_text: frame,
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-            depth: depth.min(u8::MAX as u32) as u8,
-        });
+        diag.push_elaboration(
+            frame,
+            diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+            depth,
+        );
     }
 
     /// Emit a `Type 'S' is not assignable to type 'T'.` callback signature
@@ -235,15 +228,11 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) {
         let message = self.element_mismatch_message(source_fn, target_fn);
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: diag.file.clone(),
-            start: diag.start,
-            length: diag.length,
-            message_text: message,
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            depth: depth.min(u8::MAX as u32) as u8,
-        });
+        diag.push_elaboration(
+            message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth,
+        );
     }
 
     /// Append tsc's signature-mismatch elaboration beneath a function-to-function
@@ -832,21 +821,13 @@ impl<'a> CheckerState<'a> {
                     let (elab_code, elab_message) =
                         self.excess_property_diagnostic_message(&prop_name, target, idx);
                     let mut diag = Diagnostic::error(
-                        file_name.clone(),
+                        file_name,
                         start,
                         length,
                         main_message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name,
-                        start,
-                        length,
-                        message_text: elab_message,
-                        category: DiagnosticCategory::Message,
-                        code: elab_code,
-                        depth: 0,
-                    });
+                    diag.push_elaboration(elab_message, elab_code, 0);
                     return diag;
                 }
                 let (code, message) =
@@ -967,7 +948,7 @@ impl<'a> CheckerState<'a> {
                     &[&source_str, &target_str],
                 );
                 let mut diag = Diagnostic::error(
-                    file_name.clone(),
+                    file_name,
                     start,
                     length,
                     message,
@@ -977,15 +958,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
                     &[&source_count.to_string(), &target_count.to_string()],
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: file_name,
-                    start,
-                    length,
-                    message_text: elaboration,
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
-                                    depth: 0,
-                });
+                diag.push_elaboration(
+                    elaboration,
+                    diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
+                    0,
+                );
                 diag
             }
             SubtypeFailureReason::TupleElementMismatch {
@@ -1023,21 +1000,13 @@ impl<'a> CheckerState<'a> {
                         &[&source_str, &target_str],
                     );
                     let mut diag = Diagnostic::error(
-                        file_name.clone(),
+                        file_name,
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name,
-                        start,
-                        length,
-                        message_text: arity_text,
-                        category: DiagnosticCategory::Message,
-                        code: arity_code,
-                        depth: 0,
-                    });
+                    diag.push_elaboration(arity_text, arity_code, 0);
                     diag
                 } else {
                     // Nested (depth >= 1) render: a closed-tuple arity mismatch
@@ -1068,21 +1037,13 @@ impl<'a> CheckerState<'a> {
                         &[&source_str, &target_str],
                     );
                     let mut diag = Diagnostic::error(
-                        file_name.clone(),
+                        file_name,
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name,
-                        start,
-                        length,
-                        message_text: arity_text,
-                        category: DiagnosticCategory::Message,
-                        code: arity_code,
-                        depth: 0,
-                    });
+                    diag.push_elaboration(arity_text, arity_code, 0);
                     diag
                 } else {
                     Diagnostic::error(file_name, start, length, arity_text, arity_code)
@@ -1617,16 +1578,11 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: ctx.file_name.clone(),
-            start: ctx.start,
-            length: ctx.length,
-            message_text: diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE
-                .to_string(),
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
-                    depth: 0,
-        });
+        diag.push_elaboration(
+            diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
+            diagnostic_codes::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
+            0,
+        );
         diag
     }
 
