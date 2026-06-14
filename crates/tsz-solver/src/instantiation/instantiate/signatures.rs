@@ -109,17 +109,23 @@ impl<'a> TypeInstantiator<'a> {
             };
             let new_this_slot = shape.this_type.map(sub_top_level);
             let new_return_type = sub_top_level(shape.return_type);
-            let mut new_params = Vec::with_capacity(shape.params.len());
-            let mut params_changed = false;
-            for p in shape.params.iter() {
+            let mut new_params: Option<Vec<_>> = None;
+            for (index, p) in shape.params.iter().enumerate() {
                 let new_t = sub_top_level(p.type_id);
-                if new_t != p.type_id {
-                    params_changed = true;
+                if let Some(new_params) = &mut new_params {
                     let mut np = *p;
                     np.type_id = new_t;
                     new_params.push(np);
+                } else if new_t != p.type_id {
+                    let mut changed = Vec::with_capacity(shape.params.len());
+                    changed.extend_from_slice(&shape.params[..index]);
+                    let mut np = *p;
+                    np.type_id = new_t;
+                    changed.push(np);
+                    new_params = Some(changed);
                 } else {
-                    new_params.push(*p);
+                    // Leave the unchanged prefix borrowed until the first
+                    // changed slot proves a replacement vector is needed.
                 }
             }
             let this_changed = match (shape.this_type, new_this_slot) {
@@ -127,10 +133,10 @@ impl<'a> TypeInstantiator<'a> {
                 (None, None) => false,
                 _ => true,
             };
-            if params_changed || this_changed || new_return_type != shape.return_type {
+            if new_params.is_some() || this_changed || new_return_type != shape.return_type {
                 return self.interner.function(FunctionShape {
                     type_params: shape.type_params.clone(),
-                    params: new_params,
+                    params: new_params.unwrap_or_else(|| shape.params.clone()),
                     this_type: new_this_slot,
                     return_type: new_return_type,
                     type_predicate: shape.type_predicate,
