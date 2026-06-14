@@ -4,6 +4,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::operations::property::PropertyAccessResult;
 
 /// Check if a property with the given name is private or protected on the given type.
 /// Delegates to the solver's type query via `query_boundaries`.
@@ -58,6 +59,16 @@ pub(super) fn same_object_key_space(
     right: TypeId,
 ) -> bool {
     left == right || same_type_param_name(db, left, right)
+}
+
+pub(super) fn is_unconstrained_type_param_object(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    object_type: TypeId,
+) -> bool {
+    crate::query_boundaries::checkers::generic::is_unconstrained_type_parameter_like(
+        db,
+        object_type,
+    )
 }
 
 pub(super) fn remapped_mapped_type_template_index_should_report_ts2536(
@@ -1147,12 +1158,8 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // A bare type parameter is reported as string/number indexable by the
-        // permissive element-indexability classifier, but tsc treats its key
-        // space as `keyof unknown` = `never`, so a concrete key member is a
-        // TS2536 rather than a valid index-signature access. Skip the permissive
-        // index-signature branch for an opaque object parameter.
-        let object_is_opaque_param = self.is_unconstrained_type_param_object(object_type);
+        let object_is_opaque_param =
+            is_unconstrained_type_param_object(self.ctx.types, object_type);
         members.iter().all(|&member| {
             self.indexed_access_key_space_relation_outcome(member, keyof_object)
                 .related
@@ -1169,6 +1176,70 @@ impl<'a> CheckerState<'a> {
                 )
                 || self.canonical_numeric_string_literal_valid_for_object(member, object_type)
         })
+    }
+
+    pub(super) fn conditional_true_branch_constraint_allows_index(
+        &mut self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        index_type_for_check: TypeId,
+    ) -> bool {
+        let object_name = self.simple_type_reference_name(object_node_idx);
+        let Some(object_name) = object_name.as_deref() else {
+            return false;
+        };
+
+        let mut current = self.ctx.arena.parent_of(node_idx);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_of(node_idx, cond.true_type)
+                && self.simple_type_reference_name(cond.check_type).as_deref() == Some(object_name)
+            {
+                let extends_type = self.get_type_from_type_node(cond.extends_type);
+                let extends_type = self.evaluate_type_with_env(extends_type);
+                let keyof_extends = self.ctx.types.evaluate_keyof(extends_type);
+                if self
+                    .indexed_access_key_space_relation_outcome(index_type_for_check, keyof_extends)
+                    .related
+                {
+                    return true;
+                }
+                if let Some(prop_atom) =
+                    crate::query_boundaries::checkers::generic::string_literal_value(
+                        self.ctx.types,
+                        index_type_for_check,
+                    )
+                {
+                    let property_name = self.ctx.types.resolve_atom(prop_atom);
+                    let prop_type =
+                        self.resolve_property_access_with_env(extends_type, &property_name);
+                    if matches!(
+                        prop_type,
+                        PropertyAccessResult::Success { .. }
+                            | PropertyAccessResult::PossiblyNullOrUndefined { .. }
+                    ) {
+                        return true;
+                    }
+                }
+                if let Some((wants_string, wants_number)) =
+                    self.get_index_key_kind(index_type_for_check)
+                    && self.is_element_indexable(extends_type, wants_string, wants_number)
+                {
+                    return true;
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+
+        false
     }
 
     pub(super) fn indexed_access_constraint_values_allow_index(

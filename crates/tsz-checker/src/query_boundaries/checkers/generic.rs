@@ -575,6 +575,12 @@ pub(crate) fn get_type_parameter_constraint(
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
 }
 
+/// Check whether a type is a type-parameter-like object without an explicit constraint.
+pub(crate) fn is_unconstrained_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_parameter_like(db, type_id)
+        && tsz_solver::type_queries::get_type_parameter_constraint(db, type_id).is_none()
+}
+
 /// Get the declared name of a type parameter or infer variable.
 pub(crate) fn type_parameter_name(
     db: &dyn TypeDatabase,
@@ -815,6 +821,13 @@ pub(crate) fn get_object_shape(
 /// Check if an object type has a named property.
 pub(crate) fn has_property_by_name(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, name).is_some()
+}
+
+pub(crate) fn string_literal_value(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::Atom> {
+    tsz_solver::type_queries::get_string_literal_value(db, type_id)
 }
 
 /// Extract the `MappedTypeId` if this type is a mapped type.

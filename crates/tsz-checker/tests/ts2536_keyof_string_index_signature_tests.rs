@@ -482,3 +482,59 @@ function f<T>(o: T) { return o['x']; }
         diag_summary(&diags)
     );
 }
+
+// ── Conditional true-branch object constraints ──
+
+/// In `T extends O ? T['m'] : never`, the true branch treats `T` as constrained
+/// by `O`, so the present key `m` must not report TS2536.
+#[test]
+fn conditional_true_branch_present_property_no_ts2536() {
+    let source = r#"
+type M = { p: string };
+type O = { m: () => M };
+type X<T extends M> = T;
+type MyReturnType<F> = F extends (...args: any[]) => infer R ? R : never;
+type FFG<T> = T extends O ? X<MyReturnType<T['m']>> : never;
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "T['m'] in the true branch of T extends O must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// Anti-hardcoding: same branch-constraint rule with renamed binders and key.
+#[test]
+fn conditional_true_branch_renamed_property_no_ts2536() {
+    let source = r#"
+type Boxed = { value: number };
+type Shape = { read: () => Boxed };
+type Wrap<Item extends Boxed> = Item;
+type ResultOf<F> = F extends (...args: any[]) => infer R ? R : never;
+type Lookup<Candidate> = Candidate extends Shape ? Wrap<ResultOf<Candidate['read']>> : never;
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "Candidate['read'] in the true branch of Candidate extends Shape must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// Array-like true-branch constraints permit numeric indexed access.
+#[test]
+fn conditional_true_branch_array_numeric_index_no_ts2536() {
+    let source = r#"
+type KnockedOut<T> = T extends any[] ? T[number] : T;
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "T[number] in the true branch of T extends any[] must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
