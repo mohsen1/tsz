@@ -300,9 +300,13 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
-  const requiredCanaryRow = "ts-toolbelt-project";
-  assert.ok(COMPILE_CANARY_PROJECT_ROWS.includes(requiredCanaryRow));
-  assert.ok(REQUIRED_PROJECT_ROWS.includes(requiredCanaryRow));
+  const requiredCanaryRow = REQUIRED_PROJECT_ROWS.find((name) => (
+    COMPILE_CANARY_PROJECT_ROWS.includes(name)
+  ));
+  assert.ok(
+    requiredCanaryRow,
+    "test fixture expects at least one required benchmark row still guarded by compile-canary CI",
+  );
   const slowdownCompatibility = {
     ...SAMPLE_COMPATIBILITY,
     state: "red",

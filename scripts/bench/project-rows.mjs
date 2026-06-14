@@ -75,7 +75,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "TS_TOOLBELT_REF",
     repo: "https://github.com/millsp/ts-toolbelt.git",
     ref: "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
-    guard_set: "canary",
+    guard_set: "required",
     benchmark_set: "required",
     category: "external",
   },
