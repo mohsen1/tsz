@@ -66,6 +66,15 @@ impl<'a> CheckerState<'a> {
             if flags & symbol_flags::TYPE_ALIAS != 0
                 && let Some(type_alias) = checker.ctx.arena.get_type_alias(node)
             {
+                // Guard against a `decl_idx` from another file's arena landing on
+                // an unrelated type alias at the same numeric index (issue #13599).
+                if !Self::decl_name_matches_in_arena(
+                    checker.ctx.arena,
+                    type_alias.name,
+                    sym_escaped_name,
+                ) {
+                    return None;
+                }
                 let (params, updates) = checker.push_type_parameters(&type_alias.type_parameters);
                 checker.pop_type_parameters(updates);
                 return Some(params);
@@ -74,6 +83,13 @@ impl<'a> CheckerState<'a> {
                 && flags & symbol_flags::CLASS != 0
                 && let Some(class) = checker.ctx.arena.get_class(node)
             {
+                if !Self::decl_name_matches_in_arena(
+                    checker.ctx.arena,
+                    class.name,
+                    sym_escaped_name,
+                ) {
+                    return None;
+                }
                 let (params, updates) = checker.push_type_parameters(&class.type_parameters);
                 checker.pop_type_parameters(updates);
                 if !params.is_empty() {
@@ -91,14 +107,12 @@ impl<'a> CheckerState<'a> {
             if flags & symbol_flags::INTERFACE != 0
                 && let Some(iface) = checker.ctx.arena.get_interface(node)
             {
-                if let Some(name_node) = checker.ctx.arena.get(iface.name)
-                    && let Some(name_ident) = checker.ctx.arena.get_identifier(name_node)
-                {
-                    if name_ident.escaped_text.as_str() != sym_escaped_name {
-                        return None;
-                    }
-                } else {
-                    // Accept if name cannot be resolved for backward compatibility
+                if !Self::decl_name_matches_in_arena(
+                    checker.ctx.arena,
+                    iface.name,
+                    sym_escaped_name,
+                ) {
+                    return None;
                 }
                 let (params, updates) = checker.push_type_parameters(&iface.type_parameters);
                 checker.pop_type_parameters(updates);
@@ -201,12 +215,20 @@ impl<'a> CheckerState<'a> {
 
         let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
             let type_alias = arena.get_type_alias(node)?;
+            // Guard against a `decl_idx` from another file's arena landing on an
+            // unrelated type alias at the same numeric index (issue #13599).
+            if !Self::decl_name_matches_in_arena(arena, type_alias.name, sym_escaped_name) {
+                return None;
+            }
             let Some(type_parameters) = type_alias.type_parameters.as_ref() else {
                 return Some(Vec::new());
             };
             type_parameters
         } else if !mixed_class_interface && flags & symbol_flags::CLASS != 0 {
             let class = arena.get_class(node)?;
+            if !Self::decl_name_matches_in_arena(arena, class.name, sym_escaped_name) {
+                return None;
+            }
             let Some(type_parameters) = class.type_parameters.as_ref() else {
                 // Class with no AST type-parameters: the slow path's only work
                 // is a JSDoc @template scan that already reads from the arena.
@@ -227,10 +249,7 @@ impl<'a> CheckerState<'a> {
                 // gets a chance to provide the real params.
                 return Some(Vec::new());
             };
-            if let Some(name_node) = arena.get(iface.name)
-                && let Some(name_ident) = arena.get_identifier(name_node)
-                && name_ident.escaped_text.as_str() != sym_escaped_name
-            {
+            if !Self::decl_name_matches_in_arena(arena, iface.name, sym_escaped_name) {
                 return None;
             }
             let Some(type_parameters) = iface.type_parameters.as_ref() else {
@@ -905,6 +924,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn count_required_type_params_from_ast(&self, sym_id: SymbolId) -> Option<usize> {
         let symbol = self.get_symbol_globally(sym_id)?;
         let flags = symbol.flags;
+        let sym_escaped_name = symbol.escaped_name.as_str();
         let decl_candidates = symbol.all_declarations();
 
         // Track the minimum required count across all declarations.
@@ -915,31 +935,40 @@ impl<'a> CheckerState<'a> {
 
         for decl_idx in decl_candidates {
             // Try the current arena first, then cross-arena lookup for lib files.
-            let result = Self::count_required_params_in_arena(self.ctx.arena, flags, decl_idx)
-                .or_else(|| {
-                    // For lib file declarations, the node lives in a different arena.
-                    // Look up the correct arena via declaration_arenas.
-                    if let Some(arenas) =
-                        self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                    {
-                        for arena in arenas {
-                            if let Some(count) = Self::count_required_params_in_arena(
-                                arena.as_ref(),
-                                flags,
-                                decl_idx,
-                            ) {
-                                return Some(count);
-                            }
+            let result = Self::count_required_params_in_arena(
+                self.ctx.arena,
+                flags,
+                decl_idx,
+                sym_escaped_name,
+            )
+            .or_else(|| {
+                // For lib file declarations, the node lives in a different arena.
+                // Look up the correct arena via declaration_arenas.
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    for arena in arenas {
+                        if let Some(count) = Self::count_required_params_in_arena(
+                            arena.as_ref(),
+                            flags,
+                            decl_idx,
+                            sym_escaped_name,
+                        ) {
+                            return Some(count);
                         }
                     }
-                    self.ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .and_then(|arena| {
-                            Self::count_required_params_in_arena(arena.as_ref(), flags, decl_idx)
-                        })
-                });
+                }
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .and_then(|arena| {
+                        Self::count_required_params_in_arena(
+                            arena.as_ref(),
+                            flags,
+                            decl_idx,
+                            sym_escaped_name,
+                        )
+                    })
+            });
 
             if let Some(required) = result {
                 best_required = Some(match best_required {
@@ -1008,24 +1037,36 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Count required type params for a single declaration in a specific arena.
+    ///
+    /// The declaration name is validated against `sym_escaped_name` so a
+    /// `decl_idx` from another file's arena cannot be read against an unrelated
+    /// arena where the same numeric index lands on a foreign declaration
+    /// (issue #13599).
     fn count_required_params_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         flags: u32,
         decl_idx: NodeIndex,
+        sym_escaped_name: &str,
     ) -> Option<usize> {
         let node = arena.get(decl_idx)?;
         let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
-            arena
-                .get_interface(node)
-                .and_then(|iface| iface.type_parameters.as_ref())
+            let iface = arena.get_interface(node)?;
+            if !Self::decl_name_matches_in_arena(arena, iface.name, sym_escaped_name) {
+                return None;
+            }
+            iface.type_parameters.as_ref()
         } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
-            arena
-                .get_type_alias(node)
-                .and_then(|ta| ta.type_parameters.as_ref())
+            let ta = arena.get_type_alias(node)?;
+            if !Self::decl_name_matches_in_arena(arena, ta.name, sym_escaped_name) {
+                return None;
+            }
+            ta.type_parameters.as_ref()
         } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-            arena
-                .get_class(node)
-                .and_then(|c| c.type_parameters.as_ref())
+            let class = arena.get_class(node)?;
+            if !Self::decl_name_matches_in_arena(arena, class.name, sym_escaped_name) {
+                return None;
+            }
+            class.type_parameters.as_ref()
         } else {
             None
         };
@@ -1046,6 +1087,30 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Returns `true` when the declaration `name_idx` in `arena` resolves to an
+    /// identifier whose text equals `sym_escaped_name`, or when the name cannot
+    /// be resolved at all (anonymous/unnamed declarations are accepted for
+    /// backward compatibility).
+    ///
+    /// This guards against a `decl_idx` (a `NodeIndex` that is only meaningful
+    /// inside the arena that owns the symbol) being read against an unrelated
+    /// arena, where the same numeric index can land on a foreign declaration.
+    /// Without this check, a non-generic imported alias can inherit an unrelated
+    /// generic's type parameters (issue #13599).
+    fn decl_name_matches_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        name_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> bool {
+        match arena
+            .get(name_idx)
+            .and_then(|name_node| arena.get_identifier(name_node))
+        {
+            Some(name_ident) => name_ident.escaped_text.as_str() == sym_escaped_name,
+            None => true,
+        }
+    }
+
     pub(crate) fn type_param_names_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         flags: u32,
@@ -1055,21 +1120,22 @@ impl<'a> CheckerState<'a> {
         let node = arena.get(decl_idx)?;
         let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
             let iface = arena.get_interface(node)?;
-            if let Some(name_node) = arena.get(iface.name)
-                && let Some(name_ident) = arena.get_identifier(name_node)
-                && name_ident.escaped_text.as_str() != sym_escaped_name
-            {
+            if !Self::decl_name_matches_in_arena(arena, iface.name, sym_escaped_name) {
                 return None;
             }
             iface.type_parameters.as_ref()
         } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
-            arena
-                .get_type_alias(node)
-                .and_then(|ta| ta.type_parameters.as_ref())
+            let ta = arena.get_type_alias(node)?;
+            if !Self::decl_name_matches_in_arena(arena, ta.name, sym_escaped_name) {
+                return None;
+            }
+            ta.type_parameters.as_ref()
         } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
-            arena
-                .get_class(node)
-                .and_then(|c| c.type_parameters.as_ref())
+            let class = arena.get_class(node)?;
+            if !Self::decl_name_matches_in_arena(arena, class.name, sym_escaped_name) {
+                return None;
+            }
+            class.type_parameters.as_ref()
         } else {
             None
         }?;
