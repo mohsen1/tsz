@@ -1283,7 +1283,7 @@ impl<'a> CheckerState<'a> {
 
             let mut properties = Vec::with_capacity(names.len());
             for name in names {
-                if crate::error_reporter::display_budget::is_exhausted() {
+                if !crate::error_reporter::display_budget::try_consume_visit() {
                     return None;
                 }
                 let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
