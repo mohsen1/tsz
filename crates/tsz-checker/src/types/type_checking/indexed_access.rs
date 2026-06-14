@@ -10,12 +10,12 @@ mod object_format;
 
 use indexed_access_helpers::{
     generic_constrained_index, indexed_access_object_alias_application_exceeds_depth,
-    is_broad_index_type, remapped_mapped_type_template_index_should_report_ts2536,
-    same_object_key_space, same_type_param_name,
+    is_broad_index_type, is_unconstrained_type_param_object,
+    remapped_mapped_type_template_index_should_report_ts2536, same_object_key_space,
+    same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
-    /// Check if an object type is a deferred indexed access that can't be resolved.
     /// Only suppresses TS2536 when the base of the indexed access is a type parameter
     /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
     /// (e.g., `DataFetchFns[T]` where `DataFetchFns` is a known type).
@@ -23,7 +23,6 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
             return false;
         }
-        // Decompose the indexed access and check if the base is a type parameter
         if let Some((base, _index)) =
             crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
         {
@@ -910,6 +909,13 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if self.conditional_true_branch_constraint_allows_index(
+            node_idx,
+            data.object_type,
+            index_type_for_check,
+        ) {
+            return;
+        }
         if remapped_mapped_type_template_index_should_report_ts2536(
             self.ctx.types,
             object_type_for_check,
@@ -1098,12 +1104,11 @@ impl<'a> CheckerState<'a> {
                     index_type,
                     index_constraint,
                 )
+                && !is_unconstrained_type_param_object(self.ctx.types, object_type_for_check)
                 && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
             {
                 return;
             }
-            // Numeric-literal index keys may stringify differently from our keyof
-            // representation; explicitly check if all literals are valid keys.
             if crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                 self.ctx.types,
                 index_type_for_check,
@@ -1371,9 +1376,6 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            // Last-resort: check if the index type parameter's AST declaration has a
-            // `keyof` constraint targeting the current object type. This catches cases
-            // where the TypeId lost its constraint during type application lowering.
             if self.index_has_keyof_constraint_from_declaration(
                 data.index_type,
                 data.object_type,
@@ -1675,12 +1677,10 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // tsc emits TS2536 ("Type 'X' cannot be used to index type 'Y'") only
-            // when the index type is itself a type parameter (or the object type is
+            // tsc emits TS2536 only when the index type is itself a type parameter (or the object type is
             // generic/deferred). For a *concrete* object type indexed by a *missing
             // literal* key, tsc instead reports the property as missing (TS2339) —
-            // uniformly across object literals, interfaces, classes, unions,
-            // intersections, function/callable types, and `unknown`. When the index
+            // uniformly across object literals, interfaces, classes, and unions. When the index
             // is not a type parameter, the object type carries no type parameters
             // (so type-parameter-like, generic index-access/conditional/application
             // objects are all excluded), the original object node is not itself a
@@ -1706,8 +1706,8 @@ impl<'a> CheckerState<'a> {
                 // to a property. Some valid accesses (e.g. an enum member via
                 // `(typeof Enum)["Member"]`) can reach this fallback through
                 // unrelated resolution gaps; emitting here would turn a valid
-                // access into a spurious error. Either way, a concrete object
-                // indexed by a concrete literal key is never a TS2536 in tsc, so do
+                // access into a spurious error. A concrete object indexed by a
+                // concrete literal key is never a TS2536 in tsc, so do
                 // not fall through to the TS2536 emission below.
                 if !matches!(
                     self.resolve_property_access_with_env(object_type_for_check, &key_name),
