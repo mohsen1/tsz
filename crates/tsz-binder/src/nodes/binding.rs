@@ -296,6 +296,49 @@ impl BinderState {
         false
     }
 
+    /// Is `block` the body block of its enclosing function-like declaration?
+    ///
+    /// A function body block shares the function's `var` scope: hoisted vars live
+    /// in it just as they live in the function scope. This distinguishes it from a
+    /// nested statement block (`catch`/`if`/loop) under ES2015, where a hoisted var
+    /// must NOT be re-exposed lest it collide with a block-scoped declaration of the
+    /// same name. Returns `true` only when `block`'s parent is a function-like node
+    /// whose `body` is exactly `block`.
+    pub(crate) fn is_function_body_block(&self, arena: &NodeArena, block: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if block.is_none() {
+            return false;
+        }
+        let Some(parent_idx) = arena.get_extended(block).map(|ext| ext.parent) else {
+            return false;
+        };
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent) = arena.get(parent_idx) else {
+            return false;
+        };
+        let body = match parent.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                arena.get_function(parent).map(|f| f.body)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                arena.get_method_decl(parent).map(|m| m.body)
+            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                arena.get_constructor(parent).map(|c| c.body)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                arena.get_accessor(parent).map(|a| a.body)
+            }
+            _ => None,
+        };
+        body == Some(block)
+    }
+
     /// Collect hoisted declarations from statements.
     pub(crate) fn collect_hoisted_declarations(
         &mut self,
@@ -1324,6 +1367,44 @@ impl BinderState {
                 .then_some((arena.atom_owner_key(), ident.atom))
         });
         if let Some(existing_id) = self.current_scope().get(name) {
+            // Cross-function synthetic-`arguments` isolation. `declare_arguments_symbol`
+            // keys its synthetic binding on the shared `NodeIndex::NONE` sentinel, so a
+            // later function's synthetic `arguments` reuses the prior function's symbol
+            // (keeping symbol-id allocation stable). When *this* function then declares a
+            // real `arguments` (parameter or `var`), it must not merge into that prior
+            // function's symbol, or the two functions' declarations collapse into one,
+            // yielding spurious TS2403. Detect the cross-function case by comparing the
+            // existing symbol's owning container with the current one and allocate a fresh
+            // symbol instead of merging. `arguments` is a true language builtin, so this
+            // is keyed on its reserved name rather than a user identifier.
+            if declaration.is_some()
+                && name == "arguments"
+                && self
+                    .symbols
+                    .get(existing_id)
+                    .is_some_and(|sym| sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0)
+            {
+                let current_container = self.current_container_symbol();
+                let existing_container = self.symbols.get(existing_id).map(|sym| sym.parent);
+                if existing_container != Some(current_container.unwrap_or(SymbolId::NONE)) {
+                    let owned_name = name.to_string();
+                    let sym_id = self.symbols.alloc(flags, owned_name.clone());
+                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        let span = Self::declaration_span(arena, declaration);
+                        sym.add_declaration(declaration, span);
+                        if (flags & symbol_flags::VALUE) != 0 {
+                            sym.set_value_declaration(declaration, span);
+                        }
+                        sym.is_exported = is_exported;
+                        if let Some(parent_id) = current_container {
+                            sym.parent = parent_id;
+                        }
+                    }
+                    Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
+                    self.declare_in_persistent_scope_with_atom(owned_name, name_atom_key, sym_id);
+                    return sym_id;
+                }
+            }
             // Check if the existing symbol is in the local symbol table.
             // If not (e.g., it's from a lib binder), we should create a new local symbol
             // to shadow the lib symbol with the local declaration.
@@ -1615,14 +1696,15 @@ impl BinderState {
         // was populated during hoisting.
         // `node_symbols` is keyed on the declaration's `NodeIndex`. The synthetic
         // `arguments` binding (`declare_arguments_symbol`) uses `NodeIndex::NONE`
-        // (`u32::MAX`) as its key, which is shared by every function scope. Looking up
-        // that sentinel here would make a later function's synthetic `arguments` (or
-        // any other `NONE`-keyed declaration) reuse the *previous* function's symbol,
-        // merging their parameter/`var` declarations into one cross-function symbol and
-        // producing spurious TS2403. Only real, hoisted declarations participate in this
-        // reuse path, so require a concrete declaration node.
+        // (`u32::MAX`) as its key, shared by every function scope, so this hoist-reuse
+        // lookup keeps the sentinel-agnostic form: it must not require a concrete node,
+        // because forcing one re-allocates a fresh `arguments` symbol per function and
+        // perturbs symbol-id allocation order, regressing unrelated global-augmentation
+        // indexed-access resolution. The cross-function `arguments` merge that would
+        // otherwise yield spurious TS2403 is instead blocked at the duplicate-detection
+        // above (a real `arguments` declaration in a different function does not merge
+        // into a prior function's synthetic `arguments`).
         if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-            && declaration.is_some()
             && let Some(&existing_id) = self.node_symbols.get(&declaration.0)
             && self.symbols.get(existing_id).is_some_and(|sym| {
                 // Only reuse the existing symbol if it was actually hoisted as a
@@ -1643,19 +1725,32 @@ impl BinderState {
                 }
             }
             // The hoisted `var` symbol is homed in the enclosing function/source/module
-            // scope, not in this (possibly nested) block scope. Only re-expose it in the
-            // current scope's table when that scope is the var's home. Writing it into a
-            // nested block table would make a later same-name block-scoped declaration
-            // (e.g. `function x() {}` in a `catch`/`if`/loop block under ES2015) collide
-            // with it via the bind-time `current_scope()` lookup, producing spurious
-            // TS2300. References inside the block still resolve through the persistent
-            // scope's parent chain, so the home-scope entry is sufficient. This restores
-            // the pre-arena-collapse behavior, where the transient block `current_scope`
-            // never received the hoisted var.
-            let home_scope = self
+            // scope. Re-expose it in the current scope's table only when that scope is the
+            // var's home OR the home function's own body block (the lexical scope the var
+            // shares with the function in `tsc`'s model). Writing it into a *nested*
+            // statement block (`catch`/`if`/loop under ES2015) would make a later same-name
+            // block-scoped declaration collide with it via the bind-time `current_scope()`
+            // lookup, producing spurious TS2300.
+            //
+            // The function body block must receive it, though: pre-collapse the body block's
+            // persistent table held the hoisted var (the transient `current_scope` did not,
+            // which is why the duplicate-detection never saw it), and the checker's
+            // flow-sensitive `typeof`-in-signature resolution depends on that body-block
+            // entry. Without it, `typeof b` in a return-type annotation resolves the var as
+            // in-scope and mis-types it instead of reporting TS2304. References inside nested
+            // blocks still resolve through the persistent scope's parent chain.
+            let current_scope_info = self
                 .current_persistent_scope()
-                .is_none_or(crate::scopes::Scope::is_function_scope);
-            if home_scope {
+                .map(|scope| (scope.is_function_scope(), scope.container_node));
+            let reexpose_here = match current_scope_info {
+                // No persistent scope, or the var's home function/source/module scope.
+                None | Some((true, _)) => true,
+                // A nested block: re-expose only when it is the function's own body block.
+                Some((false, container_node)) => {
+                    self.is_function_body_block(arena, container_node)
+                }
+            };
+            if reexpose_here {
                 self.declare_in_persistent_scope_with_atom(
                     name.to_string(),
                     name_atom_key,

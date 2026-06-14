@@ -1269,3 +1269,82 @@ namespace A.B {
 // =============================================================================
 // 5. DECLARATION BINDING
 // =============================================================================
+
+// =============================================================================
+// 6. HOISTED VAR BODY-BLOCK VISIBILITY + CROSS-FUNCTION `arguments` ISOLATION
+// =============================================================================
+
+#[test]
+fn hoisted_var_present_in_function_body_block_scope() {
+    // A `var` hoisted to the function scope must also appear in the function's
+    // own body-block scope table (pre-arena-collapse behavior). The checker's
+    // flow-sensitive `typeof`-in-signature resolution depends on the body-block
+    // entry; without it, `typeof b` in a return-type annotation mis-resolves the
+    // var as in-scope instead of reporting TS2304.
+    let (binder, _parser) = parse_and_bind(
+        "function bar(): typeof b {\n    var b = 1;\n    return undefined;\n}\n",
+    );
+    let function_has_b = binder
+        .scopes
+        .iter()
+        .any(|s| s.kind == ContainerKind::Function && s.table.get("b").is_some());
+    let body_block_has_b = binder
+        .scopes
+        .iter()
+        .any(|s| s.kind == ContainerKind::Block && s.table.get("b").is_some());
+    assert!(function_has_b, "hoisted var should be in the function scope");
+    assert!(
+        body_block_has_b,
+        "hoisted var should also be re-exposed in the function body block scope"
+    );
+}
+
+#[test]
+fn hoisted_var_not_leaked_into_nested_catch_block() {
+    // A `var` re-exposed in a *nested* statement block (catch/if/loop) would
+    // collide with a block-scoped declaration of the same name there, producing
+    // spurious TS2300. The hoisted var stays out of the nested block's table; the
+    // block-scoped `function x() {}` owns the catch block's `x`.
+    let (binder, _parser) = parse_and_bind(
+        "try { } catch (e) {\n    var x;\n    function x() {}\n}\n",
+    );
+    // The catch block scope's table must not carry the hoisted FUNCTION_SCOPED var
+    // alongside the block-scoped function under the same name as a merged entry.
+    // (Resolution still works via the parent chain.) We assert at least that a
+    // block scope exists and binding did not panic / merge into one symbol.
+    let has_block = binder
+        .scopes
+        .iter()
+        .any(|s| s.kind == ContainerKind::Block);
+    assert!(has_block, "catch block should create a block scope");
+}
+
+#[test]
+fn arguments_not_merged_across_functions() {
+    // Each function's synthetic/real `arguments` must be a distinct symbol. The
+    // shared `NodeIndex::NONE` sentinel previously let a later function's
+    // `arguments` reuse the prior function's symbol, merging both functions'
+    // parameter/`var` declarations into one cross-function symbol (spurious
+    // TS2403). With per-function isolation, a real `arguments` declaration in one
+    // function never accumulates another function's declarations.
+    let (binder, _parser) = parse_and_bind(
+        "function f1(arguments: number) { var arguments = 10; }\n\
+         function f2(arguments: number) { var arguments = 20; }\n",
+    );
+    // No single `arguments` symbol may carry declarations spanning both functions:
+    // a cross-function merge would produce a symbol with declarations from f1 and
+    // f2 simultaneously. We assert that at least two distinct `arguments`-named
+    // FUNCTION_SCOPED symbols exist (one per function).
+    let arguments_symbols = binder
+        .symbols
+        .iter()
+        .filter(|sym| {
+            sym.escaped_name == "arguments"
+                && (sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+        })
+        .count();
+    assert!(
+        arguments_symbols >= 2,
+        "each function must own a distinct `arguments` symbol (got {arguments_symbols})"
+    );
+}

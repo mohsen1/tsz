@@ -109,13 +109,32 @@ impl BinderState {
 
             if is_global_augmentation {
                 if module.body.is_some() {
+                    // The `declare global { ... }` body binds IN-PLACE at the current
+                    // (boundary) scope, exactly like the `declare module "<spec>"`
+                    // augmentation path below. Its declarations are global augmentations:
+                    // they are tracked separately (`global_augmentations`, `file_locals`
+                    // for namespaces) and merged with lib/global symbols at type-resolution
+                    // time. They must NOT linger in the boundary scope's own table, or they
+                    // shadow the original lib declarations they augment (e.g. an
+                    // `interface HTMLElement { [index: number]: HTMLElement }` augmentation
+                    // displacing the lib `HTMLElement`, perturbing `ElementTagNameMap`
+                    // resolution). Snapshot the boundary table and restore it after binding
+                    // so only the dedicated augmentation channels carry these symbols.
+                    // Nested namespaces/enums/classes inside the body get their own child
+                    // scopes in the arena and are unaffected by the restore.
+                    let boundary_scope_id = self.current_scope_id;
                     Arc::make_mut(&mut self.node_scope_ids)
-                        .insert(module.body.0, self.current_scope_id);
+                        .insert(module.body.0, boundary_scope_id);
+                    let saved_scope = self.current_scope().clone();
                     // Set flag so interface declarations inside are tracked as augmentations
                     let was_in_global_augmentation = self.in_global_augmentation;
                     self.in_global_augmentation = true;
                     self.bind_node(arena, module.body);
                     self.in_global_augmentation = was_in_global_augmentation;
+                    self.current_scope_id = boundary_scope_id;
+                    if let Some(table) = self.current_scope_mut() {
+                        *table = saved_scope;
+                    }
                 }
                 return;
             }
