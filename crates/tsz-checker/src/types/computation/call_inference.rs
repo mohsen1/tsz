@@ -1407,6 +1407,18 @@ impl<'a> CheckerState<'a> {
         for tp in &orig_shape.type_params {
             constraint_default.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
         }
+        let param_type_param_refs: Vec<_> = orig_shape
+            .params
+            .iter()
+            .map(|param| {
+                common::collect_referenced_types(self.ctx.types, param.type_id)
+                    .into_iter()
+                    .filter_map(|ty| {
+                        common::type_param_info(self.ctx.types, ty).map(|info| info.name)
+                    })
+                    .collect::<rustc_hash::FxHashSet<_>>()
+            })
+            .collect();
         let mut solver_defaulted = rustc_hash::FxHashSet::default();
         for tp in &orig_shape.type_params {
             // Build a substitution that maps THIS tp to its constraint and
@@ -1436,13 +1448,9 @@ impl<'a> CheckerState<'a> {
                 if i >= params.len() {
                     break;
                 }
-                let referenced =
-                    common::collect_referenced_types(self.ctx.types, orig_param.type_id)
-                        .into_iter()
-                        .any(|ty| {
-                            common::type_param_info(self.ctx.types, ty)
-                                .is_some_and(|info| info.name == tp.name)
-                        });
+                let referenced = param_type_param_refs
+                    .get(i)
+                    .is_some_and(|refs| refs.contains(&tp.name));
                 if !referenced {
                     continue;
                 }
