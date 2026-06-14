@@ -35,6 +35,12 @@ struct TemplateStringCursor {
     index: usize,
 }
 
+#[derive(Default)]
+struct TemplateStringMatchScratch {
+    failed_states: FxHashSet<TemplateStringMatchState>,
+    capture_ends: FxHashMap<(usize, usize), Vec<usize>>,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn parse_template_number_capture(&self, captured: &str) -> Option<TypeId> {
         let value = if let Some(digits) = captured.strip_prefix("0x") {
@@ -146,7 +152,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        let mut failed_states = FxHashSet::default();
+        let mut scratch = TemplateStringMatchScratch::default();
         self.match_template_literal_string_from(
             source,
             pattern,
@@ -154,7 +160,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             0,
             bindings,
             checker,
-            &mut failed_states,
+            &mut scratch,
         )
     }
 
@@ -268,6 +274,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .collect()
     }
 
+    fn cached_candidate_template_capture_ends(
+        &self,
+        source: &str,
+        pos: usize,
+        pattern: &[TemplateSpan],
+        index: usize,
+        scratch: &mut TemplateStringMatchScratch,
+    ) -> Vec<usize> {
+        let key = (pos, index);
+        if let Some(cached) = scratch.capture_ends.get(&key) {
+            return cached.clone();
+        }
+
+        let ends = self.candidate_template_capture_ends(source, pos, pattern, index);
+        scratch.capture_ends.insert(key, ends.clone());
+        ends
+    }
+
     /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
     ///
     /// Returns `Some(true/false)` when the span is a recognized intrinsic kind
@@ -282,7 +306,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         type_id: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
-        failed_states: &mut FxHashSet<TemplateStringMatchState>,
+        scratch: &mut TemplateStringMatchScratch,
     ) -> Option<bool> {
         use crate::relations::subtype::rules::literals::{
             find_integer_length, find_number_length, is_valid_number,
@@ -308,7 +332,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 cursor.index + 1,
                                 bindings,
                                 checker,
-                                failed_states,
+                                scratch,
                             )
                         {
                             return Some(true);
@@ -330,7 +354,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             cursor.index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         ) {
                             return Some(true);
                         }
@@ -346,7 +370,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             cursor.index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         )
                     {
                         return Some(true);
@@ -375,7 +399,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             cursor.index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         )
                     {
                         Some(true)
@@ -392,7 +416,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             cursor.index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         )
                     {
                         Some(true)
@@ -415,14 +439,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index: usize,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
-        failed_states: &mut FxHashSet<TemplateStringMatchState>,
+        scratch: &mut TemplateStringMatchScratch,
     ) -> bool {
         if index == pattern.len() {
             return pos == source.len();
         }
 
         let state = TemplateStringMatchState::new(pos, index, bindings);
-        if failed_states.contains(&state) {
+        if scratch.failed_states.contains(&state) {
             return false;
         }
 
@@ -440,13 +464,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         index + 1,
                         bindings,
                         checker,
-                        failed_states,
+                        scratch,
                     )
                 }
             }
             TemplateSpan::Type(type_id) => {
                 if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                    for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
+                    for end in self.cached_candidate_template_capture_ends(
+                        source, pos, pattern, index, scratch,
+                    ) {
                         let mut next_bindings = bindings.clone();
                         let captured = &source[pos..end];
                         if !self.bind_template_infer_capture(
@@ -464,13 +490,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             &mut next_bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         ) {
                             *bindings = next_bindings;
                             return true;
                         }
                     }
-                    failed_states.insert(state);
+                    scratch.failed_states.insert(state);
                     return false;
                 }
 
@@ -482,7 +508,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         index + 1,
                         bindings,
                         checker,
-                        failed_states,
+                        scratch,
                     );
                 }
 
@@ -493,15 +519,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     type_id,
                     bindings,
                     checker,
-                    failed_states,
+                    scratch,
                 ) {
                     if !result {
-                        failed_states.insert(state);
+                        scratch.failed_states.insert(state);
                     }
                     return result;
                 }
 
-                for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
+                for end in self
+                    .cached_candidate_template_capture_ends(source, pos, pattern, index, scratch)
+                {
                     let captured = &source[pos..end];
                     let captured_type = self.interner().literal_string(captured);
                     if self
@@ -514,7 +542,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         )
                     {
                         return true;
@@ -524,7 +552,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         };
         if !matched {
-            failed_states.insert(state);
+            scratch.failed_states.insert(state);
         }
         matched
     }
