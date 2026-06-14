@@ -120,7 +120,6 @@ impl<'a> FlowAnalyzer<'a> {
         // is the sole result read outside the walk, so aliasing it alone is sufficient
         // and never overwrites an independently-computed merge result.
         let mut flow_id_landed_on: Option<FlowNodeId> = None;
-        let mut passthrough_run: Vec<FlowNodeId> = Vec::new();
 
         // Process worklist until empty
         while let Some((entry_flow, current_type)) = worklist.pop_front() {
@@ -157,7 +156,6 @@ impl<'a> FlowAnalyzer<'a> {
             // merge. Re-scheduling an interior node simply re-runs the cheap chase.
             // Falls back to the full per-node walk whenever any gate is uncertain,
             // so narrowing stays byte-identical.
-            passthrough_run.clear();
             let mut passthrough_run_contains_flow_id = false;
             let current_flow = self.chase_linear_passthrough(
                 entry_flow,
@@ -172,7 +170,6 @@ impl<'a> FlowAnalyzer<'a> {
                 visited,
                 results,
                 &mut antecedent_defer_memo,
-                &mut passthrough_run,
                 flow_id,
                 &mut passthrough_run_contains_flow_id,
             );
@@ -183,7 +180,6 @@ impl<'a> FlowAnalyzer<'a> {
             if current_flow != flow_id && passthrough_run_contains_flow_id {
                 flow_id_landed_on = Some(current_flow);
             }
-            passthrough_run.clear();
 
             // Check global cache first to avoid redundant traversals.
             // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
@@ -1181,9 +1177,9 @@ impl<'a> FlowAnalyzer<'a> {
     /// *pure pass-through* ASSIGNMENT flow nodes — nodes that neither target nor
     /// affect `reference` — collapsing a straight-line `const`/assignment segment
     /// (the `Σ O(i)` independent-assignment narrowing hotspot) into one landed
-    /// node. Every node skipped this way is pushed onto `run` so the caller can
-    /// alias the landed node's result back to it (their flow type equals the
-    /// antecedent result by construction).
+    /// node. If the original queried flow node is skipped this way, the chase
+    /// records that fact so the caller can alias its result from the landed node
+    /// once the landed node resolves.
     ///
     /// A node is only spliced when ALL of these hold, so narrowing is byte
     /// identical to the full walk:
@@ -1213,7 +1209,6 @@ impl<'a> FlowAnalyzer<'a> {
         visited: &FxHashSet<FlowNodeId>,
         results: &FxHashMap<FlowNodeId, TypeId>,
         antecedent_defer_memo: &mut FxHashMap<FlowNodeId, bool>,
-        run: &mut Vec<FlowNodeId>,
         alias_flow_id: FlowNodeId,
         run_contains_alias_flow_id: &mut bool,
     ) -> FlowNodeId {
@@ -1393,7 +1388,6 @@ impl<'a> FlowAnalyzer<'a> {
             if current == alias_flow_id {
                 *run_contains_alias_flow_id = true;
             }
-            run.push(current);
             current = ant;
         }
     }
