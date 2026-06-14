@@ -1253,15 +1253,37 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
+            && !instance_type.is_any_unknown_or_error()
+        {
+            let params = self
+                .class_instance_def_id_for_symbol(sym_id)
+                .and_then(|def_id| self.ctx.get_def_type_params(def_id))
+                .unwrap_or_default();
+            return Some((instance_type, params));
+        }
+        if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+            let fallback = self.ctx.create_lazy_type_ref(sym_id);
+            return Some((fallback, Vec::new()));
+        }
+
         if self
             .get_symbol_from_registered_file_target(sym_id)
             .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
-            && self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            && let Some(owner_file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && owner_file_idx != self.ctx.current_file_idx
             && let Some(result) = self.delegate_cross_arena_class_instance_type(sym_id)
         {
+            // Source modules still need the delegated instance memoized for
+            // type-position class references, but registering their `DefId` as
+            // an instance type corrupts value/static namespace comparisons like
+            // `typeof import("./mod")`. Declaration files lack the source
+            // checker writer, so they still publish both caches.
+            if self.file_index_is_declaration_file(owner_file_idx) {
+                self.publish_delegated_class_instance_type(sym_id, result.0, &result.1);
+            } else {
+                self.publish_delegated_class_instance_symbol_type(sym_id, result.0);
+            }
             return Some(result);
         }
 
@@ -1382,6 +1404,71 @@ impl<'a> CheckerState<'a> {
         // Cross-file fallback: class declaration is not in the current arena.
         // Delegate to a child checker with the symbol's arena.
         self.delegate_cross_arena_class_instance_type(sym_id)
+    }
+
+    fn publish_delegated_class_instance_type(
+        &mut self,
+        sym_id: SymbolId,
+        instance_type: TypeId,
+        params: &[tsz_solver::TypeParamInfo],
+    ) {
+        if instance_type.is_any_unknown_or_error() {
+            return;
+        }
+
+        self.publish_delegated_class_instance_symbol_type(sym_id, instance_type);
+        self.publish_delegated_class_instance_env_type(sym_id, instance_type, params);
+    }
+
+    fn publish_delegated_class_instance_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+        instance_type: TypeId,
+    ) {
+        if instance_type.is_any_unknown_or_error() {
+            return;
+        }
+
+        self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+    }
+
+    fn publish_delegated_class_instance_env_type(
+        &mut self,
+        sym_id: SymbolId,
+        instance_type: TypeId,
+        params: &[tsz_solver::TypeParamInfo],
+    ) {
+        if instance_type.is_any_unknown_or_error() {
+            return;
+        }
+
+        let symbol_name = self
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .map(|symbol| symbol.escaped_name.clone());
+        let def_id = symbol_name.as_deref().map_or_else(
+            || self.ctx.get_or_create_def_id(sym_id),
+            |name| self.ctx.get_or_create_def_id_for_symbol_name(sym_id, name),
+        );
+        if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+            self.ctx.insert_def_type_params(def_id, params.to_vec());
+        }
+        self.ctx
+            .definition_store
+            .register_type_to_def(instance_type, def_id);
+        self.ctx
+            .register_class_instance_in_envs(def_id, instance_type);
+    }
+
+    fn class_instance_def_id_for_symbol(&self, sym_id: SymbolId) -> Option<tsz_solver::def::DefId> {
+        let symbol_name = self
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .map(|symbol| symbol.escaped_name.as_str());
+        Some(symbol_name.map_or_else(
+            || self.ctx.get_or_create_def_id(sym_id),
+            |name| self.ctx.get_or_create_def_id_for_symbol_name(sym_id, name),
+        ))
     }
 
     /// Check if a type alias declaration has a mapped type body that

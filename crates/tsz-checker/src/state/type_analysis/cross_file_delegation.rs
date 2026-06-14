@@ -27,6 +27,7 @@ impl<'a> CheckerState<'a> {
         &self,
         checker: &mut CheckerState<'_>,
         delegate_binder: &tsz_binder::BinderState,
+        preserve_class_sym: SymbolId,
     ) {
         for delegate_symbol in delegate_binder.symbols.iter() {
             let sym_id = delegate_symbol.id;
@@ -44,7 +45,9 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.symbol_instance_types.remove(&sym_id);
                 checker.ctx.symbol_to_def.borrow_mut().remove(&sym_id);
                 checker.ctx.symbol_resolution_set.remove(&sym_id);
-                checker.ctx.class_instance_resolution_set.remove(&sym_id);
+                if sym_id != preserve_class_sym {
+                    checker.ctx.class_instance_resolution_set.remove(&sym_id);
+                }
                 checker.ctx.class_constructor_resolution_set.remove(&sym_id);
             }
         }
