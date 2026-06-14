@@ -8,6 +8,7 @@ mod constraint_position;
 mod core;
 mod explicit_annotation;
 mod resolution;
+mod resolved;
 
 #[cfg(test)]
 mod tests {
