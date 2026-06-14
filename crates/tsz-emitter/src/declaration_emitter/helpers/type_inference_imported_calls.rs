@@ -1,4 +1,5 @@
 use super::super::DeclarationEmitter;
+use super::dts_export_text_scan::dts_line_has_export_prefix;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -121,7 +122,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn module_text_reexports_parent_root(content: &str) -> bool {
         content.lines().any(|line| {
             let trimmed = line.trim().trim_end_matches(';').trim();
-            if !trimmed.starts_with("export ") {
+            if !dts_line_has_export_prefix(trimmed) {
                 return false;
             }
             let Some((_, module_specifier)) = trimmed.rsplit_once(" from ") else {

@@ -2,6 +2,7 @@
 
 #[allow(unused_imports)]
 use super::super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
+use super::dts_export_text_scan::{dts_line_has_export_prefix, dts_text_has_export_star};
 #[allow(unused_imports)]
 use crate::emitter::type_printer::TypePrinter;
 #[allow(unused_imports)]
@@ -191,13 +192,13 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| package_root.join("index.d.ts"));
         std::fs::read_to_string(root_dts)
             .ok()
-            .is_some_and(|text| text.contains("export * from"))
+            .is_some_and(|text| dts_text_has_export_star(&text))
     }
 
     fn dts_text_explicitly_exports_name(text: &str, export_name: &str) -> bool {
         text.lines().any(|line| {
             let trimmed = line.trim();
-            if !trimmed.starts_with("export ") || !trimmed.contains('{') {
+            if !dts_line_has_export_prefix(trimmed) || !trimmed.contains('{') {
                 return false;
             }
             let Some(named) = trimmed
