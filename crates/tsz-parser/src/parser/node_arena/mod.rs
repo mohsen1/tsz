@@ -67,24 +67,20 @@ for_each_node_pool!(impl_clear_pools);
 /// of being open-coded (and silently dropped) per constructor.
 ///
 /// `$pool` is the typed side-pool field that stores `$data`. The optional
-/// `flags = <expr>` tail routes through `Node::with_data_and_flags` for the
-/// node kinds that carry node-level flags (e.g. variable statements).
+/// `flags = <expr>` tail supplies node-level flags for the kinds that carry
+/// them (e.g. variable statements); it defaults to `0`, which matches
+/// `Node::with_data`.
 macro_rules! push_data_node {
-    ($arena:expr, $parent:expr, $kind:expr, $pos:expr, $end:expr, $pool:ident, $data:expr) => {{
-        let parent: $crate::parser::base::NodeIndex = $parent;
-        let data_index = $arena.len_u32($arena.$pool.len());
-        $arena.$pool.push($data);
-        let index = $arena.len_u32($arena.nodes.len());
-        debug_assert_eq!(parent.0, index, "NodeArena parent/index invariant violated");
-        $arena.nodes.push($crate::parser::node::Node::with_data(
-            $kind, $pos, $end, data_index,
-        ));
-        $arena
-            .extended_info
-            .push($crate::parser::node::ExtendedNodeInfo::default());
-        parent
-    }};
-    ($arena:expr, $parent:expr, $kind:expr, $pos:expr, $end:expr, $pool:ident, $data:expr, flags = $flags:expr) => {{
+    // Resolve the optional `flags = <expr>` tail to a `u16` (defaulting to 0).
+    // Only the user expression / literal crosses this expansion boundary, so
+    // there is no macro-hygiene hazard with the `let` bindings below.
+    (@flags) => {
+        0u16
+    };
+    (@flags $flags:expr) => {
+        $flags
+    };
+    ($arena:expr, $parent:expr, $kind:expr, $pos:expr, $end:expr, $pool:ident, $data:expr $(, flags = $flags:expr)?) => {{
         let parent: $crate::parser::base::NodeIndex = $parent;
         let data_index = $arena.len_u32($arena.$pool.len());
         $arena.$pool.push($data);
@@ -93,7 +89,11 @@ macro_rules! push_data_node {
         $arena
             .nodes
             .push($crate::parser::node::Node::with_data_and_flags(
-                $kind, $pos, $end, data_index, $flags,
+                $kind,
+                $pos,
+                $end,
+                data_index,
+                $crate::parser::node_arena::push_data_node!(@flags $($flags)?),
             ));
         $arena
             .extended_info
@@ -237,24 +237,13 @@ impl NodeArenaInner {
     }
 
     /// Create a modifier token (static, public, private, etc.)
+    ///
+    /// Modifiers are simple tokens whose kind IS the modifier type; the end
+    /// position is `pos + keyword length`, derived from the single
+    /// source-of-truth [`tsz_scanner::keyword_text_len`] rather than a
+    /// hand-maintained length table.
     pub fn create_modifier(&mut self, kind: tsz_scanner::SyntaxKind, pos: u32) -> NodeIndex {
-        // Modifiers are simple tokens, their kind IS the modifier type
-        // End position is pos + keyword length
-        let end = pos
-            + match kind {
-                tsz_scanner::SyntaxKind::AsyncKeyword | tsz_scanner::SyntaxKind::ConstKeyword => 5,
-                tsz_scanner::SyntaxKind::StaticKeyword
-                | tsz_scanner::SyntaxKind::PublicKeyword
-                | tsz_scanner::SyntaxKind::ExportKeyword => 6,
-                tsz_scanner::SyntaxKind::PrivateKeyword
-                | tsz_scanner::SyntaxKind::DefaultKeyword
-                | tsz_scanner::SyntaxKind::DeclareKeyword => 7,
-                tsz_scanner::SyntaxKind::ReadonlyKeyword
-                | tsz_scanner::SyntaxKind::AbstractKeyword
-                | tsz_scanner::SyntaxKind::OverrideKeyword => 8,
-                tsz_scanner::SyntaxKind::ProtectedKeyword => 9,
-                _ => 0,
-            };
+        let end = pos + tsz_scanner::keyword_text_len(kind);
         self.add_token(kind as u16, pos, end)
     }
 

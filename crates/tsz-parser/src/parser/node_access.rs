@@ -657,23 +657,6 @@ impl NodeArenaInner {
         (self.get_variable_declaration_flags(node_idx) & node_flags::CONST) != 0
     }
 
-    /// Get function data.
-    /// Returns None if node is not a function-like node or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_function(&self, node: &Node) -> Option<&FunctionData> {
-        if node.has_data()
-            && matches!(
-                node.kind,
-                FUNCTION_DECLARATION | FUNCTION_EXPRESSION | ARROW_FUNCTION
-            )
-        {
-            self.functions.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
     /// Get accessor data (get/set accessor).
     #[inline]
     #[must_use]
@@ -1089,6 +1072,10 @@ define_kind_getters! {
     /// Get extended unary expression data (await/yield/non-null/spread).
     /// Returns None if node is not an await/yield/non-null/spread expression or has no data.
     get_unary_expr_ex => unary_exprs_ex -> UnaryExprDataEx, [AWAIT_EXPRESSION, YIELD_EXPRESSION, NON_NULL_EXPRESSION, SPREAD_ELEMENT];
+
+    /// Get function data.
+    /// Returns None if node is not a function-like node or has no data.
+    get_function => functions -> FunctionData, [FUNCTION_DECLARATION, FUNCTION_EXPRESSION, ARROW_FUNCTION];
 
     /// Get class data.
     /// Returns None if node is not a class declaration/expression or has no data.
