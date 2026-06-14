@@ -122,7 +122,7 @@ impl Server {
             .unwrap_or_default()
     }
 
-    fn completion_project_file_fingerprints(
+    pub(super) fn completion_project_file_fingerprints(
         files: &FxHashMap<String, String>,
     ) -> Vec<(String, u64)> {
         let mut fingerprints: Vec<_> = files
