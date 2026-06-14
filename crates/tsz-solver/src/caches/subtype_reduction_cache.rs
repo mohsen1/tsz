@@ -120,6 +120,7 @@ impl SubtypeReductionKey {
 ///
 /// The value side is `Arc<[TypeId]>` so cache hits return a cheap clone of
 /// a heap-allocated slice instead of re-allocating a `Vec`.
+#[derive(Default)]
 pub struct SubtypeReductionCache {
     inner: RefCell<FxHashMap<SubtypeReductionKey, Arc<[TypeId]>>>,
 }
@@ -166,12 +167,6 @@ impl SubtypeReductionCache {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.inner.borrow().capacity()
-    }
-}
-
-impl Default for SubtypeReductionCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

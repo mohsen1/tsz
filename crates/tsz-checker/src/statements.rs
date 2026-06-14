@@ -430,14 +430,10 @@ pub trait StatementCheckCallbacks {
 /// This is a zero-sized struct that only provides the dispatching logic.
 /// All state and type checking operations are delegated back to the
 /// implementation of `StatementCheckCallbacks` (typically `CheckerState`).
+#[derive(Default)]
 pub struct StatementChecker;
 
 impl StatementChecker {
-    /// Create a new statement checker.
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Check a statement node.
     ///
     /// This dispatches to specialized handlers based on statement kind.
@@ -1170,11 +1166,5 @@ impl StatementChecker {
         }
 
         false
-    }
-}
-
-impl Default for StatementChecker {
-    fn default() -> Self {
-        Self::new()
     }
 }

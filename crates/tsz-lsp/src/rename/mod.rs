@@ -102,7 +102,7 @@ impl RenameTextEdit {
 }
 
 /// A workspace edit (changes across multiple files).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct WorkspaceEdit {
     /// Map of file path -> list of edits.
     pub changes: FxHashMap<String, Vec<TextEdit>>,
@@ -122,15 +122,9 @@ impl WorkspaceEdit {
     }
 }
 
-impl Default for WorkspaceEdit {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// A rename-specific workspace edit that preserves prefix/suffix metadata.
 /// Use `to_workspace_edit()` to convert to a standard `WorkspaceEdit`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct RenameWorkspaceEdit {
     /// Map of file path -> list of rich rename edits.
     pub changes: FxHashMap<String, Vec<RenameTextEdit>>,
@@ -157,12 +151,6 @@ impl RenameWorkspaceEdit {
             }
         }
         ws
-    }
-}
-
-impl Default for RenameWorkspaceEdit {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

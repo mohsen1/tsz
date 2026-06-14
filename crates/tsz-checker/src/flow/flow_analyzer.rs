@@ -54,7 +54,7 @@ impl AssignmentState {
 /// A mapping of variables to their assignment states at a point in the program.
 ///
 /// Variables are indexed by their declaration node ID (`NodeIndex`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AssignmentStateMap {
     states: FxHashMap<u32, AssignmentState>,
 }
@@ -108,12 +108,6 @@ impl AssignmentStateMap {
             .states
             .values()
             .any(|&s| s == AssignmentState::MaybeAssigned)
-    }
-}
-
-impl Default for AssignmentStateMap {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

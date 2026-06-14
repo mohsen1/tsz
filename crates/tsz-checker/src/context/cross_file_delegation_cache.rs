@@ -5,7 +5,7 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::{TypeId, TypeParamInfo};
 
 /// File-local caches for cross-file/lib delegation helpers.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CrossFileDelegationCache {
     symbol_types: FxHashMap<SymbolId, (TypeId, Vec<TypeParamInfo>)>,
     declaration_node_types: Arc<dashmap::DashMap<(usize, NodeIndex, u8), TypeId>>,
@@ -13,16 +13,6 @@ pub struct CrossFileDelegationCache {
     /// (via `Arc` clone in `with_parent_cache`) with every transient child
     /// checker in the same file-check session. See [`CrossArenaSessionMemo`].
     session_memo: Arc<CrossArenaSessionMemo>,
-}
-
-impl Default for CrossFileDelegationCache {
-    fn default() -> Self {
-        Self {
-            symbol_types: FxHashMap::default(),
-            declaration_node_types: Arc::new(dashmap::DashMap::new()),
-            session_memo: Arc::new(CrossArenaSessionMemo::default()),
-        }
-    }
 }
 
 impl CrossFileDelegationCache {
