@@ -318,10 +318,15 @@ fn write_batch_residency_report(
         MemoryPressure::Medium => "medium",
         MemoryPressure::High => "high",
     };
+    let eviction_savings_kb = ResidencyBudget::eviction_savings(stats) as f64 / 1024.0;
     writeln!(stdout, "Batch retained file state:     {retained_kb:.1}K")?;
     writeln!(
         stdout,
         "Batch retained residency pressure: {pressure_label}"
+    )?;
+    writeln!(
+        stdout,
+        "Batch estimated eviction savings: {eviction_savings_kb:.1}K"
     )?;
     Ok(Some(pressure))
 }
