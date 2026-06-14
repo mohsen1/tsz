@@ -64,23 +64,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.target_references_own_type_params_non_bare(target) {
             return None;
         }
-        // Inference matches the source's free parameters positionally against the
-        // target. The source signature is normalised to evaluated (structural)
-        // shapes before inference, so the target's parameter/return/`this` types
-        // must be evaluated to the same representation — otherwise a deferred
-        // `Application` on the target (e.g. `Box<MappedResponseType<R, T>>`) cannot
-        // be matched against the source's already-evaluated object shape and no
-        // candidate is collected.
+        // Contextual inference matches the source's type parameters positionally
+        // against the target. For that match to find candidates, source and target
+        // must be compared in the *same* representation: evaluating only one side
+        // (e.g. the target's `Box<MappedResponseType<R, T>>` to its `{ data?: … }`
+        // object shape) while the other stays a deferred `Application` leaves the
+        // inference with nothing to unify, so the source type parameter silently
+        // defaults to `unknown` and the re-comparison fails. Evaluate BOTH shapes
+        // to their structural form, infer in that form, instantiate the evaluated
+        // source, and re-compare against the evaluated target — all four steps in
+        // one representation. This mirrors tsc, where
+        // `instantiateSignatureInContextOf` works over the (resolved) apparent
+        // types of both signatures.
+        let source_for_inference = self.evaluate_function_shape_types(source);
         let target_for_inference = self.evaluate_function_shape_types(target);
         let substitution = self
-            .infer_source_type_param_substitution(source, &target_for_inference)
+            .infer_source_type_param_substitution(&source_for_inference, &target_for_inference)
             .ok()?;
-        let inferred_source = self.instantiate_function_shape(source, &substitution);
-        let allow_constructor_bivariance =
-            !Self::constructor_signatures_need_strict_params(&inferred_source, target);
+        let inferred_source = self.instantiate_function_shape(&source_for_inference, &substitution);
+        let allow_constructor_bivariance = !Self::constructor_signatures_need_strict_params(
+            &inferred_source,
+            &target_for_inference,
+        );
         let retry = self.check_function_subtype_impl(
             &inferred_source,
-            target,
+            &target_for_inference,
             allow_constructor_bivariance,
         );
         retry.is_true().then_some(retry)
@@ -112,9 +120,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Return a copy of `shape` with its parameter, `this`, and return types
     /// evaluated to their structural form. The type-parameter list and parameter
-    /// metadata are preserved. Used to align the target's representation with the
-    /// source before contextual type-parameter inference (which normalises the
-    /// source to evaluated shapes).
+    /// metadata are preserved. The caller evaluates *both* the source and target
+    /// signatures with this before contextual type-parameter inference, so the two
+    /// are compared in the same representation.
     fn evaluate_function_shape_types(&mut self, shape: &FunctionShape) -> FunctionShape {
         let mut evaluated = shape.clone();
         for param in &mut evaluated.params {
