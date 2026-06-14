@@ -132,3 +132,87 @@ const impl: Api[\"raw\"] = function <T = any, R extends RT = \"json\">(): Box<MR
 ",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Residual of #13232 after #13467: the source return is itself an *explicit*
+// `Box<T>` annotation that stays a deferred `Application` (not the materialized
+// object shape the `ctx.box!` indirection produced above). Contextual
+// instantiation must evaluate BOTH signatures to the same structural form before
+// inferring; evaluating only the target left the source's `Box<T>` `Application`
+// unmatched, so `T` defaulted to `unknown` and the re-comparison still failed.
+// tsc is clean on all of these. See the gate matrix in the issue.
+// ---------------------------------------------------------------------------
+
+// Single-conditional alias, source return annotated `Box<T>` (deferred form).
+#[test]
+fn deferred_application_source_return_no_false_2322() {
+    assert_no(
+        2322,
+        "
+type M<R extends string, J = any> = R extends \"a\" ? number : J;
+interface Box<T> { data?: T; }
+type Raw = <T = any, R extends string = \"a\">() => Box<M<R, T>>;
+const f: Raw = <T = any, R extends string = \"a\">(): Box<T> => (undefined as any);
+",
+    );
+}
+
+// Structural, not identifier-keyed: renaming every binder keeps it clean.
+#[test]
+fn deferred_application_source_return_no_false_2322_renamed() {
+    assert_no(
+        2322,
+        "
+type Pick<S extends string, D = any> = S extends \"a\" ? number : D;
+interface Cell<V> { value?: V; }
+type Load = <V = any, S extends string = \"a\">() => Cell<Pick<S, V>>;
+const g: Load = <V = any, S extends string = \"a\">(): Cell<V> => (undefined as any);
+",
+    );
+}
+
+// The target conditional need not even mention the source type parameter: tsc
+// still infers the (free/covariant) source `T` to the target's demanded type.
+#[test]
+fn target_result_without_source_type_param_no_false_2322() {
+    assert_no(
+        2322,
+        "
+type M<R extends string, J = any> = R extends \"a\" ? number : string;
+interface Box<T> { data?: T; }
+type Raw = <T = any, R extends string = \"a\">() => Box<M<R, T>>;
+const f: Raw = <T = any, R extends string = \"a\">(): Box<T> => (undefined as any);
+",
+    );
+}
+
+// Guardrail: a *concrete* source return (`Box<number>`) has nothing to infer and
+// must still report TS2322 (matches tsc).
+#[test]
+fn concrete_source_return_deferred_target_still_reports_2322() {
+    assert_has(
+        2322,
+        "
+type M<R extends string, J = any> = R extends \"a\" ? number : J;
+interface Box<T> { data?: T; }
+type Raw = <T = any, R extends string = \"a\">() => Box<M<R, T>>;
+const f: Raw = <T = any, R extends string = \"a\">(): Box<number> => (undefined as any);
+",
+    );
+}
+
+// Guardrail: when the source type parameter also occurs *contravariantly* (in a
+// parameter), inference is pinned back to the bare parameter and the relation
+// must still fail, exactly as tsc reports it.
+#[test]
+fn invariant_source_type_param_occurrence_still_reports_2322() {
+    assert_has(
+        2322,
+        "
+type M<R extends string, J = any> = R extends \"a\" ? number : J;
+interface Box<T> { data?: T; }
+type Raw = <T = any, R extends string = \"a\">(p: Box<T>) => Box<M<R, T>>;
+const f: Raw = <T = any, R extends string = \"a\">(p: Box<T>): Box<T> => (undefined as any);
+",
+    );
+}
