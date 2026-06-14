@@ -6,7 +6,7 @@ standalone reason to start broad LSP work while project-corpus correctness is
 still the primary gate.
 
 Do not use this file as an LSP issue inventory or run log. Put current issue
-state in GitHub issues, draft PR bodies, PR comments, and CI artifacts.
+state in GitHub issues, PR bodies, PR comments, and CI artifacts.
 
 ## Mission
 

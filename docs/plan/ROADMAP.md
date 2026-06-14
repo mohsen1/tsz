@@ -145,7 +145,7 @@ and no reviewer role.
    queue with `gh pr merge <pr> --match-head-commit <sha>`.
 3. Land-and-continue: do not idle-wait on CI. Push, start the next task, and
    return to queue the merge when checks resolve.
-4. Check open PRs and recent merges for overlap before starting. A draft PR
+4. Check open PRs and recent merges for overlap before starting. A PR
    with a clear body claims active work; drain owned PRs before unrelated new
    work.
 5. Never merge WIP: draft state, `WIP` label, `[WIP]` title, or a body that

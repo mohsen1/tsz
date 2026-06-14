@@ -245,7 +245,7 @@ Likewise, if two visitors share identical helper logic (e.g. extracting a parame
 
 Use `docs/plan/ROADMAP.md` Track 10 for current refactor/tooling priorities.
 Historical audit files and claim documents are not the coordination surface;
-open a draft PR and keep the PR body current instead.
+open a PR and keep the PR body current instead.
 
 ---
 

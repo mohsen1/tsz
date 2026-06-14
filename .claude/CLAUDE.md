@@ -9,7 +9,8 @@ narrowing, emit, edge cases, and project-row behavior.
 - Do not update the roadmap for routine status, small fixes, cleanup, or PR
   bookkeeping. Use PR bodies, PR/review comments, or issues.
 - Inspect open PRs, recent merged PRs, and relevant issues before coding.
-- Open or update a draft PR early for roadmap-adjacent implementation.
+- Open or update a PR early for roadmap-adjacent implementation. Every open PR
+  runs the full CI suite; do not open a draft to dodge heavy CI.
 
 ## Architecture
 - Pipeline: `scanner -> parser -> binder -> checker -> solver -> emitter`.

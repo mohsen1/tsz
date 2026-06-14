@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   merge_group:
   push:
     branches:
@@ -42,7 +42,6 @@ jobs:
       metadata_only_skip: ${{ steps.gate.outputs.metadata_only_skip }}
       metadata_active_suite_found: ${{ steps.gate.outputs.metadata_active_suite_found }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
-      unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
       - id: metadata-active-suite
         if: github.event_name == 'pull_request' && github.event.action == 'edited'
@@ -101,7 +100,6 @@ jobs:
           perf_tool_only=false
           arch_tool_only=false
           compiler_checks_required=true
-          unit_packages=""
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             # Native merge queue validates a GitHub-owned synthetic merge
             # commit. Run the same Cloud Run-backed compiler suite here so
@@ -139,12 +137,9 @@ jobs:
               should_run=false
               metadata_only_skip=true
             fi
-            if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
-              # Draft PRs still run the light CI suite (lint, build, unit).
-              # Heavy suites wait until the PR is marked ready for review.
-              full_run=false
-              required_summary=false
-            fi
+            # Two-phase CI removed: every open PR (draft or not) runs the full
+            # CI suite and reports the required "CI Summary". Path-based content
+            # skips (docs-only / *-tool-only) below still trim jobs.
             # Docs-only PRs cannot affect cargo build/test/conformance, so
             # skip CI jobs when every changed path matches
             # one of the docs-only patterns. The gate job itself + the
@@ -236,38 +231,8 @@ jobs:
                 arch_tool_only=true
               fi
             fi
-            # P4 — draft-phase fast-fail: narrow the unit job to the touched
-            # crates' tests when the diff is safely localized. Ready-for-review
-            # PRs always run the full unit suite (correctness gate); only draft
-            # PRs use the narrow set.
-            #
-            # Narrowing is "safe" when EVERY changed file is either:
-            #   * under `crates/<known-unit-crate>/src|tests|benches|examples/`
-            #   * a `.md`/docs path (already filtered by docs-only above)
-            # And NONE of these "blast-radius" paths is touched:
-            #   * root `Cargo.{toml,lock}`, `.cargo/`, `rust-toolchain*`
-            #   * `crates/*/Cargo.toml`, `crates/*/build.rs`
-            #   * `scripts/ci/`, `.github/workflows/`
-            #   * a non-unit-tested crate (tsz-cli, tsz-conformance, tsz-lowering,
-            #     tsz-wasm, tsz-website) — these can transitively affect unit
-            #     test behavior via integration points
-            #
-            # When a blast-radius path is touched, fall back to the full unit
-            # suite even on drafts. Lint always runs across the full workspace
-            # regardless, so compile breakage in any crate still surfaces fast.
-            if [[ "$should_run" == "true" \
-                  && "${{ github.event.pull_request.draft }}" == "true" \
-                  && -n "${path_classification:-}" ]]; then
-              unit_packages=$(printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.unitPackages | join(" ")')
-              if [[ -n "$unit_packages" ]]; then
-                echo "P4 draft fast-fail: narrowing unit to: ${unit_packages}"
-                printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.cratePaths[]' | sed 's/^/  touched: /'
-              fi
-              if [[ -z "$unit_packages" ]]; then
-                reasons=$(printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.reason')
-                echo "P4 draft fast-fail: NOT narrowing (${reasons:-no eligible crates})"
-              fi
-            fi
+            # Draft-phase unit narrowing removed with the two-phase CI: every
+            # open PR runs the full unit suite. Path-based skips above still apply.
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
               # Fork PRs cannot use self-hosted runners by default (untrusted
               # code on shared infra). A maintainer must add the
@@ -427,12 +392,11 @@ jobs:
           echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
           echo "metadata_active_suite_found=${METADATA_ACTIVE_SUITE_FOUND:-false}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
-          echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
   pr-body-gate:
     name: pr-body-gate
     needs: gate
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
