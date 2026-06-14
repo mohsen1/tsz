@@ -697,7 +697,7 @@ impl Server {
     }
 
     fn build_quoted_alias_referenced_symbols(
-        &mut self,
+        &self,
         project: &mut Project,
         file: &str,
         arena: &tsz::parser::node::NodeArena,
