@@ -14,14 +14,15 @@ Typical usage (called from ``run_lint()`` in ``scripts/ci/gcp-full-ci.sh``):
   python3 scripts/arch/check-clippy-warn-ratchet.py [--profile <profile>]
 
 Baseline lifecycle:
-  * The committed baseline starts at ``{}`` (zero warnings under the current
-    ``-D warnings`` gate).  When a future PR promotes lints to ``warn``
-    (e.g. ``pedantic = warn`` from #13443), run this script with
-    ``--update-baseline`` to capture the new counts.
+  * The committed baseline captures the warn-level floor declared by
+    ``CLIPPY_FLAGS`` below — the ``pedantic`` group plus targeted cherry-picks,
+    minus a curated allow-list (#13443).  After changing ``CLIPPY_FLAGS``, run
+    this script with ``--update-baseline`` to recapture the counts.
   * A PR that lowers a lint count may lower the baseline by the same amount
     (decrement the value or remove the key when it reaches zero).
-  * Promoting a lint from ``warn`` to ``deny`` removes it from the baseline
-    because ``-D warnings`` already enforces it.
+  * Promoting a lint from ``warn`` to ``deny`` (in ``[workspace.lints.clippy]``)
+    removes it from the baseline because the ``-D warnings`` gate already
+    enforces it at zero.
 """
 
 import argparse
@@ -33,13 +34,51 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BASELINE_PATH = REPO_ROOT / "scripts" / "arch" / "clippy-warn-baseline.json"
 
+# Warn-level overrides for the ratchet pass (#13443).
+#
+# Why these live here and NOT in ``[workspace.lints.clippy]``:
+# the CI lint gate runs ``cargo clippy ... -- -D warnings``.  Cargo emits the
+# manifest ``[lints]`` table as ordinary ``--warn`` flags, and ``-D warnings``
+# promotes *every* active warn-level lint to a hard error.  So a manifest
+# ``pedantic = "warn"`` would not warn under the gate — it would fail the build
+# on the first pedantic finding, workspace-wide.  Keeping the pedantic floor in
+# this dedicated ratchet pass (which runs WITHOUT ``-D warnings``) is the only
+# way to surface the group as a tracked, monotonically-shrinking baseline while
+# the ``-D warnings`` gate keeps the deny groups and the six zero-tolerance
+# manifest warns honest.  The baseline lives in ``clippy-warn-baseline.json``.
 CLIPPY_FLAGS = [
-    # Mirror the warn-level overrides that will be in [workspace.lints.clippy]
-    # once #13443 lands.  Add lints here as they are promoted to warn so the
-    # ratchet tracks them from day one.
-    #
-    # Example (uncomment when #13443 is merged):
-    # "-W", "clippy::pedantic",
+    # The pedantic group at warn: opt-out instead of opt-in (#13443).
+    "-W", "clippy::pedantic",
+    # Targeted high-signal cherry-picks called out in #13443 (use_self lowers
+    # the cost of the identity-handle newtype refactors; manual_let_else folds
+    # the Option-fallback match pattern; semicolon_if_nothing_returned is pure
+    # style hygiene).  Explicit even where pedantic already covers them so the
+    # intent survives any future group recomposition.
+    "-W", "clippy::use_self",
+    "-W", "clippy::manual_let_else",
+    "-W", "clippy::semicolon_if_nothing_returned",
+    # Curated allow-list: pedantic members that are net-noise for this codebase.
+    # Documentation-shaped lints — an internal compiler, not a published API:
+    "-A", "clippy::module_name_repetitions",
+    "-A", "clippy::must_use_candidate",
+    "-A", "clippy::missing_errors_doc",
+    "-A", "clippy::missing_panics_doc",
+    # Intentional-cast family: the pervasive u32 identity newtypes
+    # (TypeId/SymbolId/DefId/FlowNodeId/Atom) make these fire constantly on
+    # deliberate, audited casts.
+    "-A", "clippy::cast_possible_truncation",
+    "-A", "clippy::cast_precision_loss",
+    "-A", "clippy::cast_sign_loss",
+    "-A", "clippy::cast_possible_wrap",
+    # Raw-string hash counting: the embedded TypeScript test fixtures uniformly
+    # use r#"..."# for consistency regardless of whether a `#` is needed, so
+    # this fires ~10k times on intentional formatting rather than on defects.
+    "-A", "clippy::needless_raw_string_hashes",
+    # Explicitly DEFERRED by #13443: signature-churn lints touch hot-path
+    # function signatures and conflict with the `fast` goal.  Revisit
+    # separately, if at all.
+    "-A", "clippy::needless_pass_by_value",
+    "-A", "clippy::trivially_copy_pass_by_ref",
 ]
 
 

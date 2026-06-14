@@ -453,9 +453,9 @@ run_lint() {
     --all-targets -- -D warnings || return $?
   scripts/arch/check-checker-boundaries.sh || return $?
   # Warn-level ratchet: counts must not rise above the committed baseline.
-  # The baseline starts at {} (zero warnings under the current -D warnings
-  # gate) and is bumped by --update-baseline when new warn-level lints are
-  # introduced (e.g. pedantic = warn from #13443).
+  # The baseline tracks the clippy pedantic floor (plus targeted cherry-picks,
+  # minus a curated allow-list) declared in CLIPPY_FLAGS in the script below
+  # (#13443); it is re-captured with --update-baseline when that set changes.
   python3 scripts/arch/check-clippy-warn-ratchet.py --profile ci-lint || return $?
   # Surface sccache stats so the cache health is visible without reading
   # the workflow log into a separate step.
