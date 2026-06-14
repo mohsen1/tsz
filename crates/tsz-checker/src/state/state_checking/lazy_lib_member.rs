@@ -171,9 +171,6 @@ impl CheckerState<'_> {
         if self.ctx.file_local_type_shadow_for_lib_name(&name) {
             return None;
         }
-        if self.program_has_global_augmentations() {
-            return None;
-        }
         // The symbol must come from the actual/cloned lib — user interfaces (even
         // sharing a lib name) take the normal path so augmentation/merging stays
         // correct.
@@ -200,15 +197,11 @@ impl CheckerState<'_> {
             .global_augmentations
             .get(name)
             .is_some_and(|decls| !decls.is_empty())
-    }
-
-    fn program_has_global_augmentations(&self) -> bool {
-        !self.ctx.binder.global_augmentations.is_empty()
             || self
                 .ctx
                 .global_augmentation_targets_index
                 .as_ref()
-                .is_some_and(|index| !index.is_empty())
+                .is_some_and(|index| index.get(name).is_some())
     }
 
     fn lib_interface_or_heritage_is_augmented_or_shadowed(
