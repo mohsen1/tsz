@@ -949,7 +949,7 @@ impl Server {
     }
 
     fn build_alias_definition_from_location(
-        &mut self,
+        &self,
         loc: &tsz_common::position::Location,
     ) -> (serde_json::Value, String, u32, u32) {
         fn extract_alias_rhs(display: &str) -> Option<String> {
