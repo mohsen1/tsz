@@ -202,6 +202,10 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // Step 1.26: fold in augmentations targeting this interface's
+                    // own module (fp-ts HKT `URItoKind` pattern, #13509).
+                    structural_type = self.apply_self_module_augmentations(sym_id, structural_type);
+
                     // Cache generic interface params with canonical symbol extraction;
                     // local NodeIndex lookups can collide with lib/cross-file nodes.
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1005,6 +1009,8 @@ impl<'a> CheckerState<'a> {
                 };
             }
             if merged != TypeId::ERROR {
+                // Self-module augmentations before caching, so `keyof` sees them (#13509).
+                merged = self.apply_self_module_augmentations(sym_id, merged);
                 self.ctx.symbol_instance_types.insert(sym_id, merged);
             }
             return merged;
@@ -1149,6 +1155,9 @@ impl<'a> CheckerState<'a> {
         let _ = params; // params are not needed for this path
 
         let merged = self.merge_interface_heritage_types(&declarations, interface_type);
+        // Self-module augmentations so the canonical DefId type that `keyof`
+        // evaluation reads carries cross-file augmented members (#13509).
+        let merged = self.apply_self_module_augmentations(sym_id, merged);
         self.ctx.symbol_instance_types.insert(sym_id, merged);
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         self.ctx
