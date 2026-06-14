@@ -335,6 +335,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // ===================================================================
+        // SAME-BASE IDENTICAL-ARGS IDENTITY SHORTCUT
+        // ===================================================================
+        // When both applications share the same base TypeId AND all type
+        // arguments are identical TypeIds, the two applications denote the
+        // same type — the same definition applied to the same arguments must
+        // produce the same structural form regardless of evaluation context.
+        // This fires before variance resolution or structural expansion so
+        // that cross-file alias references (e.g. `ReferenceExpression<DB, TB>`
+        // from two scope-push paths) relate by identity just as tsc does
+        // (tsc caches `getTypeFromTypeReference` per node, so both sides are
+        // the same object; tsz may intern the same Application at distinct
+        // TypeIds). Without this shortcut, the expansion slow path can diverge
+        // for generic-dependent union aliases across file boundaries (#13044).
+        // ===================================================================
+        if s_app.base == t_app.base
+            && s_app.args.len() == t_app.args.len()
+            && !s_app.args.is_empty()
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(&s, &t)| s == t)
+        {
+            return SubtypeResult::True;
+        }
+
         let same_arity = s_app.args.len() == t_app.args.len();
         // Same definition family: identical base TypeIds, or bases whose
         // `DefId`s canonicalize to one definition through import-alias
