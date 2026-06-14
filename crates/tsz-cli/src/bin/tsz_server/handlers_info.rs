@@ -1,6 +1,6 @@
 //! Navigation, definition, and reference handlers for tsz-server.
 
-use super::{Server, TsServerRequest, TsServerResponse};
+use super::{Server, ServerProjectCache, ServerProjectCacheKey, TsServerRequest, TsServerResponse};
 use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
@@ -314,7 +314,7 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
 }
 
 impl Server {
-    fn build_project_for_file(&self, file_name: &str) -> Option<Project> {
+    fn build_project_for_file(&self, file_name: &str) -> Option<std::cell::RefMut<'_, Project>> {
         let mut files = self.open_files.clone();
         for project_files in self.external_project_files.values() {
             for path in project_files {
@@ -336,6 +336,26 @@ impl Server {
             return None;
         }
 
+        let key = ServerProjectCacheKey {
+            files: Self::completion_project_file_fingerprints(&files),
+            allow_importing_ts_extensions: self.allow_importing_ts_extensions,
+            auto_imports_allowed_without_tsconfig: self.auto_imports_allowed_for_inferred_projects,
+            import_module_specifier_ending: self.completion_import_module_specifier_ending.clone(),
+            import_module_specifier_preference: self.import_module_specifier_preference.clone(),
+            auto_import_file_exclude_patterns: self.auto_import_file_exclude_patterns.clone(),
+            auto_import_specifier_exclude_regexes: self
+                .auto_import_specifier_exclude_regexes
+                .clone(),
+        };
+
+        let mut cache = self.project_cache.borrow_mut();
+        let cache_matches = cache.as_ref().is_some_and(|cache| cache.key == key);
+        if cache_matches {
+            return Some(std::cell::RefMut::map(cache, |cache| {
+                &mut cache.as_mut().expect("project cache must exist").project
+            }));
+        }
+
         let mut project = Project::new();
         project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
         project.set_auto_imports_allowed_without_tsconfig(
@@ -355,7 +375,10 @@ impl Server {
         for (path, text) in files {
             project.set_file(path, text);
         }
-        Some(project)
+        *cache = Some(ServerProjectCache { key, project });
+        Some(std::cell::RefMut::map(cache, |cache| {
+            &mut cache.as_mut().expect("project cache must exist").project
+        }))
     }
 
     pub(super) fn find_ancestor_of_kind(
@@ -674,7 +697,7 @@ impl Server {
     }
 
     fn build_quoted_alias_referenced_symbols(
-        &mut self,
+        &self,
         project: &mut Project,
         file: &str,
         arena: &tsz::parser::node::NodeArena,
@@ -926,7 +949,7 @@ impl Server {
     }
 
     fn build_alias_definition_from_location(
-        &mut self,
+        &self,
         loc: &tsz_common::position::Location,
     ) -> (serde_json::Value, String, u32, u32) {
         fn extract_alias_rhs(display: &str) -> Option<String> {

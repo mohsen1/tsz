@@ -22,6 +22,7 @@ fn make_server() -> Server {
         open_files: FxHashMap::default(),
         external_project_files: FxHashMap::default(),
         completion_project_cache: None,
+        project_cache: std::cell::RefCell::new(None),
         _server_mode: ServerMode::Semantic,
         _log_config: LogConfig {
             level: LogLevel::Off,

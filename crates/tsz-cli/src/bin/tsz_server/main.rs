@@ -63,6 +63,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -89,6 +90,22 @@ pub(crate) struct CompletionProjectCacheKey {
 
 pub(crate) struct CompletionProjectCache {
     pub(crate) key: CompletionProjectCacheKey,
+    pub(crate) project: tsz::lsp::Project,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ServerProjectCacheKey {
+    pub(crate) files: Vec<(String, u64)>,
+    pub(crate) allow_importing_ts_extensions: bool,
+    pub(crate) auto_imports_allowed_without_tsconfig: bool,
+    pub(crate) import_module_specifier_ending: Option<String>,
+    pub(crate) import_module_specifier_preference: Option<String>,
+    pub(crate) auto_import_file_exclude_patterns: Vec<String>,
+    pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
+}
+
+pub(crate) struct ServerProjectCache {
+    pub(crate) key: ServerProjectCacheKey,
     pub(crate) project: tsz::lsp::Project,
 }
 
@@ -592,6 +609,10 @@ pub(crate) struct Server {
     /// inputs. Avoids rebuilding `tsz_lsp::Project` when completion/detail
     /// requests repeat over the same server file snapshot and preferences.
     pub(crate) completion_project_cache: Option<CompletionProjectCache>,
+    /// General project state for the most recent identical request inputs.
+    /// Reused by project-backed navigation operations such as references,
+    /// type-definition, implementations, and file references.
+    pub(crate) project_cache: RefCell<Option<ServerProjectCache>>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Completion/codefix preference: import module specifier preference.
@@ -705,6 +726,7 @@ impl Server {
             open_files: FxHashMap::default(),
             external_project_files: FxHashMap::default(),
             completion_project_cache: None,
+            project_cache: RefCell::new(None),
             completion_import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             organize_imports_type_order: None,
@@ -777,6 +799,7 @@ impl Server {
 
     pub(crate) fn clear_completion_project_cache(&mut self) {
         self.completion_project_cache = None;
+        self.project_cache.borrow_mut().take();
     }
 
     fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
