@@ -237,6 +237,15 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    /// Parenthesize a generic-function type that appears as the first type
+    /// argument (`X<<T>() => T>` -> `X<(<T>() => T)>`) so the rendered text does
+    /// not begin a type-argument list with a `<<` token.
+    ///
+    /// For types printed from a `TypeId` this is owned structurally by
+    /// [`TypePrinter::print_type_argument`](crate::emitter::type_printer); this
+    /// string pass survives only for the class-(d) source-text fallback paths in
+    /// `type_inference_return_normalization`, which re-emit a function's declared
+    /// return annotation directly from source syntax rather than from a `TypeId`.
     pub(in crate::declaration_emitter) fn parenthesize_first_generic_function_type_argument_text(
         type_text: &str,
     ) -> String {

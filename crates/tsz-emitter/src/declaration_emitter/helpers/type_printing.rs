@@ -711,7 +711,11 @@ impl<'a> DeclarationEmitter<'a> {
         let printed = self
             .expand_imported_indexed_access_type_text(&printed)
             .unwrap_or(printed);
-        let printed = Self::parenthesize_first_generic_function_type_argument_text(&printed);
+        // Parenthesization of a generic-function first type argument (`X<<T>() => T>`
+        // -> `X<(<T>() => T)>`, needed to avoid a `<<` token) is owned structurally by
+        // `TypePrinter::print_type_argument`; this output is already correct, so no
+        // post-print text pass is applied here. The text-surgery helper survives only
+        // for the source-text (class-d) fallback in `type_inference_return_normalization`.
         if Self::contains_portable_mapped_object_text(&printed)
             && let Some(expanded) =
                 self.expand_portable_intersection_type_text(self.arena, &printed)
