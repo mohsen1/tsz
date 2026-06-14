@@ -228,17 +228,42 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// (`keyofAndIndexedAccess2`). Intersections/objects/tuples and applications
     /// with non-mapped bodies (`Static`, `PropertiesReduce`) are safe.
     fn is_index_object_cacheable(&self, obj: TypeId) -> bool {
+        self.is_index_object_cacheable_bounded(obj, 0)
+    }
+
+    /// Depth-bounded core of [`Self::is_index_object_cacheable`].
+    ///
+    /// The walk descends through `IndexAccess`/`KeyOf` operands, resolved `Lazy`
+    /// alias bodies, and `Intersection` members. A `Lazy` alias whose body
+    /// re-references the same alias through an `IndexAccess`/`KeyOf` (e.g. an
+    /// `A = …A[K]…` shape reachable via cross-file import cycles) forms a
+    /// multi-step cycle: each step alternates `Lazy -> body` and
+    /// `IndexAccess -> operand`, so `body != obj` is satisfied at every step and
+    /// the single-step check cannot break it. The [`MAX_DEF_DEPTH`] bound — the
+    /// same alias-expansion limit the evaluator uses elsewhere — terminates such
+    /// cycles. Exceeding it returns `false`, conservatively treating the operand
+    /// as non-cacheable, which can never change a diagnostic since the
+    /// substitution-independent closed-form cache is an optimization, not a
+    /// semantic input.
+    ///
+    /// [`MAX_DEF_DEPTH`]: crate::limits::MAX_DEF_DEPTH
+    fn is_index_object_cacheable_bounded(&self, obj: TypeId, depth: u32) -> bool {
+        if depth >= crate::limits::MAX_DEF_DEPTH {
+            return false;
+        }
         match self.interner.lookup(obj) {
             Some(TypeData::Application(_)) => self.is_application_body_cacheable(obj),
             // A nested index access / keyof over a cacheable object stays fine.
             Some(TypeData::IndexAccess(inner_obj, _) | TypeData::KeyOf(inner_obj)) => {
-                self.is_index_object_cacheable(inner_obj)
+                self.is_index_object_cacheable_bounded(inner_obj, depth + 1)
             }
             // Resolve a `Lazy` alias to decide on its body (e.g. `Dict =
             // Record<string, number>` resolves to a mapped/index-signature type).
             Some(TypeData::Lazy(def_id)) => match self.resolver.resolve_lazy(def_id, self.interner)
             {
-                Some(body) if body != obj => self.is_index_object_cacheable(body),
+                Some(body) if body != obj => {
+                    self.is_index_object_cacheable_bounded(body, depth + 1)
+                }
                 _ => false,
             },
             // An intersection is safe only if every member is.
@@ -246,7 +271,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 .interner
                 .type_list(list_id)
                 .iter()
-                .all(|&m| self.is_index_object_cacheable(m)),
+                .all(|&m| self.is_index_object_cacheable_bounded(m, depth + 1)),
             // A bare mapped object keeps its index-signature relation behavior;
             // an object carrying an index signature does too.
             Some(TypeData::Mapped(_) | TypeData::ObjectWithIndex(_)) => false,
@@ -357,6 +382,51 @@ mod tests {
         let idx_plain = interner.index_access(TypeId::OBJECT, TypeId::STRING);
         assert!(!ev.body_has_conditional(idx_plain));
         assert!(ev.is_closed_cacheable_kind(idx_plain));
+    }
+
+    /// A `Lazy` alias whose resolved body re-references the same alias through an
+    /// `IndexAccess` forms a multi-step cycle (`A -> A[K] -> A -> …`). Each step
+    /// alternates `Lazy -> body` and `IndexAccess -> operand`, so the single-step
+    /// `body != obj` check is satisfied at every hop and cannot break it. Such
+    /// shapes arise from cross-file import cycles. The cache-eligibility walk must
+    /// terminate (returning the conservative "not cacheable") instead of
+    /// overflowing the stack.
+    #[test]
+    fn cacheable_kinds_terminate_on_cyclic_alias_index_access() {
+        /// Resolver whose single alias body is supplied after construction so it
+        /// can reference its own `Lazy` node (`A = A[string]`).
+        struct CyclicAliasResolver {
+            def_id: DefId,
+            body: TypeId,
+        }
+        impl TypeResolver for CyclicAliasResolver {
+            fn resolve_ref(
+                &self,
+                _symbol: crate::types::SymbolRef,
+                _interner: &dyn crate::caches::db::TypeDatabase,
+            ) -> Option<TypeId> {
+                None
+            }
+            fn resolve_lazy(
+                &self,
+                def_id: DefId,
+                _interner: &dyn crate::caches::db::TypeDatabase,
+            ) -> Option<TypeId> {
+                (def_id == self.def_id).then_some(self.body)
+            }
+        }
+
+        let interner = TypeInterner::new();
+        let def_id = DefId(7);
+        let lazy = interner.lazy(def_id);
+        // `A = A[string]`: an index access whose operand is the alias itself.
+        let body = interner.index_access(lazy, TypeId::STRING);
+        let resolver = CyclicAliasResolver { def_id, body };
+        let ev = TypeEvaluator::with_resolver(&interner, &resolver);
+
+        // Must terminate (no stack overflow) and conservatively exclude the
+        // cyclic shape from the substitution-independent cache.
+        assert!(!ev.is_closed_cacheable_kind(body));
     }
 
     /// An `IndexAccess`/`KeyOf` over an index-signature-bearing operand (a bare
