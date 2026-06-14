@@ -70,6 +70,7 @@ pub mod namespace_es5_ir;
 pub mod namespace_iife_binding_scan;
 pub mod private_fields_es5;
 pub mod spread_es5;
+pub(crate) mod tslib_helper_naming;
 
 // Re-export concrete emitter types for use by the emitter module
 // This breaks the dependency on internal submodules (transforms::class_es5)

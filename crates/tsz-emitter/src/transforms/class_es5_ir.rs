@@ -99,6 +99,7 @@ use crate::transforms::private_fields_es5::{
     collect_private_fields_with_reserved, collect_private_methods_with_reserved,
     make_unique_private_name, private_helper_base,
 };
+use crate::transforms::tslib_helper_naming::TslibHelperNaming;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use tsz_common::common::ModuleKind;
@@ -194,10 +195,8 @@ pub struct ES5ClassTransformer<'a> {
     /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
-    /// When true, prefix helper names like `__decorate` with the tslib import binding.
-    tslib_prefix: bool,
-    /// The tslib import binding name (e.g. `tslib_1`) used when `tslib_prefix` is true.
-    tslib_import_binding: String,
+    /// Naming of runtime helpers under `importHelpers` (CommonJS prefix / ESM alias).
+    tslib_helpers: TslibHelperNaming,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
     target_es5: bool,
@@ -261,8 +260,7 @@ impl<'a> ES5ClassTransformer<'a> {
             extends_this_captured: false,
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
+            tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
             target_es5: false,
@@ -327,11 +325,11 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
-        self.tslib_prefix = enable;
+        self.tslib_helpers.set_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
-        self.tslib_import_binding = binding;
+        self.tslib_helpers.set_binding(binding);
     }
 
     pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {

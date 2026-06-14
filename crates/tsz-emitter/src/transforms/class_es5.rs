@@ -35,6 +35,7 @@ use crate::context::transform::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use crate::transforms::tslib_helper_naming::TslibHelperNaming;
 use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
@@ -80,9 +81,8 @@ pub struct ClassES5Emitter<'a> {
     leading_comment: Option<String>,
     /// When true, suppress `/** @class */` annotation and leading comments.
     remove_comments: bool,
-    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
-    tslib_prefix: bool,
-    tslib_import_binding: String,
+    /// Naming of runtime helpers under `importHelpers` (CommonJS prefix / ESM alias).
+    tslib_helpers: TslibHelperNaming,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
     externally_hoisted_decls: rustc_hash::FxHashSet<String>,
@@ -110,8 +110,7 @@ impl<'a> ClassES5Emitter<'a> {
             tc39_decorators: false,
             leading_comment: None,
             remove_comments: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
+            tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
@@ -124,13 +123,13 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
-        self.tslib_prefix = enable;
+        self.tslib_helpers.set_prefix(enable);
         self.transformer.set_tslib_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
         self.transformer.set_tslib_import_binding(binding.clone());
-        self.tslib_import_binding = binding;
+        self.tslib_helpers.set_binding(binding);
     }
 
     pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
@@ -537,8 +536,8 @@ impl<'a> ClassES5Emitter<'a> {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
         printer.set_target_es5(true);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);

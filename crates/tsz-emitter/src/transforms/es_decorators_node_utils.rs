@@ -11,7 +11,7 @@ use super::{
     EsDecorateVars, PlainComputedInstanceFieldInfo,
 };
 #[allow(unused_imports)]
-use crate::transforms::emit_utils::hygienic_temp_name;
+use crate::transforms::emit_utils::{hygienic_temp_name, is_runtime_omitted_member};
 #[allow(unused_imports)]
 use rustc_hash::FxHashMap;
 #[allow(unused_imports)]
@@ -54,15 +54,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
         let prop = self.arena.get_property_decl(member_node)?;
         if !self.arena.is_static(&prop.modifiers)
-            || self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-            || self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-            || self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+            || is_runtime_omitted_member(self.arena, &prop.modifiers)
         {
             return None;
         }

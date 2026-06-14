@@ -68,6 +68,7 @@
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use crate::transforms::tslib_helper_naming::TslibHelperNaming;
 use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
@@ -95,11 +96,8 @@ pub struct AsyncES5Emitter<'a> {
     /// already-allocated hoisted vars for the purpose of `generator_state_name_for_hoisted`,
     /// so the state-name picker skips past them.
     outer_reserved_for_generator_state: Vec<String>,
-    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
-    tslib_prefix: bool,
-    tslib_import_binding: String,
-    /// Per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`).
-    helper_import_aliases: rustc_hash::FxHashMap<String, String>,
+    /// Naming of runtime helpers under `importHelpers` (CommonJS prefix / ESM alias).
+    tslib_helpers: TslibHelperNaming,
     system_import_meta: bool,
     generator_this_arg: String,
 }
@@ -116,9 +114,7 @@ impl<'a> AsyncES5Emitter<'a> {
             this_capture_depth: 0,
             class_name: None,
             outer_reserved_for_generator_state: Vec::new(),
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
-            helper_import_aliases: rustc_hash::FxHashMap::default(),
+            tslib_helpers: TslibHelperNaming::default(),
             system_import_meta: false,
             generator_this_arg: "this".to_string(),
         }
@@ -129,16 +125,16 @@ impl<'a> AsyncES5Emitter<'a> {
     }
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
-        self.tslib_prefix = enable;
+        self.tslib_helpers.set_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
-        self.tslib_import_binding = binding;
+        self.tslib_helpers.set_binding(binding);
     }
 
     /// Set per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`).
     pub fn set_helper_import_aliases(&mut self, aliases: rustc_hash::FxHashMap<String, String>) {
-        self.helper_import_aliases = aliases;
+        self.tslib_helpers.set_aliases(aliases);
     }
 
     pub const fn set_system_import_meta(&mut self, enabled: bool) {
@@ -248,8 +244,8 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
         printer.set_system_import_meta(self.system_import_meta);
         printer.set_generator_this_arg(self.generator_this_arg.clone());
         printer.emit(&ir);
@@ -266,8 +262,8 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
         printer.set_system_import_meta(self.system_import_meta);
         printer.set_generator_this_arg(self.generator_this_arg.clone());
         printer.emit(&ir);
@@ -337,8 +333,8 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
         printer.set_system_import_meta(self.system_import_meta);
         printer.set_generator_this_arg(self.generator_this_arg.clone());
         let hoisted_names: Vec<&str> = hoisted
@@ -405,9 +401,9 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
-        printer.set_helper_import_aliases(self.helper_import_aliases.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
+        printer.set_helper_import_aliases(self.tslib_helpers.aliases().clone());
         printer.set_system_import_meta(self.system_import_meta);
         printer.set_generator_this_arg(self.generator_this_arg.clone());
         printer.set_outer_reserved_for_generator_state(
@@ -462,8 +458,8 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_tslib_prefix(self.tslib_helpers.prefix());
+        printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
         printer.set_system_import_meta(self.system_import_meta);
         printer.emit(&ir);
         printer.take_output()

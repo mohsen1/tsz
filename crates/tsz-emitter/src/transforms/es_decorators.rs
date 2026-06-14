@@ -28,6 +28,7 @@ mod node_utils;
 mod private_members;
 
 use crate::transforms::emit_utils::hygienic_temp_name;
+use crate::transforms::tslib_helper_naming::TslibHelperNaming;
 
 struct ClassDecoratorVars<'a> {
     class_descriptor: &'a str,
@@ -166,9 +167,8 @@ pub struct TC39DecoratorEmitter<'a> {
     indent: usize,
     /// When true, uses `static { }` blocks (ES2022+) instead of IIFE pattern (ES2015).
     use_static_blocks: bool,
-    /// When true, prefix helper calls with `tslib_1.` (importHelpers + commonjs).
-    tslib_prefix: bool,
-    tslib_import_binding: String,
+    /// Naming of runtime helpers under `importHelpers` (CommonJS prefix / ESM alias).
+    tslib_helpers: TslibHelperNaming,
     /// When true, emit as an expression (no `let C = ` wrapper) for class expressions.
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
@@ -219,8 +219,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             source_text: None,
             indent: 0,
             use_static_blocks: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
+            tslib_helpers: TslibHelperNaming::default(),
             expression_mode: false,
             function_name: None,
             function_name_is_expression: false,
@@ -250,11 +249,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
     }
 
     pub const fn set_tslib_prefix(&mut self, prefix: bool) {
-        self.tslib_prefix = prefix;
+        self.tslib_helpers.set_prefix(prefix);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
-        self.tslib_import_binding = binding;
+        self.tslib_helpers.set_binding(binding);
     }
 
     pub const fn set_expression_mode(&mut self, expr: bool) {
@@ -319,11 +318,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     /// Returns the helper function name with optional tslib prefix.
     fn helper(&self, name: &str) -> String {
-        if self.tslib_prefix {
-            format!("{}.{name}", self.tslib_import_binding)
-        } else {
-            name.to_string()
-        }
+        self.tslib_helpers.helper_name(name)
     }
 
     fn function_name_arg(&self, fallback: &str) -> String {
