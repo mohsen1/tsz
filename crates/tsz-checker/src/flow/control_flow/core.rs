@@ -405,6 +405,12 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for `reference_symbol` lookups.
     /// Key: `node` -> resolved symbol (or `None` when not resolvable as a symbol).
     pub(crate) reference_symbol_cache: ReferenceSymbolCache,
+    /// Cache for `reference_root_symbol` lookups (the storage-root symbol of a
+    /// reference after unwrapping non-null/assertion/member/qualified access).
+    /// Key: `node` -> root symbol (or `None`). The binder AST is immutable
+    /// post-bind, so entries share the same lifetime/invalidation as
+    /// `reference_symbol_cache` (none needed within a flow walk).
+    pub(crate) reference_root_symbol_cache: ReferenceSymbolCache,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
@@ -615,6 +621,7 @@ impl<'a> FlowAnalyzer<'a> {
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
+            reference_root_symbol_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             destructured_bindings: None,
             concrete_this_type: None,
@@ -641,6 +648,7 @@ impl<'a> FlowAnalyzer<'a> {
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
+            reference_root_symbol_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             destructured_bindings: None,
             concrete_this_type: None,
@@ -1285,11 +1293,111 @@ impl<'a> FlowAnalyzer<'a> {
                 .is_some_and(|(target, assignment)| target == assignment)
                 || self.assignment_targets_reference_node(ant_flow.node, reference));
 
+        // A CALL antecedent forces a defer in two situations:
+        //   1. it can itself narrow/divert THIS reference (never-returning call or
+        //      `asserts` predicate), or
+        //   2. it is a pure value pass-through but its OWN antecedent carries
+        //      narrowing that must reach the dependent reader (e.g. the
+        //      `table = 5; sink.push(table)` guard-branch shape, where the CALL
+        //      passes through the killing assignment's narrowed type at the merge).
+        // A pass-through CALL whose antecedent itself requires no defer carries no
+        // narrowing for this reference and must NOT force a per-node defer —
+        // otherwise the linear-passthrough chase cannot splice the interleaved
+        // const/call dispatch-table chain and reference reads scale O(N^2). This
+        // is a POSITIVE predicate (defer only when narrowing provably flows
+        // through); an unclassifiable call defaults to defer.
+        let ant_is_deferring_call = (ant_flags & flow_flags::CALL) != 0 && {
+            self.call_node_may_narrow_or_divert(ant_flow)
+                || ant_flow.antecedent.first().is_some_and(|&grandparent| {
+                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                })
+        };
+
         (ant_flags & flow_flags::CONDITION) != 0
-            || (ant_flags & flow_flags::CALL) != 0
+            || ant_is_deferring_call
             || (ant_flags & flow_flags::LOOP_LABEL) != 0
             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
             || ant_is_targeting_assignment
+    }
+
+    /// Positive predicate: can this CALL flow node change the flow type for some
+    /// reference (i.e. is it anything other than a pure value pass-through)?
+    ///
+    /// A CALL flow node alters the type only in two ways, matching the gate of
+    /// [`Self::handle_call_iterative`]:
+    /// 1. it never returns (return type `never`), diverting the branch to
+    ///    `UNREACHABLE_NEVER` for every reference; or
+    /// 2. it is an `asserts` type-predicate call, which can narrow a reference.
+    ///
+    /// Every other call returns the pre-type unchanged, so it is pure
+    /// pass-through. When classification is impossible (missing caches), this
+    /// returns `true` so the worklist keeps its conservative defer behavior.
+    fn call_node_may_narrow_or_divert(&self, ant_flow: &FlowNode) -> bool {
+        let call_idx = ant_flow.node;
+        let Some(node) = self.arena.get(call_idx) else {
+            // No backing node: keep prior conservative behavior.
+            return true;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            // Non-call CALL-flagged node (defensive): stay conservative.
+            return true;
+        }
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return true;
+        };
+
+        // (1) Never-returning call diverts the branch for any reference. Mirror
+        // the never detection in `handle_call_iterative` exactly (cache + stale
+        // `any` callee/binder fallbacks).
+        if let Some(node_types) = self.node_types {
+            if let Some(&call_return_type) = node_types.get(&call_idx.0) {
+                if call_return_type == TypeId::NEVER {
+                    return true;
+                }
+                if call_return_type == TypeId::ANY {
+                    if let Some(&callee_type) = node_types.get(&call.expression.0)
+                        && callee_type != TypeId::ANY
+                        && callee_type != TypeId::ERROR
+                        && query::function_return_type(self.interner, callee_type)
+                            == Some(TypeId::NEVER)
+                    {
+                        return true;
+                    }
+                    if self.callee_declaration_returns_never(call.expression) {
+                        return true;
+                    }
+                }
+            }
+        } else {
+            // No type cache to classify with: stay conservative.
+            return true;
+        }
+
+        // (2) `asserts` type-predicate call can narrow a reference. An invalid
+        // assertion call narrows nothing (`handle_call_iterative` bails on it).
+        if self
+            .call_type_predicates()
+            .is_some_and(|calls| calls.is_invalid_assertion_call(call_idx.0))
+        {
+            return false;
+        }
+        if let Some((pred, _params)) = self
+            .call_type_predicates()
+            .and_then(|preds| preds.get(&call_idx.0))
+        {
+            return pred.asserts;
+        }
+        // Fall back to the raw callee signature for assertion predicates not in
+        // the resolved-call cache.
+        let Some(node_types) = self.node_types else {
+            return true;
+        };
+        let Some(&callee_type) = node_types.get(&call.expression.0) else {
+            // Callee type unknown: cannot prove pass-through, stay conservative.
+            return true;
+        };
+        self.predicate_signature_for_type(callee_type)
+            .is_some_and(|sig| sig.predicate.asserts)
     }
 
     /// Helper function for call handling in iterative mode.

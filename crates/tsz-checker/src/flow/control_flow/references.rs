@@ -896,6 +896,17 @@ impl<'a> FlowAnalyzer<'a> {
 
     pub(crate) fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
         let idx = self.skip_parenthesized(idx);
+        if let Some(&cached) = self.reference_root_symbol_cache.borrow().get(&idx.0) {
+            return cached;
+        }
+        let result = self.reference_root_symbol_inner(idx);
+        self.reference_root_symbol_cache
+            .borrow_mut()
+            .insert(idx.0, result);
+        result
+    }
+
+    fn reference_root_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
         let node = self.arena.get(idx)?;
 
         if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {

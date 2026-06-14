@@ -1257,11 +1257,65 @@ impl<'a> FlowAnalyzer<'a> {
                     == 0
         };
 
+        // A CALL flow node is splice-eligible only when it is pure value
+        // pass-through (neither a never-returning divert nor an `asserts`
+        // predicate). The interleaved dispatch-table shape
+        // (`const x = f(); const y = x.p; const z = g(); ...`) puts such a CALL
+        // between every pair of `const` assignments, so without splicing CALL
+        // nodes the chase collapses at most one assignment before stalling and
+        // the worklist re-walks the prior chain per reference read (O(N^2)).
+        let pure_passthrough_call = |flags: u32| -> bool {
+            flags & flow_flags::CALL != 0
+                && flags
+                    & (flow_flags::BRANCH_LABEL
+                        | flow_flags::LOOP_LABEL
+                        | flow_flags::SWITCH_CLAUSE
+                        | flow_flags::CONDITION
+                        | flow_flags::ASSIGNMENT
+                        | flow_flags::ARRAY_MUTATION
+                        | flow_flags::START)
+                    == 0
+        };
+
         let mut current = entry;
         loop {
             let Some(flow) = self.binder.flow_nodes.get(current) else {
                 return current;
             };
+            // Splice a pure pass-through CALL node: it carries no narrowing for
+            // any reference, so it can be skipped in O(1) just like a
+            // non-targeting assignment. Re-derive the divert/assertion gate via
+            // `call_node_may_narrow_or_divert` (the same positive predicate the
+            // worklist uses in `antecedent_requires_defer`).
+            if pure_passthrough_call(flow.flags) {
+                if self.call_node_may_narrow_or_divert(flow) {
+                    return current;
+                }
+                let [ant] = flow.antecedent.as_slice() else {
+                    return current;
+                };
+                let ant = *ant;
+                if self.antecedent_requires_defer_cached(
+                    ant,
+                    reference,
+                    symbol_id,
+                    antecedent_defer_memo,
+                ) || visited.contains(&ant)
+                    || results.contains_key(&ant)
+                {
+                    return current;
+                }
+                if let Some(cache) = self.flow_cache()
+                    && cache
+                        .borrow()
+                        .contains_key(&(ant, cache_symbol, initial_type))
+                {
+                    return current;
+                }
+                run.push(current);
+                current = ant;
+                continue;
+            }
             if !pure_assignment_only(flow.flags) {
                 return current;
             }
