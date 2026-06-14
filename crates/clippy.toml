@@ -23,8 +23,37 @@ doc-valid-idents = [
     "TS",
     "JSDoc",
 ]
+# Declarative bans for footguns that have a sanctioned replacement. Each entry
+# carries a `reason` so the rule is self-documenting and enforced in-editor
+# (and at `-D warnings` in CI) instead of relying on a reviewer remembering it.
+# Every entry below has zero current call sites, so these are pure prevention:
+# they guard against future regressions without touching any existing code.
 disallowed-methods = [
-    "std::mem::transmute",
+    { path = "std::mem::transmute", reason = "type-punning bypasses the type system; use a checked conversion (`as`, `From`/`TryFrom`, `bytemuck`) or an explicit, audited `unsafe` boundary" },
+    # Soundness: the `*_unchecked` variants are instantaneous undefined behavior
+    # on the bad path. Prefer the checked form so a logic error panics loudly
+    # instead of silently invoking UB.
+    { path = "std::option::Option::unwrap_unchecked", reason = "UB on `None`; use `unwrap()`/`expect()` so a logic bug panics instead of invoking UB" },
+    { path = "std::result::Result::unwrap_unchecked", reason = "UB on `Err`; use `unwrap()`/`expect()` so a logic bug panics instead of invoking UB" },
+    { path = "core::hint::unreachable_unchecked", reason = "UB if reached; use `unreachable!()` so a logic bug panics instead of invoking UB" },
+    # Panic discipline: aborting skips unwinding and `Drop`. Propagate a
+    # `Result`/diagnostic to the caller instead of killing the process.
+    { path = "std::process::abort", reason = "bypasses unwinding and `Drop`; return a `Result`/diagnostic instead of aborting the process" },
+]
+
+# Determinism is load-bearing for a compiler: diagnostic order and emit output
+# must be reproducible run to run. The default `HashMap`/`HashSet` hasher
+# (`RandomState`) seeds randomly, so its iteration order changes between runs.
+disallowed-types = [
+    { path = "std::collections::hash_map::RandomState", reason = "non-deterministic hash seed breaks reproducible diagnostic/emit order; use `rustc_hash::FxBuildHasher` / `FxHashMap` (the workspace standard) for stable iteration" },
+]
+
+# No unfinished stubs on shipped compiler paths: a `todo!()`/`unimplemented!()`
+# that reaches production panics at runtime. Implement the case or return a
+# typed error/diagnostic.
+disallowed-macros = [
+    { path = "std::todo", reason = "no `todo!()` stubs on shipped compiler paths; implement the case or return a typed error/diagnostic" },
+    { path = "std::unimplemented", reason = "no `unimplemented!()` stubs on shipped compiler paths; implement the case or return a typed error/diagnostic" },
 ]
 
 # Avoiding hidden convenience that masks missing boundary discipline.
