@@ -5,7 +5,9 @@
 //! `DefinitionStore` methods that compute a live snapshot
 //! (`statistics`, `estimated_size_bytes`). Telemetry only -- no store mutation.
 
-use super::{DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue};
+use super::{
+    DASHMAP_ENTRY_OVERHEAD, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
+};
 use crate::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use std::sync::atomic::Ordering;
 use tsz_common::interner::Atom;
@@ -184,9 +186,6 @@ impl DefinitionStore {
     #[must_use]
     pub fn estimated_size_bytes(&self) -> usize {
         let mut size = std::mem::size_of::<Self>();
-
-        // Per-entry overhead for DashMap: key + value + ~64 bytes bucket/shard overhead.
-        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
 
         // definitions: DefId -> DefinitionInfo
         for entry in &self.definitions {

@@ -56,11 +56,13 @@ impl DefStateFlags {
     }
 
     /// Whether the given def was flagged via [`Self::mark_depth_poisoned`].
+    #[inline]
     pub(crate) fn is_depth_poisoned(&self, id: DefId) -> bool {
         self.depth_poisoned_defs.contains(&id)
     }
 
     /// Whether any def is depth-poisoned (cheap gate for hot paths).
+    #[inline]
     pub(crate) fn has_any_depth_poisoned(&self) -> bool {
         !self.depth_poisoned_defs.is_empty()
     }
@@ -71,6 +73,7 @@ impl DefStateFlags {
     }
 
     /// Whether `id`'s body is frozen by a publish-once marker.
+    #[inline]
     pub(crate) fn is_publish_once_frozen(&self, id: DefId) -> bool {
         !self.publish_once_defs.is_empty() && self.publish_once_defs.contains(&id)
     }
@@ -81,6 +84,7 @@ impl DefStateFlags {
     }
 
     /// Whether `id` is marked for deferred publication.
+    #[inline]
     pub(crate) fn is_deferred_publish(&self, id: DefId) -> bool {
         !self.deferred_publish_defs.is_empty() && self.deferred_publish_defs.contains(&id)
     }
@@ -91,6 +95,7 @@ impl DefStateFlags {
     }
 
     /// Whether `id` was marked circular by any checker.
+    #[inline]
     pub(crate) fn is_circular(&self, id: DefId) -> bool {
         self.circular_def_ids.contains(&id)
     }
@@ -107,6 +112,7 @@ impl DefStateFlags {
 
     /// Whether `body` should be displayed structurally because it was produced
     /// by a reducing operator and is not also a directly-written alias body.
+    #[inline]
     pub(crate) fn is_computed_body(&self, body: TypeId) -> bool {
         self.computed_alias_bodies.contains(&body)
             && !self.directly_named_alias_bodies.contains(&body)

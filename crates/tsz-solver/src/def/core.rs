@@ -51,6 +51,11 @@ type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
 type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 
+/// Rough per-entry overhead for a `DashMap`/`DashSet` bucket (key + value +
+/// shard bookkeeping), used by the store's `estimated_size_bytes` reporting.
+/// Shared by the store core and its sub-store size estimators.
+pub(super) const DASHMAP_ENTRY_OVERHEAD: usize = 64;
+
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
 // =============================================================================

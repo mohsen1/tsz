@@ -8,15 +8,11 @@
 //!
 //! [`DefinitionStore`]: super::DefinitionStore
 
-use super::{CrossFileQueryCacheKey, CrossFileQueryCacheValue, DefDashMap};
+use super::{CrossFileQueryCacheKey, CrossFileQueryCacheValue, DASHMAP_ENTRY_OVERHEAD, DefDashMap};
 use crate::types::{TypeId, TypeParamInfo};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Per-entry overhead estimate for a `DashMap` bucket/shard (see
-/// `DefinitionStore::estimated_size_bytes`).
-const DASHMAP_ENTRY_OVERHEAD: usize = 64;
 
 /// Cross-file query cache plus its delegation locks and scope stamp.
 #[derive(Debug)]
@@ -50,6 +46,7 @@ impl Default for CrossFileQueryCache {
 impl CrossFileQueryCache {
     /// Look up a previously resolved cross-file query result. Returns the shared
     /// `Arc` over the cached type-params so per-hit reads avoid a deep clone.
+    #[inline]
     pub(crate) fn get(
         &self,
         kind: u8,
@@ -85,6 +82,7 @@ impl CrossFileQueryCache {
     }
 
     /// Current program-local scope stamp (clamped to >= 1).
+    #[inline]
     pub(crate) fn scope(&self) -> u64 {
         self.source_file_symbol_type_cache_scope
             .load(Ordering::Relaxed)
