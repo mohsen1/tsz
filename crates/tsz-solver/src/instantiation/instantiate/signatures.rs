@@ -109,17 +109,23 @@ impl<'a> TypeInstantiator<'a> {
             };
             let new_this_slot = shape.this_type.map(sub_top_level);
             let new_return_type = sub_top_level(shape.return_type);
-            let mut new_params = Vec::with_capacity(shape.params.len());
-            let mut params_changed = false;
-            for p in shape.params.iter() {
+            let mut new_params: Option<Vec<_>> = None;
+            for (index, p) in shape.params.iter().enumerate() {
                 let new_t = sub_top_level(p.type_id);
-                if new_t != p.type_id {
-                    params_changed = true;
+                if let Some(new_params) = &mut new_params {
                     let mut np = *p;
                     np.type_id = new_t;
                     new_params.push(np);
+                } else if new_t != p.type_id {
+                    let mut changed = Vec::with_capacity(shape.params.len());
+                    changed.extend_from_slice(&shape.params[..index]);
+                    let mut np = *p;
+                    np.type_id = new_t;
+                    changed.push(np);
+                    new_params = Some(changed);
                 } else {
-                    new_params.push(*p);
+                    // Leave the unchanged prefix borrowed until the first
+                    // changed slot proves a replacement vector is needed.
                 }
             }
             let this_changed = match (shape.this_type, new_this_slot) {
@@ -127,10 +133,10 @@ impl<'a> TypeInstantiator<'a> {
                 (None, None) => false,
                 _ => true,
             };
-            if params_changed || this_changed || new_return_type != shape.return_type {
+            if new_params.is_some() || this_changed || new_return_type != shape.return_type {
                 return self.interner.function(FunctionShape {
                     type_params: shape.type_params.clone(),
-                    params: new_params,
+                    params: new_params.unwrap_or_else(|| shape.params.clone()),
                     this_type: new_this_slot,
                     return_type: new_return_type,
                     type_predicate: shape.type_predicate,
@@ -206,55 +212,69 @@ impl<'a> TypeInstantiator<'a> {
                     id
                 }
             };
-            let rewrite_sig = |sig: &CallSignature| -> (CallSignature, bool) {
-                let mut changed = false;
+            let rewrite_sig = |sig: &CallSignature| -> Option<CallSignature> {
                 let new_this_slot = sig.this_type.map(|s| {
                     let n = sub_top_level(s);
-                    if n != s {
-                        changed = true;
-                    }
                     n
                 });
                 let new_return = sub_top_level(sig.return_type);
-                if new_return != sig.return_type {
-                    changed = true;
-                }
-                let mut new_params = Vec::with_capacity(sig.params.len());
-                for p in sig.params.iter() {
+                let mut new_params: Option<Vec<_>> = None;
+                for (index, p) in sig.params.iter().enumerate() {
                     let new_t = sub_top_level(p.type_id);
-                    if new_t != p.type_id {
-                        changed = true;
+                    if let Some(new_params) = &mut new_params {
                         let mut np = *p;
                         np.type_id = new_t;
                         new_params.push(np);
+                    } else if new_t != p.type_id {
+                        let mut changed = Vec::with_capacity(sig.params.len());
+                        changed.extend_from_slice(&sig.params[..index]);
+                        let mut np = *p;
+                        np.type_id = new_t;
+                        changed.push(np);
+                        new_params = Some(changed);
                     } else {
-                        new_params.push(*p);
+                        // Leave the unchanged prefix borrowed until a later
+                        // slot changes.
                     }
                 }
-                let mut new_sig = sig.clone();
-                new_sig.this_type = new_this_slot;
-                new_sig.return_type = new_return;
-                new_sig.params = new_params;
-                (new_sig, changed)
+                let this_changed = new_this_slot != sig.this_type;
+                let return_changed = new_return != sig.return_type;
+                if new_params.is_none() && !this_changed && !return_changed {
+                    return None;
+                }
+                Some(CallSignature {
+                    type_params: sig.type_params.clone(),
+                    params: new_params.unwrap_or_else(|| sig.params.clone()),
+                    this_type: new_this_slot,
+                    return_type: new_return,
+                    type_predicate: sig.type_predicate,
+                    is_method: sig.is_method,
+                })
             };
 
-            let mut updated_call = Vec::with_capacity(shape.call_signatures.len());
-            let mut any_changed = false;
-            for sig in shape.call_signatures.iter() {
-                let (new_sig, changed) = rewrite_sig(sig);
-                any_changed |= changed;
-                updated_call.push(new_sig);
-            }
-            let mut updated_construct = Vec::with_capacity(shape.construct_signatures.len());
-            for sig in shape.construct_signatures.iter() {
-                let (new_sig, changed) = rewrite_sig(sig);
-                any_changed |= changed;
-                updated_construct.push(new_sig);
-            }
-            if any_changed {
+            let rewrite_signatures = |signatures: &[CallSignature]| -> Option<Vec<CallSignature>> {
+                let mut updated: Option<Vec<CallSignature>> = None;
+                for (index, signature) in signatures.iter().enumerate() {
+                    let signature = rewrite_sig(signature);
+                    if let Some(updated) = &mut updated {
+                        updated.push(signature.unwrap_or_else(|| signatures[index].clone()));
+                    } else if let Some(signature) = signature {
+                        let mut changed = Vec::with_capacity(signatures.len());
+                        changed.extend_from_slice(&signatures[..index]);
+                        changed.push(signature);
+                        updated = Some(changed);
+                    }
+                }
+                updated
+            };
+
+            let updated_call = rewrite_signatures(&shape.call_signatures);
+            let updated_construct = rewrite_signatures(&shape.construct_signatures);
+            if updated_call.is_some() || updated_construct.is_some() {
                 return self.interner.callable(CallableShape {
-                    call_signatures: updated_call,
-                    construct_signatures: updated_construct,
+                    call_signatures: updated_call.unwrap_or_else(|| shape.call_signatures.clone()),
+                    construct_signatures: updated_construct
+                        .unwrap_or_else(|| shape.construct_signatures.clone()),
                     properties: shape.properties.clone(),
                     string_index: shape.string_index,
                     number_index: shape.number_index,
