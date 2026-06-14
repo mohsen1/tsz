@@ -227,6 +227,7 @@ mod computed_declarations;
 mod correlated_union;
 mod correlated_union_mapped_arrays;
 mod default_import_alias_rewrite;
+mod dts_export_text_scan;
 mod emit_node;
 mod function_analysis;
 mod generic_call_literal;

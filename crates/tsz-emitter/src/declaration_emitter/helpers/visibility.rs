@@ -381,11 +381,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
             return false;
         };
-        let has_export_modifier = self.stmt_has_export_modifier(stmt_node)
-            || self
-                .get_source_slice(stmt_node.pos, stmt_node.end)
-                .is_some_and(|text| text.trim_start().starts_with("export "));
-        if !has_export_modifier {
+        // Export-ness is decided from the AST modifier list. `stmt_node` is a
+        // parsed `VARIABLE_STATEMENT` (checked above), so an `export` keyword is
+        // present as a modifier on the node — no source-text scan is needed.
+        if !self.stmt_has_export_modifier(stmt_node) {
             return false;
         }
         var_stmt
