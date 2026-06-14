@@ -1320,10 +1320,18 @@ tsz_write_tanstack_router_config() {
   tsz_write_basic_external_project_config "$1" "packages/router-core/src"
 }
 tsz_write_zustand_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # zustand imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_jotai_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # jotai imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_fp_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1332,7 +1340,11 @@ tsz_write_io_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_immer_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # immer imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_remeda_config() {
   tsz_write_basic_external_project_config "$1" "packages/remeda/src"
@@ -1341,13 +1353,21 @@ tsz_write_ts_morph_config() {
   tsz_write_basic_external_project_config "$1" "packages/ts-morph/src"
 }
 tsz_write_arktype_config() {
-  tsz_write_basic_external_project_config "$1" "ark/type"
+  # arktype imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "ark/type" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_superstruct_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_runtypes_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # runtypes imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_hotscript_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1358,14 +1378,156 @@ tsz_write_typebox_config() {
 tsz_write_class_transformer_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
+tsz_write_type_graphql_external_stubs() {
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+
+  cat > "$fixture_dir/tsz-bench-external-module.d.ts" <<'TYPES'
+declare const tszBenchExternalModule: any;
+export = tszBenchExternalModule;
+TYPES
+
+  cat > "$fixture_dir/tsz-bench-external-named-modules.d.ts" <<'TYPES'
+declare module 'graphql' {
+  export const GraphQLSchema: any;
+  export type GraphQLSchema = any;
+  export const GraphQLObjectType: any;
+  export type GraphQLObjectType = any;
+  export const GraphQLInputObjectType: any;
+  export type GraphQLInputObjectType = any;
+  export const GraphQLInterfaceType: any;
+  export type GraphQLInterfaceType = any;
+  export const GraphQLUnionType: any;
+  export type GraphQLUnionType = any;
+  export const GraphQLEnumType: any;
+  export type GraphQLEnumType = any;
+  export const GraphQLScalarType: any;
+  export type GraphQLScalarType = any;
+  export const GraphQLField: any;
+  export type GraphQLField<T = any, U = any, V = any> = any;
+  export const GraphQLFieldConfig: any;
+  export type GraphQLFieldConfig<T = any, U = any, V = any> = any;
+  export const GraphQLFieldConfigMap: any;
+  export type GraphQLFieldConfigMap<T = any, U = any> = any;
+  export const GraphQLInputFieldConfig: any;
+  export type GraphQLInputFieldConfig = any;
+  export const GraphQLInputFieldConfigMap: any;
+  export type GraphQLInputFieldConfigMap = any;
+  export const GraphQLArgument: any;
+  export type GraphQLArgument = any;
+  export const GraphQLArgumentConfig: any;
+  export type GraphQLArgumentConfig = any;
+  export const GraphQLEnumValueConfigMap: any;
+  export type GraphQLEnumValueConfigMap = any;
+  export const GraphQLIsTypeOfFn: any;
+  export type GraphQLIsTypeOfFn<T = any, U = any> = any;
+  export const GraphQLResolveInfo: any;
+  export type GraphQLResolveInfo = any;
+  export const GraphQLOutputType: any;
+  export type GraphQLOutputType = any;
+  export const GraphQLInputType: any;
+  export type GraphQLInputType = any;
+  export const GraphQLNamedType: any;
+  export type GraphQLNamedType = any;
+  export const GraphQLNonNull: any;
+  export type GraphQLNonNull<T = any> = any;
+  export const GraphQLList: any;
+  export type GraphQLList<T = any> = any;
+  export const GraphQLNullableType: any;
+  export type GraphQLNullableType = any;
+  export const GraphQLType: any;
+  export type GraphQLType = any;
+  export const GraphQLTypeResolver: any;
+  export type GraphQLTypeResolver<T = any, U = any> = any;
+  export const GraphQLFieldResolver: any;
+  export type GraphQLFieldResolver<T = any, U = any, V = any, W = any> = any;
+  export const GraphQLString: any;
+  export const GraphQLInt: any;
+  export const GraphQLFloat: any;
+  export const GraphQLBoolean: any;
+  export const GraphQLID: any;
+  export const execute: any;
+  export const parse: any;
+  export const buildSchema: any;
+  export const printSchema: any;
+  export const getIntrospectionQuery: any;
+  export const introspectionFromSchema: any;
+  export const IntrospectionQuery: any;
+  export type IntrospectionQuery = any;
+  export const Source: any;
+  export type Source = any;
+  export const DocumentNode: any;
+  export type DocumentNode = any;
+  export const GraphQLFormattedError: any;
+  export type GraphQLFormattedError = any;
+  export const GraphQLError: any;
+  export type GraphQLError = any;
+}
+
+declare module 'graphql/type' {
+  export const GraphQLObjectType: any;
+  export type GraphQLObjectType = any;
+  export const GraphQLInputObjectType: any;
+  export type GraphQLInputObjectType = any;
+  export const GraphQLInterfaceType: any;
+  export type GraphQLInterfaceType = any;
+  export const GraphQLUnionType: any;
+  export type GraphQLUnionType = any;
+}
+
+declare module 'graphql/language' {
+  export const DirectiveLocation: any;
+  export type DirectiveLocation = any;
+}
+
+declare module 'reflect-metadata' {}
+
+declare module 'semver' {
+  export const gte: any;
+  export type gte = any;
+}
+
+declare module 'glob' {
+  export const sync: any;
+  export type sync = any;
+}
+
+declare module 'class-validator' {
+  export const ValidatorOptions: any;
+  export type ValidatorOptions = any;
+  export const validate: any;
+  export type validate = any;
+}
+TYPES
+}
+
 tsz_write_type_graphql_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # type-graphql uses `@/` path aliases (baseUrl-relative imports) and depends
+  # on graphql, reflect-metadata, and other external packages. Provide path
+  # mapping plus module stubs so tsc resolves without installing the full
+  # dependency graph.
+  tsz_write_type_graphql_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "*": ["tsz-bench-external-module.d.ts"]
+    },
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+' \
+    ', "tsz-bench-external-named-modules.d.ts"'
 }
 tsz_write_neverthrow_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_xstate_config() {
-  tsz_write_basic_external_project_config "$1" "packages/core/src"
+  # xstate imports sibling modules with explicit `.ts` extensions; its real
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_basic_external_project_config "$1" "packages/core/src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_mobx_config() {
   tsz_write_basic_external_project_config "$1" "packages/mobx/src"
