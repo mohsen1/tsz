@@ -8,7 +8,11 @@ use super::{TypeInstantiator, instantiate_type, instantiate_type_preserving};
 
 impl<'a> TypeInstantiator<'a> {
     /// Instantiate a conditional type: instantiate all parts.
-    pub(super) fn instantiate_conditional(&mut self, cond_id: &ConditionalTypeId) -> TypeId {
+    pub(super) fn instantiate_conditional(
+        &mut self,
+        type_id: TypeId,
+        cond_id: &ConditionalTypeId,
+    ) -> TypeId {
         let cond = self.interner.get_conditional(*cond_id);
         if cond.is_distributive
             && let Some(TypeData::TypeParameter(info)) = self.interner.lookup(cond.check_type)
@@ -107,6 +111,9 @@ impl<'a> TypeInstantiator<'a> {
             false_type: self.instantiate(cond.false_type),
             is_distributive: cond.is_distributive,
         };
+        if instantiated == cond {
+            return type_id;
+        }
         self.interner.conditional(instantiated)
     }
 }

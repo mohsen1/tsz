@@ -822,7 +822,7 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::Callable(shape_id) => self.instantiate_callable(shape_id, key),
 
             // Conditional: instantiate all parts
-            TypeData::Conditional(cond_id) => self.instantiate_conditional(cond_id),
+            TypeData::Conditional(cond_id) => self.instantiate_conditional(type_id, cond_id),
 
             // Mapped: instantiate constraint and template
             TypeData::Mapped(mapped_id) => self.instantiate_mapped(mapped_id),
