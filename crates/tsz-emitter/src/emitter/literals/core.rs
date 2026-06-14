@@ -956,33 +956,8 @@ impl<'a> Printer<'a> {
     }
 }
 
-/// Format an f64 value the way JavaScript's `Number.toString()` would.
-/// JavaScript uses exponential notation for magnitudes >= 1e21 or < 1e-6.
 fn format_js_number(value: f64) -> String {
-    if value.is_infinite() {
-        return "Infinity".to_string();
-    }
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    let abs = value.abs();
-    if value == value.trunc() && abs < 1e21 {
-        return (value as i128).to_string();
-    }
-    if value == 0.0 || (1e-6..1e21).contains(&abs) {
-        return value.to_string();
-    }
-
-    let s = format!("{value:e}");
-    if let Some(pos) = s.find('e') {
-        let (mantissa, exp_part) = s.split_at(pos);
-        let exp_str = &exp_part[1..]; // skip 'e'
-        if !exp_str.starts_with('-') && !exp_str.starts_with('+') {
-            return format!("{mantissa}e+{exp_str}");
-        }
-        return s;
-    }
-    s
+    crate::text_utils::format_js_number(value)
 }
 
 fn decimal_literal_has_exponent(text: &str) -> bool {

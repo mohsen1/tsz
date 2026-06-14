@@ -1292,12 +1292,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn is_plain_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        crate::transforms::emit_utils::is_valid_identifier_name(text)
     }
 
     pub(in crate::declaration_emitter) fn quoted_string_text(text: &str) -> Option<String> {

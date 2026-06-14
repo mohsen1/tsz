@@ -247,8 +247,7 @@ impl<'a> EnumTransformer<'a> {
                     output.push_str("[\"");
                     output.push_str(&member_name);
                     output.push_str("\"] = \"");
-                    // Escape the string
-                    output.push_str(&s.replace('\\', "\\\\").replace('"', "\\\""));
+                    output.push_str(&tsz_common::source_map::escape_js_string(s, '"'));
                     output.push_str("\";\n");
                 }
                 Some(EnumValue::Number(n)) => {
@@ -318,7 +317,7 @@ impl<'a> EnumTransformer<'a> {
                 if let Some(lit) = self.arena.get_literal(node) {
                     format!(
                         "\"{}\"",
-                        lit.text.replace('\\', "\\\\").replace('"', "\\\"")
+                        tsz_common::source_map::escape_js_string(&lit.text, '"')
                     )
                 } else {
                     "\"\"".to_string()

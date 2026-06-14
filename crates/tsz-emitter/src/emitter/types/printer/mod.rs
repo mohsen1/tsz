@@ -355,7 +355,7 @@ fn quote_property_name(name: &str) -> String {
 }
 
 fn quote_property_name_single(name: &str) -> String {
-    format!("'{}'", name.replace('\\', "\\\\").replace('\'', "\\'"))
+    format!("'{}'", escape_js_string(name, '\''))
 }
 
 /// Check if a property name needs quoting, with an `is_string_named` flag

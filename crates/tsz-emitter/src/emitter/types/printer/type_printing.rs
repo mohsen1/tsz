@@ -299,18 +299,8 @@ impl<'a> TypePrinter<'a> {
         type_id
     }
 
-    /// Check if a name is a valid JavaScript/TypeScript identifier
-    /// (can be used in dot-access notation).
     pub(crate) fn is_valid_identifier(name: &str) -> bool {
-        if name.is_empty() {
-            return false;
-        }
-        let mut chars = name.chars();
-        let first = chars.next().unwrap();
-        if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
-            return false;
-        }
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        crate::transforms::emit_utils::is_valid_identifier_name(name)
     }
 
     pub(crate) fn print_property_as_accessors(

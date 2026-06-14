@@ -30,6 +30,7 @@ pub mod lowering;
 pub mod output;
 pub mod passes;
 pub mod safe_slice;
+pub(crate) mod text_utils;
 pub mod transforms;
 pub mod type_cache_view;
 

@@ -37,12 +37,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        crate::transforms::emit_utils::is_valid_identifier_name(text)
     }
 
     pub(in crate::declaration_emitter) fn type_reference_name_text(

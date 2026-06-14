@@ -8,14 +8,10 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         name: &str,
     ) -> usize {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
+        if name.is_empty() {
             return 2;
-        };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-            return name.len() + 2;
         }
-        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+        if crate::transforms::emit_utils::is_valid_identifier_name(name) {
             name.len()
         } else {
             name.len() + 2

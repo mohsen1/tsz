@@ -679,7 +679,7 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!(
                 "\"{}\"",
-                property_name.replace('\\', "\\\\").replace('"', "\\\"")
+                tsz_common::source_map::escape_js_string(&property_name, '"')
             ))
         }
     }

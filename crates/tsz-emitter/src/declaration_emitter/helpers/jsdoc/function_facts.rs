@@ -829,12 +829,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn is_simple_jsdoc_type_name(type_text: &str) -> bool {
-        let mut chars = type_text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        crate::transforms::emit_utils::is_valid_identifier_name(type_text)
     }
 
     pub(crate) fn jsdoc_function_type_signature_for_node(

@@ -1,6 +1,7 @@
 //! ES5 destructuring - for-of array indexing and assignment destructuring.
 
 use super::super::{Printer, is_valid_identifier_name};
+use tsz_common::source_map::escape_js_string;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1111,11 +1112,7 @@ impl<'a> Printer<'a> {
         if is_valid_identifier_name(key) {
             format!("{source}.{key}")
         } else {
-            format!(
-                "{}[\"{}\"]",
-                source,
-                key.replace('\\', "\\\\").replace('"', "\\\"")
-            )
+            format!("{}[\"{}\"]", source, escape_js_string(key, '"'))
         }
     }
 
@@ -1567,7 +1564,7 @@ impl<'a> Printer<'a> {
                 self.write(&key);
             } else {
                 self.write("[\"");
-                self.write(&key.replace('\\', "\\\\").replace('\"', "\\\""));
+                self.write(&escape_js_string(&key, '"'));
                 self.write("\"]");
             }
         } else {
@@ -1598,7 +1595,7 @@ impl<'a> Printer<'a> {
         match prop {
             AssignmentRestProp::Static(key) => {
                 self.write("\"");
-                self.write(&key.replace('\\', "\\\\").replace('"', "\\\""));
+                self.write(&escape_js_string(key, '"'));
                 self.write("\"");
             }
             AssignmentRestProp::Dynamic(temp) => {
@@ -1694,7 +1691,7 @@ impl<'a> Printer<'a> {
         } else {
             self.write(source);
             self.write("[\"");
-            self.write(&key.replace('\\', "\\\\").replace('\"', "\\\""));
+            self.write(&escape_js_string(key, '"'));
             self.write("\"]");
         }
     }
