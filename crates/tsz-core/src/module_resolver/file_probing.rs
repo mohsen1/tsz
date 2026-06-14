@@ -28,6 +28,34 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
+        self.try_file_inner(path, package_type, true)
+    }
+
+    /// Like [`Self::try_file`], but does NOT try directory index resolution
+    /// (`path/index.{ext}`). Used for ESM packages in Node16/NodeNext where
+    /// directory index resolution is not allowed by Node.js.
+    pub(super) fn try_file_no_index(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
+        self.try_file_inner(path, package_type, false)
+    }
+
+    /// Shared body of [`Self::try_file`] and [`Self::try_file_no_index`]. The
+    /// two differ only in the trailing directory-index probe, gated on
+    /// `try_index`: `try_file` passes `true`, `try_file_no_index` passes
+    /// `false` (ESM packages in Node16/NodeNext, where Node.js forbids
+    /// directory index resolution). Everything before that — normalization,
+    /// arbitrary-extension declaration probing, `node16_extension_substitution`,
+    /// the `rewriteRelativeImportExtensions` declaration remap, and the
+    /// original-extension fallback — is identical between the two callers.
+    fn try_file_inner(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+        try_index: bool,
+    ) -> Option<PathBuf> {
         // Canonicalize `.`/`..` before probing so the returned `PathBuf` is
         // the same across alias branches that point at the same file.
         let path = &normalize_path_segments(path);
@@ -55,18 +83,12 @@ impl ModuleResolver {
 
             // When rewriteRelativeImportExtensions is true, .ts/.tsx/.mts/.cts imports
             // should resolve to their declaration file equivalents (.d.ts/.d.mts/.d.cts).
-            if self.rewrite_relative_import_extensions {
-                let decl_ext = match extension {
-                    "ts" | "tsx" => Some("d.ts"),
-                    "mts" => Some("d.mts"),
-                    "cts" => Some("d.cts"),
-                    _ => None,
-                };
-                if let Some(decl_ext) = decl_ext {
-                    let candidate = base.with_extension(decl_ext);
-                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
-                        return Some(resolved);
-                    }
+            if self.rewrite_relative_import_extensions
+                && let Some(decl_ext) = ts_extension_to_declaration(extension)
+            {
+                let candidate = base.with_extension(decl_ext);
+                if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+                    return Some(resolved);
                 }
             }
 
@@ -86,72 +108,16 @@ impl ModuleResolver {
             }
         }
 
-        let index = path.join("index");
-        for ext in extensions {
-            if let Some(resolved) = try_file_with_suffixes_and_extension(&index, ext, suffixes) {
-                return Some(resolved);
-            }
-        }
-
-        None
-    }
-
-    /// Like [`Self::try_file`], but does NOT try directory index resolution
-    /// (`path/index.{ext}`). Used for ESM packages in Node16/NodeNext where
-    /// directory index resolution is not allowed by Node.js.
-    pub(super) fn try_file_no_index(
-        &self,
-        path: &Path,
-        package_type: Option<PackageType>,
-    ) -> Option<PathBuf> {
-        let path = &normalize_path_segments(path);
-        let suffixes = &self.module_suffixes;
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
-            && split_path_extension(path).is_none()
-        {
-            // Always probe for .d.*.ts declaration files regardless of allowArbitraryExtensions.
-            // When the flag is off, the caller (lookup) emits TS6263 for the resolved file.
-            if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
-                return Some(resolved);
-            }
-            return None;
-        }
-        if let Some((base, extension)) = split_path_extension(path) {
-            if let Some(rewritten) = node16_extension_substitution(path, extension) {
-                for candidate in &rewritten {
-                    if let Some(resolved) = try_file_with_suffixes(candidate, suffixes) {
-                        return Some(resolved);
-                    }
+        if try_index {
+            let index = path.join("index");
+            for ext in extensions {
+                if let Some(resolved) = try_file_with_suffixes_and_extension(&index, ext, suffixes)
+                {
+                    return Some(resolved);
                 }
             }
-            if self.rewrite_relative_import_extensions {
-                let decl_ext = match extension {
-                    "ts" | "tsx" => Some("d.ts"),
-                    "mts" => Some("d.mts"),
-                    "cts" => Some("d.cts"),
-                    _ => None,
-                };
-                if let Some(decl_ext) = decl_ext {
-                    let candidate = base.with_extension(decl_ext);
-                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
-                        return Some(resolved);
-                    }
-                }
-            }
-            if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
-            {
-                return Some(resolved);
-            }
-            return None;
         }
 
-        let extensions = self.extension_candidates_for_package_type(package_type);
-        for ext in extensions {
-            if let Some(resolved) = try_file_with_suffixes_and_extension(path, ext, suffixes) {
-                return Some(resolved);
-            }
-        }
-        // No index fallback -- that's the whole point
         None
     }
 
