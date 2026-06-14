@@ -92,12 +92,16 @@ impl<'a> CheckerState<'a> {
         {
             return cached.clone();
         }
-        let declared =
-            self.extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name);
-        let result = if !declared.is_empty() {
-            declared
-        } else {
-            self.get_display_type_params_for_symbol(cache_key.0)
+        // Only fall back to the raw-`SymbolId`-keyed display path when no
+        // matching declaration was found. When `extract_*` resolved a matching
+        // declaration (even to zero params, i.e. a non-generic symbol), trust it:
+        // the display fallback re-derives the owner from the raw `SymbolId`, which
+        // collides across binders and can read a sibling generic's parameters.
+        let result = match self
+            .extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name)
+        {
+            Some(declared) => declared,
+            None => self.get_display_type_params_for_symbol(cache_key.0),
         };
         self.ctx
             .type_reference_validation_caches
@@ -127,9 +131,13 @@ impl<'a> CheckerState<'a> {
         {
             return cached.iter().filter(|p| p.default.is_none()).count();
         }
-        let declared =
-            self.extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name);
-        if !declared.is_empty() {
+        // A resolved declaration (even one with zero params) is authoritative.
+        // Only when no matching declaration exists do we consult the
+        // raw-`SymbolId`-keyed `count_required_type_params`, which can otherwise
+        // read a colliding same-file symbol's parameter count.
+        if let Some(declared) =
+            self.extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name)
+        {
             let count = declared
                 .iter()
                 .filter(|param| param.default.is_none())

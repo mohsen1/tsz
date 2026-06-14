@@ -747,6 +747,71 @@ type B = StarBoxed<number, boolean>;
 }
 
 #[test]
+fn imported_non_generic_alias_ignores_same_file_generic_raw_symbol_collision() {
+    // Regression: an imported NON-generic alias must not inherit the type
+    // parameters of an unrelated generic declared in the *referencing* file.
+    // Raw `SymbolId` values collide across binders; when the reference-type-param
+    // lookup found the (non-generic) declaration but returned an empty list, the
+    // caller used to fall back to the raw-`SymbolId`-keyed display/count path,
+    // which reads the current file's colliding symbol -- a sibling generic --
+    // and leaked its params onto the non-generic alias (type-fest #13599:
+    // `WordsOptions` rendered as `WordsOptions<Type, Underscores>`).
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "sources/words.ts",
+                r#"
+export type WordsOptions = {
+    splitOnNumbers?: boolean;
+    splitOnPunctuation?: boolean;
+};
+export type _DefaultWordsOptions = {
+    splitOnNumbers: false;
+    splitOnPunctuation: false;
+};
+"#,
+            ),
+            (
+                "sources/camel.ts",
+                r#"
+import type { WordsOptions, _DefaultWordsOptions } from "./words";
+
+type LeadingUnderscores<Type extends string, Underscores extends string = ""> =
+    Type extends `_${infer Rest}`
+        ? LeadingUnderscores<Rest, `_${Underscores}`>
+        : Underscores;
+
+export type CamelCaseOptions = WordsOptions & {
+    preserveConsecutiveUppercase?: boolean;
+    preserveLeadingUnderscores?: boolean;
+};
+
+export type _DefaultCamelCaseOptions = _DefaultWordsOptions & {
+    preserveConsecutiveUppercase: false;
+    preserveLeadingUnderscores: false;
+};
+
+export type Lead<Type extends string> = LeadingUnderscores<Type>;
+"#,
+            ),
+        ],
+        "sources/camel.ts",
+        CheckerOptions::default(),
+    );
+
+    let arity_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2558 | 2707))
+        .collect();
+    assert_eq!(
+        arity_errors.len(),
+        0,
+        "Imported non-generic alias must not inherit a same-file generic's type \
+         parameters via raw-SymbolId collision; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn local_ref_type_params_ignore_cross_file_raw_symbol_owner_collision() {
     let diags = check_multi_file_with_global_index(
         &[

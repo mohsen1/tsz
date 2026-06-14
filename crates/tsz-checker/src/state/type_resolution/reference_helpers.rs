@@ -376,7 +376,9 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(true);
         if should_extract_params {
-            let params = self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+            let params = self
+                .extract_declared_type_params_for_reference_symbol(sym_id, name)
+                .unwrap_or_default();
             if !params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, params);
             } else if !self.ctx.lib_contexts.is_empty() {
@@ -404,11 +406,24 @@ impl<'a> CheckerState<'a> {
         def_id
     }
 
+    /// Extract the type parameters declared by a referenced symbol, resolved
+    /// against the symbol's own declaration arena and gated by `expected_name`.
+    ///
+    /// Returns `Some(params)` when a declaration whose name matches
+    /// `expected_name` was located — even when the result is empty, which means
+    /// the symbol is genuinely non-generic. Returns `None` only when no matching
+    /// declaration could be found in any known arena.
+    ///
+    /// The `Some(empty)` vs `None` distinction matters: a non-generic symbol must
+    /// not let callers fall back to the raw-`SymbolId`-keyed display/count paths,
+    /// because raw `SymbolId` values collide across binders and that fallback can
+    /// read an unrelated same-file generic's parameters (e.g. an imported
+    /// non-generic alias inheriting a sibling generic's free type params).
     pub(crate) fn extract_declared_type_params_for_reference_symbol(
         &mut self,
         sym_id: SymbolId,
         expected_name: &str,
-    ) -> Vec<tsz_solver::TypeParamInfo> {
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
         let mut effective_sym_id = sym_id;
         let mut effective_file_idx = None;
         let local_reference_sym_id =
@@ -442,7 +457,7 @@ impl<'a> CheckerState<'a> {
             self.get_symbol_from_registered_file_target(effective_sym_id)
                 .or_else(|| self.get_cross_file_symbol(effective_sym_id))
         }) else {
-            return Vec::new();
+            return None;
         };
         let declarations = symbol.declarations.clone();
         let imported_decl_name = self
@@ -471,22 +486,31 @@ impl<'a> CheckerState<'a> {
                     &symbol.escaped_name,
                 ) && !names.is_empty()
                 {
-                    return names
-                        .into_iter()
-                        .map(|name| tsz_solver::TypeParamInfo {
-                            name: self.ctx.types.intern_string(&name),
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                            origin: tsz_solver::TypeParamOrigin::User,
-                        })
-                        .collect();
+                    return Some(
+                        names
+                            .into_iter()
+                            .map(|name| tsz_solver::TypeParamInfo {
+                                name: self.ctx.types.intern_string(&name),
+                                constraint: None,
+                                default: None,
+                                is_const: false,
+                                origin: tsz_solver::TypeParamOrigin::User,
+                            })
+                            .collect(),
+                    );
                 }
             }
         }
 
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
+        // A declaration whose name matches and that is *syntactically* non-generic
+        // (no type-parameter list) proves the symbol has no type parameters. A
+        // matched declaration that *does* have a type-parameter list but whose
+        // params we failed to extract here must keep the display fallback alive,
+        // so it is tracked separately.
+        let mut matched_non_generic_decl = false;
+        let mut matched_generic_decl = false;
         for &decl_idx in &declarations {
             let cross_file_arena = if let Some(file_idx) = effective_file_idx.or_else(|| {
                 if current_non_import {
@@ -842,8 +866,44 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if params.is_empty() {
+                    // The matched declaration produced no type parameters. Only
+                    // treat this as authoritative (symbol is non-generic) when the
+                    // declaration is syntactically non-generic; if it carries a
+                    // type-parameter list we merely failed to resolve, defer to the
+                    // display fallback by marking it generic.
+                    let syntactically_generic = decl_arena
+                        .get_type_alias(node)
+                        .map(|alias| {
+                            alias
+                                .type_parameters
+                                .as_ref()
+                                .is_some_and(|tp| !tp.nodes.is_empty())
+                        })
+                        .or_else(|| {
+                            decl_arena.get_interface(node).map(|iface| {
+                                iface
+                                    .type_parameters
+                                    .as_ref()
+                                    .is_some_and(|tp| !tp.nodes.is_empty())
+                            })
+                        })
+                        .or_else(|| {
+                            decl_arena.get_class(node).map(|class| {
+                                class
+                                    .type_parameters
+                                    .as_ref()
+                                    .is_some_and(|tp| !tp.nodes.is_empty())
+                            })
+                        })
+                        .unwrap_or(false);
+                    if syntactically_generic {
+                        matched_generic_decl = true;
+                    } else {
+                        matched_non_generic_decl = true;
+                    }
                     continue;
                 }
+                matched_generic_decl = true;
                 if merged.is_empty() {
                     merged = params;
                     continue;
@@ -876,12 +936,21 @@ impl<'a> CheckerState<'a> {
             }
         }
         if !merged.is_empty() {
-            return merged;
+            return Some(merged);
         }
         if let Some(jsdoc_params) = jsdoc_fallback {
-            return jsdoc_params;
+            return Some(jsdoc_params);
         }
-        Vec::new()
+        if matched_non_generic_decl && !matched_generic_decl {
+            // Every matched declaration is syntactically non-generic: the symbol
+            // genuinely has no type parameters. Returning `Some(empty)` keeps
+            // callers off the raw-`SymbolId` display/count fallback that can leak a
+            // colliding same-file symbol's parameters. When a matched declaration
+            // carried an unresolved type-parameter list (`matched_generic_decl`),
+            // fall through to `None` so the display path can still recover them.
+            return Some(Vec::new());
+        }
+        None
     }
 
     /// Read leading JSDoc on a JS class declaration and synthesize
