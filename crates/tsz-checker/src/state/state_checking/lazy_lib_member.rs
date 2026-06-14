@@ -145,47 +145,65 @@ impl CheckerState<'_> {
         }
 
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
-
-        // Must resolve to a concrete lib interface symbol.
-        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
-            return None;
-        }
-
-        // Non-generic only: a generic interface body would need its receiver's
-        // type arguments substituted into the member type, which the bare-Lazy
-        // path cannot supply.
-        if self
+        if let Some(&eligible) = self
             .ctx
-            .get_def_type_params(def_id)
-            .is_some_and(|p| !p.is_empty())
+            .lib_type_resolution_caches
+            .lazy_member_receivers
+            .borrow()
+            .get(&def_id)
         {
-            return None;
+            return eligible.then_some(def_id);
         }
 
-        let name = symbol.escaped_name.clone();
-        if crate::query_boundaries::type_predicates::is_compiler_managed_type(&name) {
-            return None;
-        }
-        if self.ctx.file_local_type_shadow_for_lib_name(&name) {
-            return None;
-        }
-        // The symbol must come from the actual/cloned lib — user interfaces (even
-        // sharing a lib name) take the normal path so augmentation/merging stays
-        // correct.
-        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
-            return None;
-        }
+        let eligible = (|| {
+            // Must resolve to a concrete lib interface symbol.
+            let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+                return None;
+            }
 
-        // A globally-augmented or user-shadowed interface/base may gain members
-        // from a separate declaration. Fall back to full materialization so
-        // merge state and diagnostic source locations stay authoritative.
-        if self.lib_interface_or_heritage_is_augmented_or_shadowed(sym_id, &name) {
-            return None;
-        }
+            // Non-generic only: a generic interface body would need its receiver's
+            // type arguments substituted into the member type, which the bare-Lazy
+            // path cannot supply.
+            if self
+                .ctx
+                .get_def_type_params(def_id)
+                .is_some_and(|p| !p.is_empty())
+            {
+                return None;
+            }
 
-        Some(def_id)
+            let name = symbol.escaped_name.clone();
+            if crate::query_boundaries::type_predicates::is_compiler_managed_type(&name) {
+                return None;
+            }
+            if self.ctx.file_local_type_shadow_for_lib_name(&name) {
+                return None;
+            }
+            // The symbol must come from the actual/cloned lib — user interfaces (even
+            // sharing a lib name) take the normal path so augmentation/merging stays
+            // correct.
+            if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                return None;
+            }
+
+            // A globally-augmented or user-shadowed interface/base may gain members
+            // from a separate declaration. Fall back to full materialization so
+            // merge state and diagnostic source locations stay authoritative.
+            if self.lib_interface_or_heritage_is_augmented_or_shadowed(sym_id, &name) {
+                return None;
+            }
+
+            Some(def_id)
+        })()
+        .is_some();
+        self.ctx
+            .lib_type_resolution_caches
+            .lazy_member_receivers
+            .borrow_mut()
+            .insert(def_id, eligible);
+        eligible.then_some(def_id)
     }
 
     /// Whether a lib interface `name` has any global augmentation declarations
