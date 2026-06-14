@@ -128,6 +128,9 @@ mod printer_tests;
 // Span - Source location tracking (byte offsets)
 pub use tsz_common::span;
 
+// Diagnostics - re-exported so `tsz::diagnostics` resolves for downstream consumers
+pub use tsz_common::diagnostics;
+
 // SourceFile - Owns source text and provides &str references
 pub mod source_file;
 

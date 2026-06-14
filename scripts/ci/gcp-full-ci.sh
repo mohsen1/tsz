@@ -446,11 +446,17 @@ run_lint() {
   # — separate cache key from .target/debug so dev incrementals on a
   # contributor's machine aren't poisoned by CI-shaped fingerprints, and
   # vice versa.
-  cargo clippy --profile ci-lint \
-    -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
-    -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
+  # tsz-conformance is excluded: it pre-dates workspace lint inheritance and
+  # has existing violations that need a dedicated cleanup PR before it can
+  # join the gate (#13453).
+  cargo clippy --profile ci-lint --workspace --exclude tsz-conformance \
     --all-targets -- -D warnings || return $?
   scripts/arch/check-checker-boundaries.sh || return $?
+  # Warn-level ratchet: counts must not rise above the committed baseline.
+  # The baseline starts at {} (zero warnings under the current -D warnings
+  # gate) and is bumped by --update-baseline when new warn-level lints are
+  # introduced (e.g. pedantic = warn from #13443).
+  python3 scripts/arch/check-clippy-warn-ratchet.py --profile ci-lint || return $?
   # Surface sccache stats so the cache health is visible without reading
   # the workflow log into a separate step.
   if command -v sccache >/dev/null 2>&1; then

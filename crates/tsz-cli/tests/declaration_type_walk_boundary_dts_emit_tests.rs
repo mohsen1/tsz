@@ -88,7 +88,7 @@ fn emit_dts(name: &str, source: &str) -> Option<String> {
 #[track_caller]
 fn assert_dts(name: &str, source: &str, expected: &str) {
     let Some(dts) = emit_dts(name, source) else {
-        eprintln!("skipping: tsz binary unavailable");
+        println!("skipping: tsz binary unavailable");
         return;
     };
     assert_eq!(dts.trim_end(), expected.trim_end(), "fixture: {name}");

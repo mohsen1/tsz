@@ -1162,7 +1162,7 @@ function init(hooks: Hooks): void {
     );
 }
 
-/// A class declared in a node_modules `.d.ts` module must keep its
+/// A class declared in a `node_modules` `.d.ts` module must keep its
 /// instance/constructor split when several root files share it: the value
 /// side (`new C()`, static access) resolves to the constructor and the type
 /// side (annotations) resolves to the instance, regardless of which root is

@@ -12,3 +12,6 @@ description = "tsz project website — Eleventy static site deployed to tsz.dev"
 path = "rust/lib.rs"
 test = false
 doctest = false
+
+[lints]
+workspace = true
