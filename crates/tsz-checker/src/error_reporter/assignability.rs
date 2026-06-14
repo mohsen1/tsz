@@ -328,15 +328,26 @@ impl<'a> CheckerState<'a> {
 
         use crate::diagnostics::diagnostic_codes;
 
-        // When a value anchor is supplied, reposition missing-property codes
-        // (TS2741/TS2739/TS2740) to anchor on the property value — matching
-        // tsc's `elaborateElementwise` behavior that uses the initializer as
-        // the error node for missing-property elaborations.
-        if let Some(value_anchor_src) = value_anchor_idx {
+        // The missing-property elaboration codes (TS2741/TS2739/TS2740) whose
+        // span and code are finalized below once the value anchor and downgrade
+        // decision are known.
+        let is_missing_property = |code: u32| {
+            matches!(
+                code,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            )
+        };
+
+        // When a value anchor is supplied, missing-property codes are
+        // repositioned to anchor on the property value — matching tsc's
+        // `elaborateElementwise` behavior that uses the initializer as the error
+        // node for missing-property elaborations.
+        let value_span = value_anchor_idx.and_then(|value_anchor_src| {
             let resolved_value_anchor =
                 self.resolve_diagnostic_anchor_node(value_anchor_src, DiagnosticAnchorKind::Exact);
-            let value_span = self
-                .resolve_diagnostic_anchor(resolved_value_anchor, DiagnosticAnchorKind::Exact)
+            self.resolve_diagnostic_anchor(resolved_value_anchor, DiagnosticAnchorKind::Exact)
                 .map(|anchor| (anchor.start, anchor.length))
                 .or_else(|| {
                     self.get_node_span(resolved_value_anchor).map(|(pos, end)| {
@@ -346,55 +357,47 @@ impl<'a> CheckerState<'a> {
                             end.saturating_sub(pos),
                         )
                     })
-                });
-            if let Some((start, length)) = value_span {
-                for diag in &mut self.ctx.diagnostics[diag_count_before..] {
-                    if matches!(
-                        diag.code,
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                            | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                            | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-                    ) {
-                        diag.start = start;
-                        diag.length = length;
-                    }
-                }
-            }
-        }
-
-        if !downgrade_missing_to_2322 {
-            return;
-        }
-
-        let needs_downgrade = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
-            matches!(
-                d.code,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-            )
+                })
         });
-        if needs_downgrade {
+
+        // Downgrade missing-property elaborations to TS2322 when the caller asks
+        // for it and at least one such diagnostic was emitted. The replacement
+        // message is built before the buffer tail is finalized.
+        let downgrade_message = (downgrade_missing_to_2322
+            && self
+                .ctx
+                .recent_diagnostics(diag_count_before)
+                .iter()
+                .any(|d| is_missing_property(d.code)))
+        .then(|| {
             let src_str = "this".to_string();
             let tgt_str = self.format_type_for_assignability_message(target);
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
-            let new_message = crate::diagnostics::format_message(
+            crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
-            );
-            for diag in &mut self.ctx.diagnostics[diag_count_before..] {
-                if matches!(
-                    diag.code,
-                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-                ) {
+            )
+        });
+
+        if value_span.is_none() && downgrade_message.is_none() {
+            return;
+        }
+
+        self.ctx
+            .finalize_recent_diagnostics(diag_count_before, |diag| {
+                if !is_missing_property(diag.code) {
+                    return;
+                }
+                if let Some((start, length)) = value_span {
+                    diag.start = start;
+                    diag.length = length;
+                }
+                if let Some(new_message) = &downgrade_message {
                     diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
                     diag.message_text = new_message.clone();
                 }
-            }
-        }
+            });
     }
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {

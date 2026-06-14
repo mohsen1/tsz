@@ -1337,22 +1337,23 @@ impl<'a> CheckerState<'a> {
     fn rewrite_recent_jsx_element_source_display(&mut self, diagnostics_start: usize) {
         use crate::diagnostics::diagnostic_codes;
 
-        for diagnostic in self.ctx.diagnostics.iter_mut().skip(diagnostics_start) {
-            if diagnostic.code
-                != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                && diagnostic.code
-                    != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-                && diagnostic.code
-                    != diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-            {
-                continue;
-            }
+        self.ctx
+            .finalize_recent_diagnostics(diagnostics_start, |diagnostic| {
+                if diagnostic.code
+                    != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    && diagnostic.code
+                        != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    && diagnostic.code
+                        != diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                {
+                    return;
+                }
 
-            diagnostic.message_text =
-                diagnostic
-                    .message_text
-                    .replacen("Type 'Element'", "Type 'ReactElement<any>'", 1);
-        }
+                diagnostic.message_text =
+                    diagnostic
+                        .message_text
+                        .replacen("Type 'Element'", "Type 'ReactElement<any>'", 1);
+            });
     }
 
     fn report_jsx_multiple_children_individual_assignability(
@@ -1462,11 +1463,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        for diagnostic in self.ctx.diagnostics.iter_mut().skip(diagnostics_start) {
-            diagnostic.message_text = diagnostic
-                .message_text
-                .replace(raw_target_display, normalized_target_display);
-        }
+        self.ctx
+            .finalize_recent_diagnostics(diagnostics_start, |diagnostic| {
+                diagnostic.message_text = diagnostic
+                    .message_text
+                    .replace(raw_target_display, normalized_target_display);
+            });
     }
 
     fn jsx_multiple_children_expected_union_for_display(&mut self, type_id: TypeId) -> TypeId {

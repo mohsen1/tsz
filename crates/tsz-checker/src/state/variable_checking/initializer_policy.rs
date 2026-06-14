@@ -488,7 +488,8 @@ impl<'a> CheckerState<'a> {
                         let func = self.ctx.arena.get_function(init_node)?;
                         let body_node = self.ctx.arena.get(func.body)?;
                         Some(
-                            self.ctx.diagnostics[init_diagnostics_len..]
+                            self.ctx
+                                .recent_diagnostics(init_diagnostics_len)
                                 .iter()
                                 .any(|diag| {
                                     diag.start >= body_node.pos

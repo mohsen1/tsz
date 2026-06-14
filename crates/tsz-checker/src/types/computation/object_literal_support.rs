@@ -173,7 +173,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if the refresh pass re-emitted any implicit-any diagnostics.
         // If so, contextual typing didn't help — keep everything.
-        let refreshed_still_has_implicit_any = self.ctx.diagnostics[pre_refresh.diagnostics_len..]
+        let refreshed_still_has_implicit_any = self
+            .ctx
+            .recent_diagnostics(pre_refresh.diagnostics_len)
             .iter()
             .any(|diag| {
                 Self::implicit_any_like_diagnostic_code(diag.code)
