@@ -1,8 +1,5 @@
 use super::*;
-// The boolean/number/symbol/bigint primitive predicates are defined once in
-// `query_boundaries::common`; `property_access` no longer keeps duplicate
-// forwarders, so pull them from their canonical home here.
-use crate::query_boundaries::common::{
+use crate::query_boundaries::property_access::{
     is_bigint_type, is_boolean_type, is_number_type, is_string_type, is_symbol_type,
 };
 use tsz_solver::construction::TypeInterner;
