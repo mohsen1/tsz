@@ -190,7 +190,7 @@ pub(crate) fn map_function_shape_types(
     shape: &FunctionShape,
     mut map_type: impl FnMut(FunctionShapeTypeSlot, TypeId) -> TypeId,
 ) -> Option<FunctionShape> {
-    let mut params = None;
+    let mut params: Option<Vec<ParamInfo>> = None;
     for (index, param) in shape.params.iter().enumerate() {
         let mapped = map_type(FunctionShapeTypeSlot::Param, param.type_id);
         if let Some(params) = &mut params {
