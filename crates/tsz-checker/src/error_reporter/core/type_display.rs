@@ -636,6 +636,9 @@ impl<'a> CheckerState<'a> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
+        if crate::error_reporter::display_budget::is_exhausted() {
+            return ty;
+        }
 
         if depth >= MAX_ASSIGNABILITY_DISPLAY_DEPTH || !visiting.insert(ty) {
             return ty;
@@ -1261,6 +1264,9 @@ impl<'a> CheckerState<'a> {
         // overflow the stack while materializing a finite mapped type for
         // display (issue #12455).
         let _display_guard = DisplayRecursionGuard::enter()?;
+        if !crate::error_reporter::display_budget::try_consume_visit() {
+            return None;
+        }
         if let Some((mapped_id, mapped)) = query::mapped_type(self.ctx.types, ty) {
             let names =
                 crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
@@ -1277,6 +1283,9 @@ impl<'a> CheckerState<'a> {
 
             let mut properties = Vec::with_capacity(names.len());
             for name in names {
+                if crate::error_reporter::display_budget::is_exhausted() {
+                    return None;
+                }
                 let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
                 let type_id =
                     crate::query_boundaries::state::checking::get_finite_mapped_property_type(
@@ -1299,6 +1308,9 @@ impl<'a> CheckerState<'a> {
             let remapped: Vec<_> = members
                 .iter()
                 .map(|&member| {
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        return member;
+                    }
                     if let Some(materialized) =
                         self.materialize_finite_mapped_type_for_display(member)
                     {
@@ -1315,6 +1327,9 @@ impl<'a> CheckerState<'a> {
             let remapped: Vec<_> = members
                 .iter()
                 .map(|&member| {
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        return member;
+                    }
                     if let Some(materialized) =
                         self.materialize_finite_mapped_type_for_display(member)
                     {
