@@ -211,7 +211,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         if target_is_switch_expr || discriminant_info.is_some() {
             if !has_fallthrough
-                && let Some(current_lit_type) = self.literal_type_from_node(case_expr)
+                && let Some(current_lit_type) = self.cached_case_clause_literal_type(case_expr)
             {
                 let mut previous_cases_are_distinct_literals = true;
                 for &idx in &case_block_data.statements.nodes {
@@ -228,7 +228,9 @@ impl<'a> FlowAnalyzer<'a> {
                         previous_cases_are_distinct_literals = false;
                         break;
                     }
-                    let Some(prev_lit_type) = self.literal_type_from_node(clause.expression) else {
+                    let Some(prev_lit_type) =
+                        self.cached_case_clause_literal_type(clause.expression)
+                    else {
                         previous_cases_are_distinct_literals = false;
                         break;
                     };
@@ -266,7 +268,7 @@ impl<'a> FlowAnalyzer<'a> {
                     continue; // Skip default clause
                 }
 
-                if let Some(lit_type) = self.literal_type_from_node(clause.expression) {
+                if let Some(lit_type) = self.cached_case_clause_literal_type(clause.expression) {
                     excluded_types.push(lit_type);
                 } else if let Some(node_types) = self.node_types
                     && let Some(&expr_type) = node_types.get(&clause.expression.0)

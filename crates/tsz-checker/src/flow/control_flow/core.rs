@@ -738,6 +738,39 @@ impl<'a> FlowAnalyzer<'a> {
         self.shared.map(|s| &s.flow_numeric_atom_cache)
     }
 
+    /// Shared switch-case-clause literal-type cache, when wired.
+    #[inline]
+    pub(crate) fn shared_switch_case_literal_cache(
+        &self,
+    ) -> Option<&'a RefCell<FxHashMap<u32, Option<TypeId>>>> {
+        self.shared.map(|s| &s.flow_switch_case_literal_cache)
+    }
+
+    /// Literal `TypeId` of a switch-case clause expression, memoized.
+    ///
+    /// `literal_type_from_node` is a pure function of the immutable post-bind
+    /// AST node, so this caches its result keyed by the clause-expression
+    /// `NodeIndex`. `narrow_by_switch_case_clause` scans every earlier clause on
+    /// every case, so without memoization an N-arm literal switch re-derives (and
+    /// re-interns) O(N^2) case labels; the shared cache makes the per-switch
+    /// literal materialization O(N) total.
+    ///
+    /// When the shared bundle is absent (isolated unit-test analyzers), this
+    /// falls through to direct computation and preserves identical behavior — it
+    /// only skips the memo.
+    #[inline]
+    pub(crate) fn cached_case_clause_literal_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let Some(cache) = self.shared_switch_case_literal_cache() else {
+            return self.literal_type_from_node(idx);
+        };
+        if let Some(&hit) = cache.borrow().get(&idx.0) {
+            return hit;
+        }
+        let computed = self.literal_type_from_node(idx);
+        cache.borrow_mut().insert(idx.0, computed);
+        computed
+    }
+
     /// Shared alias path-assignment memo, when wired.
     /// Key: (`alias_symbol`, `target_reference_node`, `antecedent_flow`) ->
     /// whether the backward path from the antecedent to the alias declaration
