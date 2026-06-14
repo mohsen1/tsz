@@ -62,8 +62,9 @@ impl CheckerState<'_> {
         name: &str,
         prop_name: &str,
     ) -> Option<TypeId> {
+        let name_atom = self.ctx.types.intern_string(name);
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let key = (name.to_string(), prop_atom);
+        let key = (name_atom, prop_atom);
         if let Some(cached) = self
             .ctx
             .lib_type_resolution_caches

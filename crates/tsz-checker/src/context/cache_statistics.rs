@@ -222,9 +222,7 @@ impl<'a> CheckerContext<'a> {
                 ),
             lazy_lib_member_resolution_cache_entries: lazy_lib_member_resolution_cache.len(),
             lazy_lib_member_resolution_cache_estimated_size_bytes:
-                string_atom_option_type_cache_estimated_size_bytes(
-                    &lazy_lib_member_resolution_cache,
-                ),
+                atom_atom_option_type_cache_estimated_size_bytes(&lazy_lib_member_resolution_cache),
             symbol_name_candidates_cache_entries: symbol_name_candidates_cache.len(),
             symbol_name_candidates_cache_estimated_size_bytes:
                 string_symbol_vec_cache_estimated_size_bytes(&symbol_name_candidates_cache),
@@ -340,11 +338,10 @@ fn string_option_type_cache_estimated_size_bytes(
         .saturating_add(cache.keys().map(String::len).sum::<usize>())
 }
 
-fn string_atom_option_type_cache_estimated_size_bytes(
-    cache: &FxHashMap<(String, Atom), Option<TypeId>>,
+fn atom_atom_option_type_cache_estimated_size_bytes(
+    cache: &FxHashMap<(Atom, Atom), Option<TypeId>>,
 ) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
-        .saturating_add(cache.keys().map(|(name, _)| name.len()).sum::<usize>())
 }
 
 fn string_symbol_vec_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<SymbolId>>) -> usize {

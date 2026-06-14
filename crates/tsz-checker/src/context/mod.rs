@@ -151,12 +151,12 @@ pub struct LibTypeResolutionCaches {
     pub types: FxHashMap<String, Option<TypeId>>,
 
     /// Per-checker cache for lazy single-member lib-interface property reads.
-    /// Keyed by `(interface_name, property_name)` and stores both hits and
+    /// Keyed by `(interface_name, property_name)` atoms and stores both hits and
     /// conservative misses after the existing lazy-member resolver has decided
     /// whether it can lower only the requested member. This keeps repeated DOM
     /// reads from rescanning declaration and heritage lists while preserving the
     /// same full-materialization fallback on cached misses.
-    pub lazy_members: RefCell<FxHashMap<(String, Atom), Option<TypeId>>>,
+    pub lazy_members: RefCell<FxHashMap<(Atom, Atom), Option<TypeId>>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
