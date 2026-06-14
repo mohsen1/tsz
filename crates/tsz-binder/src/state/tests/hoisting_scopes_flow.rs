@@ -1281,9 +1281,8 @@ fn hoisted_var_present_in_function_body_block_scope() {
     // flow-sensitive `typeof`-in-signature resolution depends on the body-block
     // entry; without it, `typeof b` in a return-type annotation mis-resolves the
     // var as in-scope instead of reporting TS2304.
-    let (binder, _parser) = parse_and_bind(
-        "function bar(): typeof b {\n    var b = 1;\n    return undefined;\n}\n",
-    );
+    let (binder, _parser) =
+        parse_and_bind("function bar(): typeof b {\n    var b = 1;\n    return undefined;\n}\n");
     let function_has_b = binder
         .scopes
         .iter()
@@ -1292,7 +1291,10 @@ fn hoisted_var_present_in_function_body_block_scope() {
         .scopes
         .iter()
         .any(|s| s.kind == ContainerKind::Block && s.table.get("b").is_some());
-    assert!(function_has_b, "hoisted var should be in the function scope");
+    assert!(
+        function_has_b,
+        "hoisted var should be in the function scope"
+    );
     assert!(
         body_block_has_b,
         "hoisted var should also be re-exposed in the function body block scope"
@@ -1305,17 +1307,13 @@ fn hoisted_var_not_leaked_into_nested_catch_block() {
     // collide with a block-scoped declaration of the same name there, producing
     // spurious TS2300. The hoisted var stays out of the nested block's table; the
     // block-scoped `function x() {}` owns the catch block's `x`.
-    let (binder, _parser) = parse_and_bind(
-        "try { } catch (e) {\n    var x;\n    function x() {}\n}\n",
-    );
+    let (binder, _parser) =
+        parse_and_bind("try { } catch (e) {\n    var x;\n    function x() {}\n}\n");
     // The catch block scope's table must not carry the hoisted FUNCTION_SCOPED var
     // alongside the block-scoped function under the same name as a merged entry.
     // (Resolution still works via the parent chain.) We assert at least that a
     // block scope exists and binding did not panic / merge into one symbol.
-    let has_block = binder
-        .scopes
-        .iter()
-        .any(|s| s.kind == ContainerKind::Block);
+    let has_block = binder.scopes.iter().any(|s| s.kind == ContainerKind::Block);
     assert!(has_block, "catch block should create a block scope");
 }
 

@@ -328,9 +328,7 @@ impl BinderState {
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 arena.get_method_decl(parent).map(|m| m.body)
             }
-            k if k == syntax_kind_ext::CONSTRUCTOR => {
-                arena.get_constructor(parent).map(|c| c.body)
-            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => arena.get_constructor(parent).map(|c| c.body),
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 arena.get_accessor(parent).map(|a| a.body)
             }
@@ -1746,9 +1744,7 @@ impl BinderState {
                 // No persistent scope, or the var's home function/source/module scope.
                 None | Some((true, _)) => true,
                 // A nested block: re-expose only when it is the function's own body block.
-                Some((false, container_node)) => {
-                    self.is_function_body_block(arena, container_node)
-                }
+                Some((false, container_node)) => self.is_function_body_block(arena, container_node),
             };
             if reexpose_here {
                 self.declare_in_persistent_scope_with_atom(
