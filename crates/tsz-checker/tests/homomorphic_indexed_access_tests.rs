@@ -502,3 +502,123 @@ type Bad = UsePaths<unknown, CreateTypeOptions<PathBag, {}, BadDefaults>>;
         "incompatible defaults must still emit TS2344"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Generic indexed access by a bare type parameter stays deferred (no TS2322)
+//
+// Structural rule: `O[K]` for a bare type parameter `K extends keyof O`
+// (the object currently being indexed) is the homomorphic element type and
+// must stay deferred as `O[K]`. It must NOT distribute into `O[keyof O]` (the
+// union over every value type). The defect surfaced when a homomorphic mapped
+// element function `(x: O[K]) => O[K]` is invoked: distributing the receiver's
+// `O[K]` return into the value-type union made the call return the union and
+// fired a false TS2322 against the declared `O[K]` return type.
+//
+// Counter-boundary: indexing by `keyof O` itself (a `KeyOf`, not a type
+// parameter) must still expand to the value-type union, so
+// `{ [P in keyof T]: T[P] }[keyof T]` stays a union.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn ts2322(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+    diags.iter().filter(|d| d.code == 2322).collect()
+}
+
+#[test]
+fn homomorphic_reader_call_return_no_ts2322() {
+    // Binder names deliberately non-canonical to avoid name fast-paths.
+    let diags = check_es5(
+        r#"
+interface Bag { alpha: { v: number }; beta: { v: string } }
+type Readers<Src> = { [Field in keyof Src]: (x: Src[Field]) => Src[Field] };
+declare const readers: Readers<Bag>;
+declare const model: Bag;
+function readIndexed<Probe extends keyof Bag>(key: Probe): Bag[Probe] {
+  return readers[key](model[key]);
+}
+"#,
+    );
+    assert!(
+        ts2322(&diags).is_empty(),
+        "homomorphic reader call must return Bag[Probe], not the value union: {diags:?}"
+    );
+}
+
+#[test]
+fn homomorphic_nested_indexed_access_call_no_ts2322() {
+    let diags = check_es5(
+        r#"
+interface Bag { alpha: { v: number }; beta: { v: string } }
+type Boxes<Src> = { [Field in keyof Src]: { box: Src[Field] } };
+declare const boxes: Boxes<Bag>;
+function readBox<Probe extends keyof Bag>(key: Probe): Bag[Probe] {
+  return boxes[key].box;
+}
+"#,
+    );
+    assert!(
+        ts2322(&diags).is_empty(),
+        "nested homomorphic indexed access must stay deferred: {diags:?}"
+    );
+}
+
+#[test]
+fn generic_object_indexed_by_bare_type_param_defers() {
+    // The object is a still-generic `Src`; `Src[Probe]` must stay deferred.
+    let diags = check_es5(
+        r#"
+function generic<Src, Probe extends keyof Src>(
+  readers: { [Field in keyof Src]: (x: Src[Field]) => Src[Field] },
+  model: Src,
+  key: Probe,
+): Src[Probe] {
+  return readers[key](model[key]);
+}
+"#,
+    );
+    assert!(
+        ts2322(&diags).is_empty(),
+        "generic homomorphic reader call must return Src[Probe]: {diags:?}"
+    );
+}
+
+#[test]
+fn indexed_values_by_keyof_stays_union() {
+    // Counter-boundary: indexing by `keyof T` (NOT a bare type param) must
+    // still produce the value-type union. Assigning a non-member must error.
+    let diags = check_es5(
+        r#"
+interface Bag { alpha: { v: number }; beta: { v: string } }
+type IndexedValues<Src> = { [Field in keyof Src]: Src[Field] }[keyof Src];
+const ok1: IndexedValues<Bag> = { v: 1 };
+const ok2: IndexedValues<Bag> = { v: "x" };
+const bad: IndexedValues<Bag> = { v: true };
+"#,
+    );
+    let errs = ts2322(&diags);
+    assert_eq!(
+        errs.len(),
+        1,
+        "IndexedValues<Bag> must remain a union: only `{{ v: true }}` should error, got: {diags:?}"
+    );
+}
+
+#[test]
+fn subset_constrained_type_param_resolves_member() {
+    // `K extends "alpha"` resolves through the literal constraint (not deferred
+    // homomorphically), so the reader element is the concrete `alpha` function.
+    let diags = check_es5(
+        r#"
+interface Bag { alpha: { v: number }; beta: { v: string } }
+type Readers<Src> = { [Field in keyof Src]: (x: Src[Field]) => Src[Field] };
+declare const readers: Readers<Bag>;
+declare const model: Bag;
+function readAlpha<Probe extends "alpha">(key: Probe): Bag[Probe] {
+  return readers[key](model[key]);
+}
+"#,
+    );
+    assert!(
+        ts2322(&diags).is_empty(),
+        "subset-constrained reader call must type-check: {diags:?}"
+    );
+}
