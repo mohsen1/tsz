@@ -109,13 +109,32 @@ impl BinderState {
 
             if is_global_augmentation {
                 if module.body.is_some() {
+                    // The `declare global { ... }` body binds IN-PLACE at the current
+                    // (boundary) scope, exactly like the `declare module "<spec>"`
+                    // augmentation path below. Its declarations are global augmentations:
+                    // they are tracked separately (`global_augmentations`, `file_locals`
+                    // for namespaces) and merged with lib/global symbols at type-resolution
+                    // time. They must NOT linger in the boundary scope's own table, or they
+                    // shadow the original lib declarations they augment (e.g. an
+                    // `interface HTMLElement { [index: number]: HTMLElement }` augmentation
+                    // displacing the lib `HTMLElement`, perturbing `ElementTagNameMap`
+                    // resolution). Snapshot the boundary table and restore it after binding
+                    // so only the dedicated augmentation channels carry these symbols.
+                    // Nested namespaces/enums/classes inside the body get their own child
+                    // scopes in the arena and are unaffected by the restore.
+                    let boundary_scope_id = self.current_scope_id;
                     Arc::make_mut(&mut self.node_scope_ids)
-                        .insert(module.body.0, self.current_scope_id);
+                        .insert(module.body.0, boundary_scope_id);
+                    let saved_scope = self.current_scope().clone();
                     // Set flag so interface declarations inside are tracked as augmentations
                     let was_in_global_augmentation = self.in_global_augmentation;
                     self.in_global_augmentation = true;
                     self.bind_node(arena, module.body);
                     self.in_global_augmentation = was_in_global_augmentation;
+                    self.current_scope_id = boundary_scope_id;
+                    if let Some(table) = self.current_scope_mut() {
+                        *table = saved_scope;
+                    }
                 }
                 return;
             }
@@ -163,19 +182,29 @@ impl BinderState {
                             Arc::make_mut(&mut self.shorthand_ambient_modules)
                                 .insert(module_specifier);
                         } else {
+                            // The augmented body binds IN-PLACE at the current
+                            // (boundary) scope rather than under a fresh child scope.
+                            let boundary_scope_id = self.current_scope_id;
                             Arc::make_mut(&mut self.node_scope_ids)
-                                .insert(module.body.0, self.current_scope_id);
+                                .insert(module.body.0, boundary_scope_id);
                             let was_in_augmentation = self.in_module_augmentation;
                             let prev_module = self.current_augmented_module.take();
-                            // Save current_scope so augmentation symbols don't leak into
-                            // the parent file's scope (and subsequently into file_locals/globals).
-                            let saved_scope = self.current_scope.clone();
+                            // Snapshot the boundary scope's table so augmentation
+                            // symbols written directly into it don't leak into the
+                            // parent file's scope (and subsequently into
+                            // file_locals/globals). Nested namespaces/enums/classes
+                            // inside the body get their own child scopes in the arena
+                            // and are unaffected by this restore.
+                            let saved_scope = self.current_scope().clone();
                             self.in_module_augmentation = true;
                             self.current_augmented_module = Some(module_specifier);
                             self.bind_node(arena, module.body);
                             self.in_module_augmentation = was_in_augmentation;
                             self.current_augmented_module = prev_module;
-                            self.current_scope = saved_scope;
+                            self.current_scope_id = boundary_scope_id;
+                            if let Some(table) = self.current_scope_mut() {
+                                *table = saved_scope;
+                            }
                         }
                         return;
                     }
@@ -271,8 +300,8 @@ impl BinderState {
                         .symbols
                         .get(child_id)
                         .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
-                    if !is_enum_member {
-                        self.current_scope.set(name.clone(), child_id);
+                    if !is_enum_member && let Some(table) = self.current_scope_mut() {
+                        table.set(name.clone(), child_id);
                     }
                 }
             }
@@ -349,7 +378,7 @@ impl BinderState {
                     // Promote ALL symbols — since the module has no name, there is
                     // nothing to export FROM. TSC treats the body as if it were
                     // written directly in the enclosing scope.
-                    self.current_scope
+                    self.current_scope()
                         .iter()
                         .map(|(name, &sym_id)| (name.clone(), sym_id))
                         .collect()
@@ -377,7 +406,9 @@ impl BinderState {
             // into the parent (enclosing namespace) scope so they are accessible
             // as members of the parent namespace.
             for (name, sym_id) in anon_promoted {
-                self.current_scope.set(name, sym_id);
+                if let Some(table) = self.current_scope_mut() {
+                    table.set(name, sym_id);
+                }
                 // Mark as exported so the parent namespace's exit_scope includes
                 // them in its exports table (they're effectively declared inline
                 // in the parent scope).
@@ -686,7 +717,7 @@ impl BinderState {
                                 && let Some(clause_node) = arena.get(export_decl.export_clause)
                             {
                                 if export_decl.is_default_export {
-                                    if let Some(sym_id) = self.current_scope.get("default") {
+                                    if let Some(sym_id) = self.current_scope().get("default") {
                                         exported_symbols.push(("default".to_string(), sym_id));
                                     }
                                 } else {
@@ -836,7 +867,7 @@ impl BinderState {
                         let in_scope: Vec<String> = exported_names
                             .iter()
                             .filter(|name| {
-                                self.current_scope.has(name.as_str())
+                                self.current_scope().has(name.as_str())
                                     || self.file_locals.has(name.as_str())
                             })
                             .cloned()
@@ -870,7 +901,7 @@ impl BinderState {
                             continue;
                         }
                         if let Some(mut sym_id) = self
-                            .current_scope
+                            .current_scope()
                             .get(name)
                             .or_else(|| self.file_locals.get(name))
                         {

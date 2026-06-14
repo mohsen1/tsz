@@ -115,8 +115,6 @@ impl BinderState {
         let mut binder = Self {
             options,
             symbols: SymbolArena::new(),
-            current_scope: SymbolTable::new(),
-            scope_stack: Vec::with_capacity(16),
             file_locals: SymbolTable::new(),
             program_globals: SymbolTable::new(),
             expando_properties: Arc::new(FxHashMap::default()),
@@ -183,8 +181,6 @@ impl BinderState {
     /// their locks.
     pub fn reset(&mut self) {
         self.symbols.clear();
-        self.current_scope.clear();
-        self.scope_stack.clear();
         self.file_locals.clear();
         self.program_globals.clear();
         Arc::make_mut(&mut self.expando_properties).clear();
@@ -352,8 +348,6 @@ impl BinderState {
         let mut binder = Self {
             options,
             symbols,
-            current_scope: SymbolTable::new(),
-            scope_stack: Vec::new(),
             file_locals,
             program_globals: SymbolTable::new(),
             expando_properties: Arc::new(FxHashMap::default()),
@@ -476,8 +470,6 @@ impl BinderState {
         let mut binder = Self {
             options,
             symbols,
-            current_scope: SymbolTable::new(),
-            scope_stack: Vec::new(),
             file_locals,
             program_globals: SymbolTable::new(),
             expando_properties,
@@ -532,8 +524,7 @@ impl BinderState {
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
         };
-        if let Some(root_scope) = binder.scopes.first() {
-            binder.current_scope = root_scope.table.clone();
+        if !binder.scopes.is_empty() {
             binder.current_scope_id = ScopeId(0);
         }
         binder.recompute_module_export_equals_non_module();
@@ -597,6 +588,28 @@ impl BinderState {
         self.scopes.get(self.current_scope_id.0 as usize)
     }
 
+    /// The symbol table of the scope currently being bound.
+    ///
+    /// This is the single live declaration table: `scopes[current_scope_id].table`.
+    /// When no scope is active (pre-bind root state) it returns a shared empty
+    /// table so callers can `.get`/`.has`/`.iter` without a `None` branch.
+    pub fn current_scope(&self) -> &SymbolTable {
+        static EMPTY: std::sync::OnceLock<SymbolTable> = std::sync::OnceLock::new();
+        self.current_persistent_scope()
+            .map(|scope| &scope.table)
+            .unwrap_or_else(|| EMPTY.get_or_init(SymbolTable::new))
+    }
+
+    /// Mutable handle to the scope currently being bound, if one is active.
+    pub(crate) fn current_scope_mut(&mut self) -> Option<&mut SymbolTable> {
+        if self.current_scope_id.is_none() {
+            return None;
+        }
+        Arc::make_mut(&mut self.scopes)
+            .get_mut(self.current_scope_id.0 as usize)
+            .map(|scope| &mut scope.table)
+    }
+
     /// Symbol of the container node owning the current persistent scope
     /// (namespace, class, function, ...), if one has been bound.
     pub(crate) fn current_container_symbol(&self) -> Option<SymbolId> {
@@ -604,10 +617,13 @@ impl BinderState {
             .and_then(|scope| self.get_node_symbol(scope.container_node))
     }
 
-    /// Declare a symbol in the current persistent scope.
-    /// This adds the symbol to the persistent scope table for later querying.
-    /// Skipped during module augmentation to prevent augmented symbols from
-    /// leaking into the augmenting file's scope (and subsequently into `file_locals/globals`).
+    /// Declare a symbol in the current scope's table.
+    ///
+    /// `scopes[current_scope_id].table` is the single declaration target.
+    /// Module-augmentation isolation is handled by the boundary-scope
+    /// save/restore in `modules::binding` (the augmented body binds in-place
+    /// at the parent scope, whose table is snapshotted and restored), so this
+    /// no longer needs a special augmentation skip.
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
         self.declare_in_persistent_scope_with_atom(name, None, sym_id);
     }
@@ -618,27 +634,8 @@ impl BinderState {
         atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
         sym_id: SymbolId,
     ) {
-        if self.in_module_augmentation {
-            return;
-        }
-        if self.current_scope_id.is_some()
-            && let Some(scope) =
-                Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
-        {
-            scope.table.set_with_atom(name, atom_key, sym_id);
-        }
-    }
-
-    pub(crate) fn sync_current_scope_to_persistent(&mut self) {
-        if self.current_scope_id.is_none() {
-            return;
-        }
-        if let Some(persistent_scope) =
-            Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
-        {
-            for (name, &sym_id) in self.current_scope.iter() {
-                persistent_scope.table.set(name.clone(), sym_id);
-            }
+        if let Some(table) = self.current_scope_mut() {
+            table.set_with_atom(name, atom_key, sym_id);
         }
     }
 
@@ -1030,39 +1027,27 @@ impl BinderState {
             }
         }
 
-        // Pre-size current_scope for top-level declarations
-        self.current_scope = if estimated_decl_count > 16 {
-            SymbolTable::with_capacity(estimated_decl_count)
-        } else {
-            SymbolTable::new()
-        };
-
         // Initialize persistent scope system
         Arc::make_mut(&mut self.scopes).clear();
         Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
         Arc::make_mut(&mut self.top_level_flow).clear();
 
-        // Create root persistent scope for the source file, pre-sized for declarations
+        // Create root persistent scope for the source file, pre-sized for
+        // top-level declarations. This is the single live declaration table.
         self.enter_persistent_scope_with_capacity(
             ContainerKind::SourceFile,
             root,
             estimated_decl_count,
         );
 
-        // Pre-populate root persistent scope with lib symbols if they were merged before binding
-        if has_lib_symbols {
-            if let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
-                for (name, sym_id) in &lib_symbols {
-                    root_scope.table.set(name.clone(), *sym_id);
-                }
-            }
-
-            // Also merge lib symbols into current_scope for immediate availability
-            // This ensures symbols like console, Array, Promise are available during binding
+        // Pre-populate the root scope with lib symbols if they were merged before
+        // binding. This ensures symbols like console, Array, Promise are available
+        // during binding.
+        if has_lib_symbols && let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
             for (name, sym_id) in &lib_symbols {
-                if !self.current_scope.has(name) {
-                    self.current_scope.set(name.clone(), *sym_id);
+                if !root_scope.table.has(name) {
+                    root_scope.table.set(name.clone(), *sym_id);
                 }
             }
         }
@@ -1129,8 +1114,6 @@ impl BinderState {
             self.populate_module_exports_from_file_symbols(arena, &file_name);
             self.recompute_module_export_equals_non_module();
         }
-
-        self.sync_current_scope_to_persistent();
 
         // Store file locals from the ROOT scope only, not nested namespaces/modules.
         // This prevents namespace-local symbols from being accessible globally.
@@ -1367,7 +1350,7 @@ impl BinderState {
                 continue;
             };
             let Some(sym_id) = self
-                .current_scope
+                .current_scope()
                 .get(name)
                 .or_else(|| self.file_locals.get(name))
             else {
@@ -1445,7 +1428,7 @@ impl BinderState {
                 };
                 // Try to resolve the symbol now that all declarations are bound
                 let resolved = self
-                    .current_scope
+                    .current_scope()
                     .get(orig)
                     .or_else(|| self.file_locals.get(orig));
                 if let Some(sym_id) = resolved
@@ -1639,20 +1622,11 @@ impl BinderState {
         // Use the new merge helper that properly remaps SymbolIds
         self.merge_lib_contexts_into_binder(&lib_contexts);
 
-        // Also merge into the current scope if we're at the root level.
-        // The persistent scope arena is append-only and only holds more than
-        // the root scope once binding has entered a nested scope, so
-        // `scopes.len() <= 1` is the pre-binding root state (every caller
-        // merges libs before `bind_source_file` populates the arena).
-        if self.scopes.len() <= 1 {
-            for (name, sym_id) in self.file_locals.iter() {
-                if !self.current_scope.has(name) {
-                    self.current_scope.set(name.clone(), *sym_id);
-                }
-            }
-        }
-
-        // Merge into the root persistent scope
+        // Merge into the root persistent scope (the single live declaration table).
+        // The persistent scope arena is append-only and only holds more than the
+        // root scope once binding has entered a nested scope, so this runs in the
+        // pre-binding root state (every caller merges libs before
+        // `bind_source_file` populates the arena).
         if let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
             for (name, sym_id) in self.file_locals.iter() {
                 if !root_scope.table.has(name) {
@@ -1799,11 +1773,15 @@ impl BinderState {
         }
 
         // Reset transient binding state while keeping existing symbols and scopes.
-        self.scope_stack.clear();
-        self.current_scope = self.file_locals.clone();
+        // Seed the root scope's table (the single live declaration table) from the
+        // accumulated file locals so suffix declarations bind against them.
+        self.current_scope_id = ScopeId(0);
+        let seeded = self.file_locals.clone();
+        if let Some(table) = self.current_scope_mut() {
+            *table = seeded;
+        }
         self.hoisted_vars.clear();
         self.hoisted_functions.clear();
-        self.current_scope_id = ScopeId(0);
         self.current_flow = start_flow;
 
         let new_suffix_list = NodeList {
@@ -1822,12 +1800,10 @@ impl BinderState {
             Arc::make_mut(&mut self.top_level_flow).insert(stmt_idx.0, self.current_flow);
         }
 
-        self.sync_current_scope_to_persistent();
-
         // Store file locals, preserving any existing lib symbols
         // This ensures symbols from merge_lib_symbols() are not lost
         let existing_file_locals = std::mem::take(&mut self.file_locals);
-        self.file_locals = std::mem::take(&mut self.current_scope);
+        self.file_locals = self.current_scope().clone();
         // Merge back any existing file locals (e.g., lib symbols) that were pre-populated
         for (name, sym_id) in existing_file_locals.iter() {
             if !self.file_locals.has(name) {

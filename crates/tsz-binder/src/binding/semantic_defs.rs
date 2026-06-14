@@ -268,7 +268,7 @@ impl BinderState {
     /// hardcoding a static allow-list of lib types — covering DOM, `WebWorker`,
     /// `ScriptHost`, and any other ambient globals the project pulls in.
     pub(crate) fn name_collides_with_lib_symbol(&self, name: &str) -> bool {
-        self.current_scope
+        self.current_scope()
             .get(name)
             .or_else(|| self.file_locals.get(name))
             .is_some_and(|sym_id| self.lib_symbol_ids.contains(&sym_id))

@@ -355,7 +355,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return true;
             }
         }
-        if let Some(scope_sym_id) = binder.current_scope.get(name) {
+        if let Some(scope_sym_id) = binder.current_scope().get(name) {
             if scope_sym_id == sym_id {
                 return true;
             }

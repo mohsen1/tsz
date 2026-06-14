@@ -360,7 +360,7 @@ impl BinderState {
 
             // Skip if there's already a symbol with this name in the class scope
             // (e.g., an explicit property declaration like `y: number;`).
-            if self.current_scope.get(name).is_some() {
+            if self.current_scope().get(name).is_some() {
                 continue;
             }
 
@@ -961,7 +961,7 @@ impl BinderState {
                 // applied to the import alias at type-resolution time through the
                 // alias's apply-augmentations path.
                 let name_conflicts_with_import = self
-                    .current_scope
+                    .current_scope()
                     .get(name)
                     .and_then(|sym_id| self.symbols.get(sym_id))
                     .is_some_and(|sym| sym.import_module().is_some());
@@ -1124,7 +1124,7 @@ impl BinderState {
             // resolve type references to the type alias body while value references
             // go through the namespace alias.
             let existing_alias_id = self
-                .current_scope
+                .current_scope()
                 .get(name)
                 .filter(|id| {
                     self.symbols
@@ -1149,8 +1149,10 @@ impl BinderState {
                     sym.add_declaration(idx, arena.get(idx).map(|node| (node.pos, node.end)));
                     sym.is_exported = is_exported;
                 }
-                // TYPE_ALIAS takes current_scope so type references resolve to it
-                self.current_scope.set(name.to_string(), sym_id);
+                // TYPE_ALIAS takes the current scope so type references resolve to it
+                if let Some(table) = self.current_scope_mut() {
+                    table.set(name.to_string(), sym_id);
+                }
                 if self.current_scope_id.is_some()
                     && !self.in_module_augmentation
                     && self
@@ -1297,10 +1299,12 @@ impl BinderState {
             // We filter to ENUM_MEMBER only so namespace exports don't leak in
             // (e.g., `namespace x { export let y } enum x { z = y }` should error).
             for (name, sym_id) in exports.iter() {
-                if let Some(sym) = self.symbols.get(*sym_id)
-                    && sym.flags & symbol_flags::ENUM_MEMBER != 0
-                {
-                    self.current_scope.set(name.to_string(), *sym_id);
+                let is_enum_member = self
+                    .symbols
+                    .get(*sym_id)
+                    .is_some_and(|sym| sym.flags & symbol_flags::ENUM_MEMBER != 0);
+                if is_enum_member && let Some(table) = self.current_scope_mut() {
+                    table.set(name.to_string(), *sym_id);
                 }
             }
 
@@ -1319,7 +1323,9 @@ impl BinderState {
                         sym.add_declaration(member_idx, span);
                         sym.parent = enum_sym_id; // Set parent to the enum symbol
                     }
-                    self.current_scope.set(member_name.to_string(), sym_id);
+                    if let Some(table) = self.current_scope_mut() {
+                        table.set(member_name.to_string(), sym_id);
+                    }
                     Arc::make_mut(&mut self.node_symbols).insert(member_idx.0, sym_id);
                     // Add to exports for namespace merging
                     exports.set(member_name.to_string(), sym_id);

@@ -258,7 +258,7 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        if let Some(sym_id) = self.binder.current_scope.get("Promise")
+        if let Some(sym_id) = self.binder.current_scope().get("Promise")
             && check_symbol_has_value(sym_id, self.binder)
         {
             return true;
@@ -290,7 +290,7 @@ impl<'a> CheckerContext<'a> {
                 return true;
             }
         }
-        if self.binder.current_scope.has("Symbol") {
+        if self.binder.current_scope().has("Symbol") {
             return true;
         }
         if self.binder.file_locals.has("Symbol") {
@@ -310,7 +310,7 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        if self.binder.current_scope.has(name) {
+        if self.binder.current_scope().has(name) {
             return true;
         }
         if self.binder.file_locals.has(name) {

@@ -654,7 +654,7 @@ impl<'a> DeclarationEmitter<'a> {
         let symbol = binder
             .file_locals
             .get(name)
-            .or_else(|| binder.current_scope.get(name))?;
+            .or_else(|| binder.current_scope().get(name))?;
         let declaration = binder.symbols.get(symbol)?.declarations.first().copied()?;
         let declaration_node = self.arena.get(declaration)?;
         self.arena.get_function(declaration_node)

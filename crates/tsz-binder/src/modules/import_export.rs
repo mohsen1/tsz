@@ -365,8 +365,9 @@ impl BinderState {
                     }
                 }
                 // Add to current scope so it's captured as a module export
-                self.current_scope
-                    .set("default".to_string(), default_sym_id);
+                if let Some(table) = self.current_scope_mut() {
+                    table.set("default".to_string(), default_sym_id);
+                }
 
                 // Add to file_locals only if we are at the top-level source file scope
                 if self.current_scope_id.is_some()
@@ -389,7 +390,7 @@ impl BinderState {
                     .or_else(|| Self::get_declaration_name(arena, export.export_clause));
                 if let Some(name) = local_name {
                     if let Some(sym_id) = self
-                        .current_scope
+                        .current_scope()
                         .get(name)
                         .or_else(|| self.file_locals.get(name))
                         && let Some(sym) = self.symbols.get_mut(sym_id)
@@ -475,7 +476,7 @@ impl BinderState {
                                 if let (Some(orig), Some(exp)) = (original_name, exported_name) {
                                     // Resolve the original symbol in the current scope
                                     let resolved_sym_id = self
-                                        .current_scope
+                                        .current_scope()
                                         .get(orig)
                                         .or_else(|| self.file_locals.get(orig));
 
@@ -594,10 +595,14 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
-                                            self.current_scope.set(exp.to_string(), clone_id);
+                                            if let Some(table) = self.current_scope_mut() {
+                                                table.set(exp.to_string(), clone_id);
+                                            }
                                             self.file_locals.set(exp.to_string(), clone_id);
                                         } else if orig != exp {
-                                            self.current_scope.set(exp.to_string(), sym_id);
+                                            if let Some(table) = self.current_scope_mut() {
+                                                table.set(exp.to_string(), sym_id);
+                                            }
                                             self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }
@@ -779,15 +784,15 @@ impl BinderState {
                     //
                     // If a TYPE_ALIAS already exists, preserve it as the local/type binding and
                     // record the ALIAS partner for value/namespace resolution.
-                    let existing_type_alias_id = self.current_scope.get(name).filter(|id| {
+                    let existing_type_alias_id = self.current_scope().get(name).filter(|id| {
                         self.symbols
                             .get(*id)
                             .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
                     });
                     if let Some(type_alias_id) = existing_type_alias_id {
                         Arc::make_mut(&mut self.alias_partners).insert(type_alias_id, sym_id);
-                    } else if is_umd {
-                        self.current_scope.set(name.to_string(), sym_id);
+                    } else if is_umd && let Some(table) = self.current_scope_mut() {
+                        table.set(name.to_string(), sym_id);
                     }
                     Arc::make_mut(&mut self.node_symbols).insert(export.export_clause.0, sym_id);
 
@@ -847,7 +852,7 @@ impl BinderState {
         arena: &NodeArena,
         name: &str,
     ) -> Option<crate::SymbolId> {
-        let candidate = self.current_scope.get(name)?;
+        let candidate = self.current_scope().get(name)?;
         let sym = self.symbols.get(candidate)?;
         if (sym.flags & symbol_flags::ALIAS) == 0 || sym.import_module().is_none() {
             return None;
