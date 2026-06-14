@@ -804,6 +804,137 @@ interface Wrapper {
 }
 
 #[test]
+fn lazy_lib_member_lookup_caches_by_receiver_def_id() {
+    let lib_files = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.intl.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.intl.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2018.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2019.intl.d.ts",
+        "lib.es2019.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2020.intl.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+    ]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let document_value_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a lib value symbol");
+    let document_value_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_value_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (document_value, _) = state
+        .direct_actual_lib_symbol_type(
+            document_value_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            document_value_arena,
+            false,
+        )
+        .expect("document should lower to its annotated lazy lib interface");
+
+    let first = state
+        .try_lazy_lib_member_property_access(document_value, "title")
+        .expect("Document.title should resolve through the lazy member fast path");
+    let entries_after_first = state
+        .ctx
+        .lib_type_resolution_caches
+        .lazy_member_receiver_properties
+        .borrow()
+        .len();
+    let second = state
+        .try_lazy_lib_member_property_access(document_value, "title")
+        .expect("cached Document.title should still resolve through the fast path");
+
+    let first_type = match first {
+        tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => type_id,
+        other => panic!("first lazy member lookup should succeed, got {other:?}"),
+    };
+    let second_type = match second {
+        tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => type_id,
+        other => panic!("cached lazy member lookup should succeed, got {other:?}"),
+    };
+    assert_eq!(
+        first_type, second_type,
+        "cached lazy member lookup should return the same property-access result",
+    );
+    assert_eq!(
+        entries_after_first, 1,
+        "first lazy member lookup should record one receiver/property cache entry",
+    );
+    assert_eq!(
+        state
+            .ctx
+            .lib_type_resolution_caches
+            .lazy_member_receiver_properties
+            .borrow()
+            .len(),
+        entries_after_first,
+        "repeating the same receiver/property lookup should hit the DefId-keyed cache",
+    );
+}
+
+#[test]
 fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
     let lib_files = load_compiled_lib_files(&[
         "lib.es5.d.ts",
