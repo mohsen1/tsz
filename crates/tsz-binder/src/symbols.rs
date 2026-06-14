@@ -5,6 +5,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tsz_common::define_id;
 use tsz_parser::NodeIndex;
 
 // =============================================================================
@@ -219,22 +220,11 @@ impl Default for StableLocation {
 // Symbol
 // =============================================================================
 
-/// Unique identifier for a symbol in the symbol table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct SymbolId(pub u32);
-
-impl SymbolId {
-    pub const NONE: Self = Self(u32::MAX);
-
-    #[must_use]
-    pub const fn is_none(&self) -> bool {
-        self.0 == u32::MAX
-    }
-
-    #[must_use]
-    pub const fn is_some(&self) -> bool {
-        self.0 != u32::MAX
-    }
+define_id! {
+    /// Unique identifier for a symbol in the symbol table.
+    pub struct SymbolId;
+    derive: PartialOrd, Ord, Serialize, Deserialize;
+    sentinel: max
 }
 
 /// A symbol represents a named entity in the program.

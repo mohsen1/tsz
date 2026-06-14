@@ -4,6 +4,7 @@
 //! available even if the legacy fat AST is disabled.
 
 use serde::{Deserialize, Serialize};
+use tsz_common::define_id;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// A text range with start and end positions.
@@ -54,33 +55,12 @@ impl TextRange {
     }
 }
 
-/// Index into an arena. Used instead of pointers/references for serialization-friendly graphs.
-#[wasm_bindgen]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize, Hash)]
-pub struct NodeIndex(pub u32);
-
-impl NodeIndex {
-    pub const NONE: Self = Self(u32::MAX);
-
-    #[inline]
-    #[must_use]
-    pub const fn is_none(&self) -> bool {
-        self.0 == u32::MAX
-    }
-
-    #[inline]
-    #[must_use]
-    pub const fn is_some(&self) -> bool {
-        self.0 != u32::MAX
-    }
-
-    /// Convert a sentinel-based optional `NodeIndex` into `Option<NodeIndex>`.
-    /// Returns `None` if `self` is `NONE`, otherwise `Some(self)`.
-    #[inline]
-    #[must_use]
-    pub const fn into_option(self) -> Option<NodeIndex> {
-        if self.0 == u32::MAX { None } else { Some(self) }
-    }
+define_id! {
+    /// Index into an arena. Used instead of pointers/references for serialization-friendly graphs.
+    #[wasm_bindgen]
+    pub struct NodeIndex;
+    derive: Default, Serialize, Deserialize;
+    sentinel: max + into_option
 }
 
 /// A list of node indices, representing children or a node array.

@@ -30,6 +30,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
+use tsz_common::define_id;
 use tsz_common::interner::Atom;
 
 /// Global counter for assigning unique instance IDs to `DefinitionStore` instances.
@@ -46,6 +47,7 @@ type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 // DefId - Solver-Owned Definition Identifier
 // =============================================================================
 
+define_id! {
 /// Solver-owned definition identifier.
 ///
 /// Unlike `SymbolRef` which references Binder symbols, `DefId` is owned by
@@ -59,8 +61,7 @@ type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 /// | Stable across edits | No | Yes (with content-hash) |
 /// | Requires Binder | Yes | No |
 /// | Supports testing | Limited | Full |
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DefId(pub u32);
+pub struct DefId; }
 
 impl DefId {
     /// Sentinel value for invalid `DefId`.

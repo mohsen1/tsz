@@ -9,6 +9,9 @@
 //! - Source map generation
 //! - Comment parsing utilities
 
+// Declarative `u32` identity-newtype generator (shared by all crates).
+pub mod id;
+
 // String interning for identifier deduplication
 pub mod interner;
 pub use interner::{AstAtom, Atom, Interner, ShardedInterner};
