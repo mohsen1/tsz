@@ -191,40 +191,134 @@ pub(crate) fn map_function_shape_types(
     mut map_type: impl FnMut(FunctionShapeTypeSlot, TypeId) -> TypeId,
 ) -> Option<FunctionShape> {
     let mut changed = false;
-    let mut visit = |slot: FunctionShapeTypeSlot, type_id: TypeId| {
-        let mapped = map_type(slot, type_id);
-        if mapped != type_id {
+
+    let mut params = None;
+    for (index, param) in shape.params.iter().enumerate() {
+        let mapped_type = map_type(FunctionShapeTypeSlot::Param, param.type_id);
+        if mapped_type != param.type_id {
             changed = true;
+            if params.is_none() {
+                let mut mapped_params = Vec::with_capacity(shape.params.len());
+                mapped_params.extend_from_slice(&shape.params[..index]);
+                params = Some(mapped_params);
+            }
         }
+        if let Some(params) = params.as_mut() {
+            params.push(ParamInfo {
+                type_id: mapped_type,
+                ..*param
+            });
+        }
+    }
+
+    let this_type = shape.this_type.map(|this_type| {
+        let mapped = map_type(FunctionShapeTypeSlot::This, this_type);
+        changed |= mapped != this_type;
+        mapped
+    });
+
+    let return_type = {
+        let mapped = map_type(FunctionShapeTypeSlot::Return, shape.return_type);
+        changed |= mapped != shape.return_type;
         mapped
     };
 
-    let params: Vec<ParamInfo> = shape
-        .params
-        .iter()
-        .map(|param| ParamInfo {
-            type_id: visit(FunctionShapeTypeSlot::Param, param.type_id),
-            ..*param
-        })
-        .collect();
-    let this_type = shape
-        .this_type
-        .map(|this_type| visit(FunctionShapeTypeSlot::This, this_type));
-    let return_type = visit(FunctionShapeTypeSlot::Return, shape.return_type);
-    let type_predicate = shape.type_predicate.map(|predicate| TypePredicate {
-        type_id: predicate
-            .type_id
-            .map(|type_id| visit(FunctionShapeTypeSlot::PredicateTarget, type_id)),
-        ..predicate
+    let type_predicate = shape.type_predicate.map(|predicate| {
+        let type_id = predicate.type_id.map(|type_id| {
+            let mapped = map_type(FunctionShapeTypeSlot::PredicateTarget, type_id);
+            changed |= mapped != type_id;
+            mapped
+        });
+        TypePredicate {
+            type_id,
+            ..predicate
+        }
     });
 
     changed.then_some(FunctionShape {
         type_params: shape.type_params.clone(),
-        params,
+        params: params.unwrap_or_else(|| shape.params.clone()),
         this_type,
         return_type,
         type_predicate,
         is_constructor: shape.is_constructor,
         is_method: shape.is_method,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypePredicateTarget;
+
+    fn sample_shape() -> FunctionShape {
+        FunctionShape {
+            type_params: Vec::new(),
+            params: vec![
+                ParamInfo {
+                    type_id: TypeId::STRING,
+                    ..ParamInfo::default()
+                },
+                ParamInfo {
+                    type_id: TypeId::NUMBER,
+                    optional: true,
+                    ..ParamInfo::default()
+                },
+            ],
+            this_type: Some(TypeId::OBJECT),
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::This,
+                type_id: Some(TypeId::STRING),
+                parameter_index: None,
+            }),
+            is_constructor: true,
+            is_method: true,
+        }
+    }
+
+    #[test]
+    fn map_function_shape_types_returns_none_for_identity_map_after_visiting_all_slots() {
+        let shape = sample_shape();
+        let mut visited = Vec::new();
+
+        let mapped = map_function_shape_types(&shape, |slot, type_id| {
+            visited.push((slot, type_id));
+            type_id
+        });
+
+        assert!(mapped.is_none());
+        assert_eq!(
+            visited,
+            vec![
+                (FunctionShapeTypeSlot::Param, TypeId::STRING),
+                (FunctionShapeTypeSlot::Param, TypeId::NUMBER),
+                (FunctionShapeTypeSlot::This, TypeId::OBJECT),
+                (FunctionShapeTypeSlot::Return, TypeId::BOOLEAN),
+                (FunctionShapeTypeSlot::PredicateTarget, TypeId::STRING),
+            ]
+        );
+    }
+
+    #[test]
+    fn map_function_shape_types_rebuilds_changed_slots_preserving_metadata() {
+        let shape = sample_shape();
+
+        let mapped = map_function_shape_types(&shape, |slot, type_id| {
+            if slot == FunctionShapeTypeSlot::Return {
+                TypeId::NUMBER
+            } else {
+                type_id
+            }
+        })
+        .expect("return type change should rebuild the shape");
+
+        assert_eq!(mapped.params, shape.params);
+        assert_eq!(mapped.this_type, shape.this_type);
+        assert_eq!(mapped.return_type, TypeId::NUMBER);
+        assert_eq!(mapped.type_predicate, shape.type_predicate);
+        assert_eq!(mapped.is_constructor, shape.is_constructor);
+        assert_eq!(mapped.is_method, shape.is_method);
+    }
 }
