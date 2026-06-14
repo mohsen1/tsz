@@ -906,6 +906,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
     `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
     `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
+    `startup-floor target gaps: ${report.target_gaps.filter((row) => row.startup_floor_win).length}/${report.two_x_target.rows_below_target}`,
   ];
   const projectAggregate = report.two_x_target.project_rows_aggregate;
   if (projectAggregate?.measured_rows > 0) {

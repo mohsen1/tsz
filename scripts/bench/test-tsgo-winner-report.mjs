@@ -810,6 +810,7 @@ withTempDir((dir) => {
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /2x target gaps: 2\/3/);
+  assert.match(result.stdout, /startup-floor target gaps: 1\/2/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.two_x_target.rows_meeting_target, 1);
