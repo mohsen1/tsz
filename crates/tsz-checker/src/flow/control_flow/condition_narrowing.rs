@@ -287,7 +287,7 @@ impl<'a> FlowAnalyzer<'a> {
                         type_id,
                         &excluded_types,
                     )
-                } else if let Some((ref path, _, _)) = discriminant_info {
+                } else if let Some((ref path, _)) = discriminant_info {
                     flow_query::narrow_by_excluding_discriminant_values_in_context(
                         narrowing,
                         type_id,
@@ -453,11 +453,11 @@ impl<'a> FlowAnalyzer<'a> {
         let mut discriminant_info = None;
 
         if !target_is_switch_expr {
+            // A discriminant path is only reported when it is accessed directly
+            // on `target` (e.g. `switch (x.kind)` narrowing `x`); its absence
+            // means this switch cannot affect `target`'s type.
             discriminant_info = self.discriminant_property_info(switch_expr, target);
-            let switch_targets_base = discriminant_info
-                .as_ref()
-                .is_some_and(|(_, _, base)| self.is_matching_reference(*base, target));
-            if !switch_targets_base {
+            if discriminant_info.is_none() {
                 return type_id;
             }
         }
@@ -510,7 +510,7 @@ impl<'a> FlowAnalyzer<'a> {
                         type_id,
                         &excluded_types,
                     );
-                } else if let Some((path, is_optional, _)) = discriminant_info {
+                } else if let Some((path, is_optional)) = discriminant_info {
                     if is_optional && excluded_types.contains(&TypeId::UNDEFINED) {
                         return type_id;
                     }
