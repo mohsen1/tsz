@@ -7,6 +7,7 @@ pub(crate) mod contextual_calls;
 pub(crate) mod contextual_parameters;
 pub(crate) mod core;
 pub(crate) mod cycle_guard;
+pub(crate) mod element_indexable;
 pub(crate) mod enum_utils;
 pub(crate) mod overlap_relation_helpers;
 pub(crate) mod return_type;
