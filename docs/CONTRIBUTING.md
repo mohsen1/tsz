@@ -10,9 +10,9 @@ cd tsz
 ./scripts/setup/setup.sh   # installs hooks, initializes TypeScript submodule
 ```
 
-Open a draft PR to run the light CI suite: lint, dist-fast build, and unit
-tests. Mark the PR ready for review when it should run the heavy suites:
-WASM, conformance, emit, fourslash, and snapshot gates.
+Open a PR to run CI. Every open PR runs the full suite: lint, build, unit
+tests, WASM, conformance, emit, fourslash, and snapshot gates. Path-based
+skips still apply for docs-only or tooling-only changes.
 
 When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
 and any review/body checks), the PR author
@@ -59,14 +59,14 @@ python3 scripts/conformance/query-conformance.py --dashboard
 
 ### Workflow For Semantic Changes
 
-1. **Check active work** — inspect draft PRs, open PRs, recent merged PRs, and relevant issues before starting
-2. **Claim the scope** — open a draft PR early; a GitHub issue is optional
+1. **Check active work** — inspect open PRs, recent merged PRs, and relevant issues before starting
+2. **Claim the scope** — open a PR early; a GitHub issue is optional
 3. **Research** — use offline analysis tools and existing tests before running heavy commands
 4. **Understand the root cause** — read the relevant checker/solver code
 5. **Fix the root cause** — not a symptom. Follow architecture rules
 6. **Verify narrowly** — run only targeted local checks needed for debugging
-7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
-8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
+7. **Push updates to the PR** — every push runs the full CI suite; do not wait idle
+8. **Mark ready for review** — when the change is complete; CI already ran the full suite on every push
 9. **Land your own PR** — after exact-head PR-head gates pass,
    queue the PR yourself with
    `gh pr merge <pr> --match-head-commit <sha>`; native queue admission and
@@ -75,7 +75,7 @@ python3 scripts/conformance/query-conformance.py --dashboard
 Every PR body must include a `Goal: <green|fast|grow|hold>` line, a
 `## Verification` section, and a `## Provenance` block with `Machine:`,
 `Assistant:`, `Model:`, and `Effort:` lines reporting your actual runtime
-values; the `pr-body-gate` CI job enforces these. Use the draft PR body for
+values; the `pr-body-gate` CI job enforces these. Use the PR body for
 scope, invariants, findings, and verification.
 
 When adding or re-adding WIP state, leave a PR comment with the reason WIP
@@ -117,7 +117,8 @@ Hooks run automatically and check:
 - TypeScript submodule guard
 
 Build, lint, unit, WASM, conformance, emit, and fourslash verification runs in
-CI. Draft PRs get the light CI suite; ready-for-review PRs get the full suite.
+CI. Every open PR gets the full CI suite; path-based skips apply only to
+docs-only or tooling-only changes.
 
 To skip hooks in emergencies: `TSZ_SKIP_HOOKS=1 git commit -m "message"`
 

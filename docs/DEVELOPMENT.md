@@ -23,9 +23,8 @@ cheap and enforce:
 - TypeScript submodule guard — prevents accidental submodule edits
 
 Build, lint, unit tests, WASM, conformance, emit, and fourslash run in CI.
-Draft PRs run the light suite: lint, dist-fast build, and unit tests. Marking
-a PR ready for review runs the heavy suites: WASM, conformance, emit,
-fourslash, and snapshot gates.
+Every open PR runs the full suite on each push; path-based skips trim jobs
+for docs-only or tooling-only changes.
 
 To manually install hooks:
 ```bash
@@ -116,7 +115,7 @@ Conformance tests compare tsz diagnostics against the official TypeScript compil
 # Run one filtered test while debugging
 ./scripts/conformance/conformance.sh run --filter "testName" --verbose
 
-# Full conformance runs in CI when a PR is marked ready for review
+# Full conformance runs in CI on every open PR
 ```
 
 ### Conformance Analysis (Offline)

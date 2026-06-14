@@ -1,6 +1,6 @@
 ---
 name: tsz-pr-coordination
-description: Create, refresh, and publish TSZ pull requests with correct body and state. Use when opening a draft PR, updating a PR body, changing WIP/draft/ready state, acknowledging review, or making sure a TSZ PR satisfies the Goal, Verification, Provenance, and overlap rules.
+description: Create, refresh, and publish TSZ pull requests with correct body and state. Use when opening a PR, updating a PR body, changing WIP/draft/ready state, acknowledging review, or making sure a TSZ PR satisfies the Goal, Verification, Provenance, and overlap rules.
 ---
 
 # TSZ PR Coordination
