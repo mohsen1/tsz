@@ -189,6 +189,53 @@ fn application_eval_cache_stats_visible_in_display() {
 }
 
 #[test]
+fn application_eval_cache_invalidation_uses_recorded_def_dependencies() {
+    // Structural rule: a definition-body rewrite invalidates exactly the
+    // application-eval entries whose base, arguments, or result mention the
+    // rewritten `DefId`. The cache records those dependencies at insertion so
+    // invalidation is keyed by `DefId`, not by a full cache sweep.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let base_def = DefId(10);
+    let arg_def = DefId(20);
+    let result_def = DefId(30);
+    let unrelated_def = DefId(40);
+    let arg_ref = interner.lazy(arg_def);
+    let result_ref = interner.lazy(result_def);
+
+    db.insert_application_eval_cache(base_def, &[TypeId::STRING], false, TypeId::NUMBER);
+    db.insert_application_eval_cache(DefId(11), &[arg_ref], false, TypeId::BOOLEAN);
+    db.insert_application_eval_cache(DefId(12), &[TypeId::NUMBER], false, result_ref);
+    db.insert_application_eval_cache(unrelated_def, &[TypeId::BOOLEAN], false, TypeId::STRING);
+
+    assert_eq!(db.application_eval_dependency_key_count(base_def), 1);
+    assert_eq!(db.application_eval_dependency_key_count(arg_def), 1);
+    assert_eq!(db.application_eval_dependency_key_count(result_def), 1);
+    assert_eq!(db.statistics().application_eval_cache_entries, 4);
+
+    db.invalidate_application_eval_cache_for_def(arg_def);
+
+    assert_eq!(
+        db.lookup_application_eval_cache(DefId(11), &[arg_ref], false),
+        None
+    );
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[TypeId::STRING], false),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        db.lookup_application_eval_cache(DefId(12), &[TypeId::NUMBER], false),
+        Some(result_ref)
+    );
+    assert_eq!(
+        db.lookup_application_eval_cache(unrelated_def, &[TypeId::BOOLEAN], false),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(db.application_eval_dependency_key_count(arg_def), 0);
+}
+
+#[test]
 fn instantiation_cache_is_per_file_isolated() {
     // Structural rule: `instantiation_cache` is intentionally NOT shared
     // cross-file. The same class of ordering-sensitivity that affects

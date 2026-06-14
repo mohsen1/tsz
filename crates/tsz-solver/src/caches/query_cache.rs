@@ -4,6 +4,7 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
+use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
     QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeDatabase,
     TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
@@ -11,7 +12,6 @@ use crate::caches::db::{
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
-use crate::caches::shared_instantiation::application_eval_entry_references_def;
 use crate::caches::shared_query_cache::ApplicationEvalCacheKey;
 pub use crate::caches::shared_query_cache::SharedQueryCache;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -224,6 +224,7 @@ pub struct QueryCache<'a> {
     /// in `evaluate`). Keyed by `(TypeId, no_unchecked_indexed_access)`.
     closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
+    application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
     subtype_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
@@ -294,6 +295,7 @@ impl<'a> QueryCache<'a> {
             eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
+            application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
             subtype_cache: RefCell::new(FxHashMap::default()),
@@ -321,6 +323,7 @@ impl<'a> QueryCache<'a> {
         self.closed_eval_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
+        self.application_eval_dependency_index.borrow_mut().clear();
         self.object_spread_properties_cache.borrow_mut().clear();
         self.subtype_cache.borrow_mut().clear();
         self.assignability_cache.borrow_mut().clear();
@@ -613,7 +616,15 @@ impl<'a> QueryCache<'a> {
             && shared.shares_instantiation_family()
         {
             if let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry) {
-                self.application_eval_cache.borrow_mut().insert(key, result);
+                self.application_eval_cache
+                    .borrow_mut()
+                    .insert(key.clone(), result);
+                application_eval_index::record_dependencies(
+                    self.interner,
+                    &self.application_eval_dependency_index,
+                    &key,
+                    result,
+                );
                 self.application_eval_cache_stats.record_hit();
                 self.application_eval_cache_stats.record_shared_hit();
                 tsz_common::perf_counters::record_shared_application_eval_cache_hit();
@@ -630,11 +641,24 @@ impl<'a> QueryCache<'a> {
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
         {
-            shared.application_eval_cache.insert(key.clone(), result);
+            shared.insert_application_eval_cache(self.interner, key.clone(), result);
             self.application_eval_cache_stats.record_shared_insert();
             tsz_common::perf_counters::record_shared_application_eval_cache_insert();
         }
-        self.application_eval_cache.borrow_mut().insert(key, result);
+        self.application_eval_cache
+            .borrow_mut()
+            .insert(key.clone(), result);
+        application_eval_index::record_dependencies(
+            self.interner,
+            &self.application_eval_dependency_index,
+            &key,
+            result,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn application_eval_dependency_key_count(&self, def_id: DefId) -> usize {
+        application_eval_index::key_count(&self.application_eval_dependency_index, def_id)
     }
 
     fn check_object_spread_properties_cache(&self, key: TypeId) -> Option<Vec<PropertyInfo>> {
@@ -1015,17 +1039,15 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
     }
 
     fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
-        let mut cache = self.application_eval_cache.borrow_mut();
-        cache.retain(|key, &mut result| {
-            !application_eval_entry_references_def(self.interner, key, result, def_id)
-        });
+        application_eval_index::invalidate_for_def(
+            &self.application_eval_dependency_index,
+            &self.application_eval_cache,
+            def_id,
+        );
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
-            && !shared.application_eval_cache.is_empty()
         {
-            shared.application_eval_cache.retain(|key, result| {
-                !application_eval_entry_references_def(self.interner, key, *result, def_id)
-            });
+            shared.invalidate_application_eval_cache_for_def(def_id);
         }
     }
 

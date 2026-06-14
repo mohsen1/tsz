@@ -1,12 +1,14 @@
 //! Thread-safe shared query cache for cross-file type checking.
 
 use crate::caches::instantiation_cache::InstantiationCacheKey;
+use crate::caches::shared_instantiation::collect_application_eval_entry_def_dependencies;
 use crate::caches::shared_instantiation::shared_instantiation_family_requested;
 use crate::def::DefId;
 use crate::evaluation::request::EvaluationCacheKey;
+use crate::intern::TypeInterner;
 use crate::types::{RelationCacheKey, RelationCacheValue, TypeId};
 use dashmap::DashMap;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashSet};
 
 // The trailing two `bool`s are `no_unchecked_indexed_access` and
 // `exact_optional_property_types`. Evaluating a generic application can expand
@@ -53,6 +55,8 @@ pub struct SharedQueryCache {
     pub(super) subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
+    pub(super) application_eval_dependency_index:
+        DashMap<DefId, FxHashSet<ApplicationEvalCacheKey>, FxBuildHasher>,
     pub(super) instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
     share_instantiation_family: bool,
 }
@@ -64,6 +68,7 @@ impl SharedQueryCache {
             subtype_cache: DashMap::with_hasher(FxBuildHasher),
             assignability_cache: DashMap::with_hasher(FxBuildHasher),
             application_eval_cache: DashMap::with_hasher(FxBuildHasher),
+            application_eval_dependency_index: DashMap::with_hasher(FxBuildHasher),
             instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             share_instantiation_family: shared_instantiation_family_requested(),
         }
@@ -88,6 +93,30 @@ impl SharedQueryCache {
     #[inline]
     pub(super) const fn shares_instantiation_family(&self) -> bool {
         self.share_instantiation_family
+    }
+
+    pub(super) fn insert_application_eval_cache(
+        &self,
+        interner: &TypeInterner,
+        key: ApplicationEvalCacheKey,
+        result: TypeId,
+    ) {
+        self.application_eval_cache.insert(key.clone(), result);
+        for def_id in collect_application_eval_entry_def_dependencies(interner, &key, result) {
+            self.application_eval_dependency_index
+                .entry(def_id)
+                .or_default()
+                .insert(key.clone());
+        }
+    }
+
+    pub(super) fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
+        let Some((_, keys)) = self.application_eval_dependency_index.remove(&def_id) else {
+            return;
+        };
+        for key in keys {
+            self.application_eval_cache.remove(&key);
+        }
     }
 
     /// Estimate the resident heap bytes of the shared cache maps.
