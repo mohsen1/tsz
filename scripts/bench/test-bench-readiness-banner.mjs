@@ -43,7 +43,7 @@ assert.match(
       rows_below_target: 0,
       missing_attribution_rows: [],
       project_rows_aggregate: {
-        rows: 3,
+        measured_rows: 3,
         tsz_speedup_vs_tsgo: 1.42,
         target_met: false,
       },

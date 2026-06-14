@@ -64,7 +64,7 @@ export function benchReadinessMessages(readiness, winnerReport = null) {
     const speedupText = Number.isFinite(speedup) && speedup > 0
       ? `${speedup.toFixed(2)}x`
       : "unknown speedup";
-    const projectRows = Number(projectAggregate.rows ?? 0);
+    const projectRows = Number(projectAggregate.measured_rows ?? 0);
     const rowText = projectRows > 0 ? ` across ${projectRows} project row(s)` : "";
     messages.push(
       `Benchmark companion report project-row aggregate is ${speedupText}${rowText}, below the 2x tsgo target; public speed claims are not launch-ready.`,
