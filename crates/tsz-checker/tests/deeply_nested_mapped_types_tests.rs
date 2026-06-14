@@ -1,7 +1,155 @@
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_source_codes, check_source_with_libs_code_messages, load_lib_files,
+};
 
 fn check(source: &str) -> Vec<u32> {
     check_source_codes(source)
+}
+
+/// Type-check `source` as an external module with the bundled `es5` lib loaded
+/// (so the global utility types `Readonly`/`Partial`/`Pick`/`Record`/… are in
+/// scope), returning only the diagnostic codes. Skips gracefully (empty) when
+/// the bundled lib asset is unavailable in the build environment.
+fn check_with_es5_lib_codes(source: &str) -> Vec<u32> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    if libs.is_empty() {
+        return Vec::new();
+    }
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &libs)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+}
+
+fn ts2322_count(codes: &[u32]) -> usize {
+    codes.iter().filter(|&&c| c == 2322).count()
+}
+
+/// Regression guard for #8432 (`deeplyNestedMappedTypes.ts` family): a
+/// value-only binding (`const Readonly: unique symbol`) that merely shares a
+/// name with a global lib utility type must NOT shadow that lib type in type
+/// position inside an external module. tsc keeps the lib `Readonly<T>` visible;
+/// tsz used to key the lib type's `DefId` to the shadowing value symbol, so the
+/// `Readonly<…>` application never matched its mapped-type body and stayed
+/// opaque — producing a false `TS2322` on the *valid* assignment (the unreduced
+/// `Readonly<{ a: string }>` target rejects everything). After the fix the
+/// application reduces and only the genuine `number`/`string` leaf mismatch
+/// errors.
+#[test]
+fn value_const_shadowing_lib_readonly_in_module_still_reduces() {
+    let codes = check_with_es5_lib_codes(
+        r#"
+export declare const Readonly: unique symbol;
+type Foo = Readonly<{ a: string }>;
+const ok: Foo = { a: "hi" };
+const bad: Foo = { a: 1 };
+export {};
+"#,
+    );
+    if codes.is_empty() {
+        return; // lib asset unavailable — covered by CLI/conformance instead
+    }
+    assert_eq!(
+        ts2322_count(&codes),
+        1,
+        "exactly the `bad` leaf mismatch must error, not the valid `ok` assignment: {codes:?}"
+    );
+}
+
+/// Same defect reached through a generic alias body (`type G<R> = Readonly<R>`):
+/// the deferred lib application inside the alias must reduce when instantiated.
+#[test]
+fn value_const_shadowing_lib_readonly_via_generic_alias_reduces() {
+    let codes = check_with_es5_lib_codes(
+        r#"
+export declare const Readonly: unique symbol;
+type G<R> = Readonly<R>;
+type Foo = G<{ a: string }>;
+const ok: Foo = { a: "hi" };
+const bad: Foo = { a: 1 };
+export {};
+"#,
+    );
+    if codes.is_empty() {
+        return;
+    }
+    assert_eq!(
+        ts2322_count(&codes),
+        1,
+        "generic-alias lib application must reduce; only `bad` should error: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding: the fix keys on the structural value-only-shadow condition,
+/// not the identifier `Readonly`. The same shadow over `Partial` (which makes
+/// members optional) must keep the lib type visible — the empty and valid
+/// objects are clean and only the `number`/`string` mismatch errors.
+#[test]
+fn value_const_shadowing_lib_partial_in_module_still_reduces() {
+    let codes = check_with_es5_lib_codes(
+        r#"
+export declare const Partial: unique symbol;
+type Foo = Partial<{ a: string }>;
+const empty: Foo = {};
+const ok: Foo = { a: "hi" };
+const bad: Foo = { a: 1 };
+export {};
+"#,
+    );
+    if codes.is_empty() {
+        return;
+    }
+    assert_eq!(
+        ts2322_count(&codes),
+        1,
+        "Partial shadow must reduce; only `bad` should error: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding, second binder: a value shadowing `Record`.
+#[test]
+fn value_const_shadowing_lib_record_in_module_still_reduces() {
+    let codes = check_with_es5_lib_codes(
+        r#"
+export declare const Record: unique symbol;
+type Foo = Record<string, number>;
+const ok: Foo = { x: 1 };
+const bad: Foo = { x: "s" };
+export {};
+"#,
+    );
+    if codes.is_empty() {
+        return;
+    }
+    assert_eq!(
+        ts2322_count(&codes),
+        1,
+        "Record shadow must reduce; only `bad` should error: {codes:?}"
+    );
+}
+
+/// The script-file (global, non-module) form already resolved correctly before
+/// the fix; guard that it stays correct (the fix must not perturb the
+/// non-external-module path).
+#[test]
+fn value_const_shadowing_lib_readonly_in_script_unchanged() {
+    let codes = check_with_es5_lib_codes(
+        r#"
+declare const Readonly: unique symbol;
+type Foo = Readonly<{ a: string }>;
+const ok: Foo = { a: "hi" };
+const bad: Foo = { a: 1 };
+"#,
+    );
+    if codes.is_empty() {
+        return;
+    }
+    assert_eq!(
+        ts2322_count(&codes),
+        1,
+        "script-form Readonly shadow must reduce; only `bad` should error: {codes:?}"
+    );
 }
 
 /// tsc does NOT emit TS2344 or TS2464 for a recursive identity mapped type.

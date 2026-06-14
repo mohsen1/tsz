@@ -10,117 +10,11 @@ use crate::query_boundaries::common::TypeResolver;
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
-use tsz_solver::def::{DefId, DefinitionStore};
+use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
+use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
 use crate::query_boundaries::common::TypeEnvironment;
-
-/// A dual-environment registration that must be applied to the flow-analyzer
-/// environment (`type_environment`) but lost the `RefCell` borrow race when it
-/// was first attempted.
-///
-/// Each variant carries fully-owned data so the operation can be replayed later
-/// without holding any borrow of the originating `CheckerContext`. Replaying a
-/// deferred write reproduces exactly the same `TypeEnvironment` mutation the
-/// direct dual-write would have performed, which is why the previous full
-/// per-file `clone()` repair is no longer required.
-#[derive(Clone, Debug)]
-pub enum DeferredFlowEnvWrite {
-    /// `set_definition_store` — wire the shared `DefinitionStore` fallback.
-    SetDefinitionStore(Arc<DefinitionStore>),
-    /// `insert_def` — register a non-generic definition body.
-    InsertDef { def_id: DefId, body: TypeId },
-    /// `insert_def_with_params` (+ optional declared variances) — register a
-    /// generic definition body.
-    InsertDefWithParams {
-        def_id: DefId,
-        body: TypeId,
-        params: Vec<tsz_solver::TypeParamInfo>,
-        variances: Option<Arc<[tsz_solver::type_handles::Variance]>>,
-    },
-    /// `insert_class_instance_type` — register a class instance type.
-    InsertClassInstance {
-        def_id: DefId,
-        instance_type: TypeId,
-    },
-    /// `register_class_extends` — register a class `extends` parent.
-    RegisterClassExtends { def_id: DefId, parent_def_id: DefId },
-    /// `register_def_symbol_mapping` — register the `DefId` <-> `SymbolId` bridge.
-    RegisterDefSymbolMapping { def_id: DefId, sym_id: SymbolId },
-    /// `register_augmented_def` — re-apply an augmentation merge.
-    RegisterAugmentedDef {
-        def_id: DefId,
-        augmented: TypeId,
-        is_class: bool,
-    },
-    /// `insert_def_kind` — register a `DefKind`.
-    InsertDefKind {
-        def_id: DefId,
-        kind: tsz_solver::def::DefKind,
-    },
-}
-
-impl DeferredFlowEnvWrite {
-    /// Apply this deferred registration to a flow-analyzer `TypeEnvironment`.
-    fn apply(&self, env: &mut TypeEnvironment) {
-        match self {
-            Self::SetDefinitionStore(store) => env.set_definition_store(Arc::clone(store)),
-            Self::InsertDef { def_id, body } => env.insert_def(*def_id, *body),
-            Self::InsertDefWithParams {
-                def_id,
-                body,
-                params,
-                variances,
-            } => {
-                env.insert_def_with_params(*def_id, *body, params.clone());
-                if let Some(variances) = variances {
-                    env.insert_declared_variances(*def_id, Arc::clone(variances));
-                }
-            }
-            Self::InsertClassInstance {
-                def_id,
-                instance_type,
-            } => env.insert_class_instance_type(*def_id, *instance_type),
-            Self::RegisterClassExtends {
-                def_id,
-                parent_def_id,
-            } => env.register_class_extends(*def_id, *parent_def_id),
-            Self::RegisterDefSymbolMapping { def_id, sym_id } => {
-                env.register_def_symbol_mapping(*def_id, *sym_id);
-            }
-            Self::RegisterAugmentedDef {
-                def_id,
-                augmented,
-                is_class,
-            } => apply_augmented_def(env, *def_id, *augmented, *is_class),
-            Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
-        }
-    }
-}
-
-/// Apply an augmentation merge to a single environment.
-///
-/// Shared by the live dual-write path and deferred replay so both produce
-/// identical results: class-like defs update the instance-type slot, other defs
-/// re-insert the body while preserving any existing type parameters.
-fn apply_augmented_def(
-    env: &mut TypeEnvironment,
-    def_id: DefId,
-    augmented: TypeId,
-    is_class: bool,
-) {
-    if is_class || env.get_class_instance_type(def_id).is_some() {
-        env.insert_class_instance_type(def_id, augmented);
-    } else {
-        let params: Option<Vec<tsz_solver::TypeParamInfo>> =
-            env.get_def_params(def_id).map(<[_]>::to_vec);
-        if let Some(params) = params {
-            env.insert_def_with_params(def_id, augmented, params);
-        } else {
-            env.insert_def(def_id, augmented);
-        }
-    }
-}
 
 impl<'a> CheckerContext<'a> {
     /// Get or create a `DefId` for a symbol.
@@ -616,11 +510,52 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
+    /// True when `sym_id` is a local *value-only* binding (no type-position
+    /// meaning) that is not itself a lib symbol — i.e. a value that merely
+    /// shadows a same-named global lib type (`const Readonly: unique symbol`
+    /// vs the lib `Readonly<T>`). Such a binding occupies only the value
+    /// namespace, so it must never stand in for the lib type's canonical
+    /// identity in type position.
+    fn is_value_only_lib_shadow(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::symbol_flags;
+        !self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && self.binder.get_symbol(sym_id).is_some_and(|s| {
+                s.has_any_flags(symbol_flags::VALUE)
+                    && !s.has_any_flags(
+                        symbol_flags::TYPE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::ALIAS,
+                    )
+            })
+    }
+
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
         if let Some(sym_id) = self.binder.file_locals.get(name)
             && !self.symbol_has_current_file_type_declaration(sym_id, name)
         {
-            return sym_id;
+            // A local *value-only* binding that merely shares a name with a
+            // global lib type (e.g. `export declare const Readonly: unique
+            // symbol`) must not be treated as the canonical lib symbol. It
+            // carries no type-position meaning, so the lib type stays visible;
+            // keying the lib type's `DefId` to this value symbol corrupts
+            // deferred reduction — the lib `Readonly<…>` application then no
+            // longer matches the mapped-type body registered for the lib symbol,
+            // so it stays opaque (#8432 `deeplyNestedMappedTypes.ts`). Type-
+            // position resolution already routes such shadows to the recorded
+            // lib TYPE symbol via `lib_type_namespace`; mirror that here so the
+            // application-base def and the body-registration def agree on the lib
+            // symbol instead of the value. Genuine merged lib symbols, and any
+            // symbol carrying type meaning, keep the existing fast path.
+            if self.is_value_only_lib_shadow(sym_id) {
+                if let Some(&lib_type_sym_id) = self.binder.lib_type_namespace.get(name) {
+                    return lib_type_sym_id;
+                }
+                // No recorded lib type shadow: fall through to the lib-symbol
+                // search below rather than returning the value symbol.
+            } else {
+                return sym_id;
+            }
         }
 
         if let Some(sym_id) = self
