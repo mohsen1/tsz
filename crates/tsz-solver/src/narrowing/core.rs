@@ -1718,9 +1718,29 @@ impl<'a> NarrowingContext<'a> {
 
                             if effective_source == resolved_target {
                                 effective_source
-                            } else if effective_source == TypeId::UNKNOWN
-                                || effective_source == TypeId::ANY
-                            {
+                            } else if effective_source == TypeId::ANY {
+                                // A user-defined type predicate does not narrow `any`
+                                // away from `any` when the asserted type is exactly the
+                                // global `Object` or `Function` interface. This mirrors
+                                // tsc's `narrowTypeByTypePredicate`, which skips
+                                // narrowing when `isTypeAny(type)` and the predicate type
+                                // is `globalObjectType` or `globalFunctionType` (and the
+                                // `instanceof Object`/`Function` handling above). For any
+                                // other asserted type, `any` narrows to the predicate
+                                // type. Without this, `any` collapses to `Object` and a
+                                // following `Array.isArray` guard intersects it down to
+                                // `never` (false TS2339 in ts-pattern's matcher walk).
+                                if self.is_object_interface(resolved_target)
+                                    || crate::type_queries::is_function_interface_structural(
+                                        self.db,
+                                        resolved_target,
+                                    )
+                                {
+                                    TypeId::ANY
+                                } else {
+                                    *target_type
+                                }
+                            } else if effective_source == TypeId::UNKNOWN {
                                 *target_type
                             } else if union_list_id(self.db, effective_source).is_some() {
                                 // For unions: filter members, fall back to
