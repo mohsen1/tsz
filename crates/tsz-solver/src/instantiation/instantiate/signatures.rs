@@ -213,10 +213,7 @@ impl<'a> TypeInstantiator<'a> {
                 }
             };
             let rewrite_sig = |sig: &CallSignature| -> Option<CallSignature> {
-                let new_this_slot = sig.this_type.map(|s| {
-                    let n = sub_top_level(s);
-                    n
-                });
+                let new_this_slot = sig.this_type.map(sub_top_level);
                 let new_return = sub_top_level(sig.return_type);
                 let mut new_params: Option<Vec<_>> = None;
                 for (index, p) in sig.params.iter().enumerate() {
