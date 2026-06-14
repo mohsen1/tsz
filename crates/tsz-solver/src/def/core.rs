@@ -23,6 +23,7 @@ use super::publication_census;
 #[cfg(test)]
 use crate::types::ObjectFlags;
 use crate::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
+use crate::utils::MutexExt;
 use dashmap::{DashMap, DashSet};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
@@ -714,8 +715,7 @@ impl DefinitionStore {
             Entry::Vacant(vacant) => {
                 vacant.insert(def_id);
                 self.symbol_mappings_log
-                    .lock()
-                    .expect("symbol mappings log lock poisoned")
+                    .lock_unpoisoned("def.symbol_mappings_log")
                     .push((symbol_id, def_id));
             }
             Entry::Occupied(_) => {}
@@ -1570,12 +1570,10 @@ impl DefinitionStore {
         if !self.symbol_mappings_log_invalid.load(Ordering::Relaxed) {
             let log = self
                 .symbol_mappings_log
-                .lock()
-                .expect("symbol mappings log lock poisoned");
+                .lock_unpoisoned("def.symbol_mappings_log");
             let mut cached = self
                 .symbol_mappings_log_snapshot
-                .lock()
-                .expect("symbol mappings log snapshot lock poisoned");
+                .lock_unpoisoned("def.symbol_mappings_log_snapshot");
             if let Some((cached_len, snapshot)) = cached.as_ref()
                 && *cached_len == log.len()
             {
@@ -1606,8 +1604,7 @@ impl DefinitionStore {
 
             let mut cached = self
                 .symbol_mappings_snapshot
-                .lock()
-                .expect("symbol mappings snapshot lock poisoned");
+                .lock_unpoisoned("def.symbol_mappings_snapshot");
             if let Some((cached_generation, snapshot)) = cached.as_ref()
                 && *cached_generation == generation_after
             {
@@ -1622,8 +1619,7 @@ impl DefinitionStore {
     fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<SymbolMappingsSnapshot> {
         let cached = self
             .symbol_mappings_snapshot
-            .lock()
-            .expect("symbol mappings snapshot lock poisoned");
+            .lock_unpoisoned("def.symbol_mappings_snapshot");
         cached.as_ref().and_then(|(cached_generation, snapshot)| {
             (*cached_generation == generation).then(|| Arc::clone(snapshot))
         })

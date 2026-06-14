@@ -536,6 +536,9 @@ pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> Tuple
     }
 }
 
+mod lock;
+pub(crate) use lock::{MutexExt, RwLockExt};
+
 #[cfg(test)]
 #[path = "../../tests/utils_tests.rs"]
 mod tests;

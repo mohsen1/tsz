@@ -159,6 +159,7 @@ mod tests {
         // Concurrent increments from N threads must produce N distinct
         // values (Relaxed ordering on a single counter is sufficient for
         // uniqueness, which is the contract callers rely on).
+        use crate::utils::MutexExt;
         use std::collections::HashSet;
         use std::sync::Arc;
         use std::sync::Mutex;
@@ -176,13 +177,15 @@ mod tests {
                 for _ in 0..PER_THREAD {
                     local.push(next_query_id());
                 }
-                collected.lock().expect("lock poisoned").extend(local);
+                collected
+                    .lock_unpoisoned("query_trace.collected")
+                    .extend(local);
             }));
         }
         for h in handles {
             h.join().expect("thread panicked");
         }
-        let all = collected.lock().expect("lock poisoned");
+        let all = collected.lock_unpoisoned("query_trace.collected");
         let unique: HashSet<u64> = all.iter().copied().collect();
         assert_eq!(
             unique.len(),

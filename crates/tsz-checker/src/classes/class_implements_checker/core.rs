@@ -1403,7 +1403,13 @@ impl<'a> CheckerState<'a> {
                                     } else {
                                         self.error_at_node(
                                                 class_error_idx,
-                                                &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Types have separate declarations of a private property '{member_name}'."),
+                                                &format!(
+                                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  {}",
+                                                    crate::diagnostics::format_message(
+                                                        diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                                                        &[&member_name],
+                                                    ),
+                                                ),
                                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                             );
                                     }

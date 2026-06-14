@@ -16,6 +16,7 @@ use crate::types::{
     TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId,
     TypeParamInfo,
 };
+use crate::utils::RwLockExt;
 use crate::visitor::is_identity_comparable_type;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -1029,16 +1030,10 @@ impl TypeInterner {
         let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
         {
             let mut vec = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                inner
-                    .index_to_key
-                    .write()
-                    .expect("interner index_to_key lock poisoned")
+                inner.index_to_key.write_unpoisoned("interner.index_to_key")
             });
             let mut ord = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                inner
-                    .alloc_order
-                    .write()
-                    .expect("interner alloc_order lock poisoned")
+                inner.alloc_order.write_unpoisoned("interner.alloc_order")
             });
             write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
             write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
@@ -1106,17 +1101,11 @@ impl TypeInterner {
                     // no `Instant::now()`, no atomic touch.
                     let mut vec =
                         tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                            inner
-                                .index_to_key
-                                .write()
-                                .expect("interner index_to_key lock poisoned")
+                            inner.index_to_key.write_unpoisoned("interner.index_to_key")
                         });
                     let mut ord =
                         tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                            inner
-                                .alloc_order
-                                .write()
-                                .expect("interner alloc_order lock poisoned")
+                            inner.alloc_order.write_unpoisoned("interner.alloc_order")
                         });
                     write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
                     write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
