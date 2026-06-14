@@ -54,6 +54,55 @@ macro_rules! impl_clear_pools {
 }
 for_each_node_pool!(impl_clear_pools);
 
+/// Append a data-bearing node to the arena, centralizing the
+/// `data` / `nodes` / `extended_info` lockstep push and the
+/// `parent == nodes.len()` invariant in one place.
+///
+/// Every data-bearing `add_*` constructor reserves the node's eventual index
+/// up front with [`NodeArenaInner::reserve_parent`], wires up its children's
+/// parent pointers against that index, then hands the typed payload to this
+/// macro. The macro performs the three-step `data` / `nodes` / `extended_info`
+/// push in lockstep and asserts the reserved `parent` still equals the index
+/// the node actually lands at — so the invariant is enforced uniformly instead
+/// of being open-coded (and silently dropped) per constructor.
+///
+/// `$pool` is the typed side-pool field that stores `$data`. The optional
+/// `flags = <expr>` tail routes through `Node::with_data_and_flags` for the
+/// node kinds that carry node-level flags (e.g. variable statements).
+macro_rules! push_data_node {
+    ($arena:expr, $parent:expr, $kind:expr, $pos:expr, $end:expr, $pool:ident, $data:expr) => {{
+        let parent: $crate::parser::base::NodeIndex = $parent;
+        let data_index = $arena.len_u32($arena.$pool.len());
+        $arena.$pool.push($data);
+        let index = $arena.len_u32($arena.nodes.len());
+        debug_assert_eq!(parent.0, index, "NodeArena parent/index invariant violated");
+        $arena.nodes.push($crate::parser::node::Node::with_data(
+            $kind, $pos, $end, data_index,
+        ));
+        $arena
+            .extended_info
+            .push($crate::parser::node::ExtendedNodeInfo::default());
+        parent
+    }};
+    ($arena:expr, $parent:expr, $kind:expr, $pos:expr, $end:expr, $pool:ident, $data:expr, flags = $flags:expr) => {{
+        let parent: $crate::parser::base::NodeIndex = $parent;
+        let data_index = $arena.len_u32($arena.$pool.len());
+        $arena.$pool.push($data);
+        let index = $arena.len_u32($arena.nodes.len());
+        debug_assert_eq!(parent.0, index, "NodeArena parent/index invariant violated");
+        $arena
+            .nodes
+            .push($crate::parser::node::Node::with_data_and_flags(
+                $kind, $pos, $end, data_index, $flags,
+            ));
+        $arena
+            .extended_info
+            .push($crate::parser::node::ExtendedNodeInfo::default());
+        parent
+    }};
+}
+pub(crate) use push_data_node;
+
 impl NodeArenaInner {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
     const MAX_NODE_PREALLOC: usize = 5_000_000;
@@ -128,6 +177,18 @@ impl NodeArenaInner {
         u32::try_from(len).expect(
             "node arena length exceeds u32::MAX; large AST support requires a larger span type",
         )
+    }
+
+    /// Reserve the index the next pushed node will occupy.
+    ///
+    /// Children are created before their parent (bottom-up), so a constructor
+    /// can take this index, set it as its children's parent, and then push the
+    /// parent node itself; [`push_data_node`] re-checks the reservation still
+    /// holds when the node lands.
+    #[inline]
+    #[must_use]
+    pub(super) fn reserve_parent(&self) -> NodeIndex {
+        NodeIndex(self.len_u32(self.nodes.len()))
     }
 
     // ============================================================================
@@ -205,42 +266,25 @@ impl NodeArenaInner {
         end: u32,
         data: IdentifierData,
     ) -> NodeIndex {
-        let data_index = self.len_u32(self.identifiers.len());
-        self.identifiers.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+        let parent = self.reserve_parent();
+        push_data_node!(self, parent, kind, pos, end, identifiers, data)
     }
 
     /// Add a literal node
     pub fn add_literal(&mut self, kind: u16, pos: u32, end: u32, data: LiteralData) -> NodeIndex {
-        let data_index = self.len_u32(self.literals.len());
-        self.literals.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+        let parent = self.reserve_parent();
+        push_data_node!(self, parent, kind, pos, end, literals, data)
     }
 
     /// Add a source file node
     pub fn add_source_file(&mut self, pos: u32, end: u32, data: SourceFileData) -> NodeIndex {
         use super::syntax_kind_ext::SOURCE_FILE;
-        let end_of_file_token = data.end_of_file_token;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+        let parent = self.reserve_parent();
 
         self.set_parent_list(&data.statements, parent);
-        self.set_parent(end_of_file_token, parent);
+        self.set_parent(data.end_of_file_token, parent);
 
-        let data_index = self.len_u32(self.source_files.len());
-        self.source_files.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes
-            .push(Node::with_data(SOURCE_FILE, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        push_data_node!(self, parent, SOURCE_FILE, pos, end, source_files, data)
     }
 }
 

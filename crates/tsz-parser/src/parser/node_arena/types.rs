@@ -3,30 +3,22 @@
 //! types, conditional/infer/operator/indexed-access/mapped types, literal and
 //! template-literal types, named tuple members, and type predicates).
 
+use super::push_data_node;
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
-    ArrayTypeData, CompositeTypeData, ConditionalTypeData, ExtendedNodeInfo, FunctionTypeData,
-    IndexedAccessTypeData, InferTypeData, LiteralTypeData, MappedTypeData, NamedTupleMemberData,
-    Node, NodeArenaInner, TemplateLiteralTypeData, TupleTypeData, TypeLiteralData,
-    TypeOperatorData, TypePredicateData, TypeQueryData, TypeRefData, WrappedTypeData,
+    ArrayTypeData, CompositeTypeData, ConditionalTypeData, FunctionTypeData, IndexedAccessTypeData,
+    InferTypeData, LiteralTypeData, MappedTypeData, NamedTupleMemberData, NodeArenaInner,
+    TemplateLiteralTypeData, TupleTypeData, TypeLiteralData, TypeOperatorData, TypePredicateData,
+    TypeQueryData, TypeRefData, WrappedTypeData,
 };
 
 impl NodeArenaInner {
     /// Add a type reference node
     pub fn add_type_ref(&mut self, kind: u16, pos: u32, end: u32, data: TypeRefData) -> NodeIndex {
-        let type_name = data.type_name;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(type_name, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.type_name, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
-
-        let data_index = self.len_u32(self.type_refs.len());
-        self.type_refs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, type_refs, data)
     }
 
     /// Add a union/intersection type node
@@ -37,18 +29,9 @@ impl NodeArenaInner {
         end: u32,
         data: CompositeTypeData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.types, parent);
-
-        let data_index = self.len_u32(self.composite_types.len());
-        self.composite_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        push_data_node!(self, parent, kind, pos, end, composite_types, data)
     }
 
     /// Add a function/constructor type node
@@ -59,21 +42,11 @@ impl NodeArenaInner {
         end: u32,
         data: FunctionTypeData,
     ) -> NodeIndex {
-        let type_annotation = data.type_annotation;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.type_parameters.as_ref(), parent);
         self.set_parent_list(&data.parameters, parent);
-        self.set_parent(type_annotation, parent);
-
-        let data_index = self.len_u32(self.function_types.len());
-        self.function_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.type_annotation, parent);
+        push_data_node!(self, parent, kind, pos, end, function_types, data)
     }
 
     /// Add a type query node (typeof)
@@ -84,19 +57,10 @@ impl NodeArenaInner {
         end: u32,
         data: TypeQueryData,
     ) -> NodeIndex {
-        let expr_name = data.expr_name;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(expr_name, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.expr_name, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
-
-        let data_index = self.len_u32(self.type_queries.len());
-        self.type_queries.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, type_queries, data)
     }
 
     /// Add a type literal node
@@ -107,17 +71,9 @@ impl NodeArenaInner {
         end: u32,
         data: TypeLiteralData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.members, parent);
-
-        let data_index = self.len_u32(self.type_literals.len());
-        self.type_literals.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, type_literals, data)
     }
 
     /// Add an array type node
@@ -128,15 +84,9 @@ impl NodeArenaInner {
         end: u32,
         data: ArrayTypeData,
     ) -> NodeIndex {
-        let element_type = data.element_type;
-        let data_index = self.len_u32(self.array_types.len());
-        self.array_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(element_type, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.element_type, parent);
+        push_data_node!(self, parent, kind, pos, end, array_types, data)
     }
 
     /// Add a tuple type node
@@ -147,17 +97,9 @@ impl NodeArenaInner {
         end: u32,
         data: TupleTypeData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.elements, parent);
-
-        let data_index = self.len_u32(self.tuple_types.len());
-        self.tuple_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, tuple_types, data)
     }
 
     /// Add an optional/rest type node
@@ -168,15 +110,9 @@ impl NodeArenaInner {
         end: u32,
         data: WrappedTypeData,
     ) -> NodeIndex {
-        let type_node = data.type_node;
-        let data_index = self.len_u32(self.wrapped_types.len());
-        self.wrapped_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(type_node, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.type_node, parent);
+        push_data_node!(self, parent, kind, pos, end, wrapped_types, data)
     }
 
     /// Add a conditional type node
@@ -187,21 +123,12 @@ impl NodeArenaInner {
         end: u32,
         data: ConditionalTypeData,
     ) -> NodeIndex {
-        let check_type = data.check_type;
-        let extends_type = data.extends_type;
-        let true_type = data.true_type;
-        let false_type = data.false_type;
-        let data_index = self.len_u32(self.conditional_types.len());
-        self.conditional_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(check_type, parent);
-        self.set_parent(extends_type, parent);
-        self.set_parent(true_type, parent);
-        self.set_parent(false_type, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.check_type, parent);
+        self.set_parent(data.extends_type, parent);
+        self.set_parent(data.true_type, parent);
+        self.set_parent(data.false_type, parent);
+        push_data_node!(self, parent, kind, pos, end, conditional_types, data)
     }
 
     /// Add an infer type node
@@ -212,15 +139,9 @@ impl NodeArenaInner {
         end: u32,
         data: InferTypeData,
     ) -> NodeIndex {
-        let type_parameter = data.type_parameter;
-        let data_index = self.len_u32(self.infer_types.len());
-        self.infer_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(type_parameter, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.type_parameter, parent);
+        push_data_node!(self, parent, kind, pos, end, infer_types, data)
     }
 
     /// Add a type operator node (keyof, unique, readonly)
@@ -231,15 +152,9 @@ impl NodeArenaInner {
         end: u32,
         data: TypeOperatorData,
     ) -> NodeIndex {
-        let type_node = data.type_node;
-        let data_index = self.len_u32(self.type_operators.len());
-        self.type_operators.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(type_node, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.type_node, parent);
+        push_data_node!(self, parent, kind, pos, end, type_operators, data)
     }
 
     /// Add an indexed access type node
@@ -250,17 +165,10 @@ impl NodeArenaInner {
         end: u32,
         data: IndexedAccessTypeData,
     ) -> NodeIndex {
-        let object_type = data.object_type;
-        let index_type = data.index_type;
-        let data_index = self.len_u32(self.indexed_access_types.len());
-        self.indexed_access_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(object_type, parent);
-        self.set_parent(index_type, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.object_type, parent);
+        self.set_parent(data.index_type, parent);
+        push_data_node!(self, parent, kind, pos, end, indexed_access_types, data)
     }
 
     /// Add a mapped type node
@@ -271,27 +179,14 @@ impl NodeArenaInner {
         end: u32,
         data: MappedTypeData,
     ) -> NodeIndex {
-        let readonly_token = data.readonly_token;
-        let type_parameter = data.type_parameter;
-        let name_type = data.name_type;
-        let question_token = data.question_token;
-        let type_node = data.type_node;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(readonly_token, parent);
-        self.set_parent(type_parameter, parent);
-        self.set_parent(name_type, parent);
-        self.set_parent(question_token, parent);
-        self.set_parent(type_node, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.readonly_token, parent);
+        self.set_parent(data.type_parameter, parent);
+        self.set_parent(data.name_type, parent);
+        self.set_parent(data.question_token, parent);
+        self.set_parent(data.type_node, parent);
         self.set_parent_opt_list(data.members.as_ref(), parent);
-
-        let data_index = self.len_u32(self.mapped_types.len());
-        self.mapped_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, mapped_types, data)
     }
 
     /// Add a literal type node
@@ -302,15 +197,9 @@ impl NodeArenaInner {
         end: u32,
         data: LiteralTypeData,
     ) -> NodeIndex {
-        let literal = data.literal;
-        let data_index = self.len_u32(self.literal_types.len());
-        self.literal_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(literal, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.literal, parent);
+        push_data_node!(self, parent, kind, pos, end, literal_types, data)
     }
 
     /// Add a template literal type node
@@ -321,19 +210,10 @@ impl NodeArenaInner {
         end: u32,
         data: TemplateLiteralTypeData,
     ) -> NodeIndex {
-        let head = data.head;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(head, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.head, parent);
         self.set_parent_list(&data.template_spans, parent);
-
-        let data_index = self.len_u32(self.template_literal_types.len());
-        self.template_literal_types.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, template_literal_types, data)
     }
 
     /// Add a named tuple member node
@@ -344,18 +224,10 @@ impl NodeArenaInner {
         end: u32,
         data: NamedTupleMemberData,
     ) -> NodeIndex {
-        let name = data.name;
-        let type_node = data.type_node;
-
-        let data_index = self.len_u32(self.named_tuple_members.len());
-        self.named_tuple_members.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(name, parent);
-        self.set_parent(type_node, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.name, parent);
+        self.set_parent(data.type_node, parent);
+        push_data_node!(self, parent, kind, pos, end, named_tuple_members, data)
     }
 
     /// Add a type predicate node
@@ -366,17 +238,9 @@ impl NodeArenaInner {
         end: u32,
         data: TypePredicateData,
     ) -> NodeIndex {
-        let parameter_name = data.parameter_name;
-        let type_node = data.type_node;
-
-        let data_index = self.len_u32(self.type_predicates.len());
-        self.type_predicates.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(parameter_name, parent);
-        self.set_parent(type_node, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.parameter_name, parent);
+        self.set_parent(data.type_node, parent);
+        push_data_node!(self, parent, kind, pos, end, type_predicates, data)
     }
 }

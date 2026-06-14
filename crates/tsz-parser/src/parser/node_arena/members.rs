@@ -3,11 +3,11 @@
 //! declarations, parameters, type parameters, decorators, and heritage
 //! clauses).
 
+use super::push_data_node;
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
-    AccessorData, ConstructorData, DecoratorData, ExtendedNodeInfo, HeritageData,
-    IndexSignatureData, MethodDeclData, Node, NodeArenaInner, ParameterData, PropertyDeclData,
-    SignatureData, TypeParameterData,
+    AccessorData, ConstructorData, DecoratorData, HeritageData, IndexSignatureData, MethodDeclData,
+    NodeArenaInner, ParameterData, PropertyDeclData, SignatureData, TypeParameterData,
 };
 
 impl NodeArenaInner {
@@ -19,24 +19,13 @@ impl NodeArenaInner {
         end: u32,
         data: SignatureData,
     ) -> NodeIndex {
-        let name = data.name;
-        let type_annotation = data.type_annotation;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
+        self.set_parent(data.name, parent);
         self.set_parent_opt_list(data.type_parameters.as_ref(), parent);
         self.set_parent_opt_list(data.parameters.as_ref(), parent);
-        self.set_parent(type_annotation, parent);
-
-        let data_index = self.len_u32(self.signatures.len());
-        self.signatures.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.type_annotation, parent);
+        push_data_node!(self, parent, kind, pos, end, signatures, data)
     }
 
     /// Add an index signature node
@@ -47,21 +36,11 @@ impl NodeArenaInner {
         end: u32,
         data: IndexSignatureData,
     ) -> NodeIndex {
-        let type_annotation = data.type_annotation;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
         self.set_parent_list(&data.parameters, parent);
-        self.set_parent(type_annotation, parent);
-
-        let data_index = self.len_u32(self.index_signatures.len());
-        self.index_signatures.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.type_annotation, parent);
+        push_data_node!(self, parent, kind, pos, end, index_signatures, data)
     }
 
     /// Add a property declaration node
@@ -72,23 +51,12 @@ impl NodeArenaInner {
         end: u32,
         data: PropertyDeclData,
     ) -> NodeIndex {
-        let name = data.name;
-        let type_annotation = data.type_annotation;
-        let initializer = data.initializer;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
-        self.set_parent(type_annotation, parent);
-        self.set_parent(initializer, parent);
-
-        let data_index = self.len_u32(self.property_decls.len());
-        self.property_decls.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.name, parent);
+        self.set_parent(data.type_annotation, parent);
+        self.set_parent(data.initializer, parent);
+        push_data_node!(self, parent, kind, pos, end, property_decls, data)
     }
 
     /// Add a method declaration node
@@ -99,25 +67,14 @@ impl NodeArenaInner {
         end: u32,
         data: MethodDeclData,
     ) -> NodeIndex {
-        let name = data.name;
-        let type_annotation = data.type_annotation;
-        let body = data.body;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
+        self.set_parent(data.name, parent);
         self.set_parent_opt_list(data.type_parameters.as_ref(), parent);
         self.set_parent_list(&data.parameters, parent);
-        self.set_parent(type_annotation, parent);
-        self.set_parent(body, parent);
-
-        let data_index = self.len_u32(self.method_decls.len());
-        self.method_decls.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.type_annotation, parent);
+        self.set_parent(data.body, parent);
+        push_data_node!(self, parent, kind, pos, end, method_decls, data)
     }
 
     /// Add a constructor declaration node
@@ -128,45 +85,24 @@ impl NodeArenaInner {
         end: u32,
         data: ConstructorData,
     ) -> NodeIndex {
-        let body = data.body;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
         self.set_parent_opt_list(data.type_parameters.as_ref(), parent);
         self.set_parent_list(&data.parameters, parent);
-        self.set_parent(body, parent);
-
-        let data_index = self.len_u32(self.constructors.len());
-        self.constructors.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.body, parent);
+        push_data_node!(self, parent, kind, pos, end, constructors, data)
     }
 
     /// Add an accessor declaration node (get/set)
     pub fn add_accessor(&mut self, kind: u16, pos: u32, end: u32, data: AccessorData) -> NodeIndex {
-        let name = data.name;
-        let type_annotation = data.type_annotation;
-        let body = data.body;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
+        self.set_parent(data.name, parent);
         self.set_parent_opt_list(data.type_parameters.as_ref(), parent);
         self.set_parent_list(&data.parameters, parent);
-        self.set_parent(type_annotation, parent);
-        self.set_parent(body, parent);
-
-        let data_index = self.len_u32(self.accessors.len());
-        self.accessors.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.type_annotation, parent);
+        self.set_parent(data.body, parent);
+        push_data_node!(self, parent, kind, pos, end, accessors, data)
     }
 
     /// Add a parameter declaration node
@@ -177,24 +113,13 @@ impl NodeArenaInner {
         end: u32,
         data: ParameterData,
     ) -> NodeIndex {
-        let name = data.name;
-        let type_annotation = data.type_annotation;
-        let initializer = data.initializer;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         // Set parent pointers for children
-        self.set_parent(name, parent);
-        self.set_parent(type_annotation, parent);
-        self.set_parent(initializer, parent);
+        self.set_parent(data.name, parent);
+        self.set_parent(data.type_annotation, parent);
+        self.set_parent(data.initializer, parent);
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-
-        let data_index = self.len_u32(self.parameters.len());
-        self.parameters.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, parameters, data)
     }
 
     /// Add a type parameter declaration node
@@ -205,24 +130,12 @@ impl NodeArenaInner {
         end: u32,
         data: TypeParameterData,
     ) -> NodeIndex {
-        let name = data.name;
-        let constraint = data.constraint;
-        let default = data.default;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
-        self.set_parent(constraint, parent);
-        self.set_parent(default, parent);
-
-        let data_index = self.len_u32(self.type_parameters.len());
-        self.type_parameters.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.name, parent);
+        self.set_parent(data.constraint, parent);
+        self.set_parent(data.default, parent);
+        push_data_node!(self, parent, kind, pos, end, type_parameters, data)
     }
 
     /// Add a decorator node
@@ -233,29 +146,15 @@ impl NodeArenaInner {
         end: u32,
         data: DecoratorData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let data_index = self.len_u32(self.decorators.len());
-        self.decorators.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, decorators, data)
     }
 
     /// Add a heritage clause node
     pub fn add_heritage(&mut self, kind: u16, pos: u32, end: u32, data: HeritageData) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.types, parent);
-
-        let data_index = self.len_u32(self.heritage_clauses.len());
-        self.heritage_clauses.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, heritage_clauses, data)
     }
 }

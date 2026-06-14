@@ -2,11 +2,11 @@
 //! export declarations, import clauses, named imports, specifiers,
 //! export assignments, and import attributes).
 
+use super::push_data_node;
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
-    ExportAssignmentData, ExportDeclData, ExtendedNodeInfo, ImportAttributeData,
-    ImportAttributesData, ImportClauseData, ImportDeclData, NamedImportsData, Node, NodeArenaInner,
-    SpecifierData,
+    ExportAssignmentData, ExportDeclData, ImportAttributeData, ImportAttributesData,
+    ImportClauseData, ImportDeclData, NamedImportsData, NodeArenaInner, SpecifierData,
 };
 
 impl NodeArenaInner {
@@ -18,23 +18,12 @@ impl NodeArenaInner {
         end: u32,
         data: ImportDeclData,
     ) -> NodeIndex {
-        let import_clause = data.import_clause;
-        let module_specifier = data.module_specifier;
-        let attributes = data.attributes;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(import_clause, parent);
-        self.set_parent(module_specifier, parent);
-        self.set_parent(attributes, parent);
-
-        let data_index = self.len_u32(self.import_decls.len());
-        self.import_decls.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.import_clause, parent);
+        self.set_parent(data.module_specifier, parent);
+        self.set_parent(data.attributes, parent);
+        push_data_node!(self, parent, kind, pos, end, import_decls, data)
     }
 
     /// Add an import clause node
@@ -45,18 +34,10 @@ impl NodeArenaInner {
         end: u32,
         data: ImportClauseData,
     ) -> NodeIndex {
-        let name = data.name;
-        let named_bindings = data.named_bindings;
-
-        let data_index = self.len_u32(self.import_clauses.len());
-        self.import_clauses.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(name, parent);
-        self.set_parent(named_bindings, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.name, parent);
+        self.set_parent(data.named_bindings, parent);
+        push_data_node!(self, parent, kind, pos, end, import_clauses, data)
     }
 
     /// Add a namespace/named imports node
@@ -67,19 +48,10 @@ impl NodeArenaInner {
         end: u32,
         data: NamedImportsData,
     ) -> NodeIndex {
-        let name = data.name;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(name, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.name, parent);
         self.set_parent_list(&data.elements, parent);
-
-        let data_index = self.len_u32(self.named_imports.len());
-        self.named_imports.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, named_imports, data)
     }
 
     /// Add an import/export specifier node
@@ -90,18 +62,10 @@ impl NodeArenaInner {
         end: u32,
         data: SpecifierData,
     ) -> NodeIndex {
-        let property_name = data.property_name;
-        let name = data.name;
-
-        let data_index = self.len_u32(self.specifiers.len());
-        self.specifiers.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(property_name, parent);
-        self.set_parent(name, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.property_name, parent);
+        self.set_parent(data.name, parent);
+        push_data_node!(self, parent, kind, pos, end, specifiers, data)
     }
 
     /// Add an export declaration node
@@ -112,23 +76,12 @@ impl NodeArenaInner {
         end: u32,
         data: ExportDeclData,
     ) -> NodeIndex {
-        let export_clause = data.export_clause;
-        let module_specifier = data.module_specifier;
-        let attributes = data.attributes;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(export_clause, parent);
-        self.set_parent(module_specifier, parent);
-        self.set_parent(attributes, parent);
-
-        let data_index = self.len_u32(self.export_decls.len());
-        self.export_decls.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.export_clause, parent);
+        self.set_parent(data.module_specifier, parent);
+        self.set_parent(data.attributes, parent);
+        push_data_node!(self, parent, kind, pos, end, export_decls, data)
     }
 
     /// Add an export assignment node
@@ -139,19 +92,10 @@ impl NodeArenaInner {
         end: u32,
         data: ExportAssignmentData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_opt_list(data.modifiers.as_ref(), parent);
-        self.set_parent(expression, parent);
-
-        let data_index = self.len_u32(self.export_assignments.len());
-        self.export_assignments.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, export_assignments, data)
     }
 
     /// Add an import attributes node
@@ -162,17 +106,9 @@ impl NodeArenaInner {
         end: u32,
         data: ImportAttributesData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.elements, parent);
-
-        let data_index = self.len_u32(self.import_attributes.len());
-        self.import_attributes.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, import_attributes, data)
     }
 
     /// Add an import attribute node
@@ -183,17 +119,9 @@ impl NodeArenaInner {
         end: u32,
         data: ImportAttributeData,
     ) -> NodeIndex {
-        let name = data.name;
-        let value = data.value;
-
-        let data_index = self.len_u32(self.import_attribute.len());
-        self.import_attribute.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(name, parent);
-        self.set_parent(value, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.name, parent);
+        self.set_parent(data.value, parent);
+        push_data_node!(self, parent, kind, pos, end, import_attribute, data)
     }
 }
