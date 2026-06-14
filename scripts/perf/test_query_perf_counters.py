@@ -166,6 +166,8 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("reset-cache high-water by family:", result.stdout)
         self.assertIn("env_eval", result.stdout)
         self.assertIn("share  40.6% →  40.6%", result.stdout)
+        self.assertIn("attributed byte coverage 4,096/4,096 (100.0%) → 4,096/4,096 (100.0%)", result.stdout)
+        self.assertIn("dominant retained family env_eval (1,664, 40.6%) → env_eval (1,664, 40.6%)", result.stdout)
 
     def test_reset_cache_summary_reports_unattributed_bytes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -194,6 +196,8 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("unattributed", result.stdout)
         self.assertIn("bytes          0 →      4,096 (+4,096)", result.stdout)
         self.assertIn("share   0.0% →  50.0%", result.stdout)
+        self.assertIn("attributed byte coverage 4,096/4,096 (100.0%) → 4,096/8,192 (50.0%)", result.stdout)
+        self.assertIn("dominant retained family env_eval (1,664, 40.6%) → unattributed (4,096, 50.0%)", result.stdout)
 
     def test_by_reason_requires_by_reason_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
