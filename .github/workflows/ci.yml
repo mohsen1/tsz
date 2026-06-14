@@ -889,6 +889,72 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
 
+  forced-parallel-determinism:
+    name: forced-parallel-determinism
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    continue-on-error: true
+    env:
+      TSZ_BIN: ${{ github.workspace }}/.target/dist-fast/tsz
+      TSZ_DETERMINISM_TIMEOUT: "45"
+      TSZ_PROJECT_COMPILE_FIXTURE_ROOT: ${{ github.workspace }}/.target/project-compile-guard
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run forced-parallel DOM determinism canaries
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          mkdir -p .target/forced-parallel-determinism
+          summary=".target/forced-parallel-determinism/summary.md"
+          {
+            echo "## Forced-parallel DOM determinism canaries"
+            echo ""
+            echo "| Row | Result | Log |"
+            echo "| --- | --- | --- |"
+          } > "$summary"
+          status=0
+          for row in dom-smoke webworker-smoke dom-webworker-smoke; do
+            log=".target/forced-parallel-determinism/${row}.log"
+            scripts/perf/forced-parallel-project-determinism.sh \
+              --row "$row" \
+              --runs 2 \
+              --workers 4,8 \
+              --mode forced \
+              --out ".target/forced-parallel-determinism" \
+              >"$log" 2>&1
+            rc=$?
+            if [[ "$rc" -eq 0 ]]; then
+              result="passed"
+            else
+              result="failed (exit $rc)"
+              status=1
+            fi
+            echo "| \`$row\` | $result | \`$log\` |" >> "$summary"
+          done
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Upload forced-parallel determinism captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forced-parallel-determinism
+          path: .target/forced-parallel-determinism/**
+          retention-days: 14
+          if-no-files-found: warn
+          compression-level: 1
+
   wasm:
     name: wasm
     needs: gate
