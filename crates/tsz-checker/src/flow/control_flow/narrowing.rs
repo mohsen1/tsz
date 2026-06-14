@@ -1158,18 +1158,11 @@ impl<'a> FlowAnalyzer<'a> {
         expr: NodeIndex,
         target: NodeIndex,
     ) -> Option<Vec<Atom>> {
+        // `discriminant_property_info` already requires the discriminant be
+        // accessed directly on `target`; only the non-optional case narrows by
+        // truthiness here.
         self.discriminant_property_info(expr, target)
-            .and_then(|(path, is_optional, base)| {
-                if is_optional {
-                    return None;
-                }
-                // Only apply discriminant narrowing if the base of the property
-                // access matches the target being narrowed. For example, if narrowing
-                // `x` based on `x.kind`, the base `x` must match target `x`.
-                // Without this check, narrowing `x.prop` based on `x.kind` would
-                // incorrectly try to find `kind` on the type of `x.prop`.
-                self.is_matching_reference(base, target).then_some(path)
-            })
+            .and_then(|(path, is_optional)| (!is_optional).then_some(path))
     }
 
     /// For a const-declared identifier that is a destructuring alias, return
@@ -1262,88 +1255,36 @@ impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn discriminant_property_info(
         &self,
         expr: NodeIndex,
-        _target: NodeIndex,
-    ) -> Option<(Vec<Atom>, bool, NodeIndex)> {
-        let expr = self.skip_parenthesized(expr);
-        self.arena.get(expr)?;
-
-        // Collect the property path by walking up the access chain
-        // For action.payload.kind, we want ["payload", "kind"]
-        let mut path: Vec<Atom> = Vec::new();
-        let mut is_optional = false;
-        let mut current = expr;
-
-        loop {
-            let current_node = self.arena.get(current)?;
-            let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || current_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            {
-                self.arena.get_access_expr(current_node)?
-            } else {
-                // Not a property/element access - we've reached the base
-                break;
-            };
-
-            // Track if any segment uses optional chaining
-            if access.question_dot_token {
-                is_optional = true;
-            }
-
-            // Get the property name for this segment
-            let prop_name = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let ident = self.arena.get_identifier_at(access.name_or_argument)?;
-                self.interner.intern_string(&ident.escaped_text)
-            } else {
-                // Element access
-                self.literal_atom_from_node_or_type(access.name_or_argument)?
-            };
-
-            // Add to path (will be reversed later)
-            path.push(prop_name);
-
-            // Move to the next level up
-            let access_target = access.expression;
-            let access_target = self.skip_parenthesized(access_target);
-            let access_target_node = self.arena.get(access_target)?;
-
-            // Unwrap assignment and comma expressions to get the actual target
-            let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            {
-                let binary = self.arena.get_binary_expr(access_target_node)?;
-                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                    // (x = y).prop -> unwrap to x.prop
-                    binary.left
-                } else if binary.operator_token == SyntaxKind::CommaToken as u16 {
-                    // (a, b).prop -> unwrap to b.prop
-                    binary.right
-                } else {
-                    access_target
-                }
-            } else {
-                access_target
-            };
-
-            current = effective_target;
-        }
-
-        // Discriminant narrowing only applies to a *direct* property of the
-        // narrowed reference. `tsc` narrows a union by `x.kind === "a"` (a
-        // discriminant property accessed directly on `x`), but it does NOT
-        // narrow the outer union through a nested access such as
-        // `x.meta.kind === "a"` — there the only references narrowed are
-        // `x.meta` and `x.meta.kind`, never `x`. Requiring a single-segment
-        // path keeps every consumer (truthiness, switch, assertion predicate)
-        // aligned with that rule; nested references are narrowed when they are
-        // themselves the target via the relative-path producers.
+        target: NodeIndex,
+    ) -> Option<(Vec<Atom>, bool)> {
+        // A discriminant property must be accessed *directly* on the narrowed
+        // reference: the guard `target.prop` narrows `target` by `prop`. The
+        // property path is therefore measured *relative to `target`*, not to
+        // the syntactic root of the access chain.
         //
-        // A single collected segment needs no reversal, so reject multi-segment
-        // paths before paying for `Vec::reverse`.
+        // Measuring relative to the root (the previous behavior) only worked
+        // when `target` itself was the root — a bare identifier, `this`, or
+        // `super`. For a member-rooted reference such as `this.state`, the path
+        // from the root `this` to `this.state.matched` is two segments
+        // (`["state", "matched"]`), so a single-segment gate rejected it and the
+        // discriminant guard `if (this.state.matched)` failed to narrow
+        // `this.state`. `relative_discriminant_path` walks from `expr` toward
+        // `target` (following `const alias = target` proxies) and yields exactly
+        // the segments between them, so `this.state.matched` relative to
+        // `this.state` is the single segment `["matched"]`.
+        //
+        // The single-segment requirement is preserved: `tsc` narrows a union by
+        // a discriminant accessed *directly* on the reference, never through a
+        // nested access (`x.meta.kind` narrows `x.meta`, never the outer `x`).
+        // This mirrors `discriminant_comparison` / `typeof_discriminant_path`,
+        // which already key their paths off `relative_discriminant_path`. The
+        // base is necessarily `target`, so only the path and optional flag are
+        // reported.
+        let (path, is_optional) = self.relative_discriminant_path(expr, target)?;
         if path.len() != 1 {
             return None;
         }
-
-        // current is now the base (e.g., "action" in action.kind)
-        Some((path, is_optional, current))
+        Some((path, is_optional))
     }
 
     pub(crate) fn discriminant_comparison(
@@ -1352,25 +1293,18 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Vec<Atom>, TypeId, bool, NodeIndex)> {
-        // Use relative_discriminant_path to find the property path from target to left.
-        // This correctly handles both:
-        //   - Direct: `t.kind === "a"` narrowing `t` → path=["kind"], base=t
-        //   - Nested: `this.test.type === "a"` narrowing `this.test` → path=["type"], base=this.test
-        // (discriminant_property_info returns the full path from the root, which is wrong when
-        //  target is not the root — e.g., returns path=["test","type"] base=this for `this.test.type`
-        //  when we need path=["type"] base=this.test relative to target=this.test)
-        // Single-segment relative path only (see `discriminant_property_info`):
-        // a nested access narrows the inner reference, never the outer `target`.
+        // `discriminant_property_info` reports the single-segment path of a
+        // discriminant accessed directly on `target` (e.g. `t.kind === "a"`
+        // narrowing `t`, or `this.test.type === "a"` narrowing `this.test`). A
+        // nested access narrows the inner reference, never the outer `target`.
         if let Some(literal) = self.discriminant_literal_candidate(right)
-            && let Some((rel_path, is_optional)) = self.relative_discriminant_path(left, target)
-            && rel_path.len() == 1
+            && let Some((rel_path, is_optional)) = self.discriminant_property_info(left, target)
         {
             return Some((rel_path, literal, is_optional, target));
         }
 
         if let Some(literal) = self.discriminant_literal_candidate(left)
-            && let Some((rel_path, is_optional)) = self.relative_discriminant_path(right, target)
-            && rel_path.len() == 1
+            && let Some((rel_path, is_optional)) = self.discriminant_property_info(right, target)
         {
             return Some((rel_path, literal, is_optional, target));
         }
@@ -1468,11 +1402,10 @@ impl<'a> FlowAnalyzer<'a> {
             if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
-                // Walk from `init_expr` towards the root, collecting segments until we hit `target`.
-                // Single-segment path only: `const k = s.meta.kind` does not narrow `s` in `tsc`.
+                // Single-segment discriminant directly on `target`: `const k =
+                // s.meta.kind` does not narrow `s` in `tsc`.
                 if let Some((rel_path, is_optional)) =
-                    self.relative_discriminant_path(init_expr, target)
-                    && rel_path.len() == 1
+                    self.discriminant_property_info(init_expr, target)
                 {
                     return Some((rel_path, literal, is_optional, target));
                 }
@@ -1583,20 +1516,19 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Vec<Atom>, bool, &str)> {
-        // Single-segment path only (see `discriminant_property_info`):
-        // `typeof s.meta.x === "string"` narrows `s.meta`, never the outer union `s`.
+        // Single-segment discriminant directly on `target` (see
+        // `discriminant_property_info`): `typeof s.meta.x === "string"` narrows
+        // `s.meta`, never the outer union `s`.
         // Try left = typeof expr, right = string literal
         if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(left))
-            && let Some((path, is_optional)) = self.relative_discriminant_path(operand, target)
-            && path.len() == 1
+            && let Some((path, is_optional)) = self.discriminant_property_info(operand, target)
             && let Some(lit) = self.literal_string_from_node(right)
         {
             return Some((path, is_optional, lit));
         }
         // Try right = typeof expr, left = string literal
         if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(right))
-            && let Some((path, is_optional)) = self.relative_discriminant_path(operand, target)
-            && path.len() == 1
+            && let Some((path, is_optional)) = self.discriminant_property_info(operand, target)
             && let Some(lit) = self.literal_string_from_node(left)
         {
             return Some((path, is_optional, lit));

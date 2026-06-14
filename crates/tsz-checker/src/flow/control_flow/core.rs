@@ -1546,9 +1546,8 @@ impl<'a> FlowAnalyzer<'a> {
         // extract the property path and narrow the parent object by discriminant.
         if let Some(predicate_type) = resolved_predicate.type_id
             && query::is_unit_type(self.interner, predicate_type)
-            && let Some((property_path, _is_optional, base)) =
+            && let Some((property_path, _is_optional)) =
                 self.discriminant_property_info(predicate_target, reference)
-            && self.is_matching_reference(base, reference)
         {
             let env_borrow;
             let mut narrowing = self.make_narrowing_context();

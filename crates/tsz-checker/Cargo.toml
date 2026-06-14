@@ -404,6 +404,9 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_rooted_discriminant_narrowing_tests"
+path = "tests/this_rooted_discriminant_narrowing_tests.rs"
+[[test]]
 name = "ts2725_tests"
 path = "tests/ts2725_tests.rs"
 [[test]]
