@@ -31,6 +31,7 @@ mod cross_file_direct_declaration_alias;
 mod cross_file_direct_functions;
 mod cross_file_env_merge;
 mod cross_file_globals;
+mod cross_file_heritage;
 mod cross_file_import_alias_pin;
 mod cross_file_interface_depth;
 mod cross_file_overlay_gate;

@@ -1678,12 +1678,7 @@ impl<'a> CheckerState<'a> {
                     };
                     merged = self.merge_lib_interface_heritage(merged, &name).0;
                 }
-                // Owner-arena `extends` heritage: `merge_interface_heritage_types`
-                // reads clauses through `self.ctx.arena`, so a cross-file generic
-                // interface that extends a base declared in its own module drops
-                // every inherited member here. Merge it from the owner arena while
-                // the derived interface's type parameters are still in scope, so
-                // inherited members share the derived body's parameter identities.
+                // Owner-arena `extends` heritage for cross-file generic interfaces.
                 if needs_text_based_resolution && merged == interface_type {
                     merged = self.merge_cross_file_interface_heritage(
                         sym_id,
