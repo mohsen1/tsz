@@ -383,7 +383,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             cursor.index + 1,
                             bindings,
                             checker,
-                            failed_states,
+                            scratch,
                         )
                     {
                         return Some(true);
