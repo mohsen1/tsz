@@ -48,7 +48,9 @@ impl EnumValue {
                 // Format float to match tsc output, including JS numeric globals.
                 format_js_number(*f)
             }
-            Self::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            Self::String(s) => {
+                format!("\"{}\"", tsz_common::source_map::escape_js_string(s, '"'))
+            }
             Self::Computed => "0 /* computed */".to_string(),
         }
     }
@@ -752,17 +754,7 @@ fn global_numeric_constant(name: &str) -> Option<EnumValue> {
 }
 
 fn format_js_number(value: f64) -> String {
-    if value.is_nan() {
-        "NaN".to_string()
-    } else if value.is_infinite() {
-        if value.is_sign_positive() {
-            "Infinity".to_string()
-        } else {
-            "-Infinity".to_string()
-        }
-    } else {
-        format!("{value}")
-    }
+    crate::text_utils::format_js_number(value)
 }
 
 #[cfg(test)]

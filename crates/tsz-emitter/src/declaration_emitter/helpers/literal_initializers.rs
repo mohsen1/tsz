@@ -482,59 +482,8 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::ImportKeyword as u16)
     }
 
-    /// Format a f64 value as JavaScript would display it.
-    ///
-    /// Matches JS `Number.prototype.toString()` behavior:
-    /// - Infinity/NaN -> "Infinity"/"NaN"
-    /// - Uses scientific notation for numbers with >= 21 integer digits
-    /// - Uses scientific notation for very small numbers
     pub(crate) fn format_js_number(n: f64) -> String {
-        if n.is_infinite() {
-            if n.is_sign_positive() {
-                "Infinity".to_string()
-            } else {
-                "-Infinity".to_string()
-            }
-        } else if n.is_nan() {
-            "NaN".to_string()
-        } else {
-            let s = n.to_string();
-            // Rust's default formatter doesn't use scientific notation for large
-            // integers. JS switches to scientific notation when the integer part
-            // has 21+ digits. Detect and convert.
-            let abs_s = s.strip_prefix('-').unwrap_or(&s);
-            let needs_scientific = if let Some(dot_pos) = abs_s.find('.') {
-                dot_pos >= 21
-            } else {
-                abs_s.len() >= 21
-            };
-            if needs_scientific {
-                Self::format_js_scientific(n)
-            } else {
-                s
-            }
-        }
-    }
-
-    /// Format a number in JavaScript-style scientific notation (e.g., `1.2345678912345678e+53`).
-    pub(in crate::declaration_emitter) fn format_js_scientific(n: f64) -> String {
-        let neg = n < 0.0;
-        let abs_n = n.abs();
-        // Use Rust's {:e} format which gives e.g. "1.2345678912345678e53"
-        let s = format!("{abs_n:e}");
-        // JS uses e+N for positive exponents, e-N for negative
-        let result = if let Some(pos) = s.find('e') {
-            let (mantissa, exp_part) = s.split_at(pos);
-            let exp_str = &exp_part[1..]; // skip 'e'
-            if exp_str.starts_with('-') {
-                format!("{mantissa}e{exp_str}")
-            } else {
-                format!("{mantissa}e+{exp_str}")
-            }
-        } else {
-            s
-        };
-        if neg { format!("-{result}") } else { result }
+        crate::text_utils::format_js_number(n)
     }
 
     /// Normalize a numeric literal string through f64, matching tsc's JS round-trip behavior.

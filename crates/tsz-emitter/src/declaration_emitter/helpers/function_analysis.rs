@@ -782,16 +782,13 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         name: &str,
     ) -> String {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
+        if name.is_empty() {
             return "\"\"".to_string();
-        };
-        let needs_quotes = !(first == '_' || first == '$' || first.is_ascii_alphabetic())
-            || chars.any(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
-        if needs_quotes {
-            format!("\"{}\"", super::escape_string_for_double_quote(name))
-        } else {
+        }
+        if crate::transforms::emit_utils::is_valid_identifier_name(name) {
             name.to_string()
+        } else {
+            format!("\"{}\"", super::escape_string_for_double_quote(name))
         }
     }
 

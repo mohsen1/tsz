@@ -1435,13 +1435,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn json_property_name_text(key: &str) -> String {
-        let mut chars = key.chars();
-        let Some(first) = chars.next() else {
+        if key.is_empty() {
             return "\"\"".to_string();
-        };
-        let valid_start = first == '_' || first == '$' || first.is_ascii_alphabetic();
-        let valid_rest = chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
-        if valid_start && valid_rest {
+        }
+        if crate::transforms::emit_utils::is_valid_identifier_name(key) {
             key.to_string()
         } else {
             serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string())

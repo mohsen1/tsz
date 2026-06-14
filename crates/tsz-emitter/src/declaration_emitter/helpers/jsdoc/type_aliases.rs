@@ -729,12 +729,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn is_jsdoc_property_identifier_name(name: &str) -> bool {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        crate::transforms::emit_utils::is_valid_identifier_name(name)
     }
 
     fn is_quoted_jsdoc_property_name(name: &str) -> bool {
