@@ -1779,6 +1779,13 @@ jobs:
           now_epoch="$(date -u +%s)"
           while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
             [[ -n "${run_id:-}" ]] || continue
+            # A catch-up dispatch that already published (conclusion=success)
+            # advanced freshness, so it must not throttle a fresh catch-up for a
+            # newer main — otherwise a successful-but-now-stale dispatch blocks
+            # "catch up no matter how many commits land" for up to the interval.
+            # Failed/cancelled/running dispatches still keep the cooldown,
+            # preserving the anti-loop-burn intent of #13306 rec 4.
+            [[ "${conclusion}" == "success" ]] && continue
             created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
             if [[ "${created_epoch}" =~ ^[0-9]+$ &&
                   $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
@@ -1931,6 +1938,13 @@ jobs:
           now_epoch="$(date -u +%s)"
           while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
             [[ -n "${run_id:-}" ]] || continue
+            # A catch-up dispatch that already published (conclusion=success)
+            # advanced freshness, so it must not throttle a fresh catch-up for a
+            # newer main — otherwise a successful-but-now-stale dispatch blocks
+            # "catch up no matter how many commits land" for up to the interval.
+            # Failed/cancelled/running dispatches still keep the cooldown,
+            # preserving the anti-loop-burn intent of #13306 rec 4.
+            [[ "${conclusion}" == "success" ]] && continue
             created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
             if [[ "${created_epoch}" =~ ^[0-9]+$ &&
                   $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
