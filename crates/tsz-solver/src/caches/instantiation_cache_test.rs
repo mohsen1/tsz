@@ -22,12 +22,12 @@
 
 use crate::caches::query_cache::QueryCache;
 use crate::instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_generic_cached, instantiate_type_cached,
-    instantiate_type_preserving_cached, substitute_this_type_at_return_position,
-    substitute_this_type_cached,
+    MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_generic_cached, instantiate_type,
+    instantiate_type_cached, instantiate_type_preserving_cached,
+    substitute_this_type_at_return_position, substitute_this_type_cached,
 };
 use crate::intern::TypeInterner;
-use crate::types::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
+use crate::types::{ConditionalType, PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
 fn param_info(atom: tsz_common::interner::Atom) -> TypeParamInfo {
     TypeParamInfo {
@@ -640,6 +640,87 @@ fn instantiate_generic_cached_identity_short_circuits() {
         stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
         "identity substitution must not probe the cache"
     );
+}
+
+#[test]
+fn unchanged_conditional_instantiation_skips_conditional_reintern() {
+    // Conditional types are meta-types, so they still need to be walked under a
+    // non-empty substitution. If all four arms remain unchanged, though, the
+    // walk should return the original `TypeId` without probing the conditional
+    // interner again.
+    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+
+    let interner = TypeInterner::new();
+    let (u_atom, _u_id) = type_param(&interner, "U");
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    });
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(u_atom, TypeId::STRING);
+
+    let before = tsz_common::perf_counters::PerfCounters::snapshot()
+        .interner
+        .conditional_intern_calls;
+    let result = instantiate_type(&interner, conditional, &subst);
+    let after = tsz_common::perf_counters::PerfCounters::snapshot()
+        .interner
+        .conditional_intern_calls;
+
+    assert_eq!(
+        result, conditional,
+        "unchanged conditional instantiation should preserve identity"
+    );
+    assert_eq!(
+        after, before,
+        "unchanged conditional instantiation should not re-intern the conditional"
+    );
+}
+
+#[test]
+fn changed_conditional_instantiation_still_rebuilds_conditional() {
+    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+
+    let interner = TypeInterner::new();
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: t_id,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    });
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_atom, TypeId::NUMBER);
+
+    let before = tsz_common::perf_counters::PerfCounters::snapshot()
+        .interner
+        .conditional_intern_calls;
+    let result = instantiate_type(&interner, conditional, &subst);
+    let after = tsz_common::perf_counters::PerfCounters::snapshot()
+        .interner
+        .conditional_intern_calls;
+
+    assert_ne!(
+        result, conditional,
+        "changed conditional instantiation must not preserve the old identity"
+    );
+    assert!(
+        after > before,
+        "changed conditional instantiation should re-intern the rebuilt conditional"
+    );
+    let result_id = match interner.lookup(result) {
+        Some(crate::types::TypeData::Conditional(id)) => id,
+        other => panic!("expected rebuilt conditional, got {other:?}"),
+    };
+    let rebuilt = interner.get_conditional(result_id);
+    assert_eq!(rebuilt.true_type, TypeId::NUMBER);
+    assert_eq!(rebuilt.false_type, TypeId::BOOLEAN);
 }
 
 #[test]

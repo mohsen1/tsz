@@ -908,6 +908,34 @@ fn test_widen_literal_type_bigint_literal() {
 }
 
 #[test]
+fn widen_literal_type_terminates_on_cyclic_union_origin() {
+    let interner = TypeInterner::new();
+    let db = &interner as &dyn crate::construction::TypeDatabase;
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let union = interner.union(vec![lit1, lit2]);
+
+    // Record a self-referential display origin: the union lists itself as one of
+    // its origin members. `widen_literal_type` recurses through origin members,
+    // so before the on-stack cycle guard this overflowed the stack (the mobx
+    // project-compile crash). It must now terminate.
+    display_provenance::record_union_origin(
+        db,
+        UnionOriginProvenance {
+            union_type_id: union,
+            origin_members: vec![union, lit1, lit2],
+        },
+    );
+
+    let widened = widen_literal_type(db, union);
+
+    // Terminated (no stack overflow). The self-reference is returned unchanged
+    // rather than recursed into, and the number literals widen to `number`;
+    // unioning the widened members collapses to `number`.
+    assert_eq!(widened, TypeId::NUMBER);
+}
+
+#[test]
 fn test_widen_literal_type_union_maps_each_member() {
     let interner = TypeInterner::new();
     let s = interner.literal_string("x");

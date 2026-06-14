@@ -175,6 +175,38 @@ const DISPOSABLE_FIXTURE_FILES: &[(&str, &str)] = &[
 const DISPOSABLE_FIXTURE_TSCONFIG: &str =
     include_str!("fixtures/parallel_agreement_disposable/tsconfig.json");
 
+/// Fourth witness family (#13255 program-def alias republication remainder):
+/// consumers are listed before the declaring module and force fresh per-file
+/// checkers to derive the same generic registry aliases through the shared
+/// `DefinitionStore`. Parallel and sequential schedules must agree even when
+/// remapped tuple-union aliases and conditional `infer` wrappers are first
+/// requested from importers rather than the declaring file.
+const SCOPE_REGISTRY_FIXTURE_FILES: &[(&str, &str)] = &[
+    (
+        "src/alias-consumer.ts",
+        include_str!("fixtures/parallel_agreement_scope_registry/alias-consumer.ts"),
+    ),
+    (
+        "src/brands.ts",
+        include_str!("fixtures/parallel_agreement_scope_registry/brands.ts"),
+    ),
+    (
+        "src/registry-consumer.ts",
+        include_str!("fixtures/parallel_agreement_scope_registry/registry-consumer.ts"),
+    ),
+    (
+        "src/scope-registry.ts",
+        include_str!("fixtures/parallel_agreement_scope_registry/scope-registry.ts"),
+    ),
+    (
+        "src/tuple-utils.ts",
+        include_str!("fixtures/parallel_agreement_scope_registry/tuple-utils.ts"),
+    ),
+];
+
+const SCOPE_REGISTRY_FIXTURE_TSCONFIG: &str =
+    include_str!("fixtures/parallel_agreement_scope_registry/tsconfig.json");
+
 fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> String {
     let mut cmd = Command::new(tsz_bin);
     cmd.args(["-p", "tsconfig.json", "--pretty", "false"])
@@ -253,5 +285,18 @@ fn forced_parallel_disposable_delegation_matches_sequential() {
         DISPOSABLE_FIXTURE_FILES,
         DISPOSABLE_FIXTURE_TSCONFIG,
         5,
+    );
+}
+
+/// Generic program aliases published through the shared definition store must
+/// be schedule-independent when importers request them before the declaring
+/// module finishes its own publication pass.
+#[test]
+fn forced_parallel_scope_registry_alias_republication_matches_sequential() {
+    assert_parallel_matches_sequential(
+        "scope_registry",
+        SCOPE_REGISTRY_FIXTURE_FILES,
+        SCOPE_REGISTRY_FIXTURE_TSCONFIG,
+        7,
     );
 }

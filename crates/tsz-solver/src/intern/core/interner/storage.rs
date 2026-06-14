@@ -11,6 +11,7 @@
 //! these locks directly rather than through accessor methods.
 
 use crate::types::{TypeData, TypeId};
+use crate::utils::RwLockExt;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::FxBuildHasher;
@@ -197,7 +198,7 @@ where
                     // TypeData writes. With `perf-counters-timing` OFF this
                     // wrapper compiles to a direct closure call.
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
+                        inner.items.write_unpoisoned("interner.items")
                     });
                     // Gap slots get an empty slice.
                     write_id_slot(&mut vec, id as usize, temp_arc, || Arc::from(Vec::new()));
@@ -227,7 +228,7 @@ where
     #[inline]
     pub(in crate::intern::core) fn empty(&self) -> Arc<[T]> {
         let inner = self.get_inner();
-        let vec = inner.items.read().expect("interner items lock poisoned");
+        let vec = inner.items.read_unpoisoned("interner.items");
         vec.first()
             .cloned()
             .unwrap_or_else(|| Arc::from(Vec::new()))
@@ -292,7 +293,7 @@ where
                     // `ConcurrentSliceInterner::intern`. Same rationale,
                     // same zero-cost-when-feature-off contract.
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
+                        inner.items.write_unpoisoned("interner.items")
                     });
                     // No empty value exists for arbitrary `T`; gap slots get
                     // this value's `Arc` and rightful owners overwrite their

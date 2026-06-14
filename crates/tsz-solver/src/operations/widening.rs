@@ -19,6 +19,7 @@ use crate::diagnostics::display_provenance::{
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::types::{ObjectFlags, TypeData, TypeId};
+use rustc_hash::FxHashSet;
 
 /// Propagate `display_alias` from the original type to the widened type.
 ///
@@ -918,6 +919,26 @@ pub fn get_base_type_for_comparison(
 /// Used for binary operator error messages where tsc shows widened types
 /// for literal operands but preserves enum type names.
 pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> TypeId {
+    // `FxHashSet::default()` does not allocate until the first insert, and only
+    // the union arm inserts, so the common non-union inputs stay allocation-free.
+    widen_literal_type_tracked(db, type_id, &mut FxHashSet::default())
+}
+
+/// `widen_literal_type` with an on-stack ancestor set guarding union recursion.
+///
+/// A union's display-origin provenance can transitively reference the union
+/// itself (a cyclic origin chain). Recursing into such members through the
+/// `Union` arm would otherwise overflow the stack. `on_stack` records the
+/// unions currently being widened on this call path; revisiting one returns it
+/// unchanged (it is already being widened by an ancestor frame). Entries are
+/// inserted on enter and removed on exit so non-cyclic diamonds — the same
+/// union reached by two independent member paths — are still widened on each
+/// path.
+fn widen_literal_type_tracked(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+    on_stack: &mut FxHashSet<TypeId>,
+) -> TypeId {
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return TypeId::BOOLEAN;
     }
@@ -932,41 +953,60 @@ pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: T
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
         Some(TypeData::Union(list_id)) => {
-            let canonical_members = db.type_list(list_id);
-            let origin_members = db.get_union_origin(type_id);
-            let members = origin_members
-                .as_deref()
-                .map_or(canonical_members.as_ref(), Vec::as_slice);
-            let mut mapped = None;
-            for (index, &member) in members.iter().enumerate() {
-                let widened = widen_literal_type(db, member);
-                if widened != member && mapped.is_none() {
-                    let mut out = Vec::with_capacity(members.len());
-                    out.extend_from_slice(&members[..index]);
-                    mapped = Some(out);
-                }
-                if let Some(mapped) = mapped.as_mut() {
-                    mapped.push(widened);
-                }
-            }
-
-            let Some(mapped) = mapped else {
+            if !on_stack.insert(type_id) {
+                // Cyclic union origin: this union is an ancestor on the current
+                // widening path. Returning it unchanged breaks the cycle.
                 return type_id;
-            };
-
-            let result = db.union(mapped.clone());
-            display_provenance::record_union_origin(
-                db,
-                UnionOriginProvenance {
-                    union_type_id: result,
-                    origin_members: mapped,
-                },
-            );
+            }
+            let result = widen_union_literal_members(db, type_id, list_id, on_stack);
+            on_stack.remove(&type_id);
             result
         }
 
         _ => type_id,
     }
+}
+
+/// Widen the members of a literal-bearing union, threading the on-stack
+/// ancestor set so nested unions stay cycle-guarded. Returns the union
+/// unchanged when no member widened.
+fn widen_union_literal_members(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+    list_id: crate::types::TypeListId,
+    on_stack: &mut FxHashSet<TypeId>,
+) -> TypeId {
+    let canonical_members = db.type_list(list_id);
+    let origin_members = db.get_union_origin(type_id);
+    let members = origin_members
+        .as_deref()
+        .map_or(canonical_members.as_ref(), Vec::as_slice);
+    let mut mapped = None;
+    for (index, &member) in members.iter().enumerate() {
+        let widened = widen_literal_type_tracked(db, member, on_stack);
+        if widened != member && mapped.is_none() {
+            let mut out = Vec::with_capacity(members.len());
+            out.extend_from_slice(&members[..index]);
+            mapped = Some(out);
+        }
+        if let Some(mapped) = mapped.as_mut() {
+            mapped.push(widened);
+        }
+    }
+
+    let Some(mapped) = mapped else {
+        return type_id;
+    };
+
+    let result = db.union(mapped.clone());
+    display_provenance::record_union_origin(
+        db,
+        UnionOriginProvenance {
+            union_type_id: result,
+            origin_members: mapped,
+        },
+    );
+    result
 }
 
 /// Combine the source constituents of a union that did not match any structured
