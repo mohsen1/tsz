@@ -451,14 +451,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let current_non_import = local_reference_sym_id == Some(effective_sym_id);
-        let Some(symbol) = (if current_non_import {
+        let symbol = (if current_non_import {
             self.ctx.binder.get_symbol(effective_sym_id)
         } else {
             self.get_symbol_from_registered_file_target(effective_sym_id)
                 .or_else(|| self.get_cross_file_symbol(effective_sym_id))
-        }) else {
-            return None;
-        };
+        })?;
         let declarations = symbol.declarations.clone();
         let imported_decl_name = self
             .ctx
