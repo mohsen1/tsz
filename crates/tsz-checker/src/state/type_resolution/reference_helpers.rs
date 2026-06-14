@@ -657,7 +657,12 @@ impl<'a> CheckerState<'a> {
                         .prefer_name_def_id_resolution()
                         .collect_type_alias_type_parameters(type_alias)
                     };
-                    Some(params)
+                    Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
+                        decl_arena,
+                        &type_alias.type_parameters,
+                        params,
+                        effective_file_idx,
+                    ))
                 } else if let Some(iface) = decl_arena.get_interface(node) {
                     if let Some(name_node) = decl_arena.get(iface.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
@@ -750,7 +755,12 @@ impl<'a> CheckerState<'a> {
                         .prefer_name_def_id_resolution()
                         .collect_merged_interface_type_parameters(&[(decl_idx, decl_arena)])
                     };
-                    Some(params)
+                    Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
+                        decl_arena,
+                        &iface.type_parameters,
+                        params,
+                        effective_file_idx,
+                    ))
                 } else if !mixed_class_interface && let Some(class) = decl_arena.get_class(node) {
                     if let Some(name_node) = decl_arena.get(class.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
@@ -853,7 +863,12 @@ impl<'a> CheckerState<'a> {
                         .with_name_def_id_resolver(&name_resolver)
                         .prefer_name_def_id_resolution()
                         .collect_type_parameters(type_parameters);
-                        Some(params)
+                        Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
+                            decl_arena,
+                            &class.type_parameters,
+                            params,
+                            effective_file_idx,
+                        ))
                     } else {
                         None
                     }
@@ -948,6 +963,91 @@ impl<'a> CheckerState<'a> {
                     .and_then(|class| class.type_parameters.as_ref())
             })
             .is_some_and(|type_parameters| !type_parameters.nodes.is_empty())
+    }
+
+    fn apply_omitted_defaults_to_cross_file_param_constraints(
+        &mut self,
+        decl_arena: &NodeArena,
+        type_parameters: &Option<NodeList>,
+        mut params: Vec<tsz_solver::TypeParamInfo>,
+        effective_file_idx: Option<usize>,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(type_parameters) = type_parameters else {
+            return params;
+        };
+        for (i, &param_idx) in type_parameters.nodes.iter().enumerate() {
+            let Some(param) = params.get_mut(i) else {
+                break;
+            };
+            let Some(param_node) = decl_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param_data) = decl_arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if param_data.constraint == NodeIndex::NONE {
+                continue;
+            }
+            if let Some(defaulted_constraint) = self
+                .cross_file_omitted_default_constraint_reference(
+                    decl_arena,
+                    param_data.constraint,
+                    effective_file_idx,
+                )
+            {
+                param.constraint = Some(defaulted_constraint);
+            }
+        }
+        params
+    }
+
+    fn cross_file_omitted_default_constraint_reference(
+        &mut self,
+        decl_arena: &NodeArena,
+        constraint_idx: NodeIndex,
+        effective_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let node = decl_arena.get(constraint_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = decl_arena.get_type_ref(node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let name = decl_arena.get_identifier_text(type_ref.type_name)?;
+        let target_sym_id =
+            self.resolve_declaration_file_type_symbol_for_lowering(name, effective_file_idx)?;
+        let target_name = self
+            .get_symbol_from_registered_file_target(target_sym_id)
+            .or_else(|| self.get_cross_file_symbol(target_sym_id))
+            .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
+            .map(|symbol| symbol.escaped_name.clone())
+            .unwrap_or_else(|| name.to_string());
+        let type_params = self.get_reference_type_params_for_symbol(target_sym_id, &target_name);
+        if type_params.is_empty() {
+            return None;
+        }
+        let default_args = crate::query_boundaries::type_defaults::fill_application_defaults(
+            self.ctx.types,
+            &[],
+            &type_params,
+        )?;
+
+        self.ensure_def_ready_for_lowering(target_sym_id, &target_name);
+        let def_id = self
+            .resolve_declaration_file_type_def_id_for_lowering(name, effective_file_idx)
+            .unwrap_or_else(|| {
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name)
+            });
+        let base = self.ctx.types.factory().lazy(def_id);
+        Some(self.ctx.types.factory().application(base, default_args))
     }
 
     /// Read leading JSDoc on a JS class declaration and synthesize
