@@ -107,6 +107,53 @@ function median(values) {
   return sorted[mid];
 }
 
+function sampleSpread(samples, medianMs) {
+  const minMs = Math.min(...samples);
+  const maxMs = Math.max(...samples);
+  const spreadMs = maxMs - minMs;
+  return {
+    min_ms: minMs,
+    max_ms: maxMs,
+    spread_ms: spreadMs,
+    relative_spread_pct: medianMs > 0 ? (spreadMs / medianMs) * 100 : 0,
+  };
+}
+
+function summarizeNoise(measurements) {
+  let maxCase = null;
+  for (const [name, data] of Object.entries(measurements)) {
+    const spread = data.noise?.relative_spread_pct;
+    if (typeof spread !== "number") continue;
+    if (!maxCase || spread > maxCase.relative_spread_pct) {
+      maxCase = {
+        name,
+        relative_spread_pct: spread,
+        spread_ms: data.noise.spread_ms,
+      };
+    }
+  }
+  return {
+    kind: "within_run_sample_spread",
+    method: "(max(sample_ms) - min(sample_ms)) / median_ms",
+    cases: Object.keys(measurements).length,
+    max_case: maxCase,
+  };
+}
+
+function runContext() {
+  return {
+    git_sha: process.env.GITHUB_SHA || null,
+    github_run_id: process.env.GITHUB_RUN_ID || null,
+    github_run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    github_workflow: process.env.GITHUB_WORKFLOW || null,
+    github_job: process.env.GITHUB_JOB || null,
+    github_ref: process.env.GITHUB_REF || null,
+    runner_name: process.env.RUNNER_NAME || null,
+    runner_os: process.env.RUNNER_OS || null,
+    runner_arch: process.env.RUNNER_ARCH || null,
+  };
+}
+
 function readBaseline(filePath) {
   if (!fs.existsSync(filePath)) {
     return null;
@@ -161,6 +208,7 @@ function main() {
       median_ms: median(samples),
       samples_ms: samples,
     };
+    entry.noise = sampleSpread(samples, entry.median_ms);
     measurements[testCase.name] = entry;
     console.log(
       `   - ${testCase.name}: mean ${formatMs(entry.mean_ms)} | median ${formatMs(entry.median_ms)}`
@@ -198,6 +246,8 @@ function main() {
       warmup: opts.warmup,
       baseline_file: opts.baseline,
       generated_at: nextBaseline.updated_at,
+      run_context: runContext(),
+      noise_summary: summarizeNoise(measurements),
       cases: measurements,
       regressions: [],
     });
@@ -253,6 +303,8 @@ function main() {
     baseline_file: opts.baseline,
     baseline_updated_at: baseline.updated_at,
     generated_at: nextBaseline.updated_at,
+    run_context: runContext(),
+    noise_summary: summarizeNoise(measurements),
     cases: measurements,
     regressions,
   });
