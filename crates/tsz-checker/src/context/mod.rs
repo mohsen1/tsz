@@ -158,6 +158,14 @@ pub struct LibTypeResolutionCaches {
     /// same full-materialization fallback on cached misses.
     pub lazy_members: RefCell<FxHashMap<(Atom, Atom), Option<TypeId>>>,
 
+    /// Per-checker cache for lazy single-member property reads once a receiver
+    /// has already been classified as an eligible bare `Lazy(DefId)`.
+    /// Keyed by `(receiver_def_id, property_name)` and stores the same hit/miss
+    /// result as `lazy_members`, but lets the receiver hot path avoid mapping
+    /// the cached `DefId` back to a symbol name before a repeated lookup.
+    pub lazy_member_receiver_properties:
+        RefCell<FxHashMap<(tsz_solver::def::DefId, Atom), Option<TypeId>>>,
+
     /// Per-checker cache for lazy single-member receiver eligibility.
     /// Keyed by the bare receiver `Lazy(DefId)`. Stores both eligible and
     /// ineligible decisions after the conservative receiver predicate has

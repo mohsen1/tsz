@@ -158,6 +158,10 @@ impl<'a> CheckerContext<'a> {
 
         let lazy_lib_member_resolution_cache =
             self.lib_type_resolution_caches.lazy_members.borrow();
+        let lazy_lib_member_receiver_property_cache = self
+            .lib_type_resolution_caches
+            .lazy_member_receiver_properties
+            .borrow();
         let symbol_name_candidates_cache = self.symbol_name_candidates_cache.borrow();
         let namespace_member_resolution_cache = self.namespace_member_resolution_cache.borrow();
         let export_equals_named_cache = self.export_equals_named_cache.borrow();
@@ -220,9 +224,14 @@ impl<'a> CheckerContext<'a> {
                 string_option_type_cache_estimated_size_bytes(
                     &self.lib_type_resolution_caches.types,
                 ),
-            lazy_lib_member_resolution_cache_entries: lazy_lib_member_resolution_cache.len(),
+            lazy_lib_member_resolution_cache_entries: lazy_lib_member_resolution_cache
+                .len()
+                .saturating_add(lazy_lib_member_receiver_property_cache.len()),
             lazy_lib_member_resolution_cache_estimated_size_bytes:
-                atom_atom_option_type_cache_estimated_size_bytes(&lazy_lib_member_resolution_cache),
+                atom_atom_option_type_cache_estimated_size_bytes(&lazy_lib_member_resolution_cache)
+                    .saturating_add(def_atom_option_type_cache_estimated_size_bytes(
+                        &lazy_lib_member_receiver_property_cache,
+                    )),
             symbol_name_candidates_cache_entries: symbol_name_candidates_cache.len(),
             symbol_name_candidates_cache_estimated_size_bytes:
                 string_symbol_vec_cache_estimated_size_bytes(&symbol_name_candidates_cache),
@@ -340,6 +349,12 @@ fn string_option_type_cache_estimated_size_bytes(
 
 fn atom_atom_option_type_cache_estimated_size_bytes(
     cache: &FxHashMap<(Atom, Atom), Option<TypeId>>,
+) -> usize {
+    fx_hash_map_estimated_size_bytes(cache)
+}
+
+fn def_atom_option_type_cache_estimated_size_bytes(
+    cache: &FxHashMap<(DefId, Atom), Option<TypeId>>,
 ) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
 }

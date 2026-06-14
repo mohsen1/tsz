@@ -341,12 +341,33 @@ impl CheckerState<'_> {
         prop_name: &str,
     ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
         let def_id = self.lazy_lib_member_receiver_def_id(object_type)?;
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let key = (def_id, prop_atom);
+        if let Some(cached) = self
+            .ctx
+            .lib_type_resolution_caches
+            .lazy_member_receiver_properties
+            .borrow()
+            .get(&key)
+            .copied()
+        {
+            return cached.map(tsz_solver::operations::property::PropertyAccessResult::simple);
+        }
 
-        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-        let name = self.ctx.binder.get_symbol(sym_id)?.escaped_name.clone();
-        let member_type = self.resolve_simple_lib_interface_own_property(&name, prop_name)?;
+        let member_type = self
+            .ctx
+            .def_to_symbol_id_with_fallback(def_id)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .map(|symbol| symbol.escaped_name.clone())
+            .and_then(|name| self.resolve_simple_lib_interface_own_property(&name, prop_name));
 
-        Some(tsz_solver::operations::property::PropertyAccessResult::simple(member_type))
+        self.ctx
+            .lib_type_resolution_caches
+            .lazy_member_receiver_properties
+            .borrow_mut()
+            .insert(key, member_type);
+
+        member_type.map(tsz_solver::operations::property::PropertyAccessResult::simple)
     }
 
     /// Resolve a property-access receiver to its property-access-ready form,
