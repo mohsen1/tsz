@@ -211,6 +211,7 @@ withTempDir((dir) => {
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
   assert.match(result.stdout, /2x target gaps with attribution commands: 2\/3/);
+  assert.match(result.stdout, /project-row aggregate speedup: 0\.15x \(below 2x target; 2 row\(s\)\)/);
   assert.deepEqual(report.two_x_target, {
     tsz_speedup_target: 2,
     eligible_green_rows: 4,
