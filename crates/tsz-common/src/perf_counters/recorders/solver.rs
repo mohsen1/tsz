@@ -53,6 +53,16 @@ pub fn record_shared_application_eval_cache_insert() {
 }
 
 #[inline]
+pub fn record_shared_application_eval_cache_bypass() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_application_eval_cache_bypasses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn record_shared_instantiation_cache_hit() {
     if !enabled_fast() {
         return;
@@ -79,6 +89,16 @@ pub fn record_shared_instantiation_cache_insert() {
     }
     counters()
         .shared_instantiation_cache_inserts
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_instantiation_cache_bypass() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_instantiation_cache_bypasses
         .fetch_add(1, Ordering::Relaxed);
 }
 

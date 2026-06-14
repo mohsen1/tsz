@@ -162,9 +162,11 @@ pub struct PerfCounters {
     pub shared_application_eval_cache_hits: AtomicU64,
     pub shared_application_eval_cache_misses: AtomicU64,
     pub shared_application_eval_cache_inserts: AtomicU64,
+    pub shared_application_eval_cache_bypasses: AtomicU64,
     pub shared_instantiation_cache_hits: AtomicU64,
     pub shared_instantiation_cache_misses: AtomicU64,
     pub shared_instantiation_cache_inserts: AtomicU64,
+    pub shared_instantiation_cache_bypasses: AtomicU64,
 
     // ─── relation failure-reason single pass (issue #13243) ─────────────
     /// Failure-reason walks executed after a failing reason-collecting
@@ -373,9 +375,11 @@ impl PerfCounters {
             shared_application_eval_cache_hits: AtomicU64::new(0),
             shared_application_eval_cache_misses: AtomicU64::new(0),
             shared_application_eval_cache_inserts: AtomicU64::new(0),
+            shared_application_eval_cache_bypasses: AtomicU64::new(0),
             shared_instantiation_cache_hits: AtomicU64::new(0),
             shared_instantiation_cache_misses: AtomicU64::new(0),
             shared_instantiation_cache_inserts: AtomicU64::new(0),
+            shared_instantiation_cache_bypasses: AtomicU64::new(0),
             relation_failure_reason_walks: AtomicU64::new(0),
             relation_failure_memo_hits: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),

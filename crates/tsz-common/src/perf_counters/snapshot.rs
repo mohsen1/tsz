@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 10;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 11;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -520,9 +520,11 @@ pub struct SharedInstantiationCacheCounters {
     pub application_eval_shared_hits: u64,
     pub application_eval_shared_misses: u64,
     pub application_eval_shared_inserts: u64,
+    pub application_eval_shared_bypasses: u64,
     pub instantiation_shared_hits: u64,
     pub instantiation_shared_misses: u64,
     pub instantiation_shared_inserts: u64,
+    pub instantiation_shared_bypasses: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -757,9 +759,11 @@ impl PerfCounters {
                 application_eval_shared_hits: load(&c.shared_application_eval_cache_hits),
                 application_eval_shared_misses: load(&c.shared_application_eval_cache_misses),
                 application_eval_shared_inserts: load(&c.shared_application_eval_cache_inserts),
+                application_eval_shared_bypasses: load(&c.shared_application_eval_cache_bypasses),
                 instantiation_shared_hits: load(&c.shared_instantiation_cache_hits),
                 instantiation_shared_misses: load(&c.shared_instantiation_cache_misses),
                 instantiation_shared_inserts: load(&c.shared_instantiation_cache_inserts),
+                instantiation_shared_bypasses: load(&c.shared_instantiation_cache_bypasses),
             },
             relation_failure: RelationFailureCounters {
                 reason_walks: load(&c.relation_failure_reason_walks),

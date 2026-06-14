@@ -849,9 +849,11 @@ impl PerfCounters {
         if counters.application_eval_shared_hits == 0
             && counters.application_eval_shared_misses == 0
             && counters.application_eval_shared_inserts == 0
+            && counters.application_eval_shared_bypasses == 0
             && counters.instantiation_shared_hits == 0
             && counters.instantiation_shared_misses == 0
             && counters.instantiation_shared_inserts == 0
+            && counters.instantiation_shared_bypasses == 0
         {
             return String::new();
         }
@@ -860,15 +862,19 @@ impl PerfCounters {
              application eval shared hits     {:>12}\n  \
              application eval shared misses   {:>12}\n  \
              application eval shared inserts  {:>12}\n  \
+             application eval shared bypasses {:>12}\n  \
              instantiation shared hits        {:>12}\n  \
              instantiation shared misses      {:>12}\n  \
-             instantiation shared inserts     {:>12}\n",
+             instantiation shared inserts     {:>12}\n  \
+             instantiation shared bypasses    {:>12}\n",
             counters.application_eval_shared_hits,
             counters.application_eval_shared_misses,
             counters.application_eval_shared_inserts,
+            counters.application_eval_shared_bypasses,
             counters.instantiation_shared_hits,
             counters.instantiation_shared_misses,
             counters.instantiation_shared_inserts,
+            counters.instantiation_shared_bypasses,
         )
     }
 

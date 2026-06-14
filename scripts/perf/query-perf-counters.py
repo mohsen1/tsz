@@ -321,12 +321,14 @@ def print_summary(snap: dict) -> None:
         print(
             f"  application_eval hits={fmt_int(shared_instantiation['application_eval_shared_hits'])}  "
             f"misses={fmt_int(shared_instantiation['application_eval_shared_misses'])}  "
-            f"inserts={fmt_int(shared_instantiation['application_eval_shared_inserts'])}"
+            f"inserts={fmt_int(shared_instantiation['application_eval_shared_inserts'])}  "
+            f"bypasses={fmt_int(shared_instantiation['application_eval_shared_bypasses'])}"
         )
         print(
             f"  instantiation    hits={fmt_int(shared_instantiation['instantiation_shared_hits'])}  "
             f"misses={fmt_int(shared_instantiation['instantiation_shared_misses'])}  "
-            f"inserts={fmt_int(shared_instantiation['instantiation_shared_inserts'])}"
+            f"inserts={fmt_int(shared_instantiation['instantiation_shared_inserts'])}  "
+            f"bypasses={fmt_int(shared_instantiation['instantiation_shared_bypasses'])}"
         )
 
 
@@ -529,9 +531,11 @@ def print_diff(post: dict, base: dict) -> None:
             "application_eval_shared_hits",
             "application_eval_shared_misses",
             "application_eval_shared_inserts",
+            "application_eval_shared_bypasses",
             "instantiation_shared_hits",
             "instantiation_shared_misses",
             "instantiation_shared_inserts",
+            "instantiation_shared_bypasses",
         ):
             print(f"  {delta(post_shared, base_shared, k)}")
         print()
