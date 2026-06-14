@@ -202,7 +202,18 @@ impl<'a> CheckerState<'a> {
         if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
             self.excess_property_target_annotation_for_site(idx)
         {
-            let annotation_display = self.format_annotation_like_type(&annotation_text);
+            // Format the annotation's lowered TypeId instead of slicing raw
+            // source text (issue #13076). Source-text rendering bypasses
+            // type-level stripping (non-object union members, optional-property
+            // `| undefined`) and breaks on multiline / aliased annotations.
+            // Fall back to source text when no annotation node is available (e.g. JSDoc `@satisfies`).
+            let annotation_display = match annotation_type_node {
+                Some(type_node) => {
+                    let annotation_type = self.get_type_from_type_node(type_node);
+                    self.format_excess_property_target_type(annotation_type)
+                }
+                None => self.format_annotation_like_type(&annotation_text),
+            };
             if self.excess_property_site_is_nested_in_nested_array_literal(idx) {
                 return annotation_display;
             }
