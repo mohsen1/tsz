@@ -328,6 +328,39 @@ impl<'a> CheckerContext<'a> {
             && self.request_node_types.ptr_eq(&snap.request_node_types)
     }
 
+    /// True when a return-type speculation snapshot has observed no writes that
+    /// rollback needs to undo.
+    ///
+    /// Return-type inference snapshots include heavier checker caches in
+    /// addition to diagnostics. The no-op fast path is intentionally strict:
+    /// every COW-backed cache must still share its original backing storage and
+    /// the global lazy-resolution fuel counter must be unchanged. If a
+    /// speculative pass wrote and later restored equal contents, the normal
+    /// rollback path still owns restoration.
+    fn return_type_snapshot_unchanged(&self, snap: &ReturnTypeSnapshot) -> bool {
+        self.full_snapshot_unchanged(&snap.full)
+            && self.node_types.ptr_eq(&snap.cache.node_types)
+            && self
+                .type_reference_validation_caches
+                .type_node_scope_types
+                .ptr_eq(&snap.cache.type_node_scope_types)
+            && self
+                .flow_shared
+                .flow_analysis_cache
+                .borrow()
+                .ptr_eq(&snap.cache.flow_analysis_cache)
+            && self
+                .flow_narrowed_nodes
+                .ptr_eq(&snap.cache.flow_narrowed_nodes)
+            && self.daa_error_nodes.ptr_eq(&snap.cache.daa_error_nodes)
+            && self
+                .symbol_flow_confirmed
+                .borrow()
+                .ptr_eq(&snap.cache.symbol_flow_confirmed)
+            && crate::state_domain::type_environment::lazy::global_resolution_fuel_value()
+                == snap.cache.global_resolution_fuel
+    }
+
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
     /// diagnostics and restoring the dedup set.
     ///
@@ -396,6 +429,10 @@ impl<'a> CheckerContext<'a> {
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
     /// dedup state, and cache entries added during speculation.
     fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+        if self.return_type_snapshot_unchanged(snap) {
+            return;
+        }
+
         tracing::trace!(
             node_types_now = self.node_types.len(),
             node_types_restored = snap.cache.node_types.len(),
