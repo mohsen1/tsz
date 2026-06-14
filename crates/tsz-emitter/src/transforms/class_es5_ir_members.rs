@@ -706,16 +706,11 @@ impl<'a> ES5ClassTransformer<'a> {
                     return self
                         .arena
                         .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
-                        && !self
-                            .arena
-                            .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
-                        && !self
-                            .arena
-                            .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                        && !crate::transforms::emit_utils::is_runtime_omitted_member(
+                            self.arena,
+                            &prop_data.modifiers,
+                        )
                         && !is_private_identifier(self.arena, prop_data.name)
-                        && !self
-                            .arena
-                            .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
                         && self.property_initializer_has_equals(m_node, prop_data);
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1267,7 +1262,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         });
                         continue;
                     }
-                    if is_abstract || is_declare || is_private_field || is_accessor_keyword {
+                    if crate::transforms::emit_utils::is_runtime_omitted_member(
+                        self.arena,
+                        &prop_data.modifiers,
+                    ) || is_private_field
+                    {
                         continue;
                     }
                     if !self.property_initializer_has_equals(member_node, prop_data) {

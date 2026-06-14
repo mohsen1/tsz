@@ -572,15 +572,10 @@ impl<'a> Printer<'a> {
                                     && let Some(prop) = self.arena.get_property_decl(member_node)
                                     && prop.initializer.is_some()
                                     && self.arena.is_static(&prop.modifiers)
-                                    && !self
-                                        .arena
-                                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                                    && !self
-                                        .arena
-                                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                                    && !self
-                                        .arena
-                                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                    && !crate::transforms::emit_utils::is_runtime_omitted_member(
+                                        self.arena,
+                                        &prop.modifiers,
+                                    )
                                 {
                                     true
                                 } else {

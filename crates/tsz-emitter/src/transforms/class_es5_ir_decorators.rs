@@ -196,11 +196,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn helper_name(&self, name: &str) -> String {
-        if self.tslib_prefix {
-            format!("{}.{name}", self.tslib_import_binding)
-        } else {
-            name.to_string()
-        }
+        self.tslib_helpers.helper_name(name)
     }
 
     /// Render a single decorator expression as a string using the IR printer.
