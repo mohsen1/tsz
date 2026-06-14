@@ -1274,15 +1274,8 @@ impl<'a> CheckerState<'a> {
             && owner_file_idx != self.ctx.current_file_idx
             && let Some(result) = self.delegate_cross_arena_class_instance_type(sym_id)
         {
-            // Source modules still need the delegated instance memoized for
-            // type-position class references, but registering their `DefId` as
-            // an instance type corrupts value/static namespace comparisons like
-            // `typeof import("./mod")`. Declaration files lack the source
-            // checker writer, so they still publish both caches.
             if self.file_index_is_declaration_file(owner_file_idx) {
                 self.publish_delegated_class_instance_type(sym_id, result.0, &result.1);
-            } else {
-                self.publish_delegated_class_instance_symbol_type(sym_id, result.0);
             }
             return Some(result);
         }

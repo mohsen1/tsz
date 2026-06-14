@@ -8,8 +8,10 @@
 use std::sync::Arc;
 
 use crate::context::CheckerOptions;
+use crate::diagnostics::diagnostic_codes;
 use crate::module_resolution::build_module_resolution_maps;
 use crate::state::CheckerState;
+use crate::test_utils::check_all_multi_file_with_global_index;
 use tsz_binder::BinderState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
@@ -171,15 +173,17 @@ let item: BoxThing | undefined;
                 .type_env
                 .borrow()
                 .snapshot_class_instance_types();
+            let symbol_cache_before = checker.ctx.symbol_instance_types.get(&sym_id).copied();
 
             let (instance_type, params) = checker
                 .class_instance_type_with_params_from_symbol(sym_id)
                 .expect("cross-file class instance should delegate");
+            assert!(!instance_type.is_any_unknown_or_error());
             assert!(params.is_empty());
             assert_eq!(
                 checker.ctx.symbol_instance_types.get(&sym_id).copied(),
-                Some(instance_type),
-                "source class delegation should memoize the requester symbol instance"
+                symbol_cache_before,
+                "source class delegation must not publish the requester symbol instance"
             );
 
             let env_after = checker
@@ -192,6 +196,70 @@ let item: BoxThing | undefined;
                 "source class delegation must not mutate the requester class-instance env"
             );
         },
+    );
+}
+
+#[test]
+fn delegated_source_class_instance_does_not_poison_commonjs_namespace_static_side() {
+    let diagnostics = check_all_multi_file_with_global_index(
+        &[
+            (
+                "extendingClassFromAliasAndUsageInIndexer_backbone.ts",
+                r#"
+export class Model {
+    public someData: string;
+}
+"#,
+            ),
+            (
+                "extendingClassFromAliasAndUsageInIndexer_moduleA.ts",
+                r#"
+import Backbone = require("./extendingClassFromAliasAndUsageInIndexer_backbone");
+export class VisualizationModel extends Backbone.Model {}
+"#,
+            ),
+            (
+                "extendingClassFromAliasAndUsageInIndexer_moduleB.ts",
+                r#"
+import Backbone = require("./extendingClassFromAliasAndUsageInIndexer_backbone");
+export class VisualizationModel extends Backbone.Model {}
+"#,
+            ),
+            (
+                "extendingClassFromAliasAndUsageInIndexer_main.ts",
+                r#"
+import Backbone = require("./extendingClassFromAliasAndUsageInIndexer_backbone");
+import moduleA = require("./extendingClassFromAliasAndUsageInIndexer_moduleA");
+import moduleB = require("./extendingClassFromAliasAndUsageInIndexer_moduleB");
+
+interface IHasVisualizationModel {
+    VisualizationModel: typeof Backbone.Model;
+}
+
+var moduleATyped: IHasVisualizationModel = moduleA;
+var moduleMap: { [key: string]: IHasVisualizationModel } = {
+    "first": moduleA,
+    "second": moduleB,
+};
+var moduleName: string;
+var visModel = new moduleMap[moduleName].VisualizationModel();
+"#,
+            ),
+        ],
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let assignability_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        assignability_errors.is_empty(),
+        "source class instance publication must not make a CommonJS module namespace expose the instance side: {assignability_errors:?}"
     );
 }
 

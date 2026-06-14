@@ -392,7 +392,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Whether a class symbol's INSTANCE type is recoverable in this checker:
     /// already registered in `symbol_instance_types`, or available in the
-    /// cross-file `ClassInstance` bucket (in which case it is registered now).
+    /// cross-file `ClassInstance` bucket.
     ///
     /// The SYMBOL bucket stores only a class's value-side (constructor) type.
     /// Serving that entry while no instance side is recoverable leaves every
@@ -417,7 +417,16 @@ impl<'a> CheckerContext<'a> {
         else {
             return false;
         };
-        self.symbol_instance_types.insert(sym_id, inst);
+        let owner_is_declaration_file = self
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(file_idx as usize))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.is_declaration_file)
+            .unwrap_or(true);
+        if owner_is_declaration_file {
+            self.symbol_instance_types.insert(sym_id, inst);
+        }
         true
     }
 
