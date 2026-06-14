@@ -697,31 +697,23 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
     let large_project = FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1;
 
     assert!(
-        !should_use_sequential_fresh_checking(large_project, false, false, false),
+        !should_use_sequential_fresh_checking(large_project, false, false),
         "large fresh-checker batches should stay parallel-eligible even when session reuse is off"
     );
     assert!(
-        should_use_sequential_fresh_checking(10, false, false, false),
+        should_use_sequential_fresh_checking(10, false, false),
         "tiny batches stay sequential for deterministic cross-file behavior"
     );
     assert!(
-        should_use_sequential_fresh_checking(10, false, true, true),
+        should_use_sequential_fresh_checking(10, true, true),
         "the force-parallel experiment must not bypass tiny-batch policy"
     );
     assert!(
-        !should_use_sequential_fresh_checking(large_project, true, false, false),
-        "large wildcard barrels stay parallel-eligible after the #13244 gate lift"
-    );
-    assert!(
-        !should_use_sequential_fresh_checking(large_project, true, true, true),
-        "large wildcard-barrel detection is not a scheduling veto, even in forced DOM probes"
-    );
-    assert!(
-        should_use_sequential_fresh_checking(large_project, false, true, false),
+        should_use_sequential_fresh_checking(large_project, true, false),
         "order-sensitive global libraries stay on the deterministic sequential fallback"
     );
     assert!(
-        !should_use_sequential_fresh_checking(large_project, false, true, true),
+        !should_use_sequential_fresh_checking(large_project, true, true),
         "the force-parallel experiment should bypass only the order-sensitive global-lib gate"
     );
 }
@@ -756,26 +748,7 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
         );
     }
 
-    #[test]
-    fn detects_large_wildcard_barrel() {
-        let mut files = Vec::new();
-        let mut barrel = String::new();
-        for i in 0..LARGE_WILDCARD_BARREL_EXPORTS {
-            files.push((format!("/p/a{i}.ts"), format!("export type A{i} = {i};")));
-            barrel.push_str(&format!("export * from \"./a{i}\";\n"));
-        }
-        files.push(("/p/index.ts".to_string(), barrel));
 
-        let program = merged_program_from_owned_files(files);
-        let work_items: Vec<usize> = (0..program.files.len()).collect();
-
-        assert!(has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
-            files: &program.files,
-            wildcard_reexports: &program.wildcard_reexports,
-            work_items: &work_items,
-            large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
-        }));
-    }
 
     fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
         let files = libs

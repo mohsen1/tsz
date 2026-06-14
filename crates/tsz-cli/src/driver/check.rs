@@ -46,7 +46,6 @@ mod checker_diagnostics;
 mod checker_lib_diagnostics;
 mod no_check_diagnostics;
 mod source_resolution_setup;
-mod wildcard_barrel_analysis;
 
 use check_file::{
     CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
@@ -69,9 +68,6 @@ use checker_lib_diagnostics::{
 use no_check_diagnostics::{NoCheckDiagnosticsInput, collect_no_check_diagnostics_for_files};
 use source_resolution_setup::{
     SourceResolutionSetup, SourceResolutionSetupInput, prepare_source_resolution_setup,
-};
-use wildcard_barrel_analysis::{
-    LARGE_WILDCARD_BARREL_EXPORTS, WildcardBarrelAnalysisInput, has_large_wildcard_barrel,
 };
 
 fn checker_lookup_resolution_mode(
@@ -391,7 +387,6 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// mutation-isolation campaign makes shared def state schedule-independent.
 const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
-    _has_large_wildcard_barrel: bool,
     has_parallel_order_sensitive_global_lib: bool,
     force_parallel_order_sensitive_global_lib: bool,
 ) -> bool {
@@ -1288,13 +1283,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
-            let has_large_wildcard_barrel =
-                has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
-                    files: &program.files,
-                    wildcard_reexports: &program.wildcard_reexports,
-                    work_items: &work_items,
-                    large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
-                });
             // Experiment escape hatch for the DOM/webworker fresh-checking
             // gate-lift campaign: force the rayon path past that one
             // heuristic so livelock/determinism repros can be driven from the
@@ -1303,7 +1291,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some();
             let use_sequential_checking = should_use_sequential_fresh_checking(
                 work_items.len(),
-                has_large_wildcard_barrel,
                 has_parallel_order_sensitive_global_lib,
                 force_parallel_order_sensitive_global_lib,
             );
