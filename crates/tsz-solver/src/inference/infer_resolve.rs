@@ -1238,6 +1238,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Infer type parameters from a type by traversing its structure.
+    #[allow(dead_code)] // Reserved for conditional type inference (paired with `infer_from_conditional`)
     fn infer_from_type(&mut self, var: InferenceVar, ty: TypeId) {
         let root = self.table.find(var);
 

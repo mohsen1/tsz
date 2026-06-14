@@ -142,7 +142,10 @@ impl UnifyValue for InferenceInfo {
 
 /// Inference error
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Variants/fields reserved for full inference error reporting
+// Constructed throughout inference as a control-flow signal; the variant
+// payload is retained for `Debug`/future error reporting, and only the variant
+// kind and `BoundsViolation.lower` are read today.
+#[allow(dead_code)]
 pub(crate) enum InferenceError {
     /// Two incompatible types were unified
     Conflict(TypeId, TypeId),
@@ -167,7 +170,6 @@ pub(crate) enum InferenceError {
 /// Constraint set for an inference variable.
 /// Tracks both lower bounds (L <: α) and upper bounds (α <: U).
 #[derive(Clone, Debug, Default)]
-#[allow(dead_code)] // Methods reserved for constraint-based inference resolution
 pub(crate) struct ConstraintSet {
     /// Lower bounds: types that must be subtypes of this variable
     /// e.g., from argument types being assigned to a parameter
@@ -177,15 +179,7 @@ pub(crate) struct ConstraintSet {
     pub(crate) upper_bounds: Vec<TypeId>,
 }
 
-#[allow(dead_code)] // Methods reserved for constraint-based inference resolution
 impl ConstraintSet {
-    pub const fn new() -> Self {
-        Self {
-            lower_bounds: Vec::new(),
-            upper_bounds: Vec::new(),
-        }
-    }
-
     pub fn from_info(info: &InferenceInfo) -> Self {
         let mut lower_bounds = Vec::new();
         let mut upper_bounds = Vec::new();
@@ -210,20 +204,6 @@ impl ConstraintSet {
         }
     }
 
-    /// Add a lower bound constraint: L <: α
-    pub fn add_lower_bound(&mut self, ty: TypeId) {
-        if !self.lower_bounds.contains(&ty) {
-            self.lower_bounds.push(ty);
-        }
-    }
-
-    /// Add an upper bound constraint: α <: U
-    pub fn add_upper_bound(&mut self, ty: TypeId) {
-        if !self.upper_bounds.contains(&ty) {
-            self.upper_bounds.push(ty);
-        }
-    }
-
     /// Check if there are any constraints
     pub const fn is_empty(&self) -> bool {
         self.lower_bounds.is_empty() && self.upper_bounds.is_empty()
@@ -234,7 +214,6 @@ impl ConstraintSet {
 pub(crate) const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 
 /// Maximum recursion depth for type containment checks.
-#[allow(dead_code)] // Used by conditional type inference (not yet wired up)
 pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
 /// Operation-local cache statistics for [`InferenceContext`].
@@ -242,6 +221,7 @@ pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 /// Owner: one inference request. The subtype memo is scoped to that request
 /// and is dropped with the context.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(dead_code)] // Inference cache accounting; consumed by inference unit tests
 pub(crate) struct InferenceContextCacheStatistics {
     /// Entries in the inference subtype memo keyed by source and target `TypeId`.
     pub(crate) subtype_entries: usize,
@@ -251,6 +231,7 @@ pub(crate) struct InferenceContextCacheStatistics {
 impl InferenceContextCacheStatistics {
     /// Estimated heap bytes owned by inference memo tables.
     #[must_use]
+    #[allow(dead_code)] // Inference cache accounting; consumed by inference unit tests
     pub(crate) const fn estimated_size_bytes(self) -> usize {
         self.estimated_size_bytes
     }
@@ -387,34 +368,6 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    pub fn with_resolver(
-        interner: &'a dyn TypeDatabase,
-        resolver: &'a dyn crate::relations::subtype::TypeResolver,
-    ) -> Self {
-        InferenceContext {
-            interner,
-            resolver: Some(resolver),
-            query_db: None,
-            subtype_cache: RefCell::new(FxHashMap::default()),
-            active_subtype_checks: RefCell::new(FxHashSet::default()),
-            table: InPlaceUnificationTable::new(),
-            type_params: Vec::new(),
-            declared_constraints: FxHashMap::default(),
-            literal_preserving_declared_constraints: FxHashSet::default(),
-            app_expansion_depth: 0,
-            in_contra_mode: false,
-            reverse_mapped_properties: FxHashMap::default(),
-            source_is_type_annotation: false,
-            infer_depth: 0,
-            infer_visited: FxHashSet::default(),
-            top_level_in_return_type_unfixed: FxHashSet::default(),
-            vars_with_substituted_candidates: FxHashSet::default(),
-            in_array_element_context: false,
-            in_readonly_source_context: false,
-            implied_arities: FxHashMap::default(),
-        }
-    }
-
     pub fn with_query_db(query_db: &'a dyn QueryDatabase) -> Self {
         InferenceContext {
             interner: query_db.as_type_database(),
@@ -442,6 +395,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Return entry and size accounting for this context's operation-local caches.
     #[must_use]
+    #[allow(dead_code)] // Inference cache accounting; consumed by inference unit tests
     pub(crate) fn cache_statistics(&self) -> InferenceContextCacheStatistics {
         let subtype_entries = self.subtype_cache.borrow().len();
         let estimated_size_bytes =
@@ -1475,6 +1429,7 @@ impl<'a> InferenceContext<'a> {
     /// concrete (non-TypeParameter) type. `TypeParameter` types in `contra_candidates`
     /// are typically unresolved source inference placeholders from generic function
     /// arguments and should not drive the resolution gate.
+    #[allow(dead_code)] // Reserved contra-candidate resolution-gate query
     pub fn has_concrete_contra_candidates(
         &mut self,
         var: InferenceVar,
