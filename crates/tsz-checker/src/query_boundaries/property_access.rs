@@ -6,7 +6,7 @@ pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::intersection_members;
 pub(crate) use super::common::raw_property_type;
 pub(crate) use super::common::{
-    array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
+    array_element_type, callable_shape_for_type as callable_shape, unwrap_readonly,
 };
 
 /// Resolve a named property on a type through the solver's property evaluator.
@@ -134,21 +134,9 @@ pub(crate) fn application_first_arg(db: &dyn TypeDatabase, type_id: TypeId) -> O
         .copied()
 }
 
-pub(crate) fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_boolean_type(db, type_id)
-}
-
-pub(crate) fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_number_type(db, type_id)
-}
-
-pub(crate) fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_symbol_type(db, type_id)
-}
-
-pub(crate) fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_bigint_type(db, type_id)
-}
+// `is_boolean_type` / `is_number_type` / `is_symbol_type` / `is_bigint_type`
+// live in `query_boundaries::common`; callers reference them there so the
+// solver forwarder is defined once rather than copied per module.
 
 pub(crate) fn def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
     tsz_solver::type_queries::get_def_id(db, type_id)

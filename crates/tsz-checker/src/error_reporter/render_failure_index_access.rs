@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
             &[&source_str, &target_str],
         );
         let mut diag = Diagnostic::error(
-            file_name.clone(),
+            file_name,
             start,
             length,
             message,
@@ -71,30 +71,18 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             )
         };
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: file_name.clone(),
-            start,
-            length,
-            message_text: inner,
-            category: DiagnosticCategory::Message,
-            code: inner_code,
-            depth: 0,
-        });
+        diag.push_elaboration(inner, inner_code, 0);
         if let Some(constraint) = target_constraint {
             let constraint_str = self.format_type_diagnostic(constraint);
             let elaboration = format_message(
                 diagnostic_messages::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
                 &[&source_param_str, &target_param_str, &constraint_str],
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: elaboration,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
-                            depth: 0,
-            });
+            diag.push_elaboration(
+                elaboration,
+                diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
+                0,
+            );
         }
         diag
     }

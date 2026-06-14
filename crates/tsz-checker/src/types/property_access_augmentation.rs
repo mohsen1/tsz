@@ -215,36 +215,22 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
     ) -> Option<TypeId> {
         // Map the object type to potential global interface names
-        let interface_names: &[&str] = if crate::query_boundaries::property_access::is_boolean_type(
-            self.ctx.types,
-            object_type,
-        ) {
-            &["Boolean"]
-        } else if crate::query_boundaries::property_access::is_number_type(
-            self.ctx.types,
-            object_type,
-        ) {
-            &["Number"]
-        } else if crate::query_boundaries::property_access::is_string_type(
-            self.ctx.types,
-            object_type,
-        ) {
-            &["String"]
-        } else if crate::query_boundaries::property_access::is_symbol_type(
-            self.ctx.types,
-            object_type,
-        ) {
-            &["Symbol"]
-        } else if crate::query_boundaries::property_access::is_bigint_type(
-            self.ctx.types,
-            object_type,
-        ) {
-            &["BigInt"]
-        } else {
-            // For object types, try to find the interface name from the symbol
-            // that declared the type (handles ErrorConstructor, RegExp, Date, etc.)
-            return self.resolve_object_type_global_augmentation(object_type, property_name);
-        };
+        let interface_names: &[&str] =
+            if crate::query_boundaries::common::is_boolean_type(self.ctx.types, object_type) {
+                &["Boolean"]
+            } else if crate::query_boundaries::common::is_number_type(self.ctx.types, object_type) {
+                &["Number"]
+            } else if crate::query_boundaries::common::is_string_type(self.ctx.types, object_type) {
+                &["String"]
+            } else if crate::query_boundaries::common::is_symbol_type(self.ctx.types, object_type) {
+                &["Symbol"]
+            } else if crate::query_boundaries::common::is_bigint_type(self.ctx.types, object_type) {
+                &["BigInt"]
+            } else {
+                // For object types, try to find the interface name from the symbol
+                // that declared the type (handles ErrorConstructor, RegExp, Date, etc.)
+                return self.resolve_object_type_global_augmentation(object_type, property_name);
+            };
 
         for &iface_name in interface_names {
             if let Some(result) =

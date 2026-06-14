@@ -108,7 +108,37 @@ impl<'a> CheckerState<'a> {
             .push_diagnostic(Diagnostic::error(String::new(), 0, 0, message, code));
     }
 
+    /// Report an error at a raw `start`/`length` in the file currently being
+    /// checked, routing through `push_diagnostic` for consistent deduplication.
+    ///
+    /// This is the shared construction path for the position-anchored emitters
+    /// below (`error_expression_expected_at_position`,
+    /// `error_declared_but_never_read`, …): it owns the `file_name.clone()` plus
+    /// dedup shape so each emitter only supplies its message and code, and a
+    /// future change to the dedup path lands in one place instead of five.
+    pub(crate) fn push_error_at(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: impl Into<String>,
+        code: u32,
+    ) {
+        self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            message.into(),
+            code,
+        ));
+    }
+
     /// Report an error at a specific position.
+    ///
+    /// Unlike [`Self::push_error_at`] and the position emitters that build on
+    /// it, this pushes straight to the diagnostic buffer and intentionally does
+    /// **not** deduplicate; converging it onto `push_diagnostic` is a separate
+    /// semantic change (it can drop or keep duplicate diagnostics) that needs a
+    /// conformance run, so it is kept distinct here rather than folded in.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
         self.ctx.diagnostics.push(Diagnostic::error(
             self.ctx.file_name.clone(),
@@ -145,13 +175,12 @@ impl<'a> CheckerState<'a> {
     /// consistent deduplication.
     pub(crate) fn error_expression_expected_at_position(&mut self, start: u32, length: u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        self.ctx.push_diagnostic(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.push_error_at(
             start,
             length,
-            diagnostic_messages::EXPRESSION_EXPECTED.to_string(),
+            diagnostic_messages::EXPRESSION_EXPECTED,
             diagnostic_codes::EXPRESSION_EXPECTED,
-        ));
+        );
     }
 
     /// Report TS6133: '{name}' is declared but its value is never read.
@@ -162,13 +191,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn error_declared_but_never_read(&mut self, name: &str, start: u32, length: u32) {
         use crate::diagnostics::diagnostic_codes;
         let message = format!("'{name}' is declared but its value is never read.");
-        self.ctx.push_diagnostic(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.push_error_at(
             start,
             length,
             message,
             diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
-        ));
+        );
     }
 
     /// Report TS6205: All type parameters are unused.
@@ -177,13 +205,12 @@ impl<'a> CheckerState<'a> {
     /// Routes through `push_diagnostic` for consistent dedup.
     pub(crate) fn error_all_type_parameters_unused(&mut self, start: u32, length: u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        self.ctx.push_diagnostic(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.push_error_at(
             start,
             length,
-            diagnostic_messages::ALL_TYPE_PARAMETERS_ARE_UNUSED.to_string(),
+            diagnostic_messages::ALL_TYPE_PARAMETERS_ARE_UNUSED,
             diagnostic_codes::ALL_TYPE_PARAMETERS_ARE_UNUSED,
-        ));
+        );
     }
 
     /// Report TS6138: "Property '{name}' is declared but its value is never read."
@@ -198,13 +225,12 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
         let message = format!("Property '{name}' is declared but its value is never read.");
-        self.ctx.push_diagnostic(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.push_error_at(
             start,
             length,
             message,
             diagnostic_codes::PROPERTY_IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
-        ));
+        );
     }
 
     /// Report TS6196: '{name}' is declared but never used.
@@ -212,14 +238,14 @@ impl<'a> CheckerState<'a> {
     /// Used for unused type-only declarations (classes, interfaces, type aliases,
     /// enums). Routes through `push_diagnostic` for consistent deduplication.
     pub(crate) fn error_declared_but_never_used(&mut self, name: &str, start: u32, length: u32) {
+        use crate::diagnostics::diagnostic_codes;
         let message = format!("'{name}' is declared but never used.");
-        self.ctx.push_diagnostic(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.push_error_at(
             start,
             length,
             message,
-            6196,
-        ));
+            diagnostic_codes::IS_DECLARED_BUT_NEVER_USED,
+        );
     }
 
     /// Report an error at the current node being processed (from resolution stack).

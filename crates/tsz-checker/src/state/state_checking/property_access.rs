@@ -13,7 +13,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
-        use crate::query_boundaries::{assignability, common, property_access};
+        use crate::query_boundaries::{assignability, common};
 
         if assignability::is_any_type(self.ctx.types, constraint)
             || query::is_string_type(self.ctx.types, constraint)
@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_numeric_name = tsz_solver::utils::canonicalize_numeric_name(prop_name).is_some();
-        if is_numeric_name && property_access::is_number_type(self.ctx.types, constraint) {
+        if is_numeric_name && common::is_number_type(self.ctx.types, constraint) {
             return true;
         }
 
@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
             members.into_iter().any(|member| {
                 assignability::is_any_type(self.ctx.types, member)
                     || query::is_string_type(self.ctx.types, member)
-                    || (is_numeric_name && property_access::is_number_type(self.ctx.types, member))
+                    || (is_numeric_name && common::is_number_type(self.ctx.types, member))
             })
         })
     }

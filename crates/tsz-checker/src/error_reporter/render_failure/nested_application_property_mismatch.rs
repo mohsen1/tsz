@@ -1,7 +1,4 @@
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::render_failure::RenderContext;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
@@ -268,15 +265,11 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&s, &t],
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: diag.file.clone(),
-                start: diag.start,
-                length: diag.length,
-                message_text: message,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                depth: depth.min(u8::MAX as u32) as u8,
-            });
+            diag.push_elaboration(
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                depth,
+            );
         }
     }
 
@@ -380,15 +373,13 @@ impl<'a> CheckerState<'a> {
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: diag.file.clone(),
+                    diag.push_elaboration_in_span(
                         start,
                         length,
-                        message_text: detail,
-                        category: DiagnosticCategory::Message,
-                        code: reason.diagnostic_code(),
-                        depth: 0,
-                    });
+                        detail,
+                        reason.diagnostic_code(),
+                        0,
+                    );
                     return diag;
                 }
                 let nested_diag = self.render_failure_reason(
@@ -445,15 +436,13 @@ impl<'a> CheckerState<'a> {
                     base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: diag.file.clone(),
+                diag.push_elaboration_in_span(
                     start,
                     length,
-                    message_text: detail,
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::THE_TYPES_OF_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
-                    depth: 0,
-                });
+                    detail,
+                    diagnostic_codes::THE_TYPES_OF_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
+                    0,
+                );
                 self.push_property_chain_leaf(&mut diag, leaf, leaf_src, leaf_tgt, idx, 1);
                 return diag;
             }
@@ -470,15 +459,7 @@ impl<'a> CheckerState<'a> {
                 base,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: diag.file.clone(),
-                start,
-                length,
-                message_text: detail,
-                category: DiagnosticCategory::Message,
-                code: reason.diagnostic_code(),
-                depth: 0,
-            });
+            diag.push_elaboration_in_span(start, length, detail, reason.diagnostic_code(), 0);
             if let Some(nested) = nested_reason {
                 let (nested_source, nested_target) = Self::nested_failure_display_types(
                     nested,
@@ -643,15 +624,7 @@ impl<'a> CheckerState<'a> {
                 base,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: diag.file.clone(),
-                start,
-                length,
-                message_text: detail,
-                category: DiagnosticCategory::Message,
-                code: detail_code,
-                depth: 0,
-            });
+            diag.push_elaboration_in_span(start, length, detail, detail_code, 0);
             diag
         } else {
             Diagnostic::error(file_name, start, length, detail, detail_code)
@@ -762,15 +735,13 @@ impl<'a> CheckerState<'a> {
             // element's own elaboration one level deeper.
             Some(nested) if needs_header => {
                 if depth == 0 {
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: diag.file.clone(),
-                        start: ctx.start,
-                        length: ctx.length,
-                        message_text: element_message,
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        depth: 0,
-                    });
+                    diag.push_elaboration_in_span(
+                        ctx.start,
+                        ctx.length,
+                        element_message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        0,
+                    );
                 }
                 let nested_diag = self.render_failure_reason(
                     nested,
@@ -794,15 +765,13 @@ impl<'a> CheckerState<'a> {
             // No further structure: the element-type relation is terminal.
             None => {
                 if depth == 0 {
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: diag.file.clone(),
-                        start: ctx.start,
-                        length: ctx.length,
-                        message_text: element_message,
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        depth: 0,
-                    });
+                    diag.push_elaboration_in_span(
+                        ctx.start,
+                        ctx.length,
+                        element_message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        0,
+                    );
                 }
             }
         }
@@ -820,22 +789,18 @@ impl<'a> CheckerState<'a> {
         sub_render_depth: u32,
         base_depth: u32,
     ) {
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: sub.file,
-            start: sub.start,
-            length: sub.length,
-            message_text: sub.message_text,
-            category: DiagnosticCategory::Message,
-            code: sub.code,
-            depth: base_depth.min(u8::MAX as u32) as u8,
-        });
+        diag.push_elaboration_at(
+            sub.file,
+            sub.start,
+            sub.length,
+            sub.message_text,
+            sub.code,
+            base_depth,
+        );
         let delta = i64::from(base_depth) - i64::from(sub_render_depth);
         for related in sub.related_information {
-            let rebased = (i64::from(related.depth) + delta).clamp(0, i64::from(u8::MAX)) as u8;
-            diag.related_information.push(DiagnosticRelatedInformation {
-                depth: rebased,
-                ..related
-            });
+            diag.related_information
+                .push(related.with_depth_shift(delta));
         }
     }
 
@@ -920,18 +885,16 @@ impl<'a> CheckerState<'a> {
                     .format_type_for_assignability_message_skip_application_alias(nested_source);
                 let target_str = self
                     .format_type_for_assignability_message_skip_application_alias(nested_target);
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: diag.file.clone(),
+                diag.push_elaboration_in_span(
                     start,
                     length,
-                    message_text: format_message(
+                    format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     ),
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    depth: depth.min(u8::MAX as u32) as u8,
-                });
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth,
+                );
             } else {
                 let nested_diag = self.render_failure_reason(
                     nested_reason,
@@ -1062,18 +1025,16 @@ impl<'a> CheckerState<'a> {
         let drill_depth = header_depth + 1;
 
         let member_str = self.format_type_diagnostic(member_type);
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: diag.file.clone(),
-            start: ctx.start,
-            length: ctx.length,
-            message_text: format_message(
+        diag.push_elaboration_in_span(
+            ctx.start,
+            ctx.length,
+            format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&member_str, &target_str],
             ),
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            depth: header_depth.min(u8::MAX as u32) as u8,
-        });
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            header_depth,
+        );
 
         // A union member that is a function failing on its *return* type drills
         // straight into the return relation beneath the member header, with no
@@ -1191,18 +1152,16 @@ impl<'a> CheckerState<'a> {
                 // assignment's RHS expression.
                 let source_str = self.format_type_diagnostic(nested_source);
                 let target_str = self.format_type_diagnostic(nested_target);
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: diag.file.clone(),
+                diag.push_elaboration_in_span(
                     start,
                     length,
-                    message_text: format_message(
+                    format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     ),
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    depth: child_depth.min(u8::MAX as u32) as u8,
-                });
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    child_depth,
+                );
             } else {
                 // The nested reason is rendered at `child_depth.max(1)` (a
                 // structural renderer needs depth >= 1 to format its child lines
@@ -1333,15 +1292,14 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&frame_source, &frame_target],
         );
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: file_name,
+        diag.push_elaboration_at(
+            file_name,
             start,
             length,
-            message_text: frame_message,
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            depth: child_depth.min(u8::MAX as u32) as u8,
-        });
+            frame_message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            child_depth,
+        );
 
         // Render the `S <: Ci` relation as a standalone diagnostic (depth 0) so
         // its drill keeps `tsc`'s path-compressed shape (`The types of 'x.p' are
@@ -1350,13 +1308,10 @@ impl<'a> CheckerState<'a> {
         // above) and slot the remaining drill one level beneath the frame. A
         // plain leaf carries no drill, so the frame stands alone.
         let sub = self.render_failure_reason(nested_reason, source_type, constituent_type, idx, 0);
-        let drill_base = child_depth + 1;
+        let drill_base = i64::from(child_depth + 1);
         for related in sub.related_information {
-            let rebased = (u32::from(related.depth) + drill_base).min(u8::MAX as u32) as u8;
-            diag.related_information.push(DiagnosticRelatedInformation {
-                depth: rebased,
-                ..related
-            });
+            diag.related_information
+                .push(related.with_depth_shift(drill_base));
         }
 
         diag
@@ -1420,15 +1375,11 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: diag.file.clone(),
-                start: diag.start,
-                length: diag.length,
-                message_text: message,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                depth: (depth + 1).min(u8::MAX as u32) as u8,
-            });
+            diag.push_elaboration(
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                depth + 1,
+            );
         }
     }
 
@@ -1471,15 +1422,13 @@ impl<'a> CheckerState<'a> {
                 base,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: diag.file.clone(),
-                start: ctx.start,
-                length: ctx.length,
-                message_text: incompat_message,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
-                depth: 0,
-            });
+            diag.push_elaboration_in_span(
+                ctx.start,
+                ctx.length,
+                incompat_message,
+                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                0,
+            );
             diag
         } else {
             Diagnostic::error(
@@ -1520,15 +1469,14 @@ impl<'a> CheckerState<'a> {
         nested_diag: Diagnostic,
         child_depth: u32,
     ) {
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: nested_diag.file,
-            start: nested_diag.start,
-            length: nested_diag.length,
-            message_text: nested_diag.message_text,
-            category: DiagnosticCategory::Message,
-            code: nested_diag.code,
-            depth: child_depth.min(u8::MAX as u32) as u8,
-        });
+        diag.push_elaboration_at(
+            nested_diag.file,
+            nested_diag.start,
+            nested_diag.length,
+            nested_diag.message_text,
+            nested_diag.code,
+            child_depth,
+        );
         diag.related_information
             .extend(nested_diag.related_information);
     }
@@ -1619,15 +1567,14 @@ impl<'a> CheckerState<'a> {
             // terminal scalar pair: emit the `Type 'se' …'te'` element header,
             // then drill into the structural reason when one is present.
             other => {
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: diag.file.clone(),
-                    start: ctx.start,
-                    length: ctx.length,
-                    message_text: self.element_mismatch_message(source_element, target_element),
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    depth: elem_depth.min(u8::MAX as u32) as u8,
-                });
+                let element_message = self.element_mismatch_message(source_element, target_element);
+                diag.push_elaboration_in_span(
+                    ctx.start,
+                    ctx.length,
+                    element_message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    elem_depth,
+                );
                 if let Some(nested) = other {
                     let nested_diag = self.render_failure_reason(
                         nested,
