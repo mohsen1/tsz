@@ -190,37 +190,45 @@ pub(crate) fn map_function_shape_types(
     shape: &FunctionShape,
     mut map_type: impl FnMut(FunctionShapeTypeSlot, TypeId) -> TypeId,
 ) -> Option<FunctionShape> {
-    let mut changed = false;
-    let mut visit = |slot: FunctionShapeTypeSlot, type_id: TypeId| {
-        let mapped = map_type(slot, type_id);
-        if mapped != type_id {
-            changed = true;
+    let mut params = None;
+    for (index, param) in shape.params.iter().enumerate() {
+        let mapped = map_type(FunctionShapeTypeSlot::Param, param.type_id);
+        if let Some(params) = &mut params {
+            params.push(ParamInfo {
+                type_id: mapped,
+                ..*param
+            });
+        } else if mapped != param.type_id {
+            let mut changed_params = Vec::with_capacity(shape.params.len());
+            changed_params.extend(shape.params[..index].iter().copied());
+            changed_params.push(ParamInfo {
+                type_id: mapped,
+                ..*param
+            });
+            params = Some(changed_params);
         }
-        mapped
-    };
+    }
 
-    let params: Vec<ParamInfo> = shape
-        .params
-        .iter()
-        .map(|param| ParamInfo {
-            type_id: visit(FunctionShapeTypeSlot::Param, param.type_id),
-            ..*param
-        })
-        .collect();
-    let this_type = shape
-        .this_type
-        .map(|this_type| visit(FunctionShapeTypeSlot::This, this_type));
-    let return_type = visit(FunctionShapeTypeSlot::Return, shape.return_type);
+    let mut changed = params.is_some();
+    let this_type = shape.this_type.map(|this_type| {
+        let mapped = map_type(FunctionShapeTypeSlot::This, this_type);
+        changed |= mapped != this_type;
+        mapped
+    });
+    let return_type = map_type(FunctionShapeTypeSlot::Return, shape.return_type);
+    changed |= return_type != shape.return_type;
     let type_predicate = shape.type_predicate.map(|predicate| TypePredicate {
-        type_id: predicate
-            .type_id
-            .map(|type_id| visit(FunctionShapeTypeSlot::PredicateTarget, type_id)),
+        type_id: predicate.type_id.map(|type_id| {
+            let mapped = map_type(FunctionShapeTypeSlot::PredicateTarget, type_id);
+            changed |= mapped != type_id;
+            mapped
+        }),
         ..predicate
     });
 
     changed.then_some(FunctionShape {
         type_params: shape.type_params.clone(),
-        params,
+        params: params.unwrap_or_else(|| shape.params.clone()),
         this_type,
         return_type,
         type_predicate,
