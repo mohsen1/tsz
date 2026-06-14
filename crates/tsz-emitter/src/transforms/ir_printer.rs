@@ -44,6 +44,7 @@ use crate::transforms::ir::{
     EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
 };
+use crate::transforms::tslib_helper_naming::TslibHelperNaming;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -78,12 +79,8 @@ pub struct IRPrinter<'a> {
     target_es5: bool,
     /// When true, comments like `/** @class */` are suppressed in output.
     remove_comments: bool,
-    /// CommonJS `tslib` binding used to prefix runtime helper calls for importHelpers.
-    tslib_prefix: bool,
-    tslib_import_binding: String,
-    /// Per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`)
-    /// applied when ESM importHelpers renamed a helper at the import site.
-    helper_import_aliases: rustc_hash::FxHashMap<String, String>,
+    /// Naming of runtime helpers under `importHelpers` (CommonJS prefix / ESM alias).
+    tslib_helpers: TslibHelperNaming,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
@@ -263,9 +260,7 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
-            helper_import_aliases: rustc_hash::FxHashMap::default(),
+            tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -297,9 +292,7 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
-            helper_import_aliases: rustc_hash::FxHashMap::default(),
+            tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -331,9 +324,7 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
-            tslib_prefix: false,
-            tslib_import_binding: "tslib_1".to_string(),
-            helper_import_aliases: rustc_hash::FxHashMap::default(),
+            tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -372,17 +363,17 @@ impl<'a> IRPrinter<'a> {
 
     /// Enable `tslib_1.` prefix for runtime helper calls (importHelpers + CJS).
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
-        self.tslib_prefix = enable;
+        self.tslib_helpers.set_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
-        self.tslib_import_binding = binding;
+        self.tslib_helpers.set_binding(binding);
     }
 
     /// Set per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`)
     /// so helper references printed from IR match the import-site aliases.
     pub fn set_helper_import_aliases(&mut self, aliases: rustc_hash::FxHashMap<String, String>) {
-        self.helper_import_aliases = aliases;
+        self.tslib_helpers.set_aliases(aliases);
     }
 
     pub fn set_commonjs_import_substitutions(
@@ -460,18 +451,7 @@ impl<'a> IRPrinter<'a> {
     /// active, or substituting the import-site alias (e.g. `__awaiter_1`) when ESM
     /// importHelpers renamed the helper. Mirrors `Printer::write_helper`.
     fn write_helper(&mut self, name: &str) {
-        if self.tslib_prefix {
-            self.output.push_str(&self.tslib_import_binding);
-            self.output.push('.');
-            self.output.push_str(name);
-            return;
-        }
-        if let Some(alias) = self.helper_import_aliases.get(name) {
-            let alias_owned = alias.clone();
-            self.output.push_str(&alias_owned);
-            return;
-        }
-        self.output.push_str(name);
+        self.tslib_helpers.write_into(&mut self.output, name);
     }
 
     /// Set the source text for `ASTRef` emission
@@ -1695,8 +1675,8 @@ impl<'a> IRPrinter<'a> {
                     let mut es5_emitter = ClassES5Emitter::new(arena);
                     es5_emitter.set_indent_level(0);
                     es5_emitter.set_remove_comments(self.remove_comments);
-                    es5_emitter.set_tslib_prefix(self.tslib_prefix);
-                    es5_emitter.set_tslib_import_binding(self.tslib_import_binding.clone());
+                    es5_emitter.set_tslib_prefix(self.tslib_helpers.prefix());
+                    es5_emitter.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
                     es5_emitter.set_inherited_computed_name_super(super_name.to_string());
                     es5_emitter.set_printer_options(self.make_ast_printer_options());
                     if let Some(source_text) = self.source_text {

@@ -11,7 +11,7 @@ use super::{
     EsDecorateVars, PlainComputedInstanceFieldInfo,
 };
 #[allow(unused_imports)]
-use crate::transforms::emit_utils::hygienic_temp_name;
+use crate::transforms::emit_utils::{hygienic_temp_name, is_runtime_omitted_member};
 #[allow(unused_imports)]
 use rustc_hash::FxHashMap;
 #[allow(unused_imports)]
@@ -84,15 +84,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 continue;
             };
             if self.arena.is_static(&prop.modifiers)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || is_runtime_omitted_member(self.arena, &prop.modifiers)
             {
                 continue;
             }
@@ -342,15 +334,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 continue;
             };
-            if self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            if is_runtime_omitted_member(self.arena, &prop.modifiers)
                 || !self.arena.is_static(&prop.modifiers)
             {
                 continue;
@@ -404,15 +388,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 continue;
             };
             if self.arena.is_static(&prop.modifiers)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || is_runtime_omitted_member(self.arena, &prop.modifiers)
             {
                 continue;
             }

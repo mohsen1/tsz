@@ -529,10 +529,10 @@ pub fn collect_private_members_with_reserved(
                 let Some(prop_data) = arena.get_property_decl(member_node) else {
                     continue;
                 };
-                if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
-                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
-                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
-                    || !is_private_identifier(arena, prop_data.name)
+                if crate::transforms::emit_utils::is_runtime_omitted_member(
+                    arena,
+                    &prop_data.modifiers,
+                ) || !is_private_identifier(arena, prop_data.name)
                 {
                     continue;
                 }

@@ -3,6 +3,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node_flags};
 use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
+/// True when a class member is omitted from runtime materialization purely by
+/// its modifiers. `abstract` and `declare` members have no runtime presence at
+/// all, and `accessor` (auto-accessor) members are lowered to getter/setter
+/// pairs rather than emitted as plain runtime fields. Static-ness, private
+/// identifiers, and initializer presence are orthogonal and remain the
+/// responsibility of each call site. This is the single definition of "omitted
+/// at runtime by modifier" shared by the field-collect and emit passes so they
+/// cannot drift.
+pub(crate) fn is_runtime_omitted_member(
+    arena: &NodeArena,
+    modifiers: &Option<tsz_parser::parser::NodeList>,
+) -> bool {
+    arena.has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::DeclareKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::AccessorKeyword)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ForOfUsingInfo {
     pub binding_name: String,
