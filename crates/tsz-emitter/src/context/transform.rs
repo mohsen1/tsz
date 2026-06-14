@@ -365,7 +365,7 @@ pub enum ModuleFormat {
 }
 
 /// Transform context maps node indices to their transform directives
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TransformContext {
     /// Map of `NodeIndex` -> `TransformDirective`
     /// Only contains entries for nodes that need transformation
@@ -478,12 +478,6 @@ impl TransformContext {
     /// Check if the context is empty
     pub fn is_empty(&self) -> bool {
         self.directives.is_empty()
-    }
-}
-
-impl Default for TransformContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

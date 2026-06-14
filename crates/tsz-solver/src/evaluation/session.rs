@@ -29,6 +29,7 @@ const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATI
 /// per-context counters, but the session counters are shared via `Rc`).
 ///
 /// Uses `Cell` for interior mutability since all access is single-threaded.
+#[derive(Default)]
 pub struct EvaluationSession {
     /// Cross-context instantiation depth (nesting of `evaluate_application_type`).
     global_instantiation_depth: Cell<u32>,
@@ -86,12 +87,6 @@ impl EvaluationSession {
     #[inline]
     pub const fn global_instantiation_fuel(&self) -> u32 {
         self.global_instantiation_fuel.get()
-    }
-}
-
-impl Default for EvaluationSession {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -219,7 +219,7 @@ pub struct SharedConstraintProofCache {
 /// [`Self::merge`], [`Self::merge_owned`]) intentionally see only the overlay
 /// layer, so the existing "restore caller map, merge winner entries" restore
 /// choreography is unchanged.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct NodeTypeCache {
     data: Arc<FxHashMap<u32, TypeId>>,
     /// Read-only fallback consulted on `data` misses. `None` for plain caches.
@@ -408,14 +408,8 @@ impl NodeTypeCache {
     }
 }
 
-impl Default for NodeTypeCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Dense tristate cache for `is_narrowable_identifier` results.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct NarrowableIdentifierCache {
     data: Vec<u8>,
 }
@@ -461,19 +455,13 @@ impl NarrowableIdentifierCache {
     }
 }
 
-impl Default for NarrowableIdentifierCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Sparse cache for `SymbolId -> TypeId` lookups.
 ///
 /// `SymbolId`s are global after program merge, so a dense per-checker vector
 /// scales with total program symbols even when a checker touches only a small
 /// subset. Keep the cache sparse and Arc-backed so child checkers can inherit a
 /// read snapshot cheaply; writes copy-on-write only the populated entries.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SymbolTypeCache {
     data: Arc<FxHashMap<SymbolId, TypeId>>,
     /// Monotonic mutation counter. Consumers (the assignability evaluation
@@ -741,12 +729,6 @@ impl AssignabilityFailureMemo {
     pub fn clear(&mut self) {
         self.stamp = None;
         self.entries.clear();
-    }
-}
-
-impl Default for SymbolTypeCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

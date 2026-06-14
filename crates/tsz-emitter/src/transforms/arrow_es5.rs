@@ -46,24 +46,13 @@ use tsz_parser::parser::node::NodeArena;
 pub use tsz_parser::syntax::transform_utils::contains_this_reference;
 
 /// Context for arrow function transformation
+#[derive(Default)]
 pub struct ArrowTransformContext {
     /// Whether we need to capture `this` as `_this`
     pub needs_this_capture: bool,
 }
 
-impl Default for ArrowTransformContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ArrowTransformContext {
-    pub const fn new() -> Self {
-        Self {
-            needs_this_capture: false,
-        }
-    }
-
     /// Analyze an arrow function to determine if `this` capture is needed
     pub fn analyze_arrow(&mut self, arena: &NodeArena, func_idx: NodeIndex) {
         let Some(func_node) = arena.get(func_idx) else {

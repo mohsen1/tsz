@@ -147,6 +147,7 @@ impl InstantiationCacheKey {
 /// for the same reason as the surrounding caches: a per-file `QueryCache`
 /// is borrowed for the duration of a check and never crossed by Rayon
 /// workers.
+#[derive(Default)]
 pub struct InstantiationCache {
     inner: RefCell<FxHashMap<InstantiationCacheKey, TypeId>>,
 }
@@ -195,12 +196,6 @@ impl InstantiationCache {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.inner.borrow().capacity()
-    }
-}
-
-impl Default for InstantiationCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

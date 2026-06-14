@@ -65,6 +65,7 @@ pub mod semantic_token_modifiers {
 /// Builder for LSP semantic tokens response (delta encoding).
 ///
 /// Tokens must be pushed in order of appearance in the file (by line, then by column).
+#[derive(Default)]
 pub struct SemanticTokensBuilder {
     data: Vec<u32>,
     prev_line: u32,
@@ -111,12 +112,6 @@ impl SemanticTokensBuilder {
     /// Build the final token array.
     pub fn build(self) -> Vec<u32> {
         self.data
-    }
-}
-
-impl Default for SemanticTokensBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

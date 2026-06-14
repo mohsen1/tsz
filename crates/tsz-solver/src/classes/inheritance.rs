@@ -24,18 +24,12 @@ struct ClassNode {
     mro: Option<Vec<SymbolId>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InheritanceGraph {
     /// Map from `SymbolId` to graph node data
     nodes: RefCell<FxHashMap<SymbolId, ClassNode>>,
     /// Maximum `SymbolId` seen so far (for `BitSet` sizing)
     max_symbol_id: Cell<usize>,
-}
-
-impl Default for InheritanceGraph {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl InheritanceGraph {

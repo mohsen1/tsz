@@ -1222,7 +1222,7 @@ bitflags::bitflags! {
 /// NOTE: The `symbol` field affects BOTH Hash and `PartialEq` for nominal discrimination.
 /// This ensures that different classes get different `TypeIds` in the interner.
 /// Structural subtyping is computed explicitly in the Solver, not via `PartialEq`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ObjectShape {
     /// Object-level flags (e.g. fresh literal tracking).
     pub flags: ObjectFlags,
@@ -1274,18 +1274,6 @@ impl ObjectShape {
     /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS` directly.
     pub fn mark_has_late_bound_members(&mut self) {
         self.flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
-    }
-}
-
-impl Default for ObjectShape {
-    fn default() -> Self {
-        Self {
-            flags: ObjectFlags::empty(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-        }
     }
 }
 
