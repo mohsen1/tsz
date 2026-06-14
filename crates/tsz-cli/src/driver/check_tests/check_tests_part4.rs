@@ -372,3 +372,56 @@ const ok: Keys = { field: "field" };
         );
     }
 
+    /// Regression for #13507: a pair of mutually-recursive union type aliases
+    /// whose value is indexed must not overflow the stack. Before the fix the
+    /// alias-deferral analysis (`alias_ast_is_deferred`) ping-ponged between the
+    /// two aliases forever; `tsc` accepts this — `x["a"]` is `number | string`,
+    /// no TS2456 circularity and no TS7053 missing-index error. Reaching the
+    /// assertions at all proves the recursion is now bounded.
+    #[test]
+    fn mutually_recursive_union_aliases_indexed_do_not_overflow() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+type U = { [k: string]: number } | V;
+type V = { [k: string]: string } | U;
+declare const x: U;
+export const r = x["a"];
+"#,
+        )]);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2456),
+            "mutually-recursive union aliases are not circular (no TS2456): {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 7053),
+            "indexing a union of string-index objects is allowed (no TS7053): {diagnostics:?}"
+        );
+    }
+
+    /// Regression for #13507: the same recursion guard must also cover the
+    /// `is_element_indexable` walk. Here the recursive union is reached through a
+    /// generic alias deferred by a conditional, so the deferral analysis is
+    /// satisfied and the cycle instead surfaces while classifying the union's
+    /// members for indexability. `tsc` is clean; the check must terminate.
+    #[test]
+    fn generic_recursive_union_alias_indexed_does_not_overflow() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+type U<T> = { [k: string]: T } | (T extends never ? never : V<T>);
+type V<T> = { [k: string]: T } | (T extends never ? never : U<T>);
+declare const x: U<number>;
+export const r = x["a"];
+"#,
+        )]);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2456),
+            "generic mutually-recursive union aliases are not circular (no TS2456): {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 7053),
+            "indexing the recursive union is allowed (no TS7053): {diagnostics:?}"
+        );
+    }
+

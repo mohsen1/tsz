@@ -4,11 +4,20 @@
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Maximum union/intersection member-nesting depth walked by
+/// [`CheckerState::is_element_indexable`] before the descent is treated as a
+/// non-terminating recursion and cut (returns the coinductive `true`). The path
+/// set already breaks genuine cycles; this is the backstop for an unbounded
+/// chain of *distinct* instantiations. Set well above any legitimate finite
+/// index-signature nesting so a real verdict is never masked.
+const MAX_ELEMENT_INDEXABLE_DEPTH: u32 = 1000;
 
 /// Result from resolving literal string keys against an object type.
 pub(crate) struct LiteralKeysResult {
@@ -1668,6 +1677,64 @@ impl<'a> CheckerState<'a> {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
+        // `wants_string` / `wants_number` are invariant across the whole descent,
+        // so the per-call `memo` can key on `TypeId` alone.
+        let mut visiting = FxHashSet::default();
+        let mut memo = FxHashMap::default();
+        self.is_element_indexable_guarded(
+            object_type,
+            wants_string,
+            wants_number,
+            &mut visiting,
+            &mut memo,
+            0,
+        )
+    }
+
+    /// Cycle/depth-guarded core of [`Self::is_element_indexable`].
+    ///
+    /// `is_element_indexable` walks into union and intersection members
+    /// recursively. A self-referential type — e.g. the union-of-unions graphs
+    /// produced by purry data-first/data-last overload typing — re-enters the
+    /// same `TypeId` (a true cycle) or descends an unbounded chain of distinct
+    /// instantiations, so the naive recursion has no fixed point and overflows
+    /// the stack (issue #13507, remeda/trpc/mobx witnesses).
+    ///
+    /// `visiting` is a path set: a `TypeId` already on the current descent is a
+    /// back-edge. `tsc` resolves recursive structural questions coinductively
+    /// (it *assumes* the recursive position is satisfied), so a back-edge — or a
+    /// descent past [`MAX_ELEMENT_INDEXABLE_DEPTH`], the backstop for an
+    /// unbounded chain of distinct types — returns `true`. For a union (`all`)
+    /// `true` is the identity that defers the verdict to the concrete members;
+    /// for an intersection (`any`) it preserves the "some member supplies the
+    /// index signature" reading. Either way the recursive occurrence never
+    /// drives a spurious `TS7053`, matching `tsc`'s clean result on these types.
+    ///
+    /// Only union and intersection members recurse, so the cycle/depth/memo
+    /// machinery is engaged lazily by [`Self::is_element_indexable_member_walk`]
+    /// — a leaf type (array/tuple/string-like/object/other) returns its verdict
+    /// directly and the common shallow case touches neither map. The `visiting`
+    /// set is path-scoped (removed on the way out) so a type shared across
+    /// sibling branches is still classified on its own merits — only genuine
+    /// ancestors are cut. `memo` caches the *finished* verdict of each
+    /// fully-walked composite so a node shared across branches (or revisited
+    /// after a cycle resolves) is walked once, keeping the descent polynomial
+    /// instead of re-expanding the recursive subgraph exponentially. A type's
+    /// indexability is the fixed point of its own definition — the same value
+    /// `tsc` computes once and reuses — so caching it per `TypeId` is sound even
+    /// when the cut value seeded a member along the way.
+    fn is_element_indexable_guarded(
+        &self,
+        object_type: TypeId,
+        wants_string: bool,
+        wants_number: bool,
+        visiting: &mut FxHashSet<TypeId>,
+        memo: &mut FxHashMap<TypeId, bool>,
+        depth: u32,
+    ) -> bool {
+        if let Some(&cached) = memo.get(&object_type) {
+            return cached;
+        }
         // Use the resolver-aware classifier so that `Application(Lazy(DefId), args)`
         // wrappers — including those nested inside intersection / union members —
         // are expanded through the checker's `TypeEnvironment` before classification.
@@ -1688,13 +1755,69 @@ impl<'a> CheckerState<'a> {
                 has_string,
                 has_number,
             } => (wants_string && has_string) || (wants_number && (has_number || has_string)),
-            query::ElementIndexableKind::Union(members) => members
-                .iter()
-                .all(|&member| self.is_element_indexable(member, wants_string, wants_number)),
-            query::ElementIndexableKind::Intersection(members) => members
-                .iter()
-                .any(|&member| self.is_element_indexable(member, wants_string, wants_number)),
+            query::ElementIndexableKind::Union(members) => self.is_element_indexable_member_walk(
+                object_type,
+                &members,
+                wants_string,
+                wants_number,
+                visiting,
+                memo,
+                depth,
+                true,
+            ),
+            query::ElementIndexableKind::Intersection(members) => self
+                .is_element_indexable_member_walk(
+                    object_type,
+                    &members,
+                    wants_string,
+                    wants_number,
+                    visiting,
+                    memo,
+                    depth,
+                    false,
+                ),
             query::ElementIndexableKind::Other => false,
         }
+    }
+
+    /// Walk the members of a union (`require_all`) or intersection (`!require_all`)
+    /// composite under the cycle/depth guard. A back-edge to an ancestor composite
+    /// or a descent past [`MAX_ELEMENT_INDEXABLE_DEPTH`] is the coinductive cut
+    /// (`true`): `tsc` assumes the recursive position is satisfied, so the verdict
+    /// is driven by the concrete members and the recursive occurrence never forces
+    /// a spurious `TS7053`. A cut node is unfinished and is not memoized.
+    #[allow(clippy::too_many_arguments)]
+    fn is_element_indexable_member_walk(
+        &self,
+        object_type: TypeId,
+        members: &[TypeId],
+        wants_string: bool,
+        wants_number: bool,
+        visiting: &mut FxHashSet<TypeId>,
+        memo: &mut FxHashMap<TypeId, bool>,
+        depth: u32,
+        require_all: bool,
+    ) -> bool {
+        if depth >= MAX_ELEMENT_INDEXABLE_DEPTH || !visiting.insert(object_type) {
+            return true;
+        }
+        let mut member_indexable = |member: TypeId| {
+            self.is_element_indexable_guarded(
+                member,
+                wants_string,
+                wants_number,
+                visiting,
+                memo,
+                depth + 1,
+            )
+        };
+        let result = if require_all {
+            members.iter().all(|&member| member_indexable(member))
+        } else {
+            members.iter().any(|&member| member_indexable(member))
+        };
+        visiting.remove(&object_type);
+        memo.insert(object_type, result);
+        result
     }
 }
