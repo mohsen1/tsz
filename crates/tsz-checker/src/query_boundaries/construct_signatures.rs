@@ -226,7 +226,7 @@ pub(crate) fn map_function_shape_types(
         ..predicate
     });
 
-    changed.then_some(FunctionShape {
+    changed.then(|| FunctionShape {
         type_params: shape.type_params.clone(),
         params: params.unwrap_or_else(|| shape.params.clone()),
         this_type,
