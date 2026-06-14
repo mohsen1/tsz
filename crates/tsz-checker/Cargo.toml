@@ -506,6 +506,9 @@ path = "tests/ambient_module_value_export_tests.rs"
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
+name = "hkt_self_augmentation_keyof_repro"
+path = "tests/hkt_self_augmentation_keyof_repro.rs"
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 [[test]]
@@ -1557,6 +1560,9 @@ path = "tests/property_chain_elaboration_collapse_tests.rs"
 [[test]]
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
+[[test]]
+name = "mapped_numeric_string_key_index_tests"
+path = "tests/mapped_numeric_string_key_index_tests.rs"
 [[test]]
 name = "homomorphic_indexed_access_tests"
 path = "tests/homomorphic_indexed_access_tests.rs"

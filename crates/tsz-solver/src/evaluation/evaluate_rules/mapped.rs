@@ -589,25 +589,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
             };
-            // Extract property name(s) from the remapped key. The no-`as`-clause
-            // path is the common case (Partial / Readonly / Required / Pick
-            // expansions) and skips a lookup + numeric-atom intern.
-            // Unions arise from `as \`${K}1\` | \`${K}2\`` producing multiple
-            // properties per source key.
-            let remapped_names: smallvec::SmallVec<[Atom; 1]> = if remapped == key_literal {
-                smallvec::smallvec![key_name]
+            // Property key(s) from the remapped key. Each `MappedKey` carries the
+            // naming key literal (string- vs number-named; see `is_string_named`).
+            let remapped_keys: smallvec::SmallVec<[MappedKey; 1]> = if remapped == key_literal {
+                smallvec::smallvec![mapped_key]
             } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
-                smallvec::smallvec![entry.name]
+                smallvec::smallvec![entry]
             } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
                 let members = self.interner().type_list(list_id);
-                let names: smallvec::SmallVec<[Atom; 1]> = members
+                let keys: smallvec::SmallVec<[MappedKey; 1]> = members
                     .iter()
-                    .filter_map(|&m| self.mapped_key_from_literal(m).map(|k| k.name))
+                    .filter_map(|&m| self.mapped_key_from_literal(m))
                     .collect();
-                if names.is_empty() {
+                if keys.is_empty() {
                     return self.interner().mapped(*mapped);
                 }
-                names
+                keys
             } else {
                 return self.interner().mapped(*mapped);
             };
@@ -679,19 +676,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 remove_optional_with_declared && source_optional,
             );
 
-            for remapped_name in remapped_names {
-                let is_string_named = source_info
-                    .is_some_and(|(_, _, _, source_is_string_named, _, _)| *source_is_string_named)
-                    && remapped_name == key_name;
-                let single_quoted_name =
-                    source_info.is_some_and(|(_, _, _, _, _, source_single_quoted_name)| {
-                        *source_single_quoted_name
-                    }) && remapped_name == key_name;
-                let is_symbol_named = source_info
-                    .is_some_and(|(_, _, _, _, source_is_symbol_named, _)| *source_is_symbol_named)
-                    && remapped_name == key_name;
+            // Naming flags an identity key inherits from its homomorphic source.
+            let (src_string_named, src_symbol_named, src_single_quoted) =
+                source_info.map_or((false, false, false), |&(_, _, _, s, y, q)| (s, y, q));
+            for mk in remapped_keys {
+                let identity = mk.name == key_name;
+                // Numeric-named string-literal key (`"0"`) stays string-named so `keyof` yields `"0"`, not `0`.
+                let is_string_named = (src_string_named && identity)
+                    || crate::utils::type_is_numeric_string_literal(
+                        self.interner(),
+                        mk.key_literal,
+                    );
+                let single_quoted_name = src_single_quoted && identity;
+                let is_symbol_named = src_symbol_named && identity;
                 properties.push(PropertyInfo {
-                    name: remapped_name,
+                    name: mk.name,
                     type_id: property_type,
                     write_type: property_type,
                     optional,
