@@ -99,6 +99,27 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// `true` when `object_type` is a bare/unconstrained type parameter.
+    ///
+    /// A bare type parameter has the implicit constraint `unknown` in tsc, so
+    /// `keyof T` is `keyof unknown` = `never` and no concrete property key is
+    /// assignable to it — `T[key]` is a `TS2536`. The element-indexability
+    /// classifier intentionally treats *every* type parameter as having string
+    /// and number index signatures (a permissive deferral that keeps value-space
+    /// `T[k]` from a spurious `TS7053`), so the index-access key check must not
+    /// lean on that permissive verdict to *suppress* `TS2536` for an opaque
+    /// object parameter. An explicitly constrained parameter resolves to a
+    /// concrete key space (`object_type_for_check` becomes the constraint), so it
+    /// is not classified here and keeps the normal index-signature suppression.
+    pub(crate) fn is_unconstrained_type_param_object(&self, object_type: TypeId) -> bool {
+        crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
+            && crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                object_type,
+            )
+            .is_none()
+    }
+
     /// Resolve a type parameter's constraint from its AST declaration when the TypeId
     /// doesn't carry one. This handles cases where type parameters lose their constraints
     /// during type application argument resolution (e.g., `M[Event]` inside `Id<M[Event]>`).
@@ -1098,6 +1119,12 @@ impl<'a> CheckerState<'a> {
                     index_type,
                     index_constraint,
                 )
+                // A bare type parameter is reported as string/number indexable by
+                // the permissive element-indexability classifier, but tsc treats
+                // its key space as `keyof unknown` = `never`: a concrete key is a
+                // TS2536, not a valid index-signature access. Don't let the
+                // permissive verdict suppress the error for an opaque object param.
+                && !self.is_unconstrained_type_param_object(object_type_for_check)
                 && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
             {
                 return;

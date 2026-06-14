@@ -293,3 +293,192 @@ store[k] = bad;
         diag_summary(&diags)
     );
 }
+
+// ── Unconstrained type-parameter object indexed by a concrete key (#13212) ──
+//
+// A bare/unconstrained type parameter has the implicit constraint `unknown` in
+// tsc, so `keyof T` is `keyof unknown` = `never`: no concrete property key is a
+// member, and `T[key]` is a TS2536. tsz's element-indexability classifier
+// permissively treats every type parameter as string/number indexable (to keep
+// value-space `T[k]` from a spurious TS7053), which previously suppressed TS2536
+// here. The fix only honors that permissive verdict for explicitly-constrained
+// parameters (which resolve to a concrete key space) — a bare parameter falls
+// through to TS2536, matching tsc.
+
+/// `type X<B> = B['out']` — string-literal key on an unconstrained param → TS2536.
+#[test]
+fn unconstrained_param_string_literal_index_emits_ts2536() {
+    let source = r#"
+type X<B> = B['out'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "B['out'] on unconstrained B must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// Anti-hardcoding: same rule with a differently-named parameter and key.
+#[test]
+fn unconstrained_renamed_param_string_literal_index_emits_ts2536() {
+    let source = r#"
+type Lookup<Shape> = Shape['field'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "Shape['field'] on unconstrained Shape must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// Numeric-literal key on an unconstrained param → TS2536.
+#[test]
+fn unconstrained_param_numeric_literal_index_emits_ts2536() {
+    let source = r#"
+type X<B> = B[0];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "B[0] on unconstrained B must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// `string` / `number` primitive key on an unconstrained param → TS2536.
+#[test]
+fn unconstrained_param_primitive_key_index_emits_ts2536() {
+    for source in ["type X<B> = B[string];", "type X<B> = B[number];"] {
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            count(&diags, 2536),
+            1,
+            "{source} must emit TS2536; got: {:?}",
+            diag_summary(&diags)
+        );
+    }
+}
+
+/// A union of concrete literal keys on an unconstrained param → TS2536.
+#[test]
+fn unconstrained_param_union_literal_index_emits_ts2536() {
+    let source = r#"
+type X<B> = B['a' | 'b'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "B['a' | 'b'] on unconstrained B must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// A parameter whose constraint is itself an unconstrained parameter is also
+/// opaque (`keyof` = `never`), so a concrete key still emits TS2536.
+#[test]
+fn param_constrained_to_unconstrained_param_emits_ts2536() {
+    let source = r#"
+type X<A, B extends A> = B['out'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "B['out'] where B extends unconstrained A must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// `B extends unknown` makes the implicit constraint explicit; tsc emits TS2536
+/// identically — the fix must not change this already-correct case.
+#[test]
+fn param_extends_unknown_concrete_index_emits_ts2536() {
+    let source = r#"
+type X<B extends unknown> = B['x'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        1,
+        "B['x'] where B extends unknown must emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+// ── Negative cases: the fix must not over-fire ──
+
+/// A concrete key present in the parameter's constraint stays valid (no TS2536).
+#[test]
+fn constrained_param_present_key_no_ts2536() {
+    let source = r#"
+type X<B extends { a: 1 }> = B['a'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "B['a'] where B extends {{ a: 1 }} must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// A parameter constrained to a string-index signature accepts any string key.
+#[test]
+fn constrained_param_string_index_signature_no_ts2536() {
+    let source = r#"
+type X<B extends Record<string, number>> = B['foo'];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "B['foo'] where B extends Record<string, number> must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
+/// `T[keyof T]`, `T[never]`, and `T[K extends keyof T]` are deferred-valid on a
+/// bare parameter and must stay clean (the index carries the type parameter).
+#[test]
+fn unconstrained_param_deferred_index_no_ts2536() {
+    for source in [
+        "type X<B> = B[keyof B];",
+        "type X<B> = B[never];",
+        "type X<B, K extends keyof B> = B[K];",
+    ] {
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            count(&diags, 2536),
+            0,
+            "{source} must not emit TS2536; got: {:?}",
+            diag_summary(&diags)
+        );
+    }
+}
+
+/// Value-space `T[k]` on a bare parameter must still report TS7053 (and never a
+/// spurious TS2536) — the permissive classifier behavior is preserved there.
+#[test]
+fn value_space_bare_param_index_still_ts7053_not_ts2536() {
+    let source = r#"
+function f<T>(o: T) { return o['x']; }
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "value-space o['x'] must not emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+    assert!(
+        count(&diags, 7053) > 0,
+        "value-space o['x'] on bare T must emit TS7053; got: {:?}",
+        diag_summary(&diags)
+    );
+}

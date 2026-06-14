@@ -1147,14 +1147,21 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // A bare type parameter is reported as string/number indexable by the
+        // permissive element-indexability classifier, but tsc treats its key
+        // space as `keyof unknown` = `never`, so a concrete key member is a
+        // TS2536 rather than a valid index-signature access. Skip the permissive
+        // index-signature branch for an opaque object parameter.
+        let object_is_opaque_param = self.is_unconstrained_type_param_object(object_type);
         members.iter().all(|&member| {
             self.indexed_access_key_space_relation_outcome(member, keyof_object)
                 .related
-                || self
-                    .get_index_key_kind(member)
-                    .is_some_and(|(wants_string, wants_number)| {
-                        self.is_element_indexable(object_type, wants_string, wants_number)
-                    })
+                || (!object_is_opaque_param
+                    && self.get_index_key_kind(member).is_some_and(
+                        |(wants_string, wants_number)| {
+                            self.is_element_indexable(object_type, wants_string, wants_number)
+                        },
+                    ))
                 || crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                     self.ctx.types,
                     member,
