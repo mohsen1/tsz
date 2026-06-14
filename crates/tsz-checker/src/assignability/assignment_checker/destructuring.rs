@@ -1083,7 +1083,7 @@ impl<'a> CheckerState<'a> {
     }
 
     const fn is_inline_type_identifier_char(ch: u8) -> bool {
-        ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
+        tsz_common::text_scan::is_ascii_identifier_continue(ch)
     }
 
     fn property_name_text(&self, name_idx: NodeIndex) -> Option<String> {

@@ -339,22 +339,11 @@ fn skip_template_literal(bytes: &[u8], start: usize) -> usize {
     pos
 }
 
-fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
-    let mut pos = start + 1;
-    while pos < bytes.len() {
-        match bytes[pos] {
-            b'\\' => pos = (pos + 2).min(bytes.len()),
-            ch if ch == quote => return pos + 1,
-            // JS/TS single-line string literals cannot contain raw newlines.
-            // If we hit one, treat the string as terminated and let the main
-            // scanner resume at the newline so subsequent comments are still
-            // detected.
-            b'\n' | b'\r' => return pos,
-            _ => pos += 1,
-        }
-    }
-    pos
-}
+// Quoted-string skipping for the comment scanner routes through the shared
+// `text_scan` primitive (single-line string literals terminate on a raw
+// newline; the comment scanner only ever passes `'`/`"` quotes). Template
+// literals are handled separately by `scan_template_literal_comments`.
+use crate::text_scan::skip_quoted_literal as skip_quoted_string;
 
 fn can_start_regex_at(bytes: &[u8], slash_pos: usize) -> bool {
     let mut pos = slash_pos;

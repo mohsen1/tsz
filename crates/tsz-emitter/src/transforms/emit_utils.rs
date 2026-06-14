@@ -1222,29 +1222,10 @@ pub(crate) fn skip_trivia_forward(source_text: Option<&str>, start: u32, end: u3
 /// ASCII identifier alphabet — used by transforms that need to detect
 /// user bindings before allocating helper-temp names.
 pub(crate) fn contains_identifier_token(haystack: &str, needle: &str) -> bool {
-    let bytes = haystack.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i + needle_bytes.len() <= bytes.len() {
-        if &bytes[i..i + needle_bytes.len()] == needle_bytes {
-            let prev_ok = i == 0 || !is_identifier_part(bytes[i - 1]);
-            let next_ok = i + needle_bytes.len() == bytes.len()
-                || !is_identifier_part(bytes[i + needle_bytes.len()]);
-            if prev_ok && next_ok {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
+    tsz_common::text_scan::contains_standalone_token(haystack, needle)
 }
 
-const fn is_identifier_part(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_identifier_part;
 
 /// Pick a temporary name that doesn't collide with any identifier reference
 /// in `source_text`. Returns `base` when the base itself is free, otherwise

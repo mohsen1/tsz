@@ -177,7 +177,7 @@ fn text_contains_identifier(text: &str, name: &str) -> bool {
 }
 
 pub(super) const fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    tsz_common::text_scan::is_ascii_identifier_continue(b)
 }
 
 #[cfg(test)]

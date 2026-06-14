@@ -327,9 +327,7 @@ impl ImportResolutionMode {
 /// JSDoc attribute grammar has a single source of truth.
 #[must_use]
 pub fn parse_jsdoc_resolution_mode_attribute_clause(text: &str) -> Option<ImportResolutionMode> {
-    const fn is_word_byte(b: u8) -> bool {
-        b == b'_' || b == b'$' || b.is_ascii_alphanumeric()
-    }
+    use crate::text_scan::is_ascii_identifier_continue as is_word_byte;
     let bytes = text.as_bytes();
 
     // Locate the attribute keyword (`with`/`assert`) at a word boundary.

@@ -1097,13 +1097,13 @@ impl<'a> CheckerState<'a> {
         let text = sf.text.get(start as usize..)?;
         let mut chars = text.chars();
         let first = chars.next()?;
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        if !tsz_common::text_scan::is_ascii_identifier_start_char(first) {
             return None;
         }
 
         let mut len = first.len_utf8() as u32;
         for ch in chars {
-            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            if tsz_common::text_scan::is_ascii_identifier_continue_char(ch) {
                 len += ch.len_utf8() as u32;
             } else {
                 break;

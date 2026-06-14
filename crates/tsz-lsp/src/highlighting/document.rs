@@ -304,12 +304,7 @@ impl<'a> DocumentHighlightProvider<'a> {
 
     /// Skip whitespace forward from an offset and return the new offset.
     fn skip_whitespace_forward(&self, offset: usize) -> usize {
-        let bytes = self.source_text.as_bytes();
-        let mut i = offset;
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        i
+        tsz_common::text_scan::skip_ascii_whitespace(self.source_text.as_bytes(), offset)
     }
 
     /// Highlight if/else keyword pairs.

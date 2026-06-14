@@ -181,20 +181,9 @@ const fn is_ident_or_member_access_char(ch: char) -> bool {
     ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric()
 }
 
-fn skip_ascii_ws(bytes: &[u8], mut i: usize) -> usize {
-    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-        i += 1;
-    }
-    i
-}
-
-const fn is_ident_start(byte: u8) -> bool {
-    byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
-}
-
-const fn is_ident_continue(byte: u8) -> bool {
-    is_ident_start(byte) || byte.is_ascii_digit()
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_ident_continue;
+use tsz_common::text_scan::is_ascii_identifier_start as is_ident_start;
+use tsz_common::text_scan::skip_ascii_whitespace as skip_ascii_ws;
 
 fn push_non_code_blank(result: &mut String, byte: u8) {
     if byte == b'\t' {
@@ -1218,19 +1207,7 @@ fn scan_balanced_parens(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-fn skip_quoted_bytes(bytes: &[u8], mut i: usize, quote: u8) -> usize {
-    i += 1;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            i += 2;
-        } else if bytes[i] == quote {
-            return i + 1;
-        } else {
-            i += 1;
-        }
-    }
-    i
-}
+use tsz_common::text_scan::skip_quoted_literal as skip_quoted_bytes;
 
 fn scan_past_decorator(bytes: &[u8], start: usize) -> Option<usize> {
     if start >= bytes.len() || bytes[start] != b'@' {

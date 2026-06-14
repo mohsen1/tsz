@@ -502,7 +502,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     const fn is_jsdoc_tag_name_continuation(ch: char) -> bool {
-        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+        tsz_common::text_scan::is_ascii_identifier_continue_char(ch)
     }
 
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_text(
@@ -1341,7 +1341,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     const fn is_jsdoc_identifier_part(ch: char) -> bool {
-        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        tsz_common::text_scan::is_ascii_identifier_continue_char(ch)
     }
 
     fn format_jsdoc_object_type_text(type_text: &str) -> Option<String> {

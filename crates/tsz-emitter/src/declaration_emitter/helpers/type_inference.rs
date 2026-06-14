@@ -399,27 +399,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn protected_type_text_literal_spans(text: &str) -> Vec<(usize, usize)> {
-        fn skip_quoted(bytes: &[u8], mut i: usize, quote: u8) -> usize {
-            i += 1;
-            let mut escaped = false;
-            while i < bytes.len() {
-                if escaped {
-                    escaped = false;
-                    i += 1;
-                    continue;
-                }
-                if bytes[i] == b'\\' {
-                    escaped = true;
-                    i += 1;
-                    continue;
-                }
-                i += 1;
-                if bytes[i - 1] == quote {
-                    break;
-                }
-            }
-            i
-        }
+        use tsz_common::text_scan::skip_quoted_literal as skip_quoted;
 
         fn scan_template(bytes: &[u8], start: usize, spans: &mut Vec<(usize, usize)>) -> usize {
             let mut segment_start = start;
@@ -504,7 +484,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(super) const fn is_ident_char_in_text(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+        tsz_common::text_scan::is_ascii_identifier_continue(b)
     }
 
     pub(in crate::declaration_emitter) fn object_rest_binding_excluded_names(

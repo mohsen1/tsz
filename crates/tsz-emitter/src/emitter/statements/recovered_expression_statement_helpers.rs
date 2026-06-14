@@ -203,6 +203,6 @@ impl<'a> Printer<'a> {
     }
 
     const fn is_ascii_identifier_part(byte: u8) -> bool {
-        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+        tsz_common::text_scan::is_ascii_identifier_continue(byte)
     }
 }
