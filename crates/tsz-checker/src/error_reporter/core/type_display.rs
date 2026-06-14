@@ -679,12 +679,18 @@ impl<'a> CheckerState<'a> {
                 // not `{ fooProp: string; } & Bar`.
                 ty
             } else if let Some(members) = query::union_members(self.ctx.types, ty) {
-                let normalized: Vec<_> = members
-                    .iter()
-                    .map(|&member| {
-                        self.normalize_assignability_display_type_inner(member, visiting, depth + 1)
-                    })
-                    .collect();
+                let mut normalized = Vec::with_capacity(members.len());
+                for &member in members.iter() {
+                    normalized.push(self.normalize_assignability_display_type_inner(
+                        member,
+                        visiting,
+                        depth + 1,
+                    ));
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return ty;
+                    }
+                }
                 if normalized == members {
                     ty
                 } else {
