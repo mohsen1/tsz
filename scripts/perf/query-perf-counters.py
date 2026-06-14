@@ -117,6 +117,24 @@ def reset_cache_rows(checker: dict, include_unattributed=False) -> list:
     return rows
 
 
+def reset_cache_total_bytes(checker: dict, rows: list) -> int:
+    total = checker.get("file_session_reset_cache_bytes_max")
+    if total is not None:
+        return total
+    return sum(row["bytes"] for row in rows)
+
+
+def dominant_reset_cache_row(rows: list) -> Optional[dict]:
+    nonzero_rows = [row for row in rows if row["entries"] != 0 or row["bytes"] != 0]
+    if not nonzero_rows:
+        return None
+    return sorted(nonzero_rows, key=lambda row: (-row["bytes"], row["name"]))[0]
+
+
+def reset_cache_attributed_bytes(rows: list) -> int:
+    return sum(row["bytes"] for row in rows if row["name"] != "unattributed")
+
+
 def print_reset_cache_high_water(checker: dict, indent: str = "  ") -> None:
     entries = checker.get("file_session_reset_cache_entries_max")
     size = checker.get("file_session_reset_cache_bytes_max")
@@ -130,7 +148,7 @@ def print_reset_cache_high_water(checker: dict, indent: str = "  ") -> None:
         return
 
     rows_by_bytes = sorted(rows, key=lambda row: (-row["bytes"], row["name"]))
-    total_for_share = size if size is not None else sum(row["bytes"] for row in rows)
+    total_for_share = reset_cache_total_bytes(checker, rows)
     dominant = rows_by_bytes[0]
     for row in rows_by_bytes:
         if row["entries"] == 0 and row["bytes"] == 0:
@@ -404,12 +422,8 @@ def print_diff(post: dict, base: dict) -> None:
         post_by_name = {row["name"]: row for row in post_rows}
         base_by_name = {row["name"]: row for row in base_rows}
         print("  reset-cache high-water by family:")
-        post_total = post["checker"].get("file_session_reset_cache_bytes_max")
-        base_total = base["checker"].get("file_session_reset_cache_bytes_max")
-        if post_total is None:
-            post_total = sum(row["bytes"] for row in post_rows)
-        if base_total is None:
-            base_total = sum(row["bytes"] for row in base_rows)
+        post_total = reset_cache_total_bytes(post["checker"], post_rows)
+        base_total = reset_cache_total_bytes(base["checker"], base_rows)
         for name in sorted(set(post_by_name) | set(base_by_name)):
             post_row = post_by_name.get(name, {"entries": 0, "bytes": 0})
             base_row = base_by_name.get(name, {"entries": 0, "bytes": 0})
@@ -425,6 +439,27 @@ def print_diff(post: dict, base: dict) -> None:
                 f"({bytes_sign}{fmt_int(bytes_delta)})  "
                 f"share {fmt_pct(base_row['bytes'], base_total):>6} → "
                 f"{fmt_pct(post_row['bytes'], post_total):>6}"
+            )
+        base_attributed = reset_cache_attributed_bytes(base_rows)
+        post_attributed = reset_cache_attributed_bytes(post_rows)
+        print(
+            "    attributed byte coverage "
+            f"{fmt_int(base_attributed)}/{fmt_int(base_total)} "
+            f"({fmt_pct(base_attributed, base_total)}) → "
+            f"{fmt_int(post_attributed)}/{fmt_int(post_total)} "
+            f"({fmt_pct(post_attributed, post_total)})"
+        )
+        base_dominant = dominant_reset_cache_row(base_rows)
+        post_dominant = dominant_reset_cache_row(post_rows)
+        if base_dominant or post_dominant:
+            base_name = base_dominant["name"] if base_dominant else "<none>"
+            post_name = post_dominant["name"] if post_dominant else "<none>"
+            base_bytes = base_dominant["bytes"] if base_dominant else 0
+            post_bytes = post_dominant["bytes"] if post_dominant else 0
+            print(
+                "    dominant retained family "
+                f"{base_name} ({fmt_int(base_bytes)}, {fmt_pct(base_bytes, base_total)}) → "
+                f"{post_name} ({fmt_int(post_bytes)}, {fmt_pct(post_bytes, post_total)})"
             )
     post_slow = post.get("slow_check_file_timings") or []
     base_slow = base.get("slow_check_file_timings") or []
