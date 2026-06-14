@@ -167,6 +167,34 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("env_eval", result.stdout)
         self.assertIn("share  40.6% →  40.6%", result.stdout)
 
+    def test_reset_cache_summary_reports_unattributed_bytes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = sample_snapshot()
+            payload["checker"]["file_session_reset_cache_bytes_max"] = 8192
+            path = self.write_json(Path(temp_dir), "snap.json", payload)
+            result = self.run_tool("--json", path)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unattributed", result.stdout)
+        self.assertIn("bytes=     4,096", result.stdout)
+        self.assertIn("byte_share= 50.0%", result.stdout)
+        self.assertIn("dominant=unattributed", result.stdout)
+
+    def test_reset_cache_diff_reports_unattributed_bytes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            baseline_payload = sample_snapshot()
+            current_payload = sample_snapshot()
+            current_payload["checker"]["file_session_reset_cache_bytes_max"] = 8192
+            baseline = self.write_json(root, "baseline.json", baseline_payload)
+            current = self.write_json(root, "current.json", current_payload)
+            result = self.run_tool("--json", current, "--baseline", baseline)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unattributed", result.stdout)
+        self.assertIn("bytes          0 →      4,096 (+4,096)", result.stdout)
+        self.assertIn("share   0.0% →  50.0%", result.stdout)
+
     def test_by_reason_requires_by_reason_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             payload = sample_snapshot()

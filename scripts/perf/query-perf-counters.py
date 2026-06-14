@@ -87,7 +87,7 @@ def reset_cache_value(checker: dict, suffix: str) -> Optional[int]:
     return checker.get(f"file_session_reset_{suffix}_max")
 
 
-def reset_cache_rows(checker: dict) -> list:
+def reset_cache_rows(checker: dict, include_unattributed=False) -> list:
     rows = []
     for name, entries_suffix, bytes_suffix in RESET_CACHE_FIELDS:
         entries = reset_cache_value(checker, entries_suffix)
@@ -101,13 +101,26 @@ def reset_cache_rows(checker: dict) -> list:
                 "bytes": size or 0,
             }
         )
+    if include_unattributed:
+        total_bytes = checker.get("file_session_reset_cache_bytes_max")
+        if total_bytes is not None:
+            known_bytes = sum(row["bytes"] for row in rows)
+            unattributed_bytes = total_bytes - known_bytes
+            if unattributed_bytes > 0:
+                rows.append(
+                    {
+                        "name": "unattributed",
+                        "entries": 0,
+                        "bytes": unattributed_bytes,
+                    }
+                )
     return rows
 
 
 def print_reset_cache_high_water(checker: dict, indent: str = "  ") -> None:
     entries = checker.get("file_session_reset_cache_entries_max")
     size = checker.get("file_session_reset_cache_bytes_max")
-    rows = reset_cache_rows(checker)
+    rows = reset_cache_rows(checker, include_unattributed=True)
     if entries is None and size is None and not rows:
         return
 
@@ -385,8 +398,8 @@ def print_diff(post: dict, base: dict) -> None:
         "compute_type_of_symbol_cache_hits",
     ):
         print(f"  {delta(post['checker'], base['checker'], k)}")
-    post_rows = reset_cache_rows(post["checker"])
-    base_rows = reset_cache_rows(base["checker"])
+    post_rows = reset_cache_rows(post["checker"], include_unattributed=True)
+    base_rows = reset_cache_rows(base["checker"], include_unattributed=True)
     if post_rows or base_rows:
         post_by_name = {row["name"]: row for row in post_rows}
         base_by_name = {row["name"]: row for row in base_rows}
