@@ -994,6 +994,39 @@ impl<'a> CheckerState<'a> {
     /// - `type Recurse = { [K in keyof Recurse]: Recurse[K] }` (self)
     /// - `type A = { [K in keyof B]: B[K] }; type B = { [K in keyof A]: A[K] }` (mutual)
     pub(crate) fn alias_ast_is_deferred(&self, sym_id: SymbolId) -> bool {
+        let mut deferral_stack = FxHashSet::default();
+        self.alias_ast_is_deferred_guarded(sym_id, &mut deferral_stack)
+    }
+
+    /// Cycle-guarded core of [`Self::alias_ast_is_deferred`].
+    ///
+    /// The union/intersection arm recurses into referenced aliases via
+    /// [`Self::union_alias_child_is_deferred_or_non_recursive`], which calls back
+    /// into this analysis. Mutually-recursive union/intersection aliases
+    /// (`type U = {…} | V; type V = {…} | U`) therefore re-enter an alias already
+    /// on the current deferral path and, before this guard, ping-ponged until the
+    /// stack overflowed (issue #13507). `deferral_stack` is path-scoped: a
+    /// back-edge to an alias being analyzed is treated as deferred (`true`),
+    /// which both terminates the walk and matches `tsc` — such aliases resolve
+    /// without a TS2456 circularity error.
+    fn alias_ast_is_deferred_guarded(
+        &self,
+        sym_id: SymbolId,
+        deferral_stack: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        if !deferral_stack.insert(sym_id) {
+            return true;
+        }
+        let result = self.alias_ast_is_deferred_inner(sym_id, deferral_stack);
+        deferral_stack.remove(&sym_id);
+        result
+    }
+
+    fn alias_ast_is_deferred_inner(
+        &self,
+        sym_id: SymbolId,
+        deferral_stack: &mut FxHashSet<SymbolId>,
+    ) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -1037,6 +1070,7 @@ impl<'a> CheckerState<'a> {
                         self.union_alias_child_is_deferred_or_non_recursive(
                             c,
                             sym_id,
+                            deferral_stack,
                             &mut FxHashSet::default(),
                         )
                     })
@@ -1052,6 +1086,7 @@ impl<'a> CheckerState<'a> {
         &self,
         node_idx: NodeIndex,
         target_sym: SymbolId,
+        deferral_stack: &mut FxHashSet<SymbolId>,
         visited_aliases: &mut FxHashSet<SymbolId>,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1091,7 +1126,7 @@ impl<'a> CheckerState<'a> {
             if !self.alias_body_references_symbol(ref_sym, target_sym, visited_aliases) {
                 return true;
             }
-            return self.alias_ast_is_deferred(ref_sym);
+            return self.alias_ast_is_deferred_guarded(ref_sym, deferral_stack);
         }
         !self.ast_node_references_symbol(node_idx, target_sym, visited_aliases)
     }
