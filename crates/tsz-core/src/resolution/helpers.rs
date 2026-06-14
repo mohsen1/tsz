@@ -133,6 +133,43 @@ pub(crate) fn types_package_name(package_name: &str) -> String {
     format!("@types/{}", stripped.replace('/', "__"))
 }
 
+/// Match `input` against a single-`*` pattern already split into its
+/// `prefix`/`suffix` halves, returning the substring the `*` captured.
+///
+/// Shared inner step of [`match_single_star`] (which splits the pattern on
+/// `*` first) and `PathMapping::match_specifier` (which carries precomputed
+/// `prefix`/`suffix` fields). Mirrors Node's `PATTERN_KEY_COMPARE` capture:
+/// `input` must start with `prefix` and end with `suffix`, and the matched
+/// region is what sits between them (empty when they abut). Routing all three
+/// callers through one body keeps the parity-sensitive capture rule from
+/// drifting between resolvers.
+pub(crate) fn match_prefix_suffix(prefix: &str, suffix: &str, input: &str) -> Option<String> {
+    if !input.starts_with(prefix) || !input.ends_with(suffix) {
+        return None;
+    }
+
+    let start = prefix.len();
+    let end = input.len().saturating_sub(suffix.len());
+
+    if end < start {
+        return None;
+    }
+
+    Some(input[start..end].to_string())
+}
+
+/// Match `input` against a single-`*` `pattern`, returning the captured
+/// wildcard text. Patterns that do not contain exactly one `*` (the
+/// `parts.len() != 2` guard) are rejected, mirroring Node's single-`*`
+/// `PATTERN_KEY_COMPARE` contract.
+pub(crate) fn match_single_star(pattern: &str, input: &str) -> Option<String> {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    match_prefix_suffix(parts[0], parts[1], input)
+}
+
 /// Match an export pattern against a subpath
 pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
@@ -150,26 +187,7 @@ pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<Strin
         return None;
     }
 
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-
-    let prefix = parts[0];
-    let suffix = parts[1];
-
-    if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
-        return None;
-    }
-
-    let start = prefix.len();
-    let end = subpath.len().saturating_sub(suffix.len());
-
-    if end < start {
-        return None;
-    }
-
-    Some(subpath[start..end].to_string())
+    match_single_star(pattern, subpath)
 }
 
 /// Specificity ranking key for an `exports`/`imports` subpath key.
@@ -242,26 +260,7 @@ pub(crate) fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<St
     let pattern = pattern.strip_prefix('#').unwrap_or(pattern);
     let specifier = specifier.strip_prefix('#').unwrap_or(specifier);
 
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-
-    let prefix = parts[0];
-    let suffix = parts[1];
-
-    if !specifier.starts_with(prefix) || !specifier.ends_with(suffix) {
-        return None;
-    }
-
-    let start = prefix.len();
-    let end = specifier.len().saturating_sub(suffix.len());
-
-    if end < start {
-        return None;
-    }
-
-    Some(specifier[start..end].to_string())
+    match_single_star(pattern, specifier)
 }
 
 // The `typesVersions` / semver algorithm is owned by
@@ -324,13 +323,7 @@ pub(crate) fn substitute_wildcard_in_exports(
 ) -> PackageExports {
     match value {
         PackageExports::String(s) => {
-            if s.contains('*') {
-                PackageExports::String(s.replacen('*', wildcard, 1))
-            } else if is_directory_match && s.ends_with('/') {
-                PackageExports::String(format!("{s}{wildcard}"))
-            } else {
-                PackageExports::String(s.clone())
-            }
+            PackageExports::String(apply_wildcard_substitution(s, wildcard, is_directory_match))
         }
         PackageExports::Conditional(entries) => PackageExports::Conditional(
             entries
@@ -490,6 +483,24 @@ pub(crate) fn declaration_substitution_for_main(path: &Path) -> Option<PathBuf> 
         "js" | "jsx" => Some(path.with_extension("d.ts")),
         "mjs" => Some(path.with_extension("d.mts")),
         "cjs" => Some(path.with_extension("d.cts")),
+        _ => None,
+    }
+}
+
+/// Map a TS implementation extension to its declaration-file extension
+/// (`ts`/`tsx` -> `d.ts`, `mts` -> `d.mts`, `cts` -> `d.cts`); returns `None`
+/// for any other extension.
+///
+/// This is the inverse direction of [`declaration_substitution_for_main`],
+/// which maps JS *output* extensions (`js`/`jsx`/`mjs`/`cjs`) to their
+/// declaration equivalents. The TS-to-declaration direction is used by the
+/// `rewriteRelativeImportExtensions` probe, where a `.ts`/`.mts`/`.cts`
+/// specifier resolves to its `.d.ts`/`.d.mts`/`.d.cts` declaration file.
+pub(crate) fn ts_extension_to_declaration(extension: &str) -> Option<&'static str> {
+    match extension {
+        "ts" | "tsx" => Some("d.ts"),
+        "mts" => Some("d.mts"),
+        "cts" => Some("d.cts"),
         _ => None,
     }
 }

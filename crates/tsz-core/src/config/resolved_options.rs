@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::checker::context::CheckerOptions;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use crate::module_resolver_helpers::match_prefix_suffix;
 use tsz_common::options::strict_family::{StrictFamilyOverrides, apply_strict_family};
 
 use super::{
@@ -216,18 +217,10 @@ impl PathMapping {
         // Keys with more than one `*` are rejected up front by
         // `build_path_mappings` (mirroring tsc's `tryParsePattern`), so every
         // mapping that reaches here has exactly one `*` and a well-formed
-        // `prefix`/`suffix`.
-        if !specifier.starts_with(&self.prefix) || !specifier.ends_with(&self.suffix) {
-            return None;
-        }
-
-        let start = self.prefix.len();
-        let end = specifier.len().saturating_sub(self.suffix.len());
-        if end < start {
-            return None;
-        }
-
-        Some(specifier[start..end].to_string())
+        // `prefix`/`suffix`. The capture itself shares the single-`*` matcher
+        // with the `exports`/`imports` resolvers (this carries precomputed
+        // `prefix`/`suffix` fields rather than re-splitting the pattern).
+        match_prefix_suffix(&self.prefix, &self.suffix, specifier)
     }
 
     pub const fn specificity(&self) -> usize {
