@@ -2,8 +2,8 @@ use std::fs;
 
 #[test]
 fn identifier_binding_default_preserve_declared_type_uses_relation_outcome() {
-    let source = fs::read_to_string("src/types/computation/identifier/core.rs")
-        .expect("failed to read identifier/core.rs");
+    let source = fs::read_to_string("src/types/computation/identifier/resolved.rs")
+        .expect("failed to read identifier/resolved.rs");
     let start = source
         .find("request.contextual_type.is_some()")
         .expect("missing binding-default identifier guard");
