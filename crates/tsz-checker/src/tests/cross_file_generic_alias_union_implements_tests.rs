@@ -248,3 +248,162 @@ class SelectQueryBuilderImpl<DB, TB extends keyof DB, O> implements SelectQueryB
         "expected the single-file equivalent to stay clean, got: {errors:?}",
     );
 }
+
+/// Cross-file variant with a callback-bearing union alias whose member
+/// references a cross-file generic interface (`ExpressionBuilder<DB, TB>`) in
+/// function-parameter position. This exercises the residual false-TS2416 family
+/// from #13044: when the same alias application `RefExpr<Schema, Tbl>` appears
+/// as both the impl annotation and the erased constraint of the interface's type
+/// parameter, the relation must recognize them as the same type by identity
+/// (same base + same args) rather than expanding the union structurally.
+#[test]
+fn cross_file_callback_bearing_alias_union_implements_clean() {
+    let types_src = r#"
+export interface Operand<V> {
+    readonly operandType?: V | undefined;
+}
+
+export interface RowsOperand<O> {
+    readonly isRowsOperand: true;
+    readonly operandType?: O | undefined;
+}
+
+export type OperandExpr<V> = Operand<V> | RowsOperand<Record<string, V>>;
+
+export interface Builder<Schema, Tbl extends keyof Schema> {
+    ref(reference: Tbl & string): unknown;
+}
+
+export type OperandFactory<Schema, Tbl extends keyof Schema, V> = (
+    eb: Builder<Schema, Tbl>,
+) => OperandExpr<V>;
+
+export type ExprOrFactory<Schema, Tbl extends keyof Schema, V> =
+    | OperandExpr<V>
+    | OperandFactory<Schema, Tbl, V>;
+
+export type ColumnOf<Schema, Tbl extends keyof Schema> = keyof Schema[Tbl] & string;
+
+export type RefExpr<Schema, Tbl extends keyof Schema> =
+    | ColumnOf<Schema, Tbl>
+    | ExprOrFactory<Schema, Tbl, any>;
+
+export interface Filterable<Schema, Tbl extends keyof Schema> {
+    compareRef<L extends RefExpr<Schema, Tbl>, R extends RefExpr<Schema, Tbl>>(
+        lhs: L,
+        op: string,
+        rhs: R,
+    ): Filterable<Schema, Tbl>;
+}
+"#;
+    let builder_src = r#"
+import { RefExpr, Filterable } from "./types";
+
+export interface QueryBuilder<Schema, Tbl extends keyof Schema, Out>
+    extends Filterable<Schema, Tbl> {
+    compareRef<L extends RefExpr<Schema, Tbl>, R extends RefExpr<Schema, Tbl>>(
+        lhs: L,
+        op: string,
+        rhs: R,
+    ): QueryBuilder<Schema, Tbl, Out>;
+}
+
+class QueryBuilderImpl<Schema, Tbl extends keyof Schema, Out>
+    implements QueryBuilder<Schema, Tbl, Out>
+{
+    compareRef(
+        lhs: RefExpr<Schema, Tbl>,
+        op: string,
+        rhs: RefExpr<Schema, Tbl>,
+    ): QueryBuilder<Schema, Tbl, Out> {
+        return this;
+    }
+}
+"#;
+    let diags = check(
+        &[("./types.ts", types_src), ("./builder.ts", builder_src)],
+        "./builder.ts",
+    );
+    let errors = implements_member_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "expected cross-file callback-bearing alias union to stay clean, got: {errors:?}",
+    );
+}
+
+/// Same callback-bearing pattern with renamed binders to guard against
+/// identifier-specific logic.
+#[test]
+fn cross_file_callback_bearing_alias_renamed_binders_clean() {
+    let types_src = r#"
+export interface Operand<V> {
+    readonly operandType?: V | undefined;
+}
+
+export interface RowsOperand<O> {
+    readonly isRowsOperand: true;
+    readonly operandType?: O | undefined;
+}
+
+export type OpExpr<Val> = Operand<Val> | RowsOperand<Record<string, Val>>;
+
+export interface Composer<Db, Table extends keyof Db> {
+    ref(reference: Table & string): unknown;
+}
+
+export type OpFactory<Db, Table extends keyof Db, Val> = (
+    eb: Composer<Db, Table>,
+) => OpExpr<Val>;
+
+export type ExprOrOp<Db, Table extends keyof Db, Val> =
+    | OpExpr<Val>
+    | OpFactory<Db, Table, Val>;
+
+export type ColOf<Db, Table extends keyof Db> = keyof Db[Table] & string;
+
+export type ColRef<Db, Table extends keyof Db> =
+    | ColOf<Db, Table>
+    | ExprOrOp<Db, Table, any>;
+
+export interface FilterOps<Db, Table extends keyof Db> {
+    cmpRef<Left extends ColRef<Db, Table>, Right extends ColRef<Db, Table>>(
+        lhs: Left,
+        op: string,
+        rhs: Right,
+    ): FilterOps<Db, Table>;
+}
+"#;
+    let main_src = r#"
+import { ColRef, FilterOps } from "./types";
+
+export interface Selector<Db, Table extends keyof Db, Row>
+    extends FilterOps<Db, Table> {
+    cmpRef<Left extends ColRef<Db, Table>, Right extends ColRef<Db, Table>>(
+        lhs: Left,
+        op: string,
+        rhs: Right,
+    ): Selector<Db, Table, Row>;
+}
+
+class SelectorImpl<Db, Table extends keyof Db, Row>
+    implements Selector<Db, Table, Row>
+{
+    cmpRef(
+        lhs: ColRef<Db, Table>,
+        op: string,
+        rhs: ColRef<Db, Table>,
+    ): Selector<Db, Table, Row> {
+        return this;
+    }
+}
+"#;
+    let diags = check(
+        &[("./types.ts", types_src), ("./main.ts", main_src)],
+        "./main.ts",
+    );
+    let errors = implements_member_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "expected renamed-binders callback-bearing alias to stay clean, got: {errors:?}",
+    );
+}
