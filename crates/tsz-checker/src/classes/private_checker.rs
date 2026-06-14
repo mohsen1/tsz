@@ -1,6 +1,6 @@
 //! Private field access and brand checking for nominal class typing.
 
-use crate::diagnostics::{diagnostic_messages, format_message};
+use crate::diagnostics::{diagnostic_messages, format_message, internal_elaboration_messages};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -99,11 +99,10 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
                     &[&source_member],
                 ),
-                tsz_solver::Visibility::Protected => {
-                    format!(
-                        "Types have separate declarations of a protected property '{source_member}'."
-                    )
-                }
+                tsz_solver::Visibility::Protected => format_message(
+                    internal_elaboration_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PROTECTED_PROPERTY,
+                    &[&source_member],
+                ),
                 tsz_solver::Visibility::Public => {
                     unreachable!("public members do not create nominal brands")
                 }

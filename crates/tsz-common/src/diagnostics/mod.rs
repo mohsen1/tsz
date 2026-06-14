@@ -49,6 +49,27 @@ pub mod diagnostic_codes {
     pub use super::data::diagnostic_codes::*;
 }
 
+/// tsz-internal diagnostic elaboration templates that have **no** dedicated tsc
+/// diagnostic number.
+///
+/// Some elaboration sentences tsc renders inline (during error elaboration)
+/// have a numbered twin in the generated [`diagnostic_messages`] table while
+/// their sibling variant does not. For example the *private*-property
+/// "separate declarations" elaboration is numbered diagnostic 2442
+/// ([`diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY`]),
+/// but the adjacent *protected*-property sentence has no code of its own (2443
+/// is already taken by `Property '{0}' is protected but type '{1}' is not a
+/// class derived from '{2}'.`). These constants give such codeless
+/// elaborations a single source of truth so the wording cannot drift between
+/// the checker modules that emit them; route them through [`format_message`]
+/// exactly like their numbered twins.
+pub mod internal_elaboration_messages {
+    /// Protected-property sibling of the numbered private twin
+    /// [`super::diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY`].
+    pub const TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PROTECTED_PROPERTY: &str =
+        "Types have separate declarations of a protected property '{0}'.";
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticRelatedInformation {
     pub category: DiagnosticCategory,

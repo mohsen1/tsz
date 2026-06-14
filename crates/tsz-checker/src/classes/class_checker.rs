@@ -3,7 +3,9 @@
 use std::borrow::Cow;
 
 use crate::classes_domain::class_summary::ClassChainSummary;
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::diagnostics::{
+    diagnostic_codes, diagnostic_messages, format_message, internal_elaboration_messages,
+};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
@@ -132,11 +134,13 @@ pub(crate) fn visibility_conflict_elaboration(
 ) -> Option<String> {
     use MemberVisibility::*;
     match (derived_visibility, base_visibility) {
-        (Private, Private) => Some(format!(
-            "Types have separate declarations of a private property '{display_name}'."
+        (Private, Private) => Some(format_message(
+            diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+            &[display_name],
         )),
-        (Protected, Protected) => Some(format!(
-            "Types have separate declarations of a protected property '{display_name}'."
+        (Protected, Protected) => Some(format_message(
+            internal_elaboration_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PROTECTED_PROPERTY,
+            &[display_name],
         )),
         (_, Private) => Some(format!(
             "Property '{display_name}' is private in type '{base_class_name}' but not in type '{derived_class_name}'."
