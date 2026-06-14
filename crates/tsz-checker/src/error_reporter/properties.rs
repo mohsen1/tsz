@@ -206,8 +206,7 @@ impl<'a> CheckerState<'a> {
             // source text (issue #13076). Source-text rendering bypasses
             // type-level stripping (non-object union members, optional-property
             // `| undefined`) and breaks on multiline / aliased annotations.
-            // Fall back to source text only when no annotation node is available
-            // (e.g. the JSDoc `@satisfies` path returns no type node).
+            // Fall back to source text when no annotation node is available (e.g. JSDoc `@satisfies`).
             let annotation_display = match annotation_type_node {
                 Some(type_node) => {
                     let annotation_type = self.get_type_from_type_node(type_node);
