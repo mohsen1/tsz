@@ -24,6 +24,36 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report an error at a node with its `related_information` already attached,
+    /// built as one complete `Diagnostic` value before it is pushed.
+    ///
+    /// This is the build-before-push counterpart to emitting with
+    /// [`Self::error_at_node`] and then appending related entries to the
+    /// buffer's last diagnostic: the latter silently attaches the elaboration to
+    /// the wrong entry whenever `(start, code)` deduplication drops the just
+    /// emitted diagnostic (so the previous, unrelated entry becomes `last`).
+    /// Routing the full value through [`CheckerContext::push_diagnostic`] keeps
+    /// the related-information collision reconciliation authoritative and the
+    /// buffer append-only. The main-diagnostic span is normalized exactly as
+    /// [`Self::error_at_node`] does; callers supply `related` built against
+    /// whatever spans they need.
+    pub(crate) fn error_at_node_with_related(
+        &mut self,
+        node_idx: NodeIndex,
+        message: &str,
+        code: u32,
+        related: Vec<crate::diagnostics::DiagnosticRelatedInformation>,
+    ) {
+        if let Some((start, end)) = self.get_node_span(node_idx) {
+            let raw_length = end.saturating_sub(start);
+            let (start, length) = self.normalized_anchor_span(node_idx, start, raw_length);
+            let mut diag =
+                Diagnostic::error(self.ctx.file_name.clone(), start, length, message, code);
+            diag.related_information = related;
+            self.ctx.push_diagnostic(diag);
+        }
+    }
+
     /// Report an error using a shared diagnostic anchor policy.
     pub(crate) fn error_at_anchor(
         &mut self,

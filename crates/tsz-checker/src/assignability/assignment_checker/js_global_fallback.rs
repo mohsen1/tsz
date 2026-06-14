@@ -105,17 +105,25 @@ impl<'a> CheckerState<'a> {
         let target_display =
             self.checked_js_global_element_access_fallback_target_display(fallback_idx);
 
-        for diag in &mut self.ctx.diagnostics[diag_count_before..] {
-            if matches!(
-                diag.code,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-            ) && diag.start >= fallback_node.pos
-                && diag.start < fallback_node.end
-            {
-                diag.start = anchor.start;
-                diag.length = anchor.length;
+        let fallback_pos = fallback_node.pos;
+        let fallback_end = fallback_node.end;
+        let anchor_start = anchor.start;
+        let anchor_length = anchor.length;
+
+        self.ctx
+            .finalize_recent_diagnostics(diag_count_before, |diag| {
+                if !matches!(
+                    diag.code,
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                ) || diag.start < fallback_pos
+                    || diag.start >= fallback_end
+                {
+                    return;
+                }
+                diag.start = anchor_start;
+                diag.length = anchor_length;
                 if let Some(display) = target_display.as_deref()
                     && let Some(name) = display.strip_prefix("typeof ")
                 {
@@ -123,8 +131,7 @@ impl<'a> CheckerState<'a> {
                     let qualified = format!("required in type '{display}'");
                     diag.message_text = diag.message_text.replace(&bare, &qualified);
                 }
-            }
-        }
+            });
     }
 
     pub(crate) fn checked_js_global_element_access_fallback_target_display(

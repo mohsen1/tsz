@@ -228,29 +228,34 @@ impl<'a> CheckerState<'a> {
                 self.report_isolated_decl_computed_name_dependency(name_idx);
             }
 
-            self.error_at_node(
+            // Build the "add a type annotation" elaboration as part of the
+            // diagnostic value, then emit it in one push, so the related entry
+            // can never attach to a different diagnostic that happens to be last
+            // in the buffer after `(start, code)` dedup drops this one.
+            let related = self
+                .get_node_span(name_idx)
+                .map(|(start, length)| {
+                    vec![crate::diagnostics::DiagnosticRelatedInformation {
+                        category: crate::diagnostics::DiagnosticCategory::Message,
+                        code: diagnostic_codes::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length,
+                        message_text: crate::diagnostics::format_message(
+                            diagnostic_messages::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
+                            &[&var_name],
+                        ),
+                        depth: 0,
+                    }]
+                })
+                .unwrap_or_default();
+
+            self.error_at_node_with_related(
                 name_idx,
                 diagnostic_messages::COMPUTED_PROPERTY_NAMES_ON_CLASS_OR_OBJECT_LITERALS_CANNOT_BE_INFERRED_WITH_ISOL,
                 diagnostic_codes::COMPUTED_PROPERTY_NAMES_ON_CLASS_OR_OBJECT_LITERALS_CANNOT_BE_INFERRED_WITH_ISOL,
+                related,
             );
-
-            if let Some((start, length)) = self.get_node_span(name_idx) {
-                let related = crate::diagnostics::DiagnosticRelatedInformation {
-                    category: crate::diagnostics::DiagnosticCategory::Message,
-                    code: diagnostic_codes::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length,
-                    message_text: crate::diagnostics::format_message(
-                        diagnostic_messages::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
-                        &[&var_name],
-                    ),
-                    depth: 0,
-                };
-                if let Some(last) = self.ctx.diagnostics.last_mut() {
-                    last.related_information.push(related);
-                }
-            }
 
             reported = true;
         }

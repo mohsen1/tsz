@@ -267,6 +267,47 @@ impl<'a> CheckerContext<'a> {
         self.diagnostics.push(diag);
     }
 
+    /// Read-only view of the diagnostics emitted since the buffer held `start`
+    /// entries.
+    ///
+    /// Checker paths that inspect their own freshly emitted diagnostics (to
+    /// decide a downgrade, detect an excess-property report, etc.) should go
+    /// through this accessor rather than indexing `diagnostics` directly, so
+    /// the buffer's `Vec` representation stays an implementation detail of the
+    /// context. `start` is clamped, so a speculative shrink between capture and
+    /// read cannot panic the slice.
+    pub(crate) fn recent_diagnostics(&self, start: usize) -> &[Diagnostic] {
+        &self.diagnostics[start.min(self.diagnostics.len())..]
+    }
+
+    /// Finalize the diagnostics emitted since the buffer held `start` entries.
+    ///
+    /// Some checker paths can only compute a diagnostic's final span, code, or
+    /// message after the sub-check that emitted it has run — for example,
+    /// repositioning a missing-property error onto an initializer anchor, or
+    /// downgrading TS2739 to TS2322 once the relation outcome is known. Routing
+    /// every such finalization through this one boundary keeps the buffer's
+    /// `Vec` representation an implementation detail of the context instead of
+    /// scattering raw `diagnostics[start..]` index patching across the checker,
+    /// and confines the "the tail may still be rewritten" window to a single,
+    /// documented place. `start` is clamped, so a speculative shrink between
+    /// emission and finalization cannot panic the slice.
+    ///
+    /// The `diagnostic_indices` aux state is intentionally left untouched: the
+    /// tail was already deduplicated and indexed when it was first pushed, so
+    /// finalizing in place reproduces exactly what the prior scattered in-place
+    /// patching produced.
+    pub(crate) fn finalize_recent_diagnostics(
+        &mut self,
+        start: usize,
+        mut finalize: impl FnMut(&mut Diagnostic),
+    ) {
+        let len = self.diagnostics.len();
+        for diag in &mut self.diagnostics[start.min(len)..] {
+            finalize(diag);
+        }
+    }
+
     /// Reconcile precedence between the name-resolution diagnostics that can
     /// collide at one span: TS2301 ("Initializer of instance member cannot
     /// reference identifier declared in constructor") outranks TS2304 ("Cannot
