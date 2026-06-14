@@ -112,6 +112,13 @@ impl<'a> CheckerState<'a> {
         expected_name: &str,
     ) -> usize {
         let cache_key = self.reference_type_params_cache_key(sym_id, expected_name);
+        if let Some(required) = self.count_required_reference_type_params_from_syntax(
+            cache_key.0,
+            cache_key.1,
+            expected_name,
+        ) {
+            return required;
+        }
         if let Some(cached) = self
             .ctx
             .type_reference_validation_caches
@@ -134,6 +141,139 @@ impl<'a> CheckerState<'a> {
             return count;
         }
         self.count_required_type_params(cache_key.0)
+    }
+
+    fn count_required_reference_type_params_from_syntax(
+        &self,
+        sym_id: SymbolId,
+        file_idx: Option<usize>,
+        expected_name: &str,
+    ) -> Option<usize> {
+        let symbol = if file_idx.is_some() {
+            self.get_symbol_from_registered_file_target(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+        } else {
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_symbol_from_registered_file_target(sym_id))
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+        }?;
+        let flags = symbol.flags;
+        let expected_leaf_name = expected_name.rsplit('.').next().unwrap_or(expected_name);
+        let mut best_required: Option<usize> = None;
+
+        for decl_idx in symbol.all_declarations() {
+            if let Some(file_idx) = file_idx {
+                let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                if let Some(required) = Self::count_required_reference_params_in_arena(
+                    arena,
+                    flags,
+                    decl_idx,
+                    expected_name,
+                    expected_leaf_name,
+                ) {
+                    best_required = Some(best_required.map_or(required, |prev| prev.min(required)));
+                }
+                continue;
+            }
+
+            if let Some(required) = Self::count_required_reference_params_in_arena(
+                self.ctx.arena,
+                flags,
+                decl_idx,
+                expected_name,
+                expected_leaf_name,
+            ) {
+                best_required = Some(best_required.map_or(required, |prev| prev.min(required)));
+                continue;
+            }
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    if let Some(required) = Self::count_required_reference_params_in_arena(
+                        arena.as_ref(),
+                        flags,
+                        decl_idx,
+                        expected_name,
+                        expected_leaf_name,
+                    ) {
+                        best_required =
+                            Some(best_required.map_or(required, |prev| prev.min(required)));
+                    }
+                }
+            }
+            if let Some(required) = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .and_then(|arena| {
+                    Self::count_required_reference_params_in_arena(
+                        arena.as_ref(),
+                        flags,
+                        decl_idx,
+                        expected_name,
+                        expected_leaf_name,
+                    )
+                })
+            {
+                best_required = Some(best_required.map_or(required, |prev| prev.min(required)));
+            }
+        }
+
+        best_required
+    }
+
+    fn count_required_reference_params_in_arena(
+        arena: &NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+        expected_name: &str,
+        expected_leaf_name: &str,
+    ) -> Option<usize> {
+        let node = arena.get(decl_idx)?;
+        let type_params = if flags & symbol_flags::INTERFACE != 0 {
+            let iface = arena.get_interface(node)?;
+            Self::reference_decl_name_matches(arena, iface.name, expected_name, expected_leaf_name)
+                .then_some(iface.type_parameters.as_ref())?
+        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+            let alias = arena.get_type_alias(node)?;
+            Self::reference_decl_name_matches(arena, alias.name, expected_name, expected_leaf_name)
+                .then_some(alias.type_parameters.as_ref())?
+        } else if flags & symbol_flags::CLASS != 0 {
+            let class = arena.get_class(node)?;
+            Self::reference_decl_name_matches(arena, class.name, expected_name, expected_leaf_name)
+                .then_some(class.type_parameters.as_ref())?
+        } else {
+            return None;
+        }?;
+
+        Some(
+            type_params
+                .nodes
+                .iter()
+                .filter(|&&param_idx| {
+                    arena
+                        .get(param_idx)
+                        .and_then(|node| arena.get_type_parameter(node))
+                        .is_some_and(|param| param.default == NodeIndex::NONE)
+                })
+                .count(),
+        )
+    }
+
+    fn reference_decl_name_matches(
+        arena: &NodeArena,
+        name_idx: NodeIndex,
+        expected_name: &str,
+        expected_leaf_name: &str,
+    ) -> bool {
+        arena
+            .get(name_idx)
+            .and_then(|node| arena.get_identifier(node))
+            .is_some_and(|ident| {
+                ident.escaped_text == expected_name || ident.escaped_text == expected_leaf_name
+            })
     }
 
     fn reference_type_params_cache_key(
