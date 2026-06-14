@@ -1239,6 +1239,8 @@ impl<'a> FlowAnalyzer<'a> {
         {
             return entry;
         }
+        let flow_cache = self.flow_cache();
+        let flow_cache = flow_cache.as_ref().map(|cache| cache.borrow());
 
         // Only pure non-merge ASSIGNMENT flow flags are skippable. Any other flag
         // means the node can apply or merge narrowing and must be processed.
@@ -1321,10 +1323,9 @@ impl<'a> FlowAnalyzer<'a> {
             {
                 return current;
             }
-            if let Some(cache) = self.flow_cache()
-                && cache
-                    .borrow()
-                    .contains_key(&(ant, cache_symbol, initial_type))
+            if flow_cache
+                .as_ref()
+                .is_some_and(|cache| cache.contains_key(&(ant, cache_symbol, initial_type)))
             {
                 return current;
             }
