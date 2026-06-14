@@ -78,11 +78,7 @@ impl ParserState {
             | SyntaxKind::UsingKeyword
             | SyntaxKind::AwaitKeyword => {
                 use tsz_scanner::SyntaxKind;
-                let export_node = self.arena.add_token(
-                    SyntaxKind::ExportKeyword as u16,
-                    start_pos,
-                    start_pos + 6,
-                );
+                let export_node = self.synth_keyword_token(SyntaxKind::ExportKeyword, start_pos);
                 let modifiers = Self::make_node_list(vec![export_node]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
@@ -93,15 +89,12 @@ impl ParserState {
                 } else {
                     self.parse_error_at(
                         start_pos,
-                        6,
+                        keyword_text_len(SyntaxKind::ExportKeyword),
                         "An import declaration cannot have modifiers.",
                         diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
                     );
-                    let export_modifier = self.arena.add_token(
-                        SyntaxKind::ExportKeyword as u16,
-                        start_pos,
-                        start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
-                    );
+                    let export_modifier =
+                        self.synth_keyword_token(SyntaxKind::ExportKeyword, start_pos);
                     let modifiers = Some(Self::make_node_list(vec![export_modifier]));
                     self.parse_import_declaration_with_modifiers(start_pos, modifiers)
                 }
@@ -136,7 +129,9 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_messages;
                     self.parse_error_at(
                         start_pos,
-                        second_export_pos + 6 - start_pos, // span covers "export export"
+                        // span covers "export export": from the first `export`
+                        // start to the end of the second `export` keyword.
+                        second_export_pos + keyword_text_len(SyntaxKind::ExportKeyword) - start_pos,
                         diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                         diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                     );
@@ -167,7 +162,7 @@ impl ParserState {
             _ => {
                 self.parse_error_at(
                     start_pos,
-                    6,
+                    keyword_text_len(SyntaxKind::ExportKeyword),
                     "Declaration or statement expected.",
                     diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                 );
@@ -188,7 +183,7 @@ impl ParserState {
         if should_report {
             self.parse_error_at(
                 export_pos,
-                6,
+                keyword_text_len(SyntaxKind::ExportKeyword),
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );

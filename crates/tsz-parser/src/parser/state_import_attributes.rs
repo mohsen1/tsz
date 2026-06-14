@@ -79,8 +79,8 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     if semicolon_recovery.is_none() && self.is_token(SyntaxKind::ColonToken) {
-                        let start = self.u32_from_usize(self.scanner.get_token_start());
-                        let end = self.u32_from_usize(self.scanner.get_token_end());
+                        let start = self.token_pos();
+                        let end = self.token_end();
                         semicolon_recovery = Some((start, end - start));
                     }
                     self.next_token();

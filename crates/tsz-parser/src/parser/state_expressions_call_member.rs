@@ -145,12 +145,12 @@ impl ParserState {
                     if (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_DECORATOR) != 0 {
                         break;
                     }
-                    let missing_argument_start = self.u32_from_usize(self.scanner.get_token_end());
+                    let missing_argument_start = self.token_end();
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
                         // TS1011: An element access expression should take an argument
-                        let current_start = self.u32_from_usize(self.scanner.get_token_start());
+                        let current_start = self.token_pos();
                         self.parse_error_at(
                             missing_argument_start,
                             (current_start.saturating_sub(missing_argument_start)).max(1),

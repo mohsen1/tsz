@@ -943,9 +943,8 @@ impl ParserState {
                             let mut outer_close_paren = None;
 
                             if self.is_token(SyntaxKind::CloseParenToken) {
-                                let inner_start =
-                                    self.u32_from_usize(self.scanner.get_token_start());
-                                let inner_end = self.u32_from_usize(self.scanner.get_token_end());
+                                let inner_start = self.token_pos();
+                                let inner_end = self.token_end();
                                 inner_close_paren =
                                     Some((inner_start, inner_end.saturating_sub(inner_start)));
 
@@ -960,10 +959,8 @@ impl ParserState {
                                         if self.is_token(SyntaxKind::CloseParenToken)
                                             && !self.scanner.has_preceding_line_break()
                                         {
-                                            let outer_start =
-                                                self.u32_from_usize(self.scanner.get_token_start());
-                                            let outer_end =
-                                                self.u32_from_usize(self.scanner.get_token_end());
+                                            let outer_start = self.token_pos();
+                                            let outer_end = self.token_end();
                                             outer_close_paren = Some((
                                                 outer_start,
                                                 outer_end.saturating_sub(outer_start),
@@ -1181,7 +1178,7 @@ impl ParserState {
                     );
                 } else {
                     let start = self.u32_from_usize(self.scanner.get_token_full_start());
-                    let end = self.u32_from_usize(self.scanner.get_token_end());
+                    let end = self.token_end();
                     self.parse_error_at(
                         start,
                         end.saturating_sub(start),
@@ -1651,9 +1648,7 @@ impl ParserState {
         // Handle new.target meta-property
         if self.is_token(SyntaxKind::DotToken) {
             self.next_token(); // consume '.'
-            let new_node =
-                self.arena
-                    .add_token(SyntaxKind::NewKeyword as u16, start_pos, start_pos + 3);
+            let new_node = self.synth_keyword_token(SyntaxKind::NewKeyword, start_pos);
             let name = self.parse_identifier_name();
             // TS17012: Check that the meta-property is 'target', not a misspelling
             if let Some(name_node) = self.arena.get(name)
@@ -1777,12 +1772,12 @@ impl ParserState {
                     );
                 }
                 SyntaxKind::OpenBracketToken => {
-                    let missing_argument_start = self.u32_from_usize(self.scanner.get_token_end());
+                    let missing_argument_start = self.token_end();
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
                         // TS1011: An element access expression should take an argument
-                        let current_start = self.u32_from_usize(self.scanner.get_token_start());
+                        let current_start = self.token_pos();
                         self.parse_error_at(
                             missing_argument_start,
                             (current_start.saturating_sub(missing_argument_start)).max(1),
