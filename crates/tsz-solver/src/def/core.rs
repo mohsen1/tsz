@@ -1027,7 +1027,6 @@ impl DefinitionStore {
 
     /// Cache a cross-file query result. First writer wins to keep parallel
     /// checking deterministic when equivalent queries race.
-    #[allow(clippy::too_many_arguments)]
     pub fn cache_resolved_cross_file_query(
         &self,
         kind: u8,
