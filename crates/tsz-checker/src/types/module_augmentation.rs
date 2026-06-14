@@ -1327,6 +1327,66 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Merge `declare module "./home" { interface I { ... } }` augmentations into
+    /// the type of interface `I` declared (and exported) in its own home module,
+    /// even when `I` is reached by reference within its declaring file rather than
+    /// through an import alias.
+    ///
+    /// This is the fp-ts higher-kinded-types pattern: a central `URItoKind`
+    /// interface in `./HKT` is augmented from many sibling files via
+    /// `declare module "./HKT" { interface URItoKind<A> { readonly Foo: ... } }`.
+    /// Computing `keyof URItoKind` (for the `Kind`/`URIS` constraint) must see the
+    /// cross-file registered members. The import-driven augmentation path only
+    /// fires for symbols carrying an `import_module()` specifier, so a self-module
+    /// interface reference never picked them up.
+    ///
+    /// Gated on `is_exported`: a file-local (non-exported) interface is not part
+    /// of the module's augmentable export surface, so a same-file
+    /// `declare module "./self"` augmentation stays an independent symbol and must
+    /// not merge into it (#6164). Symbols already reached through an import alias
+    /// are left to the import path to avoid double application.
+    pub(crate) fn apply_self_module_augmentations(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        base_type: TypeId,
+    ) -> TypeId {
+        if base_type == TypeId::ERROR
+            || base_type == TypeId::UNKNOWN
+            || !self.ctx.program_has_module_augmentations()
+        {
+            return base_type;
+        }
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return base_type;
+        };
+        // The import-driven path (`type_reference_symbol_type`) already applies
+        // augmentations for symbols reached through an import alias.
+        if symbol.import_module().is_some() {
+            return base_type;
+        }
+        // Only exported interfaces participate in their module's augmentable
+        // surface; a non-exported file-local interface keeps its self-module
+        // augmentation as a separate symbol (#6164).
+        if !symbol.is_exported {
+            return base_type;
+        }
+        let interface_name = symbol.escaped_name.clone();
+        let home_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let Some(home_file_name) = self
+            .ctx
+            .get_arena_for_file(home_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return base_type;
+        };
+        self.apply_module_augmentations(&home_file_name, &interface_name, base_type)
+    }
+
     /// Update `symbol_types` and `type_env` for augmentation-local interface symbols
     /// so self-referential type references resolve to the merged type.
     /// Searches both the current binder and `all_binders` since the augmentation
