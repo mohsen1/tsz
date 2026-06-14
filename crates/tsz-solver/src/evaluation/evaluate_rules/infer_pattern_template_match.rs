@@ -29,6 +29,12 @@ impl TemplateStringMatchState {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TemplateStringCursor {
+    pos: usize,
+    index: usize,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn parse_template_number_capture(&self, captured: &str) -> Option<TypeId> {
         let value = if let Some(digits) = captured.strip_prefix("0x") {
@@ -272,8 +278,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         source: &str,
         pattern: &[TemplateSpan],
-        pos: usize,
-        index: usize,
+        cursor: TemplateStringCursor,
         type_id: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
@@ -283,7 +288,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             find_integer_length, find_number_length, is_valid_number,
         };
 
-        let remaining = &source[pos..];
+        let remaining = &source[cursor.pos..];
 
         match self.interner().lookup(type_id)? {
             TypeData::Intrinsic(kind) => match kind {
@@ -299,8 +304,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             && self.match_template_literal_string_from(
                                 source,
                                 pattern,
-                                pos + len,
-                                index + 1,
+                                cursor.pos + len,
+                                cursor.index + 1,
                                 bindings,
                                 checker,
                                 failed_states,
@@ -321,8 +326,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if self.match_template_literal_string_from(
                             source,
                             pattern,
-                            pos + len,
-                            index + 1,
+                            cursor.pos + len,
+                            cursor.index + 1,
                             bindings,
                             checker,
                             failed_states,
@@ -337,8 +342,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         && self.match_template_literal_string_from(
                             source,
                             pattern,
-                            pos + 4,
-                            index + 1,
+                            cursor.pos + 4,
+                            cursor.index + 1,
                             bindings,
                             checker,
                             failed_states,
@@ -350,8 +355,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         && self.match_template_literal_string_from(
                             source,
                             pattern,
-                            pos + 5,
-                            index + 1,
+                            cursor.pos + 5,
+                            cursor.index + 1,
                             bindings,
                             checker,
                             failed_states,
@@ -366,8 +371,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         && self.match_template_literal_string_from(
                             source,
                             pattern,
-                            pos + 4,
-                            index + 1,
+                            cursor.pos + 4,
+                            cursor.index + 1,
                             bindings,
                             checker,
                             failed_states,
@@ -383,8 +388,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         && self.match_template_literal_string_from(
                             source,
                             pattern,
-                            pos + 9,
-                            index + 1,
+                            cursor.pos + 9,
+                            cursor.index + 1,
                             bindings,
                             checker,
                             failed_states,
@@ -484,8 +489,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(result) = self.match_intrinsic_span_from(
                     source,
                     pattern,
-                    pos,
-                    index,
+                    TemplateStringCursor { pos, index },
                     type_id,
                     bindings,
                     checker,
