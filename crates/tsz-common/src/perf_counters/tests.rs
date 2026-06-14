@@ -471,9 +471,11 @@ mod json_tests {
                 "application_eval_shared_hits",
                 "application_eval_shared_misses",
                 "application_eval_shared_inserts",
+                "application_eval_shared_bypasses",
                 "instantiation_shared_hits",
                 "instantiation_shared_misses",
                 "instantiation_shared_inserts",
+                "instantiation_shared_bypasses",
             ],
         );
     }

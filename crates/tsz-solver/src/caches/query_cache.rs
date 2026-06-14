@@ -632,6 +632,8 @@ impl<'a> QueryCache<'a> {
             }
             self.application_eval_cache_stats.record_shared_miss();
             tsz_common::perf_counters::record_shared_application_eval_cache_miss();
+        } else {
+            tsz_common::perf_counters::record_shared_application_eval_cache_bypass();
         }
         self.application_eval_cache_stats.record_miss();
         None
@@ -1673,6 +1675,8 @@ impl QueryDatabase for QueryCache<'_> {
                     }
                     self.instantiation_cache_stats.record_shared_miss();
                     tsz_common::perf_counters::record_shared_instantiation_cache_miss();
+                } else {
+                    tsz_common::perf_counters::record_shared_instantiation_cache_bypass();
                 }
                 self.instantiation_cache_stats.record_miss();
                 None
