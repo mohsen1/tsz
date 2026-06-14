@@ -98,6 +98,22 @@ pub(crate) fn literal_key_for_property_name(
     interner.literal_string_atom(name)
 }
 
+/// Returns `true` when `type_id` is a string-literal type whose text is a
+/// numeric property name (e.g. `"0"`, `"42"`).
+///
+/// Such a key names a string-named property: a mapped type iterating over
+/// `"0" | "1"` must keep those keys as the string literals `"0" | "1"` so that
+/// `keyof` reproduces them, instead of collapsing to the numeric literals
+/// `0 | 1`. A `LiteralValue::Number` key (authored as bare `0`) is intentionally
+/// excluded.
+pub(crate) fn type_is_numeric_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(crate::types::TypeData::Literal(crate::types::LiteralValue::String(atom)))
+            if atom_as_numeric_key(db, atom).is_some()
+    )
+}
+
 /// If `atom` is a numeric property name, returns the parsed `f64` value.
 /// Returns `None` for string-named atoms, `NaN`/`Infinity` identifiers used as property names,
 /// and any atom that is not a valid JavaScript numeric literal.
