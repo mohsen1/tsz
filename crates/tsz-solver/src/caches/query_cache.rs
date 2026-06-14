@@ -2015,11 +2015,8 @@ impl QueryDatabase for QueryCache<'_> {
 #[path = "../../tests/db_tests.rs"]
 mod tests;
 
-// `estimated_size_bytes` lives in a child module to keep this shard under
-// the 2000-line file-size cap; child modules retain private-field access.
 #[path = "query_cache_size.rs"]
 mod size;
 
-// `Atom`-keyed property access lives in a child module for the same reason.
 #[path = "query_cache_property.rs"]
 mod property;
