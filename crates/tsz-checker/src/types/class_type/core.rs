@@ -387,7 +387,10 @@ impl<'a> CheckerState<'a> {
                     }
                     (Some(own), None) => own,
                     (None, Some(base)) => base,
-                    (None, None) => unreachable!(),
+                    (None, None) => unreachable!(
+                        "guarded by `!prescan_props.is_empty() || base_prescan_type.is_some()`: \
+                         at least one of own/base prescan types is present"
+                    ),
                 };
                 self.ctx
                     .class_instance_type_cache
