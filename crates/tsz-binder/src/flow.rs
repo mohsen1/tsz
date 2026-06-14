@@ -3,6 +3,7 @@
 //! Provides `FlowNode`, `FlowNodeId`, `FlowNodeArena`, and `flow_flags`.
 
 use serde::{Deserialize, Serialize};
+use tsz_common::define_id;
 use tsz_parser::NodeIndex;
 
 // =============================================================================
@@ -32,22 +33,11 @@ pub mod flow_flags {
     pub const CONDITION: u32 = TRUE_CONDITION | FALSE_CONDITION;
 }
 
-/// Unique identifier for a flow node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct FlowNodeId(pub u32);
-
-impl FlowNodeId {
-    pub const NONE: Self = Self(u32::MAX);
-
-    #[must_use]
-    pub const fn is_none(&self) -> bool {
-        self.0 == u32::MAX
-    }
-
-    #[must_use]
-    pub const fn is_some(&self) -> bool {
-        self.0 != u32::MAX
-    }
+define_id! {
+    /// Unique identifier for a flow node.
+    pub struct FlowNodeId;
+    derive: Serialize, Deserialize;
+    sentinel: max
 }
 
 /// A node in the control flow graph.

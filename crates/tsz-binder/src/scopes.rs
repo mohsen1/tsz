@@ -3,6 +3,7 @@
 //! Provides `Scope`, `ScopeId`, and `ContainerKind`.
 
 use serde::{Deserialize, Serialize};
+use tsz_common::define_id;
 use tsz_parser::NodeIndex;
 
 use crate::symbols::SymbolTable;
@@ -11,22 +12,11 @@ use crate::symbols::SymbolTable;
 // Persistent Scope System
 // =============================================================================
 
-/// Unique identifier for a persistent scope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ScopeId(pub u32);
-
-impl ScopeId {
-    pub const NONE: Self = Self(u32::MAX);
-
-    #[must_use]
-    pub const fn is_none(&self) -> bool {
-        self.0 == u32::MAX
-    }
-
-    #[must_use]
-    pub const fn is_some(&self) -> bool {
-        self.0 != u32::MAX
-    }
+define_id! {
+    /// Unique identifier for a persistent scope.
+    pub struct ScopeId;
+    derive: Serialize, Deserialize;
+    sentinel: max
 }
 
 /// Container kind - tracks what kind of scope we're in

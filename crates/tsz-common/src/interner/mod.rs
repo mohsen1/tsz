@@ -12,48 +12,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-/// Declare an interned string handle type.
-///
-/// Each handle type names a distinct atom namespace: handles minted by one
-/// interner kind must not be resolved by or compared against another, and
-/// the distinct types make such cross-namespace use a compile error.
-macro_rules! atom_handle {
-    ($(#[$doc:meta])* $name:ident) => {
-        $(#[$doc])*
-        #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd, Ord,
-        )]
-        pub struct $name(pub u32);
-
-        impl $name {
-            /// A sentinel value representing no atom / empty string.
-            pub const NONE: Self = Self(0);
-
-            /// Returns the `NONE` sentinel - used for serde default.
-            #[must_use]
-            #[inline]
-            pub const fn none() -> Self {
-                Self::NONE
-            }
-
-            /// Check if this is the empty/none atom.
-            #[must_use]
-            #[inline]
-            pub const fn is_none(self) -> bool {
-                self.0 == 0
-            }
-
-            /// Get the raw index value.
-            #[must_use]
-            #[inline]
-            pub const fn index(self) -> u32 {
-                self.0
-            }
-        }
-    };
-}
-
-atom_handle! {
+// Interned string handle types. Each handle type names a distinct atom
+// namespace: handles minted by one interner kind must not be resolved by or
+// compared against another, and the distinct types make such cross-namespace
+// use a compile error. Both share the program-wide `u32` handle skeleton
+// emitted by `define_id!` with the zero-valued (empty-string) sentinel.
+crate::define_id! {
     /// An interned string identifier in the program-wide (solver) namespace.
     ///
     /// Atoms are cheap to copy (just a u32) and can be compared with == in O(1).
@@ -65,10 +29,12 @@ atom_handle! {
     /// per-file [`Interner`] instead; the two namespaces use incompatible
     /// encodings, so the same string gets unrelated raw values in each. Bridge
     /// by resolving the string and re-interning, never by copying raw indices.
-    Atom
+    pub struct Atom;
+    derive: Serialize, Deserialize, Default, PartialOrd, Ord;
+    sentinel: zero
 }
 
-atom_handle! {
+crate::define_id! {
     /// An interned string identifier in a per-file AST namespace.
     ///
     /// `AstAtom`s are minted sequentially by the per-file [`Interner`] that the
@@ -77,7 +43,9 @@ atom_handle! {
     /// interner: comparing or resolving them against another file's arena, or
     /// against the program-wide [`Atom`] namespace, is a logic error (and a
     /// compile error thanks to this distinct type).
-    AstAtom
+    pub struct AstAtom;
+    derive: Serialize, Deserialize, Default, PartialOrd, Ord;
+    sentinel: zero
 }
 
 const SHARD_BITS: u32 = 6;

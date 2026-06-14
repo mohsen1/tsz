@@ -20,6 +20,7 @@
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::span::Span;
 use std::sync::Arc;
+use tsz_common::define_id;
 
 const SOURCE_FILE_LEN_OVERFLOW_MESSAGE: &str =
     "source file text length exceeds u32; large file support requires a larger span type";
@@ -333,12 +334,13 @@ impl<'a> From<&'a SourceFile> for SourceFileRef<'a> {
 // SourceId - Interned source file identifier
 // =============================================================================
 
-/// An interned identifier for a source file.
-///
-/// This is used in multi-file compilation to efficiently reference
-/// source files without cloning strings.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct SourceId(pub u32);
+define_id! {
+    /// An interned identifier for a source file.
+    ///
+    /// This is used in multi-file compilation to efficiently reference
+    /// source files without cloning strings.
+    pub struct SourceId; derive: Default
+}
 
 impl SourceId {
     /// The invalid/unknown source ID.

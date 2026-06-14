@@ -6,6 +6,7 @@
 use crate::def::DefId;
 use serde::Serialize;
 use tsz_binder::SymbolId;
+use tsz_common::define_id;
 use tsz_common::interner::Atom;
 
 /// Hand-maintained `PartialEq`/`Eq`/`Hash` impls for the interned shape types
@@ -13,6 +14,7 @@ use tsz_common::interner::Atom;
 /// per-field identity decisions made explicit via exhaustive destructuring.
 mod shape_identity;
 
+define_id! {
 /// A lightweight handle to an interned type.
 /// Equality check is O(1) - just compare the u32 values.
 ///
@@ -82,8 +84,8 @@ mod shape_identity;
 /// | Empty array literal `[]`          | `any[]`       |
 /// | Function never returns            | `NEVER`       |
 /// | Exhaustive narrowing remainder    | `NEVER`       |
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
-pub struct TypeId(pub u32);
+pub struct TypeId; derive: Serialize, Default
+}
 
 impl TypeId {
     /// Internal placeholder - no valid type.
@@ -662,41 +664,32 @@ impl InferencePriority {
     pub const LOWEST: Self = Self::LowPriority;
 }
 
-/// Interned list of `TypeId` values (e.g., unions/intersections).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TypeListId(pub u32);
+define_id!(/// Interned list of `TypeId` values (e.g., unions/intersections).
+    pub struct TypeListId);
 
-/// Interned object shape (properties + index signatures).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ObjectShapeId(pub u32);
+define_id!(/// Interned object shape (properties + index signatures).
+    pub struct ObjectShapeId);
 
-/// Interned tuple element list.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TupleListId(pub u32);
+define_id!(/// Interned tuple element list.
+    pub struct TupleListId);
 
-/// Interned function shape.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FunctionShapeId(pub u32);
+define_id!(/// Interned function shape.
+    pub struct FunctionShapeId);
 
-/// Interned callable shape.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CallableShapeId(pub u32);
+define_id!(/// Interned callable shape.
+    pub struct CallableShapeId);
 
-/// Interned type application (Base<Args>).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TypeApplicationId(pub u32);
+define_id!(/// Interned type application (Base<Args>).
+    pub struct TypeApplicationId);
 
-/// Interned template literal span list.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TemplateLiteralId(pub u32);
+define_id!(/// Interned template literal span list.
+    pub struct TemplateLiteralId);
 
-/// Interned conditional type.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ConditionalTypeId(pub u32);
+define_id!(/// Interned conditional type.
+    pub struct ConditionalTypeId);
 
-/// Interned mapped type.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct MappedTypeId(pub u32);
+define_id!(/// Interned mapped type.
+    pub struct MappedTypeId);
 /// The structural "shape" of a type.
 /// This is the key used for interning - structurally identical types
 /// will have the same `TypeData` and therefore the same `TypeId`.
@@ -1611,9 +1604,8 @@ impl TypeParamInfo {
     }
 }
 
-/// Reference to a symbol (for named types)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SymbolRef(pub u32);
+define_id!(/// Reference to a symbol (for named types)
+    pub struct SymbolRef);
 
 /// Conditional type structure
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
