@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
 const shardCloudbuild = fs.readFileSync(
@@ -79,6 +80,7 @@ assert.doesNotMatch(
 const shardFilters = [...workflow.matchAll(/^\s+filter: '([^']+)'/gm)]
   .map((match) => new RegExp(match[1]));
 const missingRequiredProjectRows = REQUIRED_PROJECT_ROWS
+  .filter((row) => !BENCH_RUNNER_EXCLUDED_ROWS.has(row))
   .filter((row) => !shardFilters.some((filter) => filter.test(row)));
 assert.deepEqual(
   missingRequiredProjectRows,

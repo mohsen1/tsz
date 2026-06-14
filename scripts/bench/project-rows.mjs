@@ -125,8 +125,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "91a6d2986650475f29eeb3bd18ebd025128aa07e",
     expected_generated: 78,
     expected_generated_env: "TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED",
-    guard_set: "canary",
-    benchmark_set: "canary",
+    guard_set: "required",
+    benchmark_set: "required",
     category: "generated",
   },
   {
