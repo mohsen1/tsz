@@ -1388,7 +1388,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # route is an existing request-shaped helper already used throughout the
         # indexed-access checker — no new quarantine entry. Removal condition
         # remains #8225 narrowing this quarantine.
-        3051,
+        #
+        # Bumped 3051→3052 for the base-class poison-cycle mint-prevention fix
+        # (#13044/#13484): extracting `instantiate_base_instance_type_with_args`
+        # into its own `base_instance_instantiation` module (to stay under the
+        # 2000-line cap) adds one `use query_boundaries::common::TypeSubstitution`
+        # in the new file while `constructors.rs` still needs the same import for
+        # its remaining sites. The moved call sites are existing request-shaped
+        # `common` helpers — no new quarantine surface.
+        3052,
     ),
 ]
 

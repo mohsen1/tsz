@@ -64,19 +64,15 @@ impl<'a> CheckerState<'a> {
         //
         // `tsc` binds base->derived type parameters order-independently and never
         // collapses a free type parameter to an error sentinel. Mirror that: when
-        // the base reference resolves to the cycle sentinel, keep the application
-        // deferred as `Application(Lazy(base_def), args)`. The base body is not
-        // resolved against the in-progress class; it resolves later once the base
-        // class instance is complete, binding `DB` to the real type argument. The
-        // base definition is recovered from a deferrable `Lazy(DefId)` reference
-        // or from the caller-supplied `deferral_def_id` (which covers the case
-        // where the base instance is already the raw `TypeId::ERROR` sentinel,
-        // carrying no `Lazy` to recover the definition from).
+        // the base reference resolves to the cycle sentinel and the caller
+        // supplied the base class definition (`deferral_def_id`), keep the
+        // application deferred as `Application(Lazy(base_def), args)`. The base
+        // body is not resolved against the in-progress class; it resolves later
+        // once the base class instance is complete, binding `DB` to the real type
+        // argument.
         let resolved_base = self.resolve_lazy_type(base_instance_type);
         if resolved_base == TypeId::ERROR
-            && let Some(base_def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, base_instance_type)
-                    .or(deferral_def_id)
+            && let Some(base_def_id) = deferral_def_id
         {
             let lazy_base = self.ctx.types.lazy(base_def_id);
             return self.ctx.types.application(lazy_base, type_args);
