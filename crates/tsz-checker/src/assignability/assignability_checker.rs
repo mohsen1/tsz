@@ -6,7 +6,6 @@ use crate::query_boundaries::assignability::{
     get_keyof_type, get_string_literal_value, get_union_members, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::collect_type_queries;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -1347,7 +1346,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            for symbol_ref in collect_type_queries(self.ctx.types, current) {
+            for symbol_ref in self
+                .ctx
+                .collect_type_queries_cached(current)
+                .iter()
+                .copied()
+            {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
                 let _ = self.get_type_of_symbol(sym_id);
                 // Populate type_env with the VALUE type (constructor for classes) so that
