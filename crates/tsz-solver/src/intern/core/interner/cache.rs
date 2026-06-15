@@ -1,4 +1,13 @@
 //! Thread-local direct-mapped caches for type interning and lookup.
+//!
+//! This module is the interner's thread-local fast path: small direct-mapped
+//! caches probed on every `lookup`, `intern`, and `intern_string` call. The
+//! `#[inline(always)]` on the probe/insert wrappers and the fixed-size backing
+//! arrays are deliberate, measured micro-optimizations (#12602, #13642), not
+//! debt to pay down — exempt the whole module from the pedantic warn-ratchet's
+//! `inline_always`/`large_stack_arrays` rather than tracking these intentional
+//! choices as a baseline that future hot-path additions must squeeze under.
+#![allow(clippy::inline_always, clippy::large_stack_arrays)]
 
 use crate::types::{TypeData, TypeId};
 use std::cell::Cell;
