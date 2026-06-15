@@ -28,7 +28,7 @@ enum SyntacticNullishness {
     Never,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Recover the un-widened literal type of a logical-operator (`&&`/`||`/`??`)
     /// operand for the result union, when a literal-preserving context requested
     /// it (`ctx.preserve_logical_operand_literals`).
@@ -1426,7 +1426,7 @@ impl<'a> CheckerState<'a> {
 /// primitive-constraint relation outcome. The pure structural rules live in
 /// [`in_operator`]; this keeps the relation routed through the canonical
 /// `in_operator_primitive_constraint` request.
-impl<'a> InOperatorRhsClassifier for CheckerState<'a> {
+impl InOperatorRhsClassifier for CheckerState<'_> {
     fn types(&self) -> &dyn tsz_solver::construction::QueryDatabase {
         self.ctx.types
     }
