@@ -509,6 +509,10 @@ pub struct RelationFailureCounters {
     pub reason_walks: u64,
     /// Failing analyses served from the failure-analysis memo.
     pub memo_hits: u64,
+    /// Weak-type/weak-union probes run while collecting failure reasons. The
+    /// single-pass path (`analyze_weak_and_explain`) runs one probe set per
+    /// failing pair where the legacy double path ran two (issue #13243).
+    pub weak_violation_probes: u64,
 }
 
 /// Opt-in shared application-eval and instantiation cache counters (#13240).
@@ -770,6 +774,7 @@ impl PerfCounters {
             },
             relation_failure: RelationFailureCounters {
                 reason_walks: load(&c.relation_failure_reason_walks),
+                weak_violation_probes: load(&c.relation_weak_violation_probes),
                 memo_hits: load(&c.relation_failure_memo_hits),
             },
             solver_materialization: SolverMaterializationCounters {

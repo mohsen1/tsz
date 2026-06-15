@@ -719,8 +719,8 @@ impl<'a> CheckerState<'a> {
                     if (member_node.kind == PROPERTY_SIGNATURE
                         || member_node.kind == METHOD_SIGNATURE)
                         && let Some(sig) = arena.get_signature(member_node)
-                        && let Some(name_node) = arena.get(sig.name)
-                        && let Some(id_data) = arena.get_identifier(name_node)
+                        && let Some(member_name) =
+                            self.augmentation_member_key_name(arena, sig.name)
                     {
                         let type_id = if std::ptr::eq(arena, self.ctx.arena) {
                             let mut type_id = if member_node.kind == PROPERTY_SIGNATURE
@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
 
                         aug_member_order += 1;
                         members.push(PropertyInfo {
-                            name: self.ctx.types.intern_string(&id_data.escaped_text),
+                            name: self.ctx.types.intern_string(&member_name),
                             type_id,
                             write_type: type_id,
                             optional: sig.question_token,
@@ -1327,6 +1327,66 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve an augmentation member's property-key name from the augmenting
+    /// file's own arena/binder, purely syntactically.
+    ///
+    /// Plain identifier, string-literal, and numeric-literal keys are read
+    /// directly. A computed key `[expr]` is resolved when `expr` is a string
+    /// literal or an identifier bound to a string-initialized `const` in the
+    /// augmenting file — the fp-ts `const URI = "X"; interface I { [URI]: ... }`
+    /// pattern. The resolution is deliberately syntactic (no expression type
+    /// evaluation): augmentation member collection runs *inside* interface body
+    /// resolution, so calling the evaluating `get_property_name_resolved` here
+    /// would re-enter interface resolution and recurse. It also works uniformly
+    /// for cross-arena augmentations whose key `const` lives in another file's
+    /// binder (#13653).
+    fn augmentation_member_key_name(
+        &mut self,
+        arena: &tsz_parser::parser::NodeArena,
+        name_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<String> {
+        Self::augmentation_member_key_name_in_arena(arena, name_idx, |ident_name| {
+            let binder = self.ctx.get_binder_for_arena(arena)?;
+            let sym_id = binder.file_locals.get(ident_name)?;
+            binder
+                .get_symbol(sym_id)
+                .and_then(|symbol| arena.get(symbol.value_declaration))
+                .and_then(|decl| arena.get_variable_declaration(decl))
+                .and_then(|var_decl| arena.get(var_decl.initializer))
+                .and_then(|init| arena.get_literal(init))
+                .map(|lit| lit.text.clone())
+        })
+    }
+
+    /// Pure-arena key resolution shared by all augmentation paths.
+    /// `resolve_const` maps a computed-key identifier to its string-`const`
+    /// value (so the same matching can be unit-tested without a live binder).
+    fn augmentation_member_key_name_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        name_idx: tsz_parser::parser::NodeIndex,
+        resolve_const: impl FnOnce(&str) -> Option<String>,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME;
+        let name_node = arena.get(name_idx)?;
+        if let Some(ident) = arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if let Some(lit) = arena.get_literal(name_node) {
+            return Some(lit.text.clone());
+        }
+        if name_node.kind == COMPUTED_PROPERTY_NAME {
+            let computed = arena.get_computed_property(name_node)?;
+            let expr_node = arena.get(computed.expression)?;
+            if let Some(lit) = arena.get_literal(expr_node) {
+                return Some(lit.text.clone());
+            }
+            if let Some(ident) = arena.get_identifier(expr_node) {
+                return resolve_const(ident.escaped_text.as_str());
+            }
+        }
+        None
+    }
+
     /// Merge `declare module "./home" { interface I { ... } }` augmentations into
     /// the type of interface `I` declared (and exported) in its own home module,
     /// even when `I` is reached by reference within its declaring file rather than
@@ -1472,6 +1532,70 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::{BinderState, ModuleAugmentation};
     use tsz_parser::parser::{NodeArena, ParserState};
+
+    /// `augmentation_member_key_name_in_arena` resolves identifier, string-literal,
+    /// and computed string-`const` property keys, and leaves an unresolvable
+    /// computed key as `None`. The const resolver is renamed (`TAG`, not a
+    /// hard-coded fp-ts name) to lock the structural, name-independent contract.
+    #[test]
+    fn augmentation_member_key_name_resolves_identifier_string_and_computed_const() {
+        let source = r#"
+interface I {
+    foo: number;
+    "bar": number;
+    [TAG]: number;
+    [OTHER]: number;
+}
+"#;
+        let mut parser = ParserState::new("t.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let arena = Arc::new(parser.into_arena());
+        let sf = arena.source_files.first().expect("source file");
+        let iface_idx = sf
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| {
+                arena
+                    .get(idx)
+                    .and_then(|n| arena.get_interface(n))
+                    .is_some()
+            })
+            .expect("interface node");
+        let iface = arena
+            .get_interface(arena.get(iface_idx).expect("iface node"))
+            .expect("interface data");
+
+        let resolved: Vec<Option<String>> = iface
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|member_idx| {
+                let member = arena.get(member_idx)?;
+                let sig = arena.get_signature(member)?;
+                Some(CheckerState::augmentation_member_key_name_in_arena(
+                    &arena,
+                    sig.name,
+                    // Only `TAG` is a known string const; `OTHER` is unknown.
+                    |name| (name == "TAG").then(|| "computed_tag".to_string()),
+                ))
+            })
+            .collect();
+
+        assert_eq!(
+            resolved,
+            vec![
+                Some("foo".to_string()),
+                Some("bar".to_string()),
+                Some("computed_tag".to_string()),
+                None,
+            ],
+            "key resolver must handle identifier, string-literal, and computed \
+             string-const keys, and drop unresolvable computed keys"
+        );
+    }
 
     #[test]
     fn module_augmentation_has_type_params_detects_type_alias_with_params() {
