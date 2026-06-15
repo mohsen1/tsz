@@ -4,7 +4,7 @@ fn for_each_densify_source_symbol(
     retained_lib_symbols: &FxHashSet<SymbolId>,
     mut visit: impl FnMut(&crate::binder::Symbol),
 ) {
-    if symbols.shared_prefix_len() == lib_symbol_ids.len() {
+    if symbols.lib_prefix_is_pristine(lib_symbol_ids.len()) {
         let mut retained_prefix_ids: Vec<_> = retained_lib_symbols.iter().copied().collect();
         retained_prefix_ids.sort_unstable();
         for sym_id in retained_prefix_ids {
