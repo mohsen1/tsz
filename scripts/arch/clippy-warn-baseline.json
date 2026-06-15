@@ -66,5 +66,5 @@
   "clippy::use_self": 147,
   "clippy::used_underscore_binding": 197,
   "clippy::used_underscore_items": 1,
-  "clippy::wildcard_imports": 168
+  "clippy::wildcard_imports": 169
 }

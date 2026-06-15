@@ -1034,13 +1034,13 @@ pub fn is_generic_type_with_union_constraint(db: &dyn TypeDatabase, type_id: Typ
             .iter()
             .any(|&member| is_generic_type_with_union_constraint(db, member)),
         _ => {
-            if !is_instantiable_type(db, type_id) {
-                false
-            } else {
+            if is_instantiable_type(db, type_id) {
                 let base = get_base_constraint_or_type(db, type_id);
                 base != type_id
                     && (matches!(db.lookup(base), Some(TypeData::Union(_)))
                         || maybe_nullable(db, base))
+            } else {
+                false
             }
         }
     };
