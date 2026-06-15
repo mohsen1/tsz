@@ -2,12 +2,11 @@
 //!
 //! This module is the interner's thread-local fast path: small direct-mapped
 //! caches probed on every `lookup`, `intern`, and `intern_string` call. The
-//! `#[inline(always)]` on the probe/insert wrappers and the fixed-size backing
-//! arrays are deliberate, measured micro-optimizations (#12602, #13642), not
-//! debt to pay down — exempt the whole module from the pedantic warn-ratchet's
-//! `inline_always`/`large_stack_arrays` rather than tracking these intentional
-//! choices as a baseline that future hot-path additions must squeeze under.
-#![allow(clippy::inline_always, clippy::large_stack_arrays)]
+//! string cache (#13642) deliberately stays off the two existing pedantic
+//! tripwires without a suppression attribute: its probe/insert wrappers use a
+//! plain `#[inline]` hint (trivial bodies LLVM inlines anyway) so they do not
+//! add to the `inline_always` ratchet, and its backing array is sized to keep
+//! the per-thread allocation under the `large_stack_arrays` threshold.
 
 use crate::types::{TypeData, TypeId};
 use std::cell::Cell;
@@ -86,8 +85,13 @@ struct InternCacheEntry {
 // determinism are preserved (same string -> same `Atom`). A full byte/length
 // compare on hit makes hash collisions a miss, never a wrong `Atom`.
 
-const STRING_CACHE_BITS: u32 = 9;
-const STRING_CACHE_SIZE: usize = 1 << STRING_CACHE_BITS; // 512
+// 256 slots keep the per-thread `[StringCacheEntry; N]` allocation
+// (~40 bytes/entry) under the `large_stack_arrays` 16384-byte threshold so the
+// cache needs no lint suppression. The hot working set of interned names
+// (type-parameter and property identifiers) is a few dozen distinct strings, so
+// a 256-entry direct-mapped table still resolves the vast majority to one hit.
+const STRING_CACHE_BITS: u32 = 8;
+const STRING_CACHE_SIZE: usize = 1 << STRING_CACHE_BITS; // 256
 const STRING_CACHE_MASK: u64 = (STRING_CACHE_SIZE as u64) - 1;
 /// Inline capacity for the cached key bytes. Covers the hot short names
 /// (`"[Symbol.iterator]"` is 17 bytes, `"removeEventListener"` is 19); longer
@@ -194,7 +198,7 @@ impl TypeInternerCache {
         });
     }
 
-    #[inline(always)]
+    #[inline]
     fn string_probe(&self, hash: u64, instance_id: u32, s: &str) -> Option<Atom> {
         // Strings longer than the inline cap are never inserted, so they can
         // never hit. Returning early also keeps the `key_bytes[..len]` slice
@@ -218,7 +222,7 @@ impl TypeInternerCache {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn string_insert(&self, hash: u64, instance_id: u32, s: &str, result: Atom) {
         // Only short strings fit inline; longer ones are not cached.
         let bytes = s.as_bytes();
@@ -276,12 +280,12 @@ pub(super) fn intern_insert(hash: u64, instance_id: u32, key: TypeData, result: 
     TL_CACHE.with(|cache| cache.intern_insert(hash, instance_id, key, result));
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn string_probe(hash: u64, instance_id: u32, s: &str) -> Option<Atom> {
     TL_CACHE.with(|cache| cache.string_probe(hash, instance_id, s))
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn string_insert(hash: u64, instance_id: u32, s: &str, result: Atom) {
     TL_CACHE.with(|cache| cache.string_insert(hash, instance_id, s, result));
 }
