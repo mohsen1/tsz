@@ -96,7 +96,7 @@ impl BinderState {
     /// must be hoisted to `file_locals` (the gateway for cross-file visibility)
     /// and recorded in `global_augmentations` so cross-file resolution can find
     /// them; otherwise a bare reference reports a false `TS2304`.
-    fn record_global_value_augmentation(
+    pub(crate) fn record_global_value_augmentation(
         &mut self,
         name: &str,
         sym_id: SymbolId,
@@ -104,6 +104,17 @@ impl BinderState {
         flags: u32,
     ) {
         self.file_locals.set(name.to_string(), sym_id);
+        self.push_global_augmentation(name, decl, flags);
+    }
+
+    /// Append a `(declaration, flags)` entry to the `global_augmentations` table
+    /// for the given name, without touching `file_locals`.
+    ///
+    /// Use this for sites that only need to register a global augmentation entry
+    /// (e.g. interface/type-alias augmentations that already manage `file_locals`
+    /// separately or not at all). Sites that must also hoist the symbol into
+    /// `file_locals` should use `record_global_value_augmentation`.
+    pub(crate) fn push_global_augmentation(&mut self, name: &str, decl: NodeIndex, flags: u32) {
         Arc::make_mut(&mut self.global_augmentations)
             .entry(name.to_string())
             .or_default()
@@ -140,22 +151,16 @@ impl BinderState {
                 let is_exported = Self::is_node_exported(arena, idx);
 
                 if self.in_module_augmentation
-                    && let Some(ref module_spec) = self.current_augmented_module
+                    && let Some(module_spec) = self.current_augmented_module.clone()
                 {
-                    Arc::make_mut(&mut self.module_augmentations)
-                        .entry(module_spec.clone())
-                        .or_default()
-                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                    self.record_module_augmentation_entry(&module_spec, name, idx);
                 }
 
                 // Track variable declarations inside `declare global { }` blocks
                 // as global augmentations, just like interfaces and namespaces.
                 // This enables cross-file conflict detection with UMD exports.
                 if self.in_global_augmentation {
-                    Arc::make_mut(&mut self.global_augmentations)
-                        .entry(name.to_string())
-                        .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx, flags));
+                    self.push_global_augmentation(name, idx, flags);
                 }
 
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
@@ -241,12 +246,9 @@ impl BinderState {
                 let is_exported = Self::has_export_modifier(arena, func.modifiers.as_ref());
 
                 if self.in_module_augmentation
-                    && let Some(ref module_spec) = self.current_augmented_module
+                    && let Some(module_spec) = self.current_augmented_module.clone()
                 {
-                    Arc::make_mut(&mut self.module_augmentations)
-                        .entry(module_spec.clone())
-                        .or_default()
-                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                    self.record_module_augmentation_entry(&module_spec, name, idx);
                 }
 
                 let sym_id =
@@ -259,19 +261,19 @@ impl BinderState {
                         symbol_flags::FUNCTION,
                     );
                 }
-                let tp_count = func
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names = Self::collect_type_param_names(arena, func.type_parameters.as_ref());
-                self.record_semantic_def(
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, func.type_parameters.as_ref());
+                self.record_type_decl_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::Function,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        ..Default::default()
+                    },
                 );
             }
 
@@ -667,6 +669,22 @@ impl BinderState {
         );
     }
 
+    /// Bind every heritage clause (`extends` / `implements`) of a class.
+    ///
+    /// Shared by `bind_class_declaration` and `bind_class_expression` so both
+    /// walk heritage clauses identically.
+    fn bind_class_heritage(
+        &mut self,
+        arena: &NodeArena,
+        class: &tsz_parser::parser::node::ClassData,
+    ) {
+        if let Some(ref heritage) = class.heritage_clauses {
+            for &clause_idx in &heritage.nodes {
+                self.bind_node(arena, clause_idx);
+            }
+        }
+    }
+
     pub(crate) fn bind_class_declaration(
         &mut self,
         arena: &NodeArena,
@@ -689,27 +707,20 @@ impl BinderState {
                 let is_exported = Self::has_export_modifier(arena, class.modifiers.as_ref());
 
                 if self.in_module_augmentation
-                    && let Some(ref module_spec) = self.current_augmented_module
+                    && let Some(module_spec) = self.current_augmented_module.clone()
                 {
-                    Arc::make_mut(&mut self.module_augmentations)
-                        .entry(module_spec.clone())
-                        .or_default()
-                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                    self.record_module_augmentation_entry(&module_spec, name, idx);
                 }
 
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
-                let tp_count = class
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names =
-                    Self::collect_type_param_names(arena, class.type_parameters.as_ref());
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, class.type_parameters.as_ref());
                 let (extends_names, implements_names) = Self::collect_heritage_clause_names_split(
                     arena,
                     class.heritage_clauses.as_ref(),
                 );
                 let is_declare = Self::has_declare_modifier(arena, class.modifiers.as_ref());
-                self.record_semantic_def_ext(
+                self.record_type_decl_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
                     name,
@@ -742,11 +753,7 @@ impl BinderState {
             self.enter_scope_with_capacity(ContainerKind::Class, idx, member_capacity);
 
             self.bind_type_parameters(arena, class.type_parameters.as_ref());
-            if let Some(ref heritage) = class.heritage_clauses {
-                for &clause_idx in &heritage.nodes {
-                    self.bind_node(arena, clause_idx);
-                }
-            }
+            self.bind_class_heritage(arena, class);
 
             for &member_idx in &class.members.nodes {
                 self.bind_class_member(arena, member_idx);
@@ -762,21 +769,17 @@ impl BinderState {
             let member_capacity = class.members.nodes.len();
             self.enter_scope_with_capacity(ContainerKind::Class, idx, member_capacity);
 
+            let mut flags = symbol_flags::CLASS;
+            if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
+                flags |= symbol_flags::ABSTRACT;
+            }
             if let Some(name) = Self::get_identifier_name(arena, class.name) {
-                let mut flags = symbol_flags::CLASS;
-                if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
-                    flags |= symbol_flags::ABSTRACT;
-                }
                 let sym_id = self.declare_symbol(arena, name, flags, idx, false);
                 Arc::make_mut(&mut self.node_symbols).insert(class.name.0, sym_id);
             } else {
                 // Anonymous class expression: create a CLASS symbol so that
                 // the checker can use it as parent_id on instance properties,
                 // enabling "(Anonymous class)" display in diagnostics.
-                let mut flags = symbol_flags::CLASS;
-                if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
-                    flags |= symbol_flags::ABSTRACT;
-                }
                 let sym_id = self.symbols.alloc(flags, "(Anonymous class)".to_string());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = arena.get(idx).map(|node| (node.pos, node.end));
@@ -787,11 +790,7 @@ impl BinderState {
             }
 
             self.bind_type_parameters(arena, class.type_parameters.as_ref());
-            if let Some(ref heritage) = class.heritage_clauses {
-                for &clause_idx in &heritage.nodes {
-                    self.bind_node(arena, clause_idx);
-                }
-            }
+            self.bind_class_heritage(arena, class);
 
             for &member_idx in &class.members.nodes {
                 self.bind_class_member(arena, member_idx);
@@ -917,13 +916,7 @@ impl BinderState {
             // If we're inside a global augmentation block, track this as an augmentation
             // that should merge with lib.d.ts symbols at type resolution time
             if self.in_global_augmentation {
-                Arc::make_mut(&mut self.global_augmentations)
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(crate::state::GlobalAugmentation::new(
-                        idx,
-                        symbol_flags::INTERFACE,
-                    ));
+                self.push_global_augmentation(name, idx, symbol_flags::INTERFACE);
             }
 
             // In script files (non-module files), top-level interface declarations that
@@ -937,13 +930,7 @@ impl BinderState {
                 && !self.is_external_module
                 && (Self::is_built_in_global_type(name) || self.name_collides_with_lib_symbol(name))
             {
-                Arc::make_mut(&mut self.global_augmentations)
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(crate::state::GlobalAugmentation::new(
-                        idx,
-                        symbol_flags::INTERFACE,
-                    ));
+                self.push_global_augmentation(name, idx, symbol_flags::INTERFACE);
             }
 
             // Rule #44: augmentation interfaces always bind to a separate `SymbolId`
@@ -978,18 +965,14 @@ impl BinderState {
                     idx,
                     is_exported,
                 );
-                let tp_count = iface
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names =
-                    Self::collect_type_param_names(arena, iface.type_parameters.as_ref());
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, iface.type_parameters.as_ref());
                 let (extends_names, implements_names) = Self::collect_heritage_clause_names_split(
                     arena,
                     iface.heritage_clauses.as_ref(),
                 );
                 let is_declare = Self::has_declare_modifier(arena, iface.modifiers.as_ref());
-                self.record_semantic_def_ext(
+                self.record_type_decl_semantic_def(
                     aug_sym_id,
                     crate::state::SemanticDefKind::Interface,
                     name,
@@ -1009,15 +992,11 @@ impl BinderState {
 
             let sym_id =
                 self.declare_symbol(arena, name, symbol_flags::INTERFACE, idx, is_exported);
-            let tp_count = iface
-                .type_parameters
-                .as_ref()
-                .map_or(0, |tp| tp.nodes.len() as u16);
-            let tp_names = Self::collect_type_param_names(arena, iface.type_parameters.as_ref());
+            let (tp_count, tp_names) = Self::type_param_info(arena, iface.type_parameters.as_ref());
             let (extends_names, implements_names) =
                 Self::collect_heritage_clause_names_split(arena, iface.heritage_clauses.as_ref());
             let is_declare = Self::has_declare_modifier(arena, iface.modifiers.as_ref());
-            self.record_semantic_def_ext(
+            self.record_type_decl_semantic_def(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
                 name,
@@ -1066,13 +1045,7 @@ impl BinderState {
             // spurious TS2344. Type aliases inside a namespace can never
             // participate in global interface merging anyway.
             if self.in_global_augmentation && !Self::is_inside_namespace(arena, idx) {
-                Arc::make_mut(&mut self.global_augmentations)
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(crate::state::GlobalAugmentation::new(
-                        idx,
-                        symbol_flags::TYPE_ALIAS,
-                    ));
+                self.push_global_augmentation(name, idx, symbol_flags::TYPE_ALIAS);
             }
 
             // Rule #44: augmentation type aliases bind to a separate `SymbolId`
@@ -1090,14 +1063,10 @@ impl BinderState {
                     idx,
                     is_exported,
                 );
-                let tp_count = alias
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names =
-                    Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, alias.type_parameters.as_ref());
                 let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
-                self.record_semantic_def_with_declare(
+                self.record_type_decl_semantic_def(
                     aug_sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
@@ -1166,14 +1135,10 @@ impl BinderState {
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
                 Arc::make_mut(&mut self.alias_partners).insert(sym_id, alias_id);
-                let tp_count = alias
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names =
-                    Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, alias.type_parameters.as_ref());
                 let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
-                self.record_semantic_def_with_declare(
+                self.record_type_decl_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
@@ -1189,14 +1154,10 @@ impl BinderState {
             } else {
                 let sym_id =
                     self.declare_symbol(arena, name, symbol_flags::TYPE_ALIAS, idx, is_exported);
-                let tp_count = alias
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |tp| tp.nodes.len() as u16);
-                let tp_names =
-                    Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
+                let (tp_count, tp_names) =
+                    Self::type_param_info(arena, alias.type_parameters.as_ref());
                 let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
-                self.record_semantic_def_with_declare(
+                self.record_type_decl_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
@@ -1225,12 +1186,9 @@ impl BinderState {
             let is_exported = Self::has_export_modifier(arena, enum_decl.modifiers.as_ref());
 
             if self.in_module_augmentation
-                && let Some(ref module_spec) = self.current_augmented_module
+                && let Some(module_spec) = self.current_augmented_module.clone()
             {
-                Arc::make_mut(&mut self.module_augmentations)
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                self.record_module_augmentation_entry(&module_spec, name, idx);
             }
 
             // Check if this is a const enum
