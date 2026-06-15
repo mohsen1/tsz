@@ -1518,8 +1518,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         Some(target),
                     );
                 }
-                // FunctionShape has no properties - not assignable to non-empty object
-                return SubtypeResult::False;
+                // A bare `FunctionShape` has no own enumerable properties, so model
+                // it as an empty object shape. This lets a function satisfy an
+                // object target whose required properties it covers — in particular
+                // an all-optional ("weak") object such as the `{ brand?: number }`
+                // member of `(() => void) & { brand?: number }`, which `tsc`
+                // accepts — while a target with a missing *required* property still
+                // fails inside `check_object_subtype`. The standalone weak-object
+                // rejection (TS2559) is owned by `CompatChecker`'s weak-type pass,
+                // which runs ahead of the structural relation for whole weak object
+                // targets.
+                let empty_source = ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                };
+                return self.check_object_subtype(
+                    &empty_source,
+                    None,
+                    Some(source),
+                    &t_shape,
+                    Some(target),
+                );
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
