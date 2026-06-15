@@ -507,9 +507,10 @@ fn mode_bits_isolate_preserving_from_default() {
 
 #[test]
 fn depth_exceeded_result_is_not_cached() {
-    // A depth-overflow walk returns TypeId::ERROR, but that recovery value
-    // must not poison the cross-call cache. Repeating the same request should
-    // miss again and recompute instead of hitting a cached ERROR.
+    // A depth-overflow walk returns a relation-preserving partial type (no
+    // longer the `TypeId::ERROR` sentinel; see #13652), but that recovery
+    // value must not poison the cross-call cache. Repeating the same request
+    // should miss again and recompute instead of hitting a cached result.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -530,8 +531,9 @@ fn depth_exceeded_result_is_not_cached() {
     let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst);
     let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst);
 
-    assert_eq!(r1, TypeId::ERROR);
-    assert_eq!(r2, TypeId::ERROR);
+    // The bail no longer surfaces the ERROR sentinel.
+    assert_ne!(r1, TypeId::ERROR);
+    assert_eq!(r1, r2);
 
     let stats1 = db.statistics();
     assert_eq!(
@@ -753,10 +755,11 @@ fn instantiate_generic_cached_no_query_db_disables_cache() {
 
 #[test]
 fn instantiate_generic_cached_depth_overflow_not_cached() {
-    // A depth-overflow walk returns TypeId::ERROR but must not poison the
+    // A depth-overflow walk returns a relation-preserving partial type (no
+    // longer the `TypeId::ERROR` sentinel; see #13652) but must not poison the
     // cache: re-requesting the same (body, args) must miss again. Otherwise a
-    // single spurious overflow would lock the alias to ERROR for the lifetime
-    // of the QueryCache.
+    // single spurious overflow would lock the alias to that value for the
+    // lifetime of the QueryCache.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -774,8 +777,8 @@ fn instantiate_generic_cached_depth_overflow_not_cached() {
     let r1 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
     let r2 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
 
-    assert_eq!(r1, TypeId::ERROR);
-    assert_eq!(r2, TypeId::ERROR);
+    assert_ne!(r1, TypeId::ERROR);
+    assert_eq!(r1, r2);
 
     let stats1 = db.statistics();
     assert_eq!(

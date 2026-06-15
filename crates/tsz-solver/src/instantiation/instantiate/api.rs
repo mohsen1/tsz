@@ -880,11 +880,10 @@ pub(crate) fn instantiate_type_with_shadowed(
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     instantiator.shadowed.extend_from_slice(shadowed_params);
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        return TypeId::ERROR;
-    }
-    result
+    // The walk returns a relation-preserving value on a depth/frame bail (it
+    // never surfaces a substitution-bound free type parameter), so keep it
+    // rather than collapsing to `TypeId::ERROR`; see #13652 / `bail_value`.
+    instantiator.instantiate(type_id)
 }
 
 /// Like [`instantiate_type_preserving`] but also replaces every
@@ -911,12 +910,8 @@ pub(crate) fn instantiate_type_preserving_with_declared(
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     instantiator.preserve_unsubstituted_type_params = true;
     instantiator.declared_index_type = Some((source, iter_var, declared_type));
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    // Keep the relation-preserving bail value on overflow (see #13652).
+    instantiator.instantiate(type_id)
 }
 
 /// Cache-aware variant of [`instantiate_type`].
@@ -1100,11 +1095,10 @@ pub fn instantiate_type_with_depth_status(
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        (TypeId::ERROR, true)
-    } else {
-        (result, false)
-    }
+    // Report the overflow bool for callers that gate on it, but hand back the
+    // relation-preserving bail value (never a substitution-bound free type
+    // parameter) instead of the `TypeId::ERROR` sentinel (#13652).
+    (result, instantiator.depth_exceeded)
 }
 
 /// Convenience function for instantiating a type while preserving meta-type
