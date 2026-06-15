@@ -1,4 +1,5 @@
 mod array_heritage;
+mod base_instance_instantiation;
 mod computed_property_names;
 pub(crate) mod constructors;
 #[cfg(test)]
