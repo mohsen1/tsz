@@ -227,13 +227,26 @@ withTempDir((dir) => {
   assert.equal(merged.run_status, "completed");
 });
 
+// Issue #13607: a missing project row is an advisory compatibility gap, not a
+// blocking one. The merge must publish the benchmark timing data anyway and
+// surface the gap as a ::warning:: (the missing-required-TIMING-row floor is
+// owned independently by check-artifact-readiness.mjs).
 withTempDir((dir) => {
   const missingRow = REQUIRED_PROJECT_ROWS[0];
   const rows = REQUIRED_PROJECT_ROWS.filter((name) => name !== missingRow)
     .map((name) => projectRow(name));
   const result = runMerge(dir, rows);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`${missingRow}: missing project row`));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output), "advisory gap must still write bench-results.json");
+  assert.match(
+    result.stderr,
+    new RegExp(`::warning::[\\s\\S]*${missingRow}: missing project row`),
+  );
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.ok(
+    merged.validation.project_compatibility_advisory.includes(`${missingRow}: missing project row`),
+    "advisory gap must be recorded in merged.validation.project_compatibility_advisory",
+  );
 });
 
 withTempDir((dir) => {
@@ -243,8 +256,12 @@ withTempDir((dir) => {
     return projectRow(name, compatibility);
   });
   const result = runMerge(dir, rows);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /rxjs-project: missing compatibility\.peak_memory_bytes/);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
+  assert.match(
+    result.stderr,
+    /::warning::[\s\S]*rxjs-project: missing compatibility\.peak_memory_bytes/,
+  );
 });
 
 withTempDir((dir) => {
@@ -258,6 +275,9 @@ withTempDir((dir) => {
   assert.match(result.stderr, new RegExp(`${duplicateRow}: duplicate project row`));
 });
 
+// Duplicate rows stay BLOCKING even for a canary-only row. This is the floor
+// that check-artifact-readiness.mjs does NOT cover (it only inspects REQUIRED
+// rows), so the merge step must remain the authoritative duplicate guard.
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const result = runMerge(dir, [
@@ -268,6 +288,35 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     new RegExp(`${canaryRow}: duplicate project row`),
+  );
+});
+
+// Issue #13607 witness: a compile-only canary row with a compatibility gap,
+// paired with the full REQUIRED set (complete timing), must publish. The merge
+// exits 0, writes the artifact, preserves the canary row, and warns.
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const { peak_memory_bytes: _peakMemoryBytes, ...compatibility } = SAMPLE_COMPATIBILITY;
+  const rows = [
+    ...REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
+    projectRow(canaryRow, compatibility),
+  ];
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output), "compat gap must still write bench-results.json");
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.ok(
+    merged.results.some((r) => r.name === canaryRow),
+    "canary row must survive into the published artifact",
+  );
+  assert.match(
+    result.stderr,
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: missing compatibility\\.peak_memory_bytes`),
+  );
+  assert.ok(
+    merged.validation.project_compatibility_advisory.includes(
+      `${canaryRow}: missing compatibility.peak_memory_bytes`,
+    ),
   );
 });
 
@@ -355,10 +404,11 @@ withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: missing compatibility\\.diagnostic_subsystems`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: missing compatibility\\.diagnostic_subsystems`),
   );
 });
 
@@ -369,10 +419,11 @@ withTempDir((dir) => {
     fixture_sources: [],
   };
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: compatibility\\.fixture_sources must name at least one source`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: compatibility\\.fixture_sources must name at least one source`),
   );
 });
 
@@ -386,10 +437,11 @@ withTempDir((dir) => {
     ],
   };
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: compatibility\\.fixture_sources\\[0\\]\\.ref must be a non-empty string`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: compatibility\\.fixture_sources\\[0\\]\\.ref must be a non-empty string`),
   );
   assert.match(
     result.stderr,
@@ -405,10 +457,11 @@ withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { owner_track: _ownerTrack, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: missing compatibility\\.owner_track`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: missing compatibility\\.owner_track`),
   );
 });
 
@@ -422,10 +475,11 @@ withTempDir((dir) => {
     known_blockers: ["relations-assignability"],
   };
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: red/yellow compatibility\\.first_failure_class must name the first blocker`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: red/yellow compatibility\\.first_failure_class must name the first blocker`),
   );
 });
 
@@ -439,10 +493,11 @@ withTempDir((dir) => {
     known_blockers: [],
   };
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: red/yellow compatibility\\.known_blockers must name at least one blocker`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: red/yellow compatibility\\.known_blockers must name at least one blocker`),
   );
 });
 
@@ -456,10 +511,11 @@ withTempDir((dir) => {
     known_blockers: ["evaluation-inference-instantiation", "relations-assignability"],
   };
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output));
   assert.match(
     result.stderr,
-    new RegExp(`${canaryRow}: red/yellow compatibility\\.first_failure_class must match the first known blocker`),
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: red/yellow compatibility\\.first_failure_class must match the first known blocker`),
   );
 });
 
@@ -973,13 +1029,19 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-// Non-artifact_missing rows must still fail if they have missing required fields.
+// Non-artifact_missing rows with a missing required compatibility field are an
+// advisory gap (issue #13607): the merge must publish timing data and warn,
+// not block. (artifact_missing rows above are exempt entirely.)
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { peak_memory_bytes: _peakMemoryBytes, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`${canaryRow}: missing compatibility\\.peak_memory_bytes`));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output), "advisory gap must still write bench-results.json");
+  assert.match(
+    result.stderr,
+    new RegExp(`::warning::[\\s\\S]*${canaryRow}: missing compatibility\\.peak_memory_bytes`),
+  );
 });
 
 // artifact_missing row mixed with required green rows: the artifact_missing
