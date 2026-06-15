@@ -128,6 +128,61 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Settle a conditional whose evaluated operands carry an error or an
+    /// unresolved reference, before the structural relation check runs.
+    ///
+    /// - A *genuine* error type in the extends position (e.g. a failed indexed
+    ///   access that minted `TypeData::Error`) collapses the conditional to its
+    ///   false branch — tsc parity, and it preserves structural modifiers
+    ///   (readonly) instead of collapsing to `T`.
+    /// - An `UnresolvedTypeName` is NOT a genuine error: it is a cross-module /
+    ///   cross-arena reference the current resolver generation could not yet
+    ///   bind to a `DefId` (the same residue the check-side `visit_conditional`
+    ///   excludes via `is_genuine_error_type`). The relation machinery treats
+    ///   such a name as related to everything (error/`any`-like), so a definitive
+    ///   branch here would be schedule-dependent: `T extends Builtin ? T : …`
+    ///   over a still-unresolved imported `Builtin` reports `T <: Builtin` true
+    ///   and collapses to `T`, while `Filter extends AnyRecord ? {…} : never`
+    ///   collapses to `never`. Defer instead (mirroring the `Lazy`/`Application`
+    ///   deferral) so the resolver generation that binds the reference decides
+    ///   the branch, and mark the unresolved-reference event so the deferred
+    ///   result is not persisted to the depth-agnostic caches and a later pass
+    ///   recomputes it rather than reusing a stale deferral.
+    ///
+    /// Returns `Some(result)` when the conditional is settled or deferred here.
+    pub(super) fn resolve_conditional_error_or_unresolved(
+        &mut self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> Option<TypeId> {
+        if crate::visitor::is_genuine_error_type(self.interner(), extends_type) {
+            return Some(self.evaluate(cond.false_type));
+        }
+
+        // Only a *bare* `UnresolvedTypeName` is intercepted here; an unresolved
+        // reference wrapped in an `Application`/`Lazy` is deferred downstream by
+        // the indeterminate-relation block after the subtype check.
+        if matches!(
+            self.interner().lookup(extends_type),
+            Some(TypeData::UnresolvedTypeName(_))
+        ) || matches!(
+            self.interner().lookup(check_type),
+            Some(TypeData::UnresolvedTypeName(_))
+        ) {
+            self.mark_unresolved_def_seen();
+            return Some(self.interner().conditional(ConditionalType {
+                check_type,
+                extends_type,
+                true_type: cond.true_type,
+                false_type: cond.false_type,
+                is_distributive: cond.is_distributive,
+            }));
+        }
+
+        None
+    }
+
     /// Subtype check with cache lookup and thread-local depth guard.
     ///
     /// Returns `true` if `check_type <: extends_type`, consulting the evaluator's

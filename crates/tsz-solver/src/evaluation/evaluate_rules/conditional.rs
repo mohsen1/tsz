@@ -967,11 +967,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             }
 
-            // tsc takes the false branch when the extends type is unresolvable
-            // (e.g. `Function` without lib types); this preserves structural
-            // modifiers (readonly) instead of collapsing the conditional to T.
-            if crate::visitor::is_error_type(self.interner(), extends_type) {
-                return self.evaluate(cond.false_type);
+            // A genuine error settles the conditional to its false branch; an
+            // unresolved cross-arena reference instead defers it (see
+            // `resolve_conditional_error_or_unresolved`).
+            if let Some(result) =
+                self.resolve_conditional_error_or_unresolved(cond, check_type, extends_type)
+            {
+                return result;
             }
 
             let is_sub = self.check_conditional_subtype(check_type, extends_type);
