@@ -1047,40 +1047,10 @@ impl TypeInterner {
             return;
         }
 
-        // Small unions use a u64 bitset; larger partition misses use Vec<bool>.
-        if len <= 64 {
-            self.reduce_union_subtypes_quadratic(flat);
-        } else {
-            let mut keep = vec![true; len];
-            let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
-                &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
-            });
-            for i in 0..len {
-                if !keep[i] {
-                    continue;
-                }
-                for j in 0..len {
-                    if i == j || !keep[j] {
-                        continue;
-                    }
-                    if let Some(counter) = shallow_checks {
-                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    if self.is_subtype_shallow(flat[i], flat[j]) {
-                        keep[i] = false;
-                        break;
-                    }
-                }
-            }
-            let mut write = 0;
-            for read in 0..len {
-                if keep[read] {
-                    flat[write] = flat[read];
-                    write += 1;
-                }
-            }
-            flat.truncate(write);
-        }
+        // Partition miss (no usable discriminant): full pairwise reduction. The
+        // quadratic engine itself picks a `u64` bitset (`len <= 64`) or a
+        // `Vec<bool>` keep-mask for larger inputs.
+        self.reduce_union_subtypes_quadratic(flat);
     }
 
     /// Reduce large object unions by likely discriminant property when useful.
@@ -1129,77 +1099,166 @@ impl TypeInterner {
                     .map(|p| p.type_id)
                 });
 
-            if let Some(v) = val {
-                partitions.entry(v).or_default().push(member);
-            } else {
-                fallback.push(member);
+            // Group only by *unit* discriminant values: distinct unit keys are
+            // provably disjoint, which is what licenses skipping cross-group
+            // subtype checks. A widened/non-unit discriminant (e.g. `string`, a
+            // union, or a nested object) can overlap another member's value, so
+            // such members fall back to the fully cross-checked group.
+            match val.and_then(|v| self.get_unit_value_key(v).map(|_| v)) {
+                Some(v) => partitions.entry(v).or_default().push(member),
+                None => fallback.push(member),
             }
         }
 
-        // Reduce each partition independently.
-        let mut result: TypeListBuffer = SmallVec::new();
+        // Members carrying *distinct* discriminant values can never subtype one
+        // another: their discriminant property holds disjoint literal values, so
+        // `is_subtype_shallow` always fails across groups. Only *within* a group
+        // (same discriminant) can a member be redundant. Reduce each group with
+        // the quadratic engine — the sum of group sizes squared is far below the
+        // whole-union N² when the discriminant is selective (the all-distinct
+        // case, e.g. a discriminated `StressEvent`, collapses to O(N), since each
+        // group holds a single member).
+        let mut grouped: TypeListBuffer = SmallVec::new();
         for (_, group) in partitions {
             let mut group_buf = TypeListBuffer::from_vec(group);
             self.reduce_union_subtypes_quadratic(&mut group_buf);
-            result.extend(group_buf);
+            grouped.extend(group_buf);
         }
 
-        // Reduce fallback, then check fallback against all winners.
+        // The fallback group holds members without the discriminant property (or
+        // with a non-object value for it). Those *can* relate across the grouped
+        // members in either direction, so they still need pairwise checks — but
+        // only against the (already group-reduced) winners, never group-vs-group.
         if !fallback.is_empty() {
             let mut fallback_buf = TypeListBuffer::from_vec(fallback);
             self.reduce_union_subtypes_quadratic(&mut fallback_buf);
-            result.extend(fallback_buf);
+            self.reduce_across_partition(&mut grouped, &mut fallback_buf);
+            grouped.extend(fallback_buf);
         }
 
-        // Final pass only when partitioning actually reduced the problem.
-        if result.len() < members.len() {
-            self.reduce_union_subtypes_quadratic(&mut result);
-            Some(result)
-        } else {
-            None
+        // Partitioning is the *complete* reduction here: with a real discriminant
+        // there is no residual group-vs-group redundancy to find, so we never run
+        // the whole-union quadratic pass. Returning the partitioned result even
+        // when nothing was removed is what flattens the all-distinct slope — the
+        // caller must not fall through to the full O(N²) sweep. Re-sort + dedup to
+        // keep union member identity canonical (partition iteration is unordered).
+        self.sort_union_members(&mut grouped);
+        grouped.dedup();
+        Some(grouped)
+    }
+
+    /// Remove `fallback` members that are subtypes of any `grouped` winner, and
+    /// `grouped` winners that are subtypes of any surviving `fallback` member.
+    /// Bounded by `O(|grouped| * |fallback|)` — never group-vs-group.
+    fn reduce_across_partition(&self, grouped: &mut TypeListBuffer, fallback: &mut TypeListBuffer) {
+        if grouped.is_empty() || fallback.is_empty() {
+            return;
+        }
+        let shallow_checks = tsz_common::perf_counters::enabled_fast()
+            .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
+        let bump = || {
+            if let Some(counter) = shallow_checks {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        };
+
+        // Drop fallback members redundant against a grouped winner.
+        let g_snapshot: SmallVec<[TypeId; 16]> = grouped.iter().copied().collect();
+        fallback.retain(|f| {
+            let f = *f;
+            for &g in &g_snapshot {
+                bump();
+                if self.is_subtype_shallow(f, g) {
+                    return false;
+                }
+            }
+            true
+        });
+
+        // Drop grouped winners redundant against a (surviving) fallback member.
+        let f_snapshot: SmallVec<[TypeId; 16]> = fallback.iter().copied().collect();
+        if !f_snapshot.is_empty() {
+            grouped.retain(|g| {
+                let g = *g;
+                for &f in &f_snapshot {
+                    bump();
+                    if self.is_subtype_shallow(g, f) {
+                        return false;
+                    }
+                }
+                true
+            });
         }
     }
 
-    /// quadratic implementation of union reduction, used within partitions.
+    /// Quadratic implementation of union reduction, used within partitions.
+    ///
+    /// A `u64` bitset is the fast path for the common `len <= 64` case; a
+    /// `Vec<bool>` keep-mask covers larger partitions (a single discriminant
+    /// value can attract more than 64 members) so the pairwise scan stays
+    /// correct without the caller pre-bounding group size.
     fn reduce_union_subtypes_quadratic(&self, flat: &mut TypeListBuffer) {
         let len = flat.len();
         if len <= 1 {
             return;
         }
-        // Use a u64 bitset; callers keep partitions within this size.
-        debug_assert!(len <= 64, "reduce_union_subtypes_quadratic: len={len} > 64");
-        let mut keep: u64 = if len >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << len) - 1
-        };
         let shallow_checks = tsz_common::perf_counters::enabled_fast()
             .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
-        for i in 0..len {
-            if keep & (1u64 << i) == 0 {
-                continue;
-            }
-            for j in 0..len {
-                if i == j || keep & (1u64 << j) == 0 {
+        if len <= 64 {
+            let mut keep: u64 = (1u64 << len) - 1;
+            for i in 0..len {
+                if keep & (1u64 << i) == 0 {
                     continue;
                 }
-                if let Some(counter) = shallow_checks {
-                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                if self.is_subtype_shallow(flat[i], flat[j]) {
-                    keep &= !(1u64 << i);
-                    break;
+                for j in 0..len {
+                    if i == j || keep & (1u64 << j) == 0 {
+                        continue;
+                    }
+                    if let Some(counter) = shallow_checks {
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if self.is_subtype_shallow(flat[i], flat[j]) {
+                        keep &= !(1u64 << i);
+                        break;
+                    }
                 }
             }
-        }
-        let mut write = 0;
-        for read in 0..len {
-            if keep & (1u64 << read) != 0 {
-                flat[write] = flat[read];
-                write += 1;
+            let mut write = 0;
+            for read in 0..len {
+                if keep & (1u64 << read) != 0 {
+                    flat[write] = flat[read];
+                    write += 1;
+                }
             }
+            flat.truncate(write);
+        } else {
+            let mut keep = vec![true; len];
+            for i in 0..len {
+                if !keep[i] {
+                    continue;
+                }
+                for j in 0..len {
+                    if i == j || !keep[j] {
+                        continue;
+                    }
+                    if let Some(counter) = shallow_checks {
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if self.is_subtype_shallow(flat[i], flat[j]) {
+                        keep[i] = false;
+                        break;
+                    }
+                }
+            }
+            let mut write = 0;
+            for read in 0..len {
+                if keep[read] {
+                    flat[write] = flat[read];
+                    write += 1;
+                }
+            }
+            flat.truncate(write);
         }
-        flat.truncate(write);
     }
 
     /// Remove redundant types from an intersection using shallow subtype checks.
@@ -1426,5 +1485,106 @@ mod tests {
             panic!("expected union to survive normalization");
         };
         assert_eq!(interner.type_list(list_id).len(), 3);
+    }
+
+    fn distinct_conditional(interner: &TypeInterner, n: u32) -> TypeId {
+        // A deferred, distributive conditional whose check type is unique per `n`
+        // so each interns to a separate `TypeData::Conditional`.
+        interner.conditional(crate::types::ConditionalType {
+            check_type: interner.literal_number(n as f64),
+            extends_type: TypeId::STRING,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::BOOLEAN,
+            is_distributive: true,
+        })
+    }
+
+    #[test]
+    fn union_of_deferred_conditionals_skips_quadratic_reduction() {
+        let interner = TypeInterner::new();
+        // A union of many *distinct, unevaluated* conditionals is the shape
+        // produced by distributing `Exclude`/`Extract` over a wide union before
+        // the conditionals resolve. The shallow subtype engine cannot relate two
+        // conditionals, so reduction is futile — it must be skipped entirely
+        // rather than run an O(N²) sweep that removes nothing.
+        const N: u32 = 200;
+        let members: Vec<TypeId> = (0..N).map(|i| distinct_conditional(&interner, i)).collect();
+
+        let before = tsz_common::perf_counters::counters()
+            .union_subtype_reduction_shallow_checks
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let union = interner.union(members);
+        let after = tsz_common::perf_counters::counters()
+            .union_subtype_reduction_shallow_checks
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        // All members are distinct and irreducible, so the union keeps them all.
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a wide union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), N as usize);
+        // The decisive assertion: no pairwise shallow-subtype work was spent.
+        // (Without the deferred-form guard this would be on the order of N².)
+        assert_eq!(
+            after - before,
+            0,
+            "deferred-conditional union must not run pairwise subtype reduction"
+        );
+    }
+
+    #[test]
+    fn discriminated_object_union_partitions_instead_of_full_quadratic() {
+        let interner = TypeInterner::new();
+        // All-distinct discriminant (`kind: i`) object union. Cross-discriminant
+        // members can never subtype one another, so partitioning must reduce the
+        // pairwise work to O(N) — not the O(N²) whole-union sweep that the old
+        // `None`-fallthrough produced when no member was removed.
+        const N: u32 = 120;
+        let kind = interner.intern_string("kind");
+        let members: Vec<TypeId> = (0..N)
+            .map(|i| {
+                let payload = interner.intern_string(&format!("p{i}"));
+                interner.object(vec![
+                    crate::types::PropertyInfo {
+                        name: kind,
+                        type_id: interner.literal_number(i as f64),
+                        write_type: TypeId::NEVER,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                    },
+                    crate::types::PropertyInfo {
+                        name: payload,
+                        type_id: TypeId::NUMBER,
+                        write_type: TypeId::NEVER,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                    },
+                ])
+            })
+            .collect();
+
+        let before = tsz_common::perf_counters::counters()
+            .union_subtype_reduction_shallow_checks
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let union = interner.union(members);
+        let after = tsz_common::perf_counters::counters()
+            .union_subtype_reduction_shallow_checks
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a discriminated union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), N as usize);
+        // Partitioning keeps the pairwise work well below the N² floor; a full
+        // sweep would be N*(N-1) = 14280 shallow checks at N=120.
+        let spent = after - before;
+        assert!(
+            spent < (N as u64) * (N as u64 - 1) / 2,
+            "discriminated union should partition, not run the full O(N²) sweep (spent {spent})"
+        );
     }
 }

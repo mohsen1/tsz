@@ -735,7 +735,7 @@ impl TypeInterner {
     /// Instead of `sort_by(compare_union_members)` which does 4-6 DashMap/arena lookups
     /// per comparison (O(N log N * lookups)), this pre-caches all lookup data for each
     /// member in O(N) reads, then sorts using the cached data with zero further lookups.
-    fn sort_union_members(&self, flat: &mut TypeListBuffer) {
+    pub(crate) fn sort_union_members(&self, flat: &mut TypeListBuffer) {
         if flat.len() <= 1 {
             return;
         }
@@ -898,11 +898,25 @@ impl TypeInterner {
         }
 
         // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
-        // Skip reduction if union contains complex types (TypeParameters, Lazy, etc.)
+        // Skip reduction if the union contains members the shallow subtype engine
+        // cannot relate: type parameters, lazy refs, and *unevaluated deferred
+        // operations* (distributive `Conditional` / `IndexAccess`). The shallow
+        // engine has no rules for the latter, so every pairwise check over them
+        // returns `false` after a full lookup — an O(N²) sweep that can never
+        // remove a member. This is the eager-vs-deferred divergence from tsc:
+        // distributing `Exclude`/`Extract` over a wide union yields a union of
+        // deferred conditionals that tsc keeps lazy; tsz must likewise not try to
+        // subtype-reduce them before they resolve. Concrete members reduce on the
+        // later normalization that runs once the conditionals evaluate.
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
+                Some(
+                    TypeData::TypeParameter(_)
+                        | TypeData::Lazy(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::IndexAccess(_, _)
+                )
             )
         });
         if !has_complex && !preserve_callable_order {
