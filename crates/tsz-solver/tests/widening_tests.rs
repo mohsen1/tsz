@@ -1342,3 +1342,42 @@ fn annotation_widen_reports_display_residue() {
         "literal spellings live only in display provenance"
     );
 }
+
+// -------- recursive union-origin termination (issue #13507) ------------------
+//
+// `widen_literal_type` follows a union's display-origin member list when one is
+// recorded. A few generic-heavy projects (mobx's observable/computed generics)
+// produce a union whose origin members reach the union again, forming a cycle
+// in the member graph. Before the path-scoped cycle guard, widening such a union
+// recursed until the worker stack overflowed (SIGABRT, exit 134). These tests
+// pin the termination — they abort the whole test binary on regression.
+
+/// A union whose display origin references the union itself must terminate.
+#[test]
+fn widen_literal_type_self_referential_union_origin_terminates() {
+    let interner = TypeInterner::new();
+    let lit = interner.literal_string("a");
+    let union = interner.union(vec![lit, TypeId::NUMBER]);
+    // Poison the display origin so a member of the union is the union itself.
+    interner.store_union_origin(union, vec![union, lit]);
+
+    let widened = widen_literal_type(&interner, union);
+    // Reaching here proves no stack overflow. Widening still happened (the
+    // non-cyclic literal member became `string`), so the result stays a union.
+    assert!(matches!(interner.lookup(widened), Some(TypeData::Union(_))));
+}
+
+/// Two unions whose display origins reference each other must terminate.
+#[test]
+fn widen_literal_type_mutually_recursive_union_origins_terminate() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let u1 = interner.union(vec![a, TypeId::NUMBER]);
+    let u2 = interner.union(vec![b, TypeId::BOOLEAN]);
+    interner.store_union_origin(u1, vec![u2, a]);
+    interner.store_union_origin(u2, vec![u1, b]);
+
+    let widened = widen_literal_type(&interner, u1);
+    assert!(matches!(interner.lookup(widened), Some(TypeData::Union(_))));
+}
