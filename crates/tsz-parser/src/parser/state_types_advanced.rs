@@ -1419,8 +1419,8 @@ impl ParserState {
     /// Handles compound `<<` by splitting into two `<` tokens.
     pub(crate) fn parse_type_arguments(&mut self) -> NodeList {
         // Save the `<` position before consuming it so TS1099 points at `<`, not `>`
-        let less_than_start = self.u32_from_usize(self.scanner.get_token_start());
-        let less_than_end = self.u32_from_usize(self.scanner.get_token_end());
+        let less_than_start = self.token_pos();
+        let less_than_end = self.token_end();
         self.parse_expected_less_than();
 
         let mut args = Vec::new();
@@ -1562,8 +1562,8 @@ impl ParserState {
         let checkpoint = self.speculation_checkpoint();
 
         // Save the `<` position before consuming it so TS1099 points at `<`, not `>`
-        let less_than_start = self.u32_from_usize(self.scanner.get_token_start());
-        let less_than_end = self.u32_from_usize(self.scanner.get_token_end());
+        let less_than_start = self.token_pos();
+        let less_than_end = self.token_end();
 
         // Consume `<` (handles `<<` by splitting into two `<` tokens)
         self.parse_expected_less_than();

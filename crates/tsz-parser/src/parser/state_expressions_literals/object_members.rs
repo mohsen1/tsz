@@ -236,7 +236,7 @@ impl ParserState {
         // TSC emits TS1162: "An object member cannot be declared optional."
         let question_pos = if self.is_token(SyntaxKind::QuestionToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            let pos = self.u32_from_usize(self.scanner.get_token_start());
+            let pos = self.token_pos();
             self.parse_error_at_current_token(
                 "An object member cannot be declared optional.",
                 diagnostic_codes::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
@@ -264,7 +264,7 @@ impl ParserState {
         // suppress downstream semantic checks. We skip the '!' here for error recovery
         // and let the checker emit TS1255 based on the exclamation_token_pos field.
         let exclamation_pos = if self.is_token(SyntaxKind::ExclamationToken) {
-            let pos = self.u32_from_usize(self.scanner.get_token_start());
+            let pos = self.token_pos();
             self.next_token(); // Skip the '!' for error recovery
             pos
         } else {

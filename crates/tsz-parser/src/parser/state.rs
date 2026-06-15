@@ -27,7 +27,7 @@ use rustc_hash::FxHashMap;
 use tracing::warn;
 use tsz_common::interner::AstAtom;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
-use tsz_scanner::{SyntaxKind, token_is_keyword};
+use tsz_scanner::{SyntaxKind, keyword_text_len, token_is_keyword};
 // =============================================================================
 // Parser Context Flags
 // =============================================================================
@@ -705,6 +705,17 @@ impl ParserState {
         self.u32_from_usize(self.scanner.get_token_end())
     }
 
+    /// Synthesize a keyword token spanning `start .. start + len(kw)`.
+    ///
+    /// Used by error-recovery paths that fabricate a keyword/modifier token
+    /// at a known start. The span end is derived from the single
+    /// source-of-truth [`keyword_text_len`] instead of hardcoding the byte
+    /// length (e.g. `+ 6` for `"export"`) at each call site.
+    pub(crate) fn synth_keyword_token(&mut self, kw: SyntaxKind, start: u32) -> NodeIndex {
+        let end = start + keyword_text_len(kw);
+        self.arena.add_token(kw as u16, start, end)
+    }
+
     /// Advance to next token
     pub(crate) fn next_token(&mut self) -> SyntaxKind {
         self.current_token = self.scanner.scan();
@@ -833,7 +844,7 @@ impl ParserState {
         if (flags & TokenFlags::UnicodeEscape as u32) != 0 {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
-                self.u32_from_usize(self.scanner.get_token_start()),
+                self.token_pos(),
                 self.u32_from_usize(self.scanner.get_token_end() - self.scanner.get_token_start()),
                 "Keywords cannot contain escape characters.",
                 diagnostic_codes::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,

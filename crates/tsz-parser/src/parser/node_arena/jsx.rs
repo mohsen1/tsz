@@ -2,11 +2,12 @@
 //! closing tags, attributes, spread attributes, expressions, text, and
 //! namespaced names).
 
+use super::push_data_node;
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
-    ExtendedNodeInfo, JsxAttributeData, JsxAttributesData, JsxClosingData, JsxElementData,
-    JsxExpressionData, JsxFragmentData, JsxNamespacedNameData, JsxOpeningData,
-    JsxSpreadAttributeData, JsxTextData, Node, NodeArenaInner,
+    JsxAttributeData, JsxAttributesData, JsxClosingData, JsxElementData, JsxExpressionData,
+    JsxFragmentData, JsxNamespacedNameData, JsxOpeningData, JsxSpreadAttributeData, JsxTextData,
+    NodeArenaInner,
 };
 
 impl NodeArenaInner {
@@ -18,21 +19,11 @@ impl NodeArenaInner {
         end: u32,
         data: JsxElementData,
     ) -> NodeIndex {
-        let opening_element = data.opening_element;
-        let closing_element = data.closing_element;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(opening_element, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.opening_element, parent);
         self.set_parent_list(&data.children, parent);
-        self.set_parent(closing_element, parent);
-
-        let data_index = self.len_u32(self.jsx_elements.len());
-        self.jsx_elements.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.closing_element, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_elements, data)
     }
 
     /// Add a JSX opening/self-closing element node
@@ -43,21 +34,11 @@ impl NodeArenaInner {
         end: u32,
         data: JsxOpeningData,
     ) -> NodeIndex {
-        let tag_name = data.tag_name;
-        let attributes = data.attributes;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(tag_name, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.tag_name, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
-        self.set_parent(attributes, parent);
-
-        let data_index = self.len_u32(self.jsx_opening.len());
-        self.jsx_opening.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.attributes, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_opening, data)
     }
 
     /// Add a JSX closing element node
@@ -68,17 +49,9 @@ impl NodeArenaInner {
         end: u32,
         data: JsxClosingData,
     ) -> NodeIndex {
-        let tag_name = data.tag_name;
-
-        let data_index = self.len_u32(self.jsx_closing.len());
-        self.jsx_closing.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(tag_name, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.tag_name, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_closing, data)
     }
 
     /// Add a JSX fragment node
@@ -89,21 +62,11 @@ impl NodeArenaInner {
         end: u32,
         data: JsxFragmentData,
     ) -> NodeIndex {
-        let opening_fragment = data.opening_fragment;
-        let closing_fragment = data.closing_fragment;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(opening_fragment, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.opening_fragment, parent);
         self.set_parent_list(&data.children, parent);
-        self.set_parent(closing_fragment, parent);
-
-        let data_index = self.len_u32(self.jsx_fragments.len());
-        self.jsx_fragments.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        self.set_parent(data.closing_fragment, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_fragments, data)
     }
 
     /// Add a JSX attributes node
@@ -114,17 +77,9 @@ impl NodeArenaInner {
         end: u32,
         data: JsxAttributesData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.properties, parent);
-
-        let data_index = self.len_u32(self.jsx_attributes.len());
-        self.jsx_attributes.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, jsx_attributes, data)
     }
 
     /// Add a JSX attribute node
@@ -135,19 +90,10 @@ impl NodeArenaInner {
         end: u32,
         data: JsxAttributeData,
     ) -> NodeIndex {
-        let name = data.name;
-        let initializer = data.initializer;
-
-        let data_index = self.len_u32(self.jsx_attribute.len());
-        self.jsx_attribute.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(name, parent);
-        self.set_parent(initializer, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.name, parent);
+        self.set_parent(data.initializer, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_attribute, data)
     }
 
     /// Add a JSX spread attribute node
@@ -158,17 +104,9 @@ impl NodeArenaInner {
         end: u32,
         data: JsxSpreadAttributeData,
     ) -> NodeIndex {
-        let expression = data.expression;
-
-        let data_index = self.len_u32(self.jsx_spread_attributes.len());
-        self.jsx_spread_attributes.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_spread_attributes, data)
     }
 
     /// Add a JSX expression node
@@ -179,27 +117,16 @@ impl NodeArenaInner {
         end: u32,
         data: JsxExpressionData,
     ) -> NodeIndex {
-        let expression = data.expression;
-
-        let data_index = self.len_u32(self.jsx_expressions.len());
-        self.jsx_expressions.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_expressions, data)
     }
 
     /// Add a JSX text node
     pub fn add_jsx_text(&mut self, kind: u16, pos: u32, end: u32, data: JsxTextData) -> NodeIndex {
-        let data_index = self.len_u32(self.jsx_text.len());
-        self.jsx_text.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+        // Leaf node: no children to parent, but still data-bearing.
+        let parent = self.reserve_parent();
+        push_data_node!(self, parent, kind, pos, end, jsx_text, data)
     }
 
     /// Add a JSX namespaced name node
@@ -210,18 +137,9 @@ impl NodeArenaInner {
         end: u32,
         data: JsxNamespacedNameData,
     ) -> NodeIndex {
-        let namespace = data.namespace;
-        let name = data.name;
-
-        let data_index = self.len_u32(self.jsx_namespaced_names.len());
-        self.jsx_namespaced_names.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(namespace, parent);
-        self.set_parent(name, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.namespace, parent);
+        self.set_parent(data.name, parent);
+        push_data_node!(self, parent, kind, pos, end, jsx_namespaced_names, data)
     }
 }

@@ -721,7 +721,7 @@ impl ParserState {
             // to match tsc's parseErrorAtPosition(scanner.getTokenStart()). When there's
             // leading whitespace, the positions differ and both errors are emitted.
             let full_start = self.u32_from_usize(self.scanner.get_token_full_start());
-            let end = self.u32_from_usize(self.scanner.get_token_end());
+            let end = self.token_end();
             self.parse_error_at(
                 full_start,
                 end.saturating_sub(full_start),

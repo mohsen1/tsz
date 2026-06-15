@@ -38,6 +38,36 @@ use super::syntax_kind_ext::{
     TYPE_PREDICATE, VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
+/// Generate the single-condition typed getter bodies (`get_X(&Node) ->
+/// Option<&XData>`) that were previously hand-written ~per node kind. Each
+/// arm checks `has_data()` and that the node's kind is one of `[KIND, ..]`
+/// before indexing the typed side-pool — the exact shape `define_at_accessors!`
+/// wrappers delegate to.
+macro_rules! define_kind_getters {
+    ($(
+        $(#[$meta:meta])*
+        $name:ident => $field:ident -> $ret:ty, [$($kind:ident),+ $(,)?]
+    );* $(;)?) => {
+        impl NodeArenaInner {
+            $(
+                $(#[$meta])*
+                #[inline]
+                #[must_use]
+                pub fn $name(&self, node: &Node) -> Option<&$ret> {
+                    if node.has_data()
+                        && ($(node.kind == $crate::parser::syntax_kind_ext::$kind)||+)
+                    {
+                        self.$field.get(node.data_index as usize)
+                    } else {
+                        None
+                    }
+                }
+            )*
+        }
+    };
+}
+pub(crate) use define_kind_getters;
+
 impl NodeArenaInner {
     /// Get a thin node by index
     #[inline]
@@ -238,32 +268,6 @@ impl NodeArenaInner {
             )
         {
             self.literals.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get binary expression data.
-    /// Returns None if node is not a binary expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_binary_expr(&self, node: &Node) -> Option<&BinaryExprData> {
-        use super::syntax_kind_ext::BINARY_EXPRESSION;
-        if node.has_data() && node.kind == BINARY_EXPRESSION {
-            self.binary_exprs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get call expression data.
-    /// Returns None if node is not a call/new expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_call_expr(&self, node: &Node) -> Option<&CallExprData> {
-        use super::syntax_kind_ext::{CALL_EXPRESSION, NEW_EXPRESSION};
-        if node.has_data() && (node.kind == CALL_EXPRESSION || node.kind == NEW_EXPRESSION) {
-            self.call_exprs.get(node.data_index as usize)
         } else {
             None
         }
@@ -653,718 +657,12 @@ impl NodeArenaInner {
         (self.get_variable_declaration_flags(node_idx) & node_flags::CONST) != 0
     }
 
-    /// Get access expression data (property access or element access).
-    /// Returns None if node is not an access expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_access_expr(&self, node: &Node) -> Option<&AccessExprData> {
-        use super::syntax_kind_ext::{
-            ELEMENT_ACCESS_EXPRESSION, META_PROPERTY, PROPERTY_ACCESS_EXPRESSION,
-        };
-        if node.has_data()
-            && (node.kind == PROPERTY_ACCESS_EXPRESSION
-                || node.kind == ELEMENT_ACCESS_EXPRESSION
-                || node.kind == META_PROPERTY)
-        {
-            self.access_exprs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get conditional expression data (ternary: a ? b : c).
-    /// Returns None if node is not a conditional expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_conditional_expr(&self, node: &Node) -> Option<&ConditionalExprData> {
-        use super::syntax_kind_ext::CONDITIONAL_EXPRESSION;
-        if node.has_data() && node.kind == CONDITIONAL_EXPRESSION {
-            self.conditional_exprs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get qualified name data (A.B syntax).
-    /// Returns None if node is not a qualified name or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_qualified_name(&self, node: &Node) -> Option<&QualifiedNameData> {
-        use super::syntax_kind_ext::QUALIFIED_NAME;
-        if node.has_data() && node.kind == QUALIFIED_NAME {
-            self.qualified_names.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get literal expression data (array or object literal).
-    /// Returns None if node is not a literal expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_literal_expr(&self, node: &Node) -> Option<&LiteralExprData> {
-        use super::syntax_kind_ext::{ARRAY_LITERAL_EXPRESSION, OBJECT_LITERAL_EXPRESSION};
-        if node.has_data()
-            && (node.kind == ARRAY_LITERAL_EXPRESSION || node.kind == OBJECT_LITERAL_EXPRESSION)
-        {
-            self.literal_exprs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get property assignment data.
-    /// Returns None if node is not a property assignment or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_property_assignment(&self, node: &Node) -> Option<&PropertyAssignmentData> {
-        use super::syntax_kind_ext::PROPERTY_ASSIGNMENT;
-        if node.has_data() && node.kind == PROPERTY_ASSIGNMENT {
-            self.property_assignments.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get type assertion data (as/satisfies/type assertion).
-    /// Returns None if node is not a type assertion or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_type_assertion(&self, node: &Node) -> Option<&TypeAssertionData> {
-        use super::syntax_kind_ext::{AS_EXPRESSION, SATISFIES_EXPRESSION, TYPE_ASSERTION};
-        if node.has_data()
-            && (node.kind == TYPE_ASSERTION
-                || node.kind == AS_EXPRESSION
-                || node.kind == SATISFIES_EXPRESSION)
-        {
-            self.type_assertions.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get unary expression data (prefix or postfix).
-    /// Returns None if node is not a unary expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_unary_expr(&self, node: &Node) -> Option<&UnaryExprData> {
-        use super::syntax_kind_ext::{POSTFIX_UNARY_EXPRESSION, PREFIX_UNARY_EXPRESSION};
-        if node.has_data()
-            && (node.kind == PREFIX_UNARY_EXPRESSION || node.kind == POSTFIX_UNARY_EXPRESSION)
-        {
-            self.unary_exprs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get extended unary expression data (await/yield/non-null/spread).
-    /// Returns None if node is not an await/yield/non-null/spread expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_unary_expr_ex(&self, node: &Node) -> Option<&UnaryExprDataEx> {
-        use super::syntax_kind_ext::{
-            AWAIT_EXPRESSION, NON_NULL_EXPRESSION, SPREAD_ELEMENT, YIELD_EXPRESSION,
-        };
-        if node.has_data()
-            && (node.kind == AWAIT_EXPRESSION
-                || node.kind == YIELD_EXPRESSION
-                || node.kind == NON_NULL_EXPRESSION
-                || node.kind == SPREAD_ELEMENT)
-        {
-            self.unary_exprs_ex.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get function data.
-    /// Returns None if node is not a function-like node or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_function(&self, node: &Node) -> Option<&FunctionData> {
-        if node.has_data()
-            && matches!(
-                node.kind,
-                FUNCTION_DECLARATION | FUNCTION_EXPRESSION | ARROW_FUNCTION
-            )
-        {
-            self.functions.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get class data.
-    /// Returns None if node is not a class declaration/expression or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_class(&self, node: &Node) -> Option<&ClassData> {
-        use super::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
-        if node.has_data() && (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION) {
-            self.classes.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get block data.
-    /// Returns None if node is not a block or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_block(&self, node: &Node) -> Option<&BlockData> {
-        use super::syntax_kind_ext::{BLOCK, CASE_BLOCK, CLASS_STATIC_BLOCK_DECLARATION};
-        if node.has_data()
-            && (node.kind == BLOCK
-                || node.kind == CLASS_STATIC_BLOCK_DECLARATION
-                || node.kind == CASE_BLOCK)
-        {
-            self.blocks.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get source file data.
-    /// Returns None if node is not a source file or has no data.
-    #[inline]
-    #[must_use]
-    pub fn get_source_file(&self, node: &Node) -> Option<&SourceFileData> {
-        use super::syntax_kind_ext::SOURCE_FILE;
-        if node.has_data() && node.kind == SOURCE_FILE {
-            self.source_files.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get variable data (`VariableStatement` or `VariableDeclarationList`).
-    #[inline]
-    #[must_use]
-    pub fn get_variable(&self, node: &Node) -> Option<&VariableData> {
-        use super::syntax_kind_ext::{VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT};
-        if node.has_data()
-            && (node.kind == VARIABLE_STATEMENT || node.kind == VARIABLE_DECLARATION_LIST)
-        {
-            self.variables.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get variable declaration data.
-    #[inline]
-    #[must_use]
-    pub fn get_variable_declaration(&self, node: &Node) -> Option<&VariableDeclarationData> {
-        use super::syntax_kind_ext::VARIABLE_DECLARATION;
-        if node.has_data() && node.kind == VARIABLE_DECLARATION {
-            self.variable_declarations.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get interface data.
-    #[inline]
-    #[must_use]
-    pub fn get_interface(&self, node: &Node) -> Option<&InterfaceData> {
-        use super::syntax_kind_ext::INTERFACE_DECLARATION;
-        if node.has_data() && node.kind == INTERFACE_DECLARATION {
-            self.interfaces.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get type alias data.
-    #[inline]
-    #[must_use]
-    pub fn get_type_alias(&self, node: &Node) -> Option<&TypeAliasData> {
-        use super::syntax_kind_ext::TYPE_ALIAS_DECLARATION;
-        if node.has_data() && node.kind == TYPE_ALIAS_DECLARATION {
-            self.type_aliases.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get enum data.
-    #[inline]
-    #[must_use]
-    pub fn get_enum(&self, node: &Node) -> Option<&EnumData> {
-        use super::syntax_kind_ext::ENUM_DECLARATION;
-        if node.has_data() && node.kind == ENUM_DECLARATION {
-            self.enums.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get enum member data.
-    #[inline]
-    #[must_use]
-    pub fn get_enum_member(&self, node: &Node) -> Option<&EnumMemberData> {
-        use super::syntax_kind_ext::ENUM_MEMBER;
-        if node.has_data() && node.kind == ENUM_MEMBER {
-            self.enum_members.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get module data.
-    #[inline]
-    #[must_use]
-    pub fn get_module(&self, node: &Node) -> Option<&ModuleData> {
-        use super::syntax_kind_ext::MODULE_DECLARATION;
-        if node.has_data() && node.kind == MODULE_DECLARATION {
-            self.modules.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get module block data.
-    #[inline]
-    #[must_use]
-    pub fn get_module_block(&self, node: &Node) -> Option<&ModuleBlockData> {
-        use super::syntax_kind_ext::MODULE_BLOCK;
-        if node.has_data() && node.kind == MODULE_BLOCK {
-            self.module_blocks.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get if statement data.
-    #[inline]
-    #[must_use]
-    pub fn get_if_statement(&self, node: &Node) -> Option<&IfStatementData> {
-        use super::syntax_kind_ext::IF_STATEMENT;
-        if node.has_data() && node.kind == IF_STATEMENT {
-            self.if_statements.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get loop data (while, for, do-while).
-    #[inline]
-    #[must_use]
-    pub fn get_loop(&self, node: &Node) -> Option<&LoopData> {
-        use super::syntax_kind_ext::{DO_STATEMENT, FOR_STATEMENT, WHILE_STATEMENT};
-        if node.has_data()
-            && (node.kind == WHILE_STATEMENT
-                || node.kind == DO_STATEMENT
-                || node.kind == FOR_STATEMENT)
-        {
-            self.loops.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get for-in/for-of data.
-    #[inline]
-    #[must_use]
-    pub fn get_for_in_of(&self, node: &Node) -> Option<&ForInOfData> {
-        use super::syntax_kind_ext::{FOR_IN_STATEMENT, FOR_OF_STATEMENT};
-        if node.has_data() && (node.kind == FOR_IN_STATEMENT || node.kind == FOR_OF_STATEMENT) {
-            self.for_in_of.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get switch data.
-    #[inline]
-    #[must_use]
-    pub fn get_switch(&self, node: &Node) -> Option<&SwitchData> {
-        use super::syntax_kind_ext::SWITCH_STATEMENT;
-        if node.has_data() && node.kind == SWITCH_STATEMENT {
-            self.switch_data.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get case clause data.
-    #[inline]
-    #[must_use]
-    pub fn get_case_clause(&self, node: &Node) -> Option<&CaseClauseData> {
-        use super::syntax_kind_ext::{CASE_CLAUSE, DEFAULT_CLAUSE};
-        if node.has_data() && (node.kind == CASE_CLAUSE || node.kind == DEFAULT_CLAUSE) {
-            self.case_clauses.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get try data.
-    #[inline]
-    #[must_use]
-    pub fn get_try(&self, node: &Node) -> Option<&TryData> {
-        use super::syntax_kind_ext::TRY_STATEMENT;
-        if node.has_data() && node.kind == TRY_STATEMENT {
-            self.try_data.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get catch clause data.
-    #[inline]
-    #[must_use]
-    pub fn get_catch_clause(&self, node: &Node) -> Option<&CatchClauseData> {
-        use super::syntax_kind_ext::CATCH_CLAUSE;
-        if node.has_data() && node.kind == CATCH_CLAUSE {
-            self.catch_clauses.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get labeled statement data.
-    #[inline]
-    #[must_use]
-    pub fn get_labeled_statement(&self, node: &Node) -> Option<&LabeledData> {
-        use super::syntax_kind_ext::LABELED_STATEMENT;
-        if node.has_data() && node.kind == LABELED_STATEMENT {
-            self.labeled_data.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get jump data (break/continue statements).
-    #[inline]
-    #[must_use]
-    pub fn get_jump_data(&self, node: &Node) -> Option<&JumpData> {
-        use super::syntax_kind_ext::{BREAK_STATEMENT, CONTINUE_STATEMENT};
-        if node.has_data() && (node.kind == BREAK_STATEMENT || node.kind == CONTINUE_STATEMENT) {
-            self.jump_data.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get with statement data (stored in if statement pool).
-    #[inline]
-    #[must_use]
-    pub fn get_with_statement(&self, node: &Node) -> Option<&IfStatementData> {
-        use super::syntax_kind_ext::WITH_STATEMENT;
-        if node.has_data() && node.kind == WITH_STATEMENT {
-            self.if_statements.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get import declaration data (handles both `IMPORT_DECLARATION` and `IMPORT_EQUALS_DECLARATION`).
-    #[inline]
-    #[must_use]
-    pub fn get_import_decl(&self, node: &Node) -> Option<&ImportDeclData> {
-        use super::syntax_kind_ext::{IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION};
-        if node.has_data()
-            && (node.kind == IMPORT_DECLARATION || node.kind == IMPORT_EQUALS_DECLARATION)
-        {
-            self.import_decls.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get import clause data.
-    #[inline]
-    #[must_use]
-    pub fn get_import_clause(&self, node: &Node) -> Option<&ImportClauseData> {
-        use super::syntax_kind_ext::IMPORT_CLAUSE;
-        if node.has_data() && node.kind == IMPORT_CLAUSE {
-            self.import_clauses.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get named imports/exports data.
-    /// Works for `NAMED_IMPORTS`, `NAMESPACE_IMPORT`, and `NAMED_EXPORTS` (they share the same data structure).
-    #[inline]
-    #[must_use]
-    pub fn get_named_imports(&self, node: &Node) -> Option<&NamedImportsData> {
-        use super::syntax_kind_ext::{NAMED_EXPORTS, NAMED_IMPORTS, NAMESPACE_IMPORT};
-        if node.has_data()
-            && (node.kind == NAMED_IMPORTS
-                || node.kind == NAMED_EXPORTS
-                || node.kind == NAMESPACE_IMPORT)
-        {
-            self.named_imports.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get import/export specifier data.
-    #[inline]
-    #[must_use]
-    pub fn get_specifier(&self, node: &Node) -> Option<&SpecifierData> {
-        use super::syntax_kind_ext::{EXPORT_SPECIFIER, IMPORT_SPECIFIER};
-        if node.has_data() && (node.kind == IMPORT_SPECIFIER || node.kind == EXPORT_SPECIFIER) {
-            self.specifiers.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get export declaration data.
-    #[inline]
-    #[must_use]
-    pub fn get_export_decl(&self, node: &Node) -> Option<&ExportDeclData> {
-        use super::syntax_kind_ext::{EXPORT_DECLARATION, NAMESPACE_EXPORT_DECLARATION};
-        if node.has_data()
-            && (node.kind == EXPORT_DECLARATION || node.kind == NAMESPACE_EXPORT_DECLARATION)
-        {
-            self.export_decls.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get export assignment data (export = expr).
-    #[inline]
-    #[must_use]
-    pub fn get_export_assignment(&self, node: &Node) -> Option<&ExportAssignmentData> {
-        use super::syntax_kind_ext::EXPORT_ASSIGNMENT;
-        if node.has_data() && node.kind == EXPORT_ASSIGNMENT {
-            self.export_assignments.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get import attributes data (`with { ... }` or `assert { ... }`).
-    #[inline]
-    #[must_use]
-    pub fn get_import_attributes_data(&self, node: &Node) -> Option<&ImportAttributesData> {
-        use super::syntax_kind_ext::IMPORT_ATTRIBUTES;
-        if node.has_data() && node.kind == IMPORT_ATTRIBUTES {
-            self.import_attributes.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get single import attribute data (name: value pair).
-    #[inline]
-    #[must_use]
-    pub fn get_import_attribute_data(&self, node: &Node) -> Option<&ImportAttributeData> {
-        use super::syntax_kind_ext::IMPORT_ATTRIBUTE;
-        if node.has_data() && node.kind == IMPORT_ATTRIBUTE {
-            self.import_attribute.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get parameter data.
-    #[inline]
-    #[must_use]
-    pub fn get_parameter(&self, node: &Node) -> Option<&ParameterData> {
-        use super::syntax_kind_ext::PARAMETER;
-        if node.has_data() && node.kind == PARAMETER {
-            self.parameters.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get property declaration data.
-    #[inline]
-    #[must_use]
-    pub fn get_property_decl(&self, node: &Node) -> Option<&PropertyDeclData> {
-        use super::syntax_kind_ext::PROPERTY_DECLARATION;
-        if node.has_data() && node.kind == PROPERTY_DECLARATION {
-            self.property_decls.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get method declaration data.
-    #[inline]
-    #[must_use]
-    pub fn get_method_decl(&self, node: &Node) -> Option<&MethodDeclData> {
-        use super::syntax_kind_ext::METHOD_DECLARATION;
-        if node.has_data() && node.kind == METHOD_DECLARATION {
-            self.method_decls.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get constructor data.
-    #[inline]
-    #[must_use]
-    pub fn get_constructor(&self, node: &Node) -> Option<&ConstructorData> {
-        use super::syntax_kind_ext::CONSTRUCTOR;
-        if node.has_data() && node.kind == CONSTRUCTOR {
-            self.constructors.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
     /// Get accessor data (get/set accessor).
     #[inline]
     #[must_use]
     pub fn get_accessor(&self, node: &Node) -> Option<&AccessorData> {
         if node.has_data() && node.is_accessor() {
             self.accessors.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get decorator data.
-    #[inline]
-    #[must_use]
-    pub fn get_decorator(&self, node: &Node) -> Option<&DecoratorData> {
-        use super::syntax_kind_ext::DECORATOR;
-        if node.has_data() && node.kind == DECORATOR {
-            self.decorators.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get type reference data.
-    #[inline]
-    #[must_use]
-    pub fn get_type_ref(&self, node: &Node) -> Option<&TypeRefData> {
-        use super::syntax_kind_ext::TYPE_REFERENCE;
-        if node.has_data() && node.kind == TYPE_REFERENCE {
-            self.type_refs.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get expression statement data (returns the expression node index).
-    #[inline]
-    #[must_use]
-    pub fn get_expression_statement(&self, node: &Node) -> Option<&ExprStatementData> {
-        use super::syntax_kind_ext::EXPRESSION_STATEMENT;
-        if node.has_data() && node.kind == EXPRESSION_STATEMENT {
-            self.expr_statements.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get return statement data (returns the expression node index).
-    #[inline]
-    #[must_use]
-    pub fn get_return_statement(&self, node: &Node) -> Option<&ReturnData> {
-        use super::syntax_kind_ext::{RETURN_STATEMENT, THROW_STATEMENT};
-        if node.has_data() && (node.kind == RETURN_STATEMENT || node.kind == THROW_STATEMENT) {
-            self.return_data.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX element data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_element(&self, node: &Node) -> Option<&JsxElementData> {
-        use super::syntax_kind_ext::JSX_ELEMENT;
-        if node.has_data() && node.kind == JSX_ELEMENT {
-            self.jsx_elements.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX opening/self-closing element data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_opening(&self, node: &Node) -> Option<&JsxOpeningData> {
-        use super::syntax_kind_ext::{JSX_OPENING_ELEMENT, JSX_SELF_CLOSING_ELEMENT};
-        if node.has_data()
-            && (node.kind == JSX_OPENING_ELEMENT || node.kind == JSX_SELF_CLOSING_ELEMENT)
-        {
-            self.jsx_opening.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX closing element data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_closing(&self, node: &Node) -> Option<&JsxClosingData> {
-        use super::syntax_kind_ext::JSX_CLOSING_ELEMENT;
-        if node.has_data() && node.kind == JSX_CLOSING_ELEMENT {
-            self.jsx_closing.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX fragment data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_fragment(&self, node: &Node) -> Option<&JsxFragmentData> {
-        use super::syntax_kind_ext::JSX_FRAGMENT;
-        if node.has_data() && node.kind == JSX_FRAGMENT {
-            self.jsx_fragments.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX attributes data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_attributes(&self, node: &Node) -> Option<&JsxAttributesData> {
-        use super::syntax_kind_ext::JSX_ATTRIBUTES;
-        if node.has_data() && node.kind == JSX_ATTRIBUTES {
-            self.jsx_attributes.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX attribute data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_attribute(&self, node: &Node) -> Option<&JsxAttributeData> {
-        use super::syntax_kind_ext::JSX_ATTRIBUTE;
-        if node.has_data() && node.kind == JSX_ATTRIBUTE {
-            self.jsx_attribute.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX spread attribute data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_spread_attribute(&self, node: &Node) -> Option<&JsxSpreadAttributeData> {
-        use super::syntax_kind_ext::JSX_SPREAD_ATTRIBUTE;
-        if node.has_data() && node.kind == JSX_SPREAD_ATTRIBUTE {
-            self.jsx_spread_attributes.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX expression data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_expression(&self, node: &Node) -> Option<&JsxExpressionData> {
-        use super::syntax_kind_ext::JSX_EXPRESSION;
-        if node.has_data() && node.kind == JSX_EXPRESSION {
-            self.jsx_expressions.get(node.data_index as usize)
         } else {
             None
         }
@@ -1377,18 +675,6 @@ impl NodeArenaInner {
         use tsz_scanner::SyntaxKind;
         if node.has_data() && node.kind == SyntaxKind::JsxText as u16 {
             self.jsx_text.get(node.data_index as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Get JSX namespaced name data.
-    #[inline]
-    #[must_use]
-    pub fn get_jsx_namespaced_name(&self, node: &Node) -> Option<&JsxNamespacedNameData> {
-        use super::syntax_kind_ext::JSX_NAMESPACED_NAME;
-        if node.has_data() && node.kind == JSX_NAMESPACED_NAME {
-            self.jsx_namespaced_names.get(node.data_index as usize)
         } else {
             None
         }
@@ -1743,4 +1029,193 @@ mod is_missing_recovery_identifier_tests {
         // Default-init NodeIndex points at nothing — get() returns None.
         assert!(!arena.is_missing_recovery_identifier(NodeIndex::NONE));
     }
+}
+
+// Single-kind / small-fixed-kind typed getters, table-driven.
+define_kind_getters! {
+    /// Get binary expression data.
+    /// Returns None if node is not a binary expression or has no data.
+    get_binary_expr => binary_exprs -> BinaryExprData, [BINARY_EXPRESSION];
+
+    /// Get call expression data.
+    /// Returns None if node is not a call/new expression or has no data.
+    get_call_expr => call_exprs -> CallExprData, [CALL_EXPRESSION, NEW_EXPRESSION];
+
+    /// Get access expression data (property access or element access).
+    /// Returns None if node is not an access expression or has no data.
+    get_access_expr => access_exprs -> AccessExprData, [PROPERTY_ACCESS_EXPRESSION, ELEMENT_ACCESS_EXPRESSION, META_PROPERTY];
+
+    /// Get conditional expression data (ternary: a ? b : c).
+    /// Returns None if node is not a conditional expression or has no data.
+    get_conditional_expr => conditional_exprs -> ConditionalExprData, [CONDITIONAL_EXPRESSION];
+
+    /// Get qualified name data (A.B syntax).
+    /// Returns None if node is not a qualified name or has no data.
+    get_qualified_name => qualified_names -> QualifiedNameData, [QUALIFIED_NAME];
+
+    /// Get literal expression data (array or object literal).
+    /// Returns None if node is not a literal expression or has no data.
+    get_literal_expr => literal_exprs -> LiteralExprData, [ARRAY_LITERAL_EXPRESSION, OBJECT_LITERAL_EXPRESSION];
+
+    /// Get property assignment data.
+    /// Returns None if node is not a property assignment or has no data.
+    get_property_assignment => property_assignments -> PropertyAssignmentData, [PROPERTY_ASSIGNMENT];
+
+    /// Get type assertion data (as/satisfies/type assertion).
+    /// Returns None if node is not a type assertion or has no data.
+    get_type_assertion => type_assertions -> TypeAssertionData, [TYPE_ASSERTION, AS_EXPRESSION, SATISFIES_EXPRESSION];
+
+    /// Get unary expression data (prefix or postfix).
+    /// Returns None if node is not a unary expression or has no data.
+    get_unary_expr => unary_exprs -> UnaryExprData, [PREFIX_UNARY_EXPRESSION, POSTFIX_UNARY_EXPRESSION];
+
+    /// Get extended unary expression data (await/yield/non-null/spread).
+    /// Returns None if node is not an await/yield/non-null/spread expression or has no data.
+    get_unary_expr_ex => unary_exprs_ex -> UnaryExprDataEx, [AWAIT_EXPRESSION, YIELD_EXPRESSION, NON_NULL_EXPRESSION, SPREAD_ELEMENT];
+
+    /// Get function data.
+    /// Returns None if node is not a function-like node or has no data.
+    get_function => functions -> FunctionData, [FUNCTION_DECLARATION, FUNCTION_EXPRESSION, ARROW_FUNCTION];
+
+    /// Get class data.
+    /// Returns None if node is not a class declaration/expression or has no data.
+    get_class => classes -> ClassData, [CLASS_DECLARATION, CLASS_EXPRESSION];
+
+    /// Get block data.
+    /// Returns None if node is not a block or has no data.
+    get_block => blocks -> BlockData, [BLOCK, CLASS_STATIC_BLOCK_DECLARATION, CASE_BLOCK];
+
+    /// Get source file data.
+    /// Returns None if node is not a source file or has no data.
+    get_source_file => source_files -> SourceFileData, [SOURCE_FILE];
+
+    /// Get variable data (`VariableStatement` or `VariableDeclarationList`).
+    get_variable => variables -> VariableData, [VARIABLE_STATEMENT, VARIABLE_DECLARATION_LIST];
+
+    /// Get variable declaration data.
+    get_variable_declaration => variable_declarations -> VariableDeclarationData, [VARIABLE_DECLARATION];
+
+    /// Get interface data.
+    get_interface => interfaces -> InterfaceData, [INTERFACE_DECLARATION];
+
+    /// Get type alias data.
+    get_type_alias => type_aliases -> TypeAliasData, [TYPE_ALIAS_DECLARATION];
+
+    /// Get enum data.
+    get_enum => enums -> EnumData, [ENUM_DECLARATION];
+
+    /// Get enum member data.
+    get_enum_member => enum_members -> EnumMemberData, [ENUM_MEMBER];
+
+    /// Get module data.
+    get_module => modules -> ModuleData, [MODULE_DECLARATION];
+
+    /// Get module block data.
+    get_module_block => module_blocks -> ModuleBlockData, [MODULE_BLOCK];
+
+    /// Get if statement data.
+    get_if_statement => if_statements -> IfStatementData, [IF_STATEMENT];
+
+    /// Get loop data (while, for, do-while).
+    get_loop => loops -> LoopData, [WHILE_STATEMENT, DO_STATEMENT, FOR_STATEMENT];
+
+    /// Get for-in/for-of data.
+    get_for_in_of => for_in_of -> ForInOfData, [FOR_IN_STATEMENT, FOR_OF_STATEMENT];
+
+    /// Get switch data.
+    get_switch => switch_data -> SwitchData, [SWITCH_STATEMENT];
+
+    /// Get case clause data.
+    get_case_clause => case_clauses -> CaseClauseData, [CASE_CLAUSE, DEFAULT_CLAUSE];
+
+    /// Get try data.
+    get_try => try_data -> TryData, [TRY_STATEMENT];
+
+    /// Get catch clause data.
+    get_catch_clause => catch_clauses -> CatchClauseData, [CATCH_CLAUSE];
+
+    /// Get labeled statement data.
+    get_labeled_statement => labeled_data -> LabeledData, [LABELED_STATEMENT];
+
+    /// Get jump data (break/continue statements).
+    get_jump_data => jump_data -> JumpData, [BREAK_STATEMENT, CONTINUE_STATEMENT];
+
+    /// Get with statement data (stored in if statement pool).
+    get_with_statement => if_statements -> IfStatementData, [WITH_STATEMENT];
+
+    /// Get import declaration data (handles both `IMPORT_DECLARATION` and `IMPORT_EQUALS_DECLARATION`).
+    get_import_decl => import_decls -> ImportDeclData, [IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION];
+
+    /// Get import clause data.
+    get_import_clause => import_clauses -> ImportClauseData, [IMPORT_CLAUSE];
+
+    /// Get named imports/exports data.
+    /// Works for `NAMED_IMPORTS`, `NAMESPACE_IMPORT`, and `NAMED_EXPORTS` (they share the same data structure).
+    get_named_imports => named_imports -> NamedImportsData, [NAMED_IMPORTS, NAMED_EXPORTS, NAMESPACE_IMPORT];
+
+    /// Get import/export specifier data.
+    get_specifier => specifiers -> SpecifierData, [IMPORT_SPECIFIER, EXPORT_SPECIFIER];
+
+    /// Get export declaration data.
+    get_export_decl => export_decls -> ExportDeclData, [EXPORT_DECLARATION, NAMESPACE_EXPORT_DECLARATION];
+
+    /// Get export assignment data (export = expr).
+    get_export_assignment => export_assignments -> ExportAssignmentData, [EXPORT_ASSIGNMENT];
+
+    /// Get import attributes data (`with { ... }` or `assert { ... }`).
+    get_import_attributes_data => import_attributes -> ImportAttributesData, [IMPORT_ATTRIBUTES];
+
+    /// Get single import attribute data (name: value pair).
+    get_import_attribute_data => import_attribute -> ImportAttributeData, [IMPORT_ATTRIBUTE];
+
+    /// Get parameter data.
+    get_parameter => parameters -> ParameterData, [PARAMETER];
+
+    /// Get property declaration data.
+    get_property_decl => property_decls -> PropertyDeclData, [PROPERTY_DECLARATION];
+
+    /// Get method declaration data.
+    get_method_decl => method_decls -> MethodDeclData, [METHOD_DECLARATION];
+
+    /// Get constructor data.
+    get_constructor => constructors -> ConstructorData, [CONSTRUCTOR];
+
+    /// Get decorator data.
+    get_decorator => decorators -> DecoratorData, [DECORATOR];
+
+    /// Get type reference data.
+    get_type_ref => type_refs -> TypeRefData, [TYPE_REFERENCE];
+
+    /// Get expression statement data (returns the expression node index).
+    get_expression_statement => expr_statements -> ExprStatementData, [EXPRESSION_STATEMENT];
+
+    /// Get return statement data (returns the expression node index).
+    get_return_statement => return_data -> ReturnData, [RETURN_STATEMENT, THROW_STATEMENT];
+
+    /// Get JSX element data.
+    get_jsx_element => jsx_elements -> JsxElementData, [JSX_ELEMENT];
+
+    /// Get JSX opening/self-closing element data.
+    get_jsx_opening => jsx_opening -> JsxOpeningData, [JSX_OPENING_ELEMENT, JSX_SELF_CLOSING_ELEMENT];
+
+    /// Get JSX closing element data.
+    get_jsx_closing => jsx_closing -> JsxClosingData, [JSX_CLOSING_ELEMENT];
+
+    /// Get JSX fragment data.
+    get_jsx_fragment => jsx_fragments -> JsxFragmentData, [JSX_FRAGMENT];
+
+    /// Get JSX attributes data.
+    get_jsx_attributes => jsx_attributes -> JsxAttributesData, [JSX_ATTRIBUTES];
+
+    /// Get JSX attribute data.
+    get_jsx_attribute => jsx_attribute -> JsxAttributeData, [JSX_ATTRIBUTE];
+
+    /// Get JSX spread attribute data.
+    get_jsx_spread_attribute => jsx_spread_attributes -> JsxSpreadAttributeData, [JSX_SPREAD_ATTRIBUTE];
+
+    /// Get JSX expression data.
+    get_jsx_expression => jsx_expressions -> JsxExpressionData, [JSX_EXPRESSION];
+
+    /// Get JSX namespaced name data.
+    get_jsx_namespaced_name => jsx_namespaced_names -> JsxNamespacedNameData, [JSX_NAMESPACED_NAME];
 }

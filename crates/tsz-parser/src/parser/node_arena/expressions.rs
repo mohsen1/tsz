@@ -2,12 +2,13 @@
 //! that appear inside expressions: qualified names, computed property names,
 //! and expression-with-type-arguments).
 
+use super::push_data_node;
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     AccessExprData, BinaryExprData, CallExprData, ComputedPropertyData, ConditionalExprData,
-    ExprWithTypeArgsData, ExtendedNodeInfo, LiteralExprData, Node, NodeArenaInner,
-    ParenthesizedData, QualifiedNameData, SpreadData, TaggedTemplateData, TemplateExprData,
-    TemplateSpanData, TypeAssertionData, UnaryExprData, UnaryExprDataEx,
+    ExprWithTypeArgsData, LiteralExprData, NodeArenaInner, ParenthesizedData, QualifiedNameData,
+    SpreadData, TaggedTemplateData, TemplateExprData, TemplateSpanData, TypeAssertionData,
+    UnaryExprData, UnaryExprDataEx,
 };
 
 impl NodeArenaInner {
@@ -19,20 +20,10 @@ impl NodeArenaInner {
         end: u32,
         data: QualifiedNameData,
     ) -> NodeIndex {
-        let left = data.left;
-        let right = data.right;
-
-        let data_index = self.len_u32(self.qualified_names.len());
-        self.qualified_names.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(left, parent);
-        self.set_parent(right, parent);
-
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.left, parent);
+        self.set_parent(data.right, parent);
+        push_data_node!(self, parent, kind, pos, end, qualified_names, data)
     }
 
     /// Add a computed property name node
@@ -43,16 +34,9 @@ impl NodeArenaInner {
         end: u32,
         data: ComputedPropertyData,
     ) -> NodeIndex {
-        let expression = data.expression;
-
-        let data_index = self.len_u32(self.computed_properties.len());
-        self.computed_properties.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, computed_properties, data)
     }
 
     /// Add a binary expression
@@ -63,20 +47,10 @@ impl NodeArenaInner {
         end: u32,
         data: BinaryExprData,
     ) -> NodeIndex {
-        let left = data.left;
-        let right = data.right;
-
-        let data_index = self.len_u32(self.binary_exprs.len());
-        self.binary_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(left, parent);
-        self.set_parent(right, parent);
-
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.left, parent);
+        self.set_parent(data.right, parent);
+        push_data_node!(self, parent, kind, pos, end, binary_exprs, data)
     }
 
     /// Add a call expression
@@ -87,21 +61,11 @@ impl NodeArenaInner {
         end: u32,
         data: CallExprData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(expression, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
         self.set_parent_opt_list(data.arguments.as_ref(), parent);
-
-        let data_index = self.len_u32(self.call_exprs.len());
-        self.call_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        push_data_node!(self, parent, kind, pos, end, call_exprs, data)
     }
 
     /// Add a unary expression node
@@ -112,18 +76,9 @@ impl NodeArenaInner {
         end: u32,
         data: UnaryExprData,
     ) -> NodeIndex {
-        let operand = data.operand;
-
-        let data_index = self.len_u32(self.unary_exprs.len());
-        self.unary_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(operand, parent);
-
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.operand, parent);
+        push_data_node!(self, parent, kind, pos, end, unary_exprs, data)
     }
 
     /// Add a property/element access expression node
@@ -134,20 +89,10 @@ impl NodeArenaInner {
         end: u32,
         data: AccessExprData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let name_or_argument = data.name_or_argument;
-
-        let data_index = self.len_u32(self.access_exprs.len());
-        self.access_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent(name_or_argument, parent);
-
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        self.set_parent(data.name_or_argument, parent);
+        push_data_node!(self, parent, kind, pos, end, access_exprs, data)
     }
 
     /// Add a conditional expression node (a ? b : c)
@@ -158,20 +103,11 @@ impl NodeArenaInner {
         end: u32,
         data: ConditionalExprData,
     ) -> NodeIndex {
-        let condition = data.condition;
-        let when_true = data.when_true;
-        let when_false = data.when_false;
-
-        let data_index = self.len_u32(self.conditional_exprs.len());
-        self.conditional_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(condition, parent);
-        self.set_parent(when_true, parent);
-        self.set_parent(when_false, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.condition, parent);
+        self.set_parent(data.when_true, parent);
+        self.set_parent(data.when_false, parent);
+        push_data_node!(self, parent, kind, pos, end, conditional_exprs, data)
     }
 
     /// Add an object/array literal expression node
@@ -182,17 +118,9 @@ impl NodeArenaInner {
         end: u32,
         data: LiteralExprData,
     ) -> NodeIndex {
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
+        let parent = self.reserve_parent();
         self.set_parent_list(&data.elements, parent);
-
-        let data_index = self.len_u32(self.literal_exprs.len());
-        self.literal_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, literal_exprs, data)
     }
 
     /// Add a parenthesized expression node
@@ -203,15 +131,9 @@ impl NodeArenaInner {
         end: u32,
         data: ParenthesizedData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let data_index = self.len_u32(self.parenthesized.len());
-        self.parenthesized.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, parenthesized, data)
     }
 
     /// Add a spread/await/yield expression node
@@ -222,15 +144,9 @@ impl NodeArenaInner {
         end: u32,
         data: UnaryExprDataEx,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let data_index = self.len_u32(self.unary_exprs_ex.len());
-        self.unary_exprs_ex.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, unary_exprs_ex, data)
     }
 
     /// Add a type assertion expression node
@@ -241,18 +157,10 @@ impl NodeArenaInner {
         end: u32,
         data: TypeAssertionData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let type_node = data.type_node;
-        let data_index = self.len_u32(self.type_assertions.len());
-        self.type_assertions.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent(type_node, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        self.set_parent(data.type_node, parent);
+        push_data_node!(self, parent, kind, pos, end, type_assertions, data)
     }
 
     /// Add a template expression node
@@ -263,20 +171,10 @@ impl NodeArenaInner {
         end: u32,
         data: TemplateExprData,
     ) -> NodeIndex {
-        let head = data.head;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(head, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.head, parent);
         self.set_parent_list(&data.template_spans, parent);
-
-        let data_index = self.len_u32(self.template_exprs.len());
-        self.template_exprs.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        push_data_node!(self, parent, kind, pos, end, template_exprs, data)
     }
 
     /// Add a template span node
@@ -287,20 +185,10 @@ impl NodeArenaInner {
         end: u32,
         data: TemplateSpanData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let literal = data.literal;
-
-        let data_index = self.len_u32(self.template_spans.len());
-        self.template_spans.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent(literal, parent);
-
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        self.set_parent(data.literal, parent);
+        push_data_node!(self, parent, kind, pos, end, template_spans, data)
     }
 
     /// Add a tagged template expression node
@@ -311,22 +199,11 @@ impl NodeArenaInner {
         end: u32,
         data: TaggedTemplateData,
     ) -> NodeIndex {
-        let tag = data.tag;
-        let template = data.template;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(tag, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.tag, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
-        self.set_parent(template, parent);
-
-        let data_index = self.len_u32(self.tagged_templates.len());
-        self.tagged_templates.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-
-        parent
+        self.set_parent(data.template, parent);
+        push_data_node!(self, parent, kind, pos, end, tagged_templates, data)
     }
 
     /// Add an expression with type arguments node
@@ -337,32 +214,16 @@ impl NodeArenaInner {
         end: u32,
         data: ExprWithTypeArgsData,
     ) -> NodeIndex {
-        let expression = data.expression;
-        let parent = NodeIndex(self.len_u32(self.nodes.len()));
-
-        self.set_parent(expression, parent);
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
         self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
-
-        let data_index = self.len_u32(self.expr_with_type_args.len());
-        self.expr_with_type_args.push(data);
-        let index = self.len_u32(self.nodes.len());
-        debug_assert_eq!(parent.0, index);
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        parent
+        push_data_node!(self, parent, kind, pos, end, expr_with_type_args, data)
     }
 
     /// Add a spread assignment node
     pub fn add_spread(&mut self, kind: u16, pos: u32, end: u32, data: SpreadData) -> NodeIndex {
-        let expression = data.expression;
-
-        let data_index = self.len_u32(self.spread_data.len());
-        self.spread_data.push(data);
-        let index = self.len_u32(self.nodes.len());
-        self.nodes.push(Node::with_data(kind, pos, end, data_index));
-        self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        parent
+        let parent = self.reserve_parent();
+        self.set_parent(data.expression, parent);
+        push_data_node!(self, parent, kind, pos, end, spread_data, data)
     }
 }
