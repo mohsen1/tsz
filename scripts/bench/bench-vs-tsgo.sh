@@ -872,7 +872,6 @@ run_msw_project_benchmarks() {
 }
 
 run_comlink_project_benchmarks() {
-    should_run_compile_canary_project || return 0
     if ! is_benchmark_selected "comlink-project"; then
         return
     fi

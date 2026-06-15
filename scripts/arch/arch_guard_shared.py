@@ -1388,7 +1388,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # route is an existing request-shaped helper already used throughout the
         # indexed-access checker — no new quarantine entry. Removal condition
         # remains #8225 narrowing this quarantine.
-        3051,
+        #
+        # Bumped 3051→3066 for the deferred-conditional indexed-access parity
+        # fix (#13654): keeping `O[K]` deferred over a deferred conditional base
+        # adds request-shaped `query_boundaries::common` reads in
+        # `indexed_access.rs`, `indexed_access/deferred_conditional_index.rs`,
+        # `constrained_type_param_assertion.rs`, `signatures_and_advanced.rs`,
+        # and `comparability.rs` (`contains_free_type_parameters`,
+        # `types_are_comparable_for_assertion`,
+        # `conditional_branch_union_constraint`, `index_access_types`,
+        # `is_keyof_type`, `is_conditional_type`, `is_generic_application`,
+        # `is_index_access_type`). All are existing request-shaped boundary
+        # helpers already used throughout the checker — no new quarantine entry.
+        3066,
     ),
 ]
 
