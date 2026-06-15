@@ -101,10 +101,28 @@ impl<'a> CheckerState<'a> {
         self.ctx.flush_deferred_flow_env_writes();
         {
             let type_env_snapshot = self.ctx.type_env.borrow();
-            self.ctx
-                .type_environment
-                .borrow_mut()
-                .overlay_missing_from(&type_env_snapshot);
+            let mut flow_env = self.ctx.type_environment.borrow_mut();
+            flow_env.overlay_missing_from(&type_env_snapshot);
+
+            // The two envs (#13086) are deliberately separate `RefCell`s with
+            // distinct borrow lifecycles — the flow-analyzer holds
+            // `type_environment` borrowed during narrowing while the evaluator
+            // mutates `type_env`, so they cannot share one cell without dropping
+            // writes. They are kept consistent by dual-write helpers and the
+            // vacancy-fill `overlay_missing_from` above. After reconciliation
+            // they must *agree* on every shared `DefId -> TypeId` entry; a
+            // disagreement is the silent divergence #13086 guards against, so
+            // turn it into a loud failure in debug builds.
+            if cfg!(debug_assertions)
+                && let Some((map, key, lhs, rhs)) =
+                    flow_env.first_def_divergence_from(&type_env_snapshot)
+            {
+                debug_assert!(
+                    false,
+                    "flow-analyzer env diverges from evaluator env after reconciliation \
+                     (#13086): {map}[{key}] is {lhs} in type_environment vs {rhs} in type_env"
+                );
+            }
         }
         debug_assert_eq!(
             self.ctx.deferred_flow_env_write_count(),
