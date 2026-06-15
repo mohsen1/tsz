@@ -373,7 +373,16 @@ impl<'a> CheckerState<'a> {
                 aggregate.renamed_export = scan.renamed_export;
             }
         }
-        if let Some(all_arenas) = self.ctx.all_arenas.as_ref() {
+        // The cross-arena scan below only finds matches in arenas that contain a
+        // `declare module "<module_name>" { ... }` block whose name equals (or
+        // wildcard-matches) `module_name`. When the program declares no ambient
+        // module with this name anywhere, the scan is provably fruitless, so the
+        // O(all_arenas) walk is skipped. This collapses a per-import O(files)
+        // statement scan (O(files^2) across the program) into an O(1) global
+        // index probe for the overwhelming common case of plain file imports —
+        // the diagnostic-recovery path that drove the scale-cliff slope.
+        let module_has_ambient_declaration = self.any_ambient_module_declared(module_name);
+        if module_has_ambient_declaration && let Some(all_arenas) = self.ctx.all_arenas.as_ref() {
             for arena in all_arenas.iter() {
                 if aggregate.direct_export {
                     // Direct export wins — short-circuit further scans.

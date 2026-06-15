@@ -302,6 +302,7 @@ impl<'a> CheckerContext<'a> {
             expando_property_resolution_set: crate::context::CowCache::default(),
             module_specifiers: Arc::new(FxHashMap::default()),
             module_path_specifiers: Arc::new(FxHashMap::default()),
+            module_specifiers_prebuilt: false,
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),
