@@ -1875,106 +1875,158 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         mut derived_type: TypeId,
     ) -> TypeId {
-        use tsz_scanner::SyntaxKind;
-
         for &decl_idx in declarations {
             let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
                 continue;
             };
-            for arena in arenas.iter() {
+            // Clone the arena handles so the immutable borrow of
+            // `declaration_arenas` is released before the mutable
+            // `merge_interface_heritage_from_arena` calls below.
+            let arenas: Vec<std::sync::Arc<tsz_parser::parser::node::NodeArena>> =
+                arenas.iter().cloned().collect();
+            for arena in arenas {
                 // Skip the local arena (already processed by merge_interface_heritage_types)
                 if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
                     continue;
                 }
-                let Some(node) = arena.get(decl_idx) else {
+                derived_type =
+                    self.merge_interface_heritage_from_arena(&arena, decl_idx, derived_type);
+            }
+        }
+
+        derived_type
+    }
+
+    /// Resolve a type name in the binder that owns `arena`.
+    ///
+    /// `resolve_cross_file_global_type_symbol` only sees the current file's
+    /// `file_locals` plus globals, so a file-scoped type declared in another
+    /// arena (e.g. zod's `ZodTypeDef`, a non-exported interface read through a
+    /// cross-arena heritage clause) is invisible to it. This finds that type in
+    /// its declaring file's binder by mapping `arena -> file index -> binder`
+    /// and looking the name up in that binder's `file_locals`. Returns the raw
+    /// `SymbolId`, which `get_type_of_symbol` resolves through its existing
+    /// cross-file/cross-arena symbol paths.
+    pub(crate) fn resolve_type_symbol_in_arena_scope(
+        &self,
+        arena: &std::sync::Arc<tsz_parser::parser::node::NodeArena>,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let file_idx = self.ctx.get_file_idx_for_arena(arena.as_ref())?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let sym = binder.file_locals.get(name)?;
+        binder
+            .get_symbol(sym)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+            .map(|_| sym)
+    }
+
+    /// Merge the heritage (`extends`) base types of a single interface
+    /// declaration read from `arena` into `derived_type`.
+    ///
+    /// Shared by `merge_cross_file_heritage` (which discovers the source arena
+    /// through `declaration_arenas`) and the all-arena recovery scan in the
+    /// interface-symbol computation (which discovers it by scanning loaded
+    /// arenas when the binder recorded no bridge). Base types are resolved by
+    /// name in the current binder's `file_locals`, so an interface whose
+    /// declaration lives in another arena still inherits its base members
+    /// instead of degrading to a weak own-members-only shape.
+    pub(crate) fn merge_interface_heritage_from_arena(
+        &mut self,
+        arena: &std::sync::Arc<tsz_parser::parser::node::NodeArena>,
+        decl_idx: NodeIndex,
+        mut derived_type: TypeId,
+    ) -> TypeId {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = arena.get(decl_idx) else {
+            return derived_type;
+        };
+        let Some(interface) = arena.get_interface(node) else {
+            return derived_type;
+        };
+        let Some(ref heritage_clauses) = interface.heritage_clauses else {
+            return derived_type;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
                     continue;
                 };
-                let Some(interface) = arena.get_interface(node) else {
-                    continue;
-                };
-                let Some(ref heritage_clauses) = interface.heritage_clauses else {
-                    continue;
-                };
 
-                for &clause_idx in &heritage_clauses.nodes {
-                    let Some(clause_node) = arena.get(clause_idx) else {
-                        continue;
-                    };
-                    let Some(heritage) = arena.get_heritage_clause(clause_node) else {
-                        continue;
-                    };
-                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                        continue;
-                    }
-
-                    for &type_idx in &heritage.types.nodes {
-                        let Some(type_node) = arena.get(type_idx) else {
-                            continue;
-                        };
-
-                        let (expr_idx, type_arguments) =
-                            if let Some(expr) = arena.get_expr_type_args(type_node) {
-                                (expr.expression, expr.type_arguments.as_ref())
-                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                if let Some(type_ref) = arena.get_type_ref(type_node) {
-                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
-                                } else {
-                                    (type_idx, None)
-                                }
-                            } else {
-                                (type_idx, None)
-                            };
-
-                        let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
-                            continue;
-                        };
-                        let Some(base_sym_id) = self.resolve_cross_file_global_type_symbol(&name)
-                        else {
-                            continue;
-                        };
-
-                        let mut base_type = self.get_type_of_symbol(base_sym_id);
-                        if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
-                            continue;
+                let (expr_idx, type_arguments) =
+                    if let Some(expr) = arena.get_expr_type_args(type_node) {
+                        (expr.expression, expr.type_arguments.as_ref())
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = arena.get_type_ref(type_node) {
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
+                        } else {
+                            (type_idx, None)
                         }
-                        if let Some(type_arguments) = type_arguments {
-                            let base_params = self.get_type_params_for_symbol(base_sym_id);
-                            if !base_params.is_empty() {
-                                let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
-                                for &arg_idx in &type_arguments.nodes {
-                                    type_args.push(
-                                        self.resolve_cross_file_heritage_type_arg(arena, arg_idx),
-                                    );
-                                }
-                                while type_args.len() < base_params.len() {
-                                    let param = &base_params[type_args.len()];
-                                    type_args.push(
-                                        param
-                                            .default
-                                            .or(param.constraint)
-                                            .unwrap_or(TypeId::UNKNOWN),
-                                    );
-                                }
-                                if type_args.len() > base_params.len() {
-                                    type_args.truncate(base_params.len());
-                                }
-                                let substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::from_args(
-                                        self.ctx.types,
-                                        &base_params,
-                                        &type_args,
-                                    );
-                                base_type = crate::query_boundaries::common::instantiate_type(
-                                    self.ctx.types,
-                                    base_type,
-                                    &substitution,
-                                );
-                            }
-                        }
+                    } else {
+                        (type_idx, None)
+                    };
 
-                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
+                    continue;
+                };
+                let Some(base_sym_id) = self
+                    .resolve_cross_file_global_type_symbol(&name)
+                    .or_else(|| self.resolve_type_symbol_in_arena_scope(arena, &name))
+                else {
+                    continue;
+                };
+
+                let mut base_type = self.get_type_of_symbol(base_sym_id);
+                if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
+                    continue;
+                }
+                if let Some(type_arguments) = type_arguments {
+                    let base_params = self.get_type_params_for_symbol(base_sym_id);
+                    if !base_params.is_empty() {
+                        let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
+                        for &arg_idx in &type_arguments.nodes {
+                            type_args
+                                .push(self.resolve_cross_file_heritage_type_arg(arena, arg_idx));
+                        }
+                        while type_args.len() < base_params.len() {
+                            let param = &base_params[type_args.len()];
+                            type_args.push(
+                                param
+                                    .default
+                                    .or(param.constraint)
+                                    .unwrap_or(TypeId::UNKNOWN),
+                            );
+                        }
+                        if type_args.len() > base_params.len() {
+                            type_args.truncate(base_params.len());
+                        }
+                        let substitution =
+                            crate::query_boundaries::common::TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_params,
+                                &type_args,
+                            );
+                        base_type = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            base_type,
+                            &substitution,
+                        );
                     }
                 }
+
+                derived_type = self.merge_interface_types_heritage(derived_type, base_type);
             }
         }
 

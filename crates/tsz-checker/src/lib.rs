@@ -691,6 +691,9 @@ mod contextual_return_wrapper_tests;
 #[path = "../tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/cross_file_base_type_param_interface_member_tests.rs"]
+mod cross_file_base_type_param_interface_member_tests;
+#[cfg(test)]
 #[path = "../tests/cross_file_class_merge_tests.rs"]
 mod cross_file_class_merge_tests;
 #[cfg(test)]

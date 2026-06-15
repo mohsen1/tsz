@@ -1868,6 +1868,7 @@ impl<'a> CheckerState<'a> {
                 //  - Different NodeIndex (has_out_of_arena_decl): decl not in local arena
                 //  - Same NodeIndex collision (has_cross_file_same_index): decl IS in
                 //    local arena, but declaration_arenas has additional non-local arenas
+                let mut merged_cross_arena_decl = false;
                 if has_out_of_arena_decl || has_cross_file_same_index {
                     for &decl_idx in declarations.iter() {
                         let Some(arenas) =
@@ -1888,7 +1889,95 @@ impl<'a> CheckerState<'a> {
                                 if cross_type != TypeId::ERROR {
                                     interface_type =
                                         self.merge_interface_types(interface_type, cross_type);
+                                    merged_cross_arena_decl = true;
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Owner-arena fallback for cross-arena interface bodies.
+                //
+                // When an interface symbol is observed from an importing arena
+                // (`has_out_of_arena_decl`) but the binder recorded no
+                // `declaration_arenas` bridge for any of its declaration nodes,
+                // the loop above lowers nothing, and the local lowering against
+                // `self.ctx.arena` (where the declaration NodeIndex does not
+                // resolve to an interface) degrades to `TypeId::ERROR`. That
+                // `error` then leaks wherever the interface is read through
+                // inheritance — e.g. a base type parameter bound to this
+                // interface in a derived class member (zod `ZodType<_, Def>._def`
+                // with `Def = ZodStringDef`, kysely cross-file base members).
+                //
+                // The interface's body is a pure function of its own
+                // declaration regardless of the referencing file, so recover the
+                // owner arena from the symbol's file index and lower the
+                // declaration there. Structural (no name/file-string predicate):
+                // it fires only when the local lowering produced no usable shape,
+                // the declaration is genuinely out-of-arena, and the owner arena
+                // actually holds the interface node for this declaration index.
+                if !merged_cross_arena_decl
+                    && has_out_of_arena_decl
+                    && type_environment::object_shape(self.ctx.types, interface_type).is_none()
+                    && let Some(all_arenas) = self.ctx.all_arenas.clone()
+                {
+                    // Locate the arena that actually holds each unresolved
+                    // declaration's interface node by scanning every loaded
+                    // arena for the declaration `NodeIndex`. The binder did not
+                    // record a `declaration_arenas` bridge and the symbol's
+                    // file index points at the importing arena (where the index
+                    // does not resolve), so neither the per-decl loop above nor
+                    // an owner-file lookup recovers it. The scan is structural —
+                    // it matches on "this index resolves to an interface node
+                    // here", never on a name or file string — and is bounded by
+                    // the loaded-arena count, entered only on the degenerate
+                    // miss path that would otherwise mint `error`.
+                    for &decl_idx in declarations.iter() {
+                        if self
+                            .ctx
+                            .arena
+                            .get(decl_idx)
+                            .and_then(|n| self.ctx.arena.get_interface(n))
+                            .is_some()
+                        {
+                            continue; // resolvable locally; nothing to recover
+                        }
+                        for src_arena in all_arenas.iter() {
+                            if std::ptr::eq(src_arena.as_ref(), self.ctx.arena) {
+                                continue;
+                            }
+                            if src_arena
+                                .get(decl_idx)
+                                .and_then(|n| src_arena.get_interface(n))
+                                .is_none()
+                            {
+                                continue;
+                            }
+                            let cross_type =
+                                self.lower_cross_file_interface_decl(src_arena, decl_idx, sym_id);
+                            if cross_type != TypeId::ERROR {
+                                interface_type = if type_environment::object_shape(
+                                    self.ctx.types,
+                                    interface_type,
+                                )
+                                .is_some()
+                                {
+                                    self.merge_interface_types(interface_type, cross_type)
+                                } else {
+                                    cross_type
+                                };
+                                // Lower the interface's own members above does not
+                                // pull in `extends` bases (their members live in
+                                // the same out-of-arena declaration); merge them
+                                // from the discovered source arena so the recovered
+                                // type is not a weak own-members-only shape.
+                                let src_arena = src_arena.clone();
+                                interface_type = self.merge_interface_heritage_from_arena(
+                                    &src_arena,
+                                    decl_idx,
+                                    interface_type,
+                                );
+                                break;
                             }
                         }
                     }
