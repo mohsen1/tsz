@@ -955,60 +955,35 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .skip_parenthesized_and_assertions(initializer);
-        let node = self.ctx.arena.get(initializer)?;
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+        // Reject a same-file bare-identifier callee whose declaration does not
+        // return the identity mapped-type shape. This guard keeps a user
+        // function happening to be named `arrayToEnum` from getting fabricated
+        // literal members; the shared syntactic helper only matches the name.
+        if let Some(node) = self.ctx.arena.get(initializer)
+            && node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(node)
+            && !self.array_to_enum_callee_passes_guard(call.expression)
+        {
             return None;
         }
-
-        let call = self.ctx.arena.get_call_expr(node)?;
-        if !self.call_expression_is_array_to_enum(call.expression) {
-            return None;
-        }
-
-        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
-        let arg = self.ctx.arena.skip_parenthesized_and_assertions(first_arg);
-        let arg_node = self.ctx.arena.get(arg)?;
-        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-
-        let array = self.ctx.arena.get_literal_expr(arg_node)?;
-        let mut names = Vec::new();
-        for &element in &array.elements.nodes {
-            let element = self.ctx.arena.skip_parenthesized_and_assertions(element);
-            let element_node = self.ctx.arena.get(element)?;
-            if (element_node.kind == SyntaxKind::StringLiteral as u16
-                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                && let Some(lit) = self.ctx.arena.get_literal(element_node)
-            {
-                names.push(lit.text.clone());
-            }
-        }
-
-        Some(names)
+        crate::symbols_domain::name_text::array_to_enum_call_literal_names(
+            self.ctx.arena,
+            initializer,
+        )
     }
 
-    fn call_expression_is_array_to_enum(&self, callee: NodeIndex) -> bool {
+    /// Re-applies the original two-armed acceptance: a bare-identifier callee
+    /// must additionally resolve to an identity mapped-type declaration, while a
+    /// property-access callee (`util.arrayToEnum`) is accepted on name alone.
+    fn array_to_enum_callee_passes_guard(&self, callee: NodeIndex) -> bool {
         let callee = self.ctx.arena.skip_parenthesized_and_assertions(callee);
         let Some(node) = self.ctx.arena.get(callee) else {
             return false;
         };
-
-        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return ident.escaped_text == "arrayToEnum"
-                && self.array_to_enum_callee_returns_identity_mapped_type(callee);
+        if self.ctx.arena.get_identifier(node).is_some() {
+            return self.array_to_enum_callee_returns_identity_mapped_type(callee);
         }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(node)
-            && !access.question_dot_token
-            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-        {
-            return ident.escaped_text == "arrayToEnum";
-        }
-
-        false
+        true
     }
 
     fn array_to_enum_callee_returns_identity_mapped_type(&self, callee: NodeIndex) -> bool {
@@ -1064,39 +1039,10 @@ impl<'a> CheckerState<'a> {
             func.type_annotation
         };
 
-        self.type_node_is_identity_mapped_type_in_arena(arena, return_type)
-    }
-
-    fn type_node_is_identity_mapped_type(&self, type_node: NodeIndex) -> bool {
-        self.type_node_is_identity_mapped_type_in_arena(self.ctx.arena, type_node)
-    }
-
-    fn type_node_is_identity_mapped_type_in_arena(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        type_node: NodeIndex,
-    ) -> bool {
-        let Some(node) = arena.get(type_node) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::MAPPED_TYPE {
-            return false;
-        }
-        let Some(mapped) = arena.get_mapped_type(node) else {
-            return false;
-        };
-        let Some(param) = arena
-            .get(mapped.type_parameter)
-            .and_then(|node| arena.get_type_parameter(node))
-        else {
-            return false;
-        };
-        let Some(param_name) = arena.get_identifier_at(param.name) else {
-            return false;
-        };
-        arena
-            .get_identifier_at(mapped.type_node)
-            .is_some_and(|name| name.escaped_text == param_name.escaped_text)
+        crate::symbols_domain::name_text::type_node_is_identity_mapped_type_in_arena(
+            arena,
+            return_type,
+        )
     }
 
     fn type_query_property_name_text(&self, name: NodeIndex) -> Option<String> {

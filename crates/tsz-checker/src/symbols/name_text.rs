@@ -120,6 +120,119 @@ pub(crate) fn simple_computed_name_expr_text_in_arena(
     }
 }
 
+/// The Zod identifier whose generic mapped-enum return shape
+/// (`arrayToEnum<U>(items: U): { [k in U[number]]: k }`) tsz cannot yet
+/// reproduce through pure solver inference on the symbol-type/`keyof typeof`
+/// path. The checker recovers the literal members syntactically as an interim
+/// measure (tracked by #13045). This single constant is the *only* place the
+/// user identifier is named; every recovery site routes through the helpers
+/// below so the name-key cannot drift across copies.
+pub(crate) const ARRAY_TO_ENUM_CALLEE_NAME: &str = "arrayToEnum";
+
+/// Whether `callee` is syntactically a reference to `arrayToEnum` — either the
+/// bare identifier or a non-optional property access whose member is
+/// `arrayToEnum` (e.g. `util.arrayToEnum`). Parentheses and assertions are
+/// skipped. This is the pure-syntax half of the recovery; callers that need to
+/// confirm the callee actually declares the identity mapped-type return apply
+/// the symbol-resolution guard separately.
+pub(crate) fn callee_is_array_to_enum_named(arena: &NodeArena, callee: NodeIndex) -> bool {
+    let callee = arena.skip_parenthesized_and_assertions(callee);
+    let Some(node) = arena.get(callee) else {
+        return false;
+    };
+
+    if let Some(ident) = arena.get_identifier(node) {
+        return ident.escaped_text == ARRAY_TO_ENUM_CALLEE_NAME;
+    }
+
+    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+        && !access.question_dot_token
+        && let Some(name_node) = arena.get(access.name_or_argument)
+        && let Some(ident) = arena.get_identifier(name_node)
+    {
+        return ident.escaped_text == ARRAY_TO_ENUM_CALLEE_NAME;
+    }
+
+    false
+}
+
+/// Given a call-expression node whose callee is `arrayToEnum`, return the
+/// ordered string-literal member names from its first argument's array literal.
+/// Returns `None` when the node is not such a call, the callee is not named
+/// `arrayToEnum`, or the first argument is not an array literal. Non-string
+/// elements are skipped (matching tsc's mapped-enum key derivation, which only
+/// keys off the string literals). The list may be empty when the array literal
+/// has no string members; callers decide whether an empty result is usable.
+pub(crate) fn array_to_enum_call_literal_names(
+    arena: &NodeArena,
+    call_node_idx: NodeIndex,
+) -> Option<Vec<String>> {
+    let call_node_idx = arena.skip_parenthesized_and_assertions(call_node_idx);
+    let node = arena.get(call_node_idx)?;
+    if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+        return None;
+    }
+
+    let call = arena.get_call_expr(node)?;
+    if !callee_is_array_to_enum_named(arena, call.expression) {
+        return None;
+    }
+
+    let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+    let arg = arena.skip_parenthesized_and_assertions(first_arg);
+    let arg_node = arena.get(arg)?;
+    if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+        return None;
+    }
+
+    let array = arena.get_literal_expr(arg_node)?;
+    let mut names = Vec::new();
+    for &element in &array.elements.nodes {
+        let element = arena.skip_parenthesized_and_assertions(element);
+        let element_node = arena.get(element)?;
+        if (element_node.kind == SyntaxKind::StringLiteral as u16
+            || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            && let Some(lit) = arena.get_literal(element_node)
+        {
+            names.push(lit.text.clone());
+        }
+    }
+
+    Some(names)
+}
+
+/// Whether `type_node` is an identity mapped type `{ [K in T]: K }` whose value
+/// type is exactly the key type parameter — the structural signature of the
+/// Zod `arrayToEnum` return annotation. Pure-syntax over the given arena, so it
+/// works for both same-file and cross-file (resolved) declaration arenas.
+pub(crate) fn type_node_is_identity_mapped_type_in_arena(
+    arena: &NodeArena,
+    type_node: NodeIndex,
+) -> bool {
+    let Some(node) = arena.get(type_node) else {
+        return false;
+    };
+    if node.kind != syntax_kind_ext::MAPPED_TYPE {
+        return false;
+    }
+    let Some(mapped) = arena.get_mapped_type(node) else {
+        return false;
+    };
+    let Some(param) = arena
+        .get(mapped.type_parameter)
+        .and_then(|node| arena.get_type_parameter(node))
+    else {
+        return false;
+    };
+    let Some(param_name) = arena.get_identifier_at(param.name) else {
+        return false;
+    };
+    arena
+        .get_identifier_at(mapped.type_node)
+        .is_some_and(|name| name.escaped_text == param_name.escaped_text)
+}
+
 pub(crate) fn is_zero_arg_call_like_expr_in_arena(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -361,5 +474,96 @@ mod tests {
     fn is_zero_arg_call_like_unwraps_parentheses() {
         let (parser, idx) = parse_first_expression("(foo());");
         assert!(is_zero_arg_call_like_expr_in_arena(parser.get_arena(), idx));
+    }
+
+    // ---------- arrayToEnum recovery primitives -----------------------------
+
+    #[test]
+    fn callee_name_matches_bare_identifier() {
+        let (parser, idx) = parse_first_expression("arrayToEnum;");
+        assert!(callee_is_array_to_enum_named(parser.get_arena(), idx));
+    }
+
+    #[test]
+    fn callee_name_matches_property_access_member() {
+        let (parser, idx) = parse_first_expression("util.arrayToEnum;");
+        assert!(callee_is_array_to_enum_named(parser.get_arena(), idx));
+    }
+
+    #[test]
+    fn callee_name_matches_deep_property_access_member() {
+        let (parser, idx) = parse_first_expression("a.b.arrayToEnum;");
+        assert!(callee_is_array_to_enum_named(parser.get_arena(), idx));
+    }
+
+    #[test]
+    fn callee_name_rejects_renamed_binder() {
+        // A user identifier that merely contains the substring must not match;
+        // the name-key is an exact-segment check, not a substring test.
+        let (parser, idx) = parse_first_expression("notArrayToEnumish;");
+        assert!(!callee_is_array_to_enum_named(parser.get_arena(), idx));
+    }
+
+    #[test]
+    fn callee_name_rejects_property_access_with_other_member() {
+        let (parser, idx) = parse_first_expression("arrayToEnum.other;");
+        assert!(!callee_is_array_to_enum_named(parser.get_arena(), idx));
+    }
+
+    #[test]
+    fn literal_names_extracts_string_members_for_bare_callee() {
+        let (parser, idx) = parse_first_expression(r#"arrayToEnum(["a", "b", "c"]);"#);
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+        );
+    }
+
+    #[test]
+    fn literal_names_extracts_string_members_for_property_access_callee() {
+        let (parser, idx) = parse_first_expression(r#"util.arrayToEnum(["x", "y"]);"#);
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            Some(vec!["x".to_string(), "y".to_string()]),
+        );
+    }
+
+    #[test]
+    fn literal_names_skips_non_string_members() {
+        let (parser, idx) = parse_first_expression(r#"arrayToEnum(["a", 1, "b"]);"#);
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            Some(vec!["a".to_string(), "b".to_string()]),
+        );
+    }
+
+    #[test]
+    fn literal_names_rejects_renamed_callee() {
+        // The same call shape under a different identifier must not be recovered;
+        // this is the anti-hardcoding contract — the name-key lives in exactly
+        // one place and any other identifier yields `None`.
+        let (parser, idx) = parse_first_expression(r#"makeEnum(["a", "b"]);"#);
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            None
+        );
+    }
+
+    #[test]
+    fn literal_names_rejects_non_array_first_argument() {
+        let (parser, idx) = parse_first_expression(r#"arrayToEnum("a");"#);
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            None
+        );
+    }
+
+    #[test]
+    fn literal_names_returns_none_for_non_call() {
+        let (parser, idx) = parse_first_expression("arrayToEnum;");
+        assert_eq!(
+            array_to_enum_call_literal_names(parser.get_arena(), idx),
+            None
+        );
     }
 }
