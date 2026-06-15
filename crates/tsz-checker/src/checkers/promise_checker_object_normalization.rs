@@ -164,6 +164,17 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Intrinsics (`number`, `string`, `boolean`, `any`, `never`, …) are
+        // normalization fixpoints that can never recur, so the memo would only
+        // ever store `type_id -> type_id`. Skip the cycle-guard/stamp/memo
+        // bookkeeping for them — they are the dominant leaf of the walk, and
+        // paying a thread-local set access plus a stamp recompute per leaf is
+        // pure overhead. Mirrors the `is_intrinsic` fast path in
+        // `evaluate_type_for_assignability`.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
         // Re-entrant cycle: return the type opaque. Taking membership for the
         // duration of the walk also means the memo can never observe a result
         // derived from an in-flight (not-yet-fixpointed) evaluation of the same
@@ -186,11 +197,26 @@ impl<'a> CheckerState<'a> {
         let epoch_before = awaited_eval_clamp_epoch();
         let result = self.evaluate_awaited_application_for_assignability_body(type_id, depth);
 
-        // Record only clamp-clean completions: a `depth > 8` bail anywhere in
-        // the subtree (epoch moved) produced a degraded form. The stamp is read
-        // after the walk on purpose — the walk grows the type environments and
-        // the result is valid for that post-walk state.
-        if awaited_eval_clamp_epoch() == epoch_before
+        // Record only clamp-clean completions that actually normalized the type.
+        //
+        // - Identity results (`result == type_id`) are skipped: caching a
+        //   `type_id -> type_id` entry never saves work on a later hit (the body
+        //   would re-derive the same input) yet still pays an insert, and under
+        //   a churning session stamp (each assignment site grows the type
+        //   environments, rolling the memo) those inserts thrash the map
+        //   (allocate/rehash per cleared generation). The combinatorial blowup
+        //   this memo targets is the *rewritten* `Awaited<…>` sub-applications
+        //   reachable through many parents, which are exactly the non-identity
+        //   results, so skipping identities preserves the win while removing the
+        //   overhead on awaited-free assignability paths.
+        // - A `depth > 8` bail anywhere in the subtree (epoch moved) produced a
+        //   degraded form a shallower re-evaluation must improve on, so it is
+        //   never recorded.
+        //
+        // The stamp is read after the walk on purpose — the walk grows the type
+        // environments and the result is valid for that post-walk state.
+        if result != type_id
+            && awaited_eval_clamp_epoch() == epoch_before
             && !self.ctx.depth_exceeded.get()
             && let Some(stamp) = self.assignability_eval_memo_stamp()
         {
