@@ -1308,16 +1308,40 @@ impl<'a> CheckerState<'a> {
                 original_arg_type
             };
 
-            if self
-                .ctx
-                .arena
-                .get(arg_idx)
-                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
-                && self.ctx.enclosing_class.is_some()
+            // Resolve polymorphic `this` references inside an argument to the
+            // concrete enclosing class/interface instance type for inference.
+            // The flow type of a `this` reference is the bare `ThisType` marker,
+            // which carries no structure: matched against a generic parameter
+            // the constraint walker collects zero candidates, so the inferred
+            // type parameter falls back to its constraint (`unknown`) — an
+            // invisible result in covariant positions but a false TS2345 in a
+            // contravariant (function-parameter) position. `tsc` resolves a
+            // `this` argument to the enclosing instance type before inference;
+            // mirror that using the active `this` binding (the concrete receiver
+            // pushed while checking the member body).
+            //
+            // The substitution is deep, so it also reaches `this` nested inside
+            // a freshly built argument (e.g. `[this]` → `Foo[]`), not just a
+            // top-level `this` argument. It is gated on the argument type
+            // actually containing a `ThisType` (so a Lazy reference to another
+            // class with fluent `this`-returning methods is untouched — its
+            // `this` stays opaque inside the unresolved reference) and on a
+            // concrete enclosing `this` being available, so it never rewrites a
+            // marker into another marker. The separate final assignability
+            // recheck reads the original argument types, so it still re-resolves
+            // `this` against the receiver and is unaffected.
+            if self.ctx.enclosing_class.is_some()
+                && common::contains_this_type(self.ctx.types, arg_type)
                 && !self.is_this_in_nested_function_without_own_this_binding(arg_idx)
+                && let Some(resolved_this) = self.current_this_type()
+                && !common::is_this_type(self.ctx.types, resolved_this)
             {
-                changed = true;
-                arg_type = self.ctx.types.this_type();
+                let substituted =
+                    common::substitute_this_type(self.ctx.types, arg_type, resolved_this);
+                if substituted != arg_type {
+                    changed = true;
+                    arg_type = substituted;
+                }
             }
 
             if let Some(declared) =
