@@ -740,10 +740,36 @@ impl TypeInterner {
 
     /// Intern a string into an Atom.
     /// This is used when constructing types with property names or string literals.
+    ///
+    /// Hot property and type-parameter names (`"T"`, `"length"`,
+    /// `"[Symbol.iterator]"`, ...) are re-interned tens of thousands of times on
+    /// type-heavy workloads. A thread-local direct-mapped cache scoped by this
+    /// interner's `instance_id` collapses repeats to a hash + array index + byte
+    /// compare, avoiding the shard `RwLock` and the double hash inside
+    /// `ShardedInterner::intern`. The cache only ever returns an `Atom` the
+    /// interner already minted, so interning stays deterministic (same string ->
+    /// same `Atom`); a full byte/length compare on hit rules out collisions.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
         tsz_common::perf_counters::record_interner_string_intern_call();
-        self.string_interner.intern(s)
+
+        // The empty string is the zero `Atom` sentinel; skip the cache.
+        if s.is_empty() {
+            return Atom::NONE;
+        }
+
+        let mut hasher = FxHasher::default();
+        s.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if let Some(atom) = cache::string_probe(hash, self.instance_id, s) {
+            tsz_common::perf_counters::record_interner_string_intern_cache_hit();
+            return atom;
+        }
+
+        let atom = self.string_interner.intern(s);
+        cache::string_insert(hash, self.instance_id, s, atom);
+        atom
     }
 
     /// Resolve an Atom back to its string value.
