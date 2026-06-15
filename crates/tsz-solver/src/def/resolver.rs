@@ -180,6 +180,20 @@ pub trait TypeResolver {
         None
     }
 
+    /// Reverse of [`TypeResolver::resolve_well_known_symbol_name`]: recover the
+    /// canonical `[Symbol.xxx]` property name a well-known `SymbolRef` was
+    /// registered under.
+    ///
+    /// Unique-symbol keys are modeled as `UniqueSymbol(SymbolRef)` in `keyof`
+    /// and indexed-access types, but their object-shape members are stored under
+    /// the canonical text key (e.g. `"[Symbol.iterator]"`). Converting a
+    /// well-known `SymbolRef` back to that text — rather than the synthetic
+    /// `__unique_N` placeholder used for user-authored unique symbols — lets
+    /// member lookup and mapped-type materialization round-trip such keys.
+    fn well_known_symbol_name_for_ref(&self, _symbol: SymbolRef) -> Option<&str> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
@@ -628,6 +642,17 @@ impl TypeEnvironment {
     /// Look up a registered well-known symbol key name.
     pub fn get_well_known_symbol_ref(&self, name: &str) -> Option<SymbolRef> {
         self.well_known_symbol_name_to_ref.get(name).copied()
+    }
+
+    /// Reverse of [`TypeEnvironment::get_well_known_symbol_ref`]: the canonical
+    /// `[Symbol.xxx]` name registered for a well-known symbol `SymbolRef`.
+    ///
+    /// The registry holds only the handful of well-known symbols, so a linear
+    /// scan is cheaper than maintaining a second always-in-sync reverse map.
+    pub fn lookup_well_known_symbol_name(&self, symbol: SymbolRef) -> Option<&str> {
+        self.well_known_symbol_name_to_ref
+            .iter()
+            .find_map(|(name, &reg)| (reg == symbol).then_some(name.as_str()))
     }
 
     /// Set the concrete type that `ThisType` should resolve to.
@@ -1228,6 +1253,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn resolve_well_known_symbol_name(&self, name: &str) -> Option<SymbolRef> {
         self.get_well_known_symbol_ref(name)
+    }
+
+    fn well_known_symbol_name_for_ref(&self, symbol: SymbolRef) -> Option<&str> {
+        self.lookup_well_known_symbol_name(symbol)
     }
 
     fn resolve_type_query(
