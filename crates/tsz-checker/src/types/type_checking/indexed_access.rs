@@ -1577,6 +1577,24 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // Concrete-tuple base indexed by a generic type-param chain
+            // (`Table[D1][0]`, `AddDigitTable[Carry][T][U]`): `tsc` resolves the
+            // chain to the tuple's element-value union (`Base[number]`), whose
+            // key-space accepts the outer index. The generic recovery above keys
+            // off `Base[keyof Base]`, which pollutes the value union with
+            // `length`/array-method values for a tuple base and so spuriously
+            // rejects the element index. Derive the element-value key-space
+            // directly, validating each intermediate index against the tuple's
+            // numeric index domain so out-of-range / `keyof`-based inner
+            // constraints still emit the genuine `TS2536`.
+            if self.generic_tuple_chain_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            ) {
+                return;
+            }
+
             let obj_type_str = self.format_ts2536_object_type(data.object_type, object_type);
             let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
             let prefer_evaluated_index = (evaluated_index_type != TypeId::ERROR

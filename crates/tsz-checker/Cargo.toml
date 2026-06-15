@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "any_user_predicate_keeps_any_for_object_function_tests"
 path = "tests/any_user_predicate_keeps_any_for_object_function_tests.rs"
 [[test]]
+name = "concrete_tuple_generic_index_chain_ts2536_tests"
+path = "tests/concrete_tuple_generic_index_chain_ts2536_tests.rs"
+[[test]]
 name = "cross_file_delegation_lookup_consolidation_tests"
 path = "tests/cross_file_delegation_lookup_consolidation_tests.rs"
 [[test]]
