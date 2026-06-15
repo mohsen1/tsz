@@ -1474,6 +1474,18 @@ pub struct CheckerContext<'a> {
     /// one pass per checker. Entries preserve (file, statement) order.
     pub global_scope_conflict_candidates: OnceCell<Vec<(usize, tsz_parser::parser::NodeIndex)>>,
 
+    /// Lazily-built per-checker set of JSX-runtime module specifiers
+    /// (`<source>/jsx-runtime`, `<source>/jsx-dev-runtime`) implied by the
+    /// program's jsx mode, `jsxImportSource`, and any `@jsxImportSource` /
+    /// `@jsxRuntime` pragmas across *all* files. The cross-file global
+    /// augmentation conflict check needs this set once per file, but it is a
+    /// pure function of the bound program + compiler options (independent of
+    /// the current file), so the previous per-file recomputation rescanned
+    /// every arena's source text for pragmas on every checked file — O(files²)
+    /// string scanning that does no work at all on the common non-JSX project.
+    /// Building it once per checker collapses that to a single pass.
+    pub program_jsx_runtime_modules: OnceCell<FxHashSet<String>>,
+
     /// Memo for `effective_jsx_mode`, keyed by the file index it was computed
     /// for (child checkers and session resets re-point `current_file_idx`).
     /// The mode is a pure function of the file's source text and compiler
