@@ -673,6 +673,27 @@ fn insert(
 // Public specifier-lookup shim
 // ---------------------------------------------------------------------------
 
+thread_local! {
+    // Per-thread memo for `module_specifier_candidates`. The candidate set is a
+    // pure function of the specifier text, so it never needs invalidation.
+    // Modular projects (ts-toolbelt, etc.) re-resolve the same handful of
+    // relative specifiers (`../List/List`, …) across hundreds of files, so this
+    // compatibility shim is hit repeatedly with identical inputs; the memo
+    // collapses the normalize/strip/scan work to one hashmap probe. Bounded in
+    // practice by the project's distinct import specifiers.
+    static CANDIDATES_MEMO: std::cell::RefCell<FxHashMap<String, Vec<String>>> =
+        std::cell::RefCell::new(FxHashMap::default());
+}
+
+/// Clear the per-thread [`module_specifier_candidates`] memo. The candidate set
+/// is a pure function of the specifier so this is never needed for correctness;
+/// it is wired into `clear_all_thread_local_state` at project/row boundaries so
+/// the memo persists across a compilation's files (where the reuse is) but does
+/// not accumulate unbounded across projects on a reused worker thread.
+pub fn reset_module_specifier_candidates_memo() {
+    CANDIDATES_MEMO.with(|memo| memo.borrow_mut().clear());
+}
+
 /// Build lookup keys for a module specifier.
 ///
 /// This is a thin compatibility shim. New code should prefer
@@ -699,12 +720,25 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
     // compatibility shim — and the specifiers that drive it — are visible.
     // The audit's full solution collapses the legacy map and canonical-spec
     // resolver into one entrypoint with one normalized key model; this
-    // visibility hook prepares the migration by exposing call sites.
+    // visibility hook prepares the migration by exposing call sites. Kept ahead
+    // of the memo so hits stay visible to the audit.
     tracing::trace!(
         site = "module_resolution::module_specifier_candidates",
         specifier = specifier,
         "module-specifier compatibility-shim lookup"
     );
+    if let Some(cached) = CANDIDATES_MEMO.with(|memo| memo.borrow().get(specifier).cloned()) {
+        return cached;
+    }
+    let computed = compute_module_specifier_candidates(specifier);
+    CANDIDATES_MEMO.with(|memo| {
+        memo.borrow_mut()
+            .insert(specifier.to_string(), computed.clone());
+    });
+    computed
+}
+
+fn compute_module_specifier_candidates(specifier: &str) -> Vec<String> {
     let Some(canonical) = normalize_import_specifier(specifier) else {
         // Quotes-only or empty input: the raw string is the only key the
         // caller could realistically match on.
