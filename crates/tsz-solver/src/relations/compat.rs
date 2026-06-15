@@ -224,6 +224,24 @@ impl AssignabilityOverrideProvider for NoopOverrideProvider {
 ///
 /// This layer integrates with the "Lawyer" layer to apply nuanced rules
 /// for `any` propagation.
+/// Source of the weak-type classification consumed by
+/// [`CompatChecker::explain_failure`]'s weak block.
+///
+/// `Compute` probes `violates_weak_union`/`violates_weak_type` inline (the
+/// historical behavior for every caller that only needs the reason).
+/// `Precomputed` carries the result of a single shared probe so the
+/// reason-collection boundary can derive both the `weak_union_violation`
+/// boolean and the failure reason from one pass instead of probing the same
+/// pair twice (issue #13243).
+#[derive(Clone, Copy)]
+enum WeakViolation {
+    Compute,
+    Precomputed {
+        violates_union: bool,
+        violates_type: bool,
+    },
+}
+
 pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Optional query database for Salsa-backed memoization.
@@ -1441,6 +1459,65 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        self.explain_failure_with_weak(source, target, WeakViolation::Compute)
+    }
+
+    /// Compute the weak-type classification of a failing `(source, target)` pair
+    /// **once** and derive both the `weak_union_violation` boolean (consumed by
+    /// the checker to route TS2559 vs TS2322/TS2741) and the failure reason from
+    /// the same result.
+    ///
+    /// The reason-collection boundary previously called
+    /// [`is_weak_union_violation`](Self::is_weak_union_violation) (which runs
+    /// `violates_weak_union` + `violates_weak_type`) and then
+    /// [`explain_failure`](Self::explain_failure) (which runs the *same* two weak
+    /// probes again inside its weak block) on every failing pair — each weak
+    /// probe re-extracts object shapes and enumerates properties, so on
+    /// diagnostic-heavy programs the pair runs twice. This single-pass entry runs
+    /// each weak probe once and feeds the result to the reason walk, preserving
+    /// the existing semantics exactly:
+    /// - the boolean is `violates_weak_union || violates_weak_type`,
+    ///   **unconditional** (matching `is_weak_union_violation`, which ignores
+    ///   `skip_weak_type_checks`);
+    /// - the reason's weak branch only fires when `!skip_weak_type_checks`
+    ///   (matching `explain_failure`'s internal guard), so when weak checks are
+    ///   skipped the precomputed booleans drive only the returned flag, never the
+    ///   reason.
+    pub fn analyze_weak_and_explain(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (bool, Option<SubtypeFailureReason>) {
+        let violates_union = self.violates_weak_union(source, target);
+        // `violates_weak_type` is only consulted when the union probe did not
+        // already report a violation, mirroring the short-circuit in both
+        // `is_weak_union_violation` (`a || b`) and `explain_failure` (the second
+        // `if` runs only after the first returns false). Computing it eagerly
+        // would change neither result but would do extra work the original code
+        // never did.
+        let violates_type = if violates_union {
+            false
+        } else {
+            self.violates_weak_type(source, target)
+        };
+        let weak_union_violation = violates_union || violates_type;
+        let reason = self.explain_failure_with_weak(
+            source,
+            target,
+            WeakViolation::Precomputed {
+                violates_union,
+                violates_type,
+            },
+        );
+        (weak_union_violation, reason)
+    }
+
+    fn explain_failure_with_weak(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        weak: WeakViolation,
+    ) -> Option<SubtypeFailureReason> {
         // Fast path: if assignable, no failure to explain
         if source == target {
             return None;
@@ -1479,14 +1556,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Weak type violations — must respect skip_weak_type_checks,
         // matching the guard in is_assignable_impl (TS2559 suppression).
         if !self.skip_weak_type_checks {
-            let violates = self.violates_weak_union(source, target);
-            if violates {
+            // Reuse the caller's single-pass weak classification when present
+            // (`analyze_weak_and_explain`); otherwise probe here as before. Both
+            // paths short-circuit identically: `violates_weak_type` is only
+            // consulted when `violates_weak_union` was false.
+            let violates_union = match weak {
+                WeakViolation::Precomputed { violates_union, .. } => violates_union,
+                WeakViolation::Compute => self.violates_weak_union(source, target),
+            };
+            if violates_union {
                 return Some(SubtypeFailureReason::TypeMismatch {
                     source_type: source,
                     target_type: target,
                 });
             }
-            if self.violates_weak_type(source, target) {
+            let violates_type = match weak {
+                WeakViolation::Precomputed { violates_type, .. } => violates_type,
+                WeakViolation::Compute => self.violates_weak_type(source, target),
+            };
+            if violates_type {
                 return Some(SubtypeFailureReason::NoCommonProperties {
                     source_type: source,
                     target_type: target,

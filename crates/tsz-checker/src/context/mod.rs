@@ -924,6 +924,13 @@ pub struct CheckerContext<'a> {
     /// told apart in `import("<path>").X` messages.
     pub module_path_specifiers: Arc<FxHashMap<u32, String>>,
 
+    /// Set when `ProgramContext::apply_to` pre-populated `module_specifiers`
+    /// and `module_path_specifiers` from the shared program-level maps. When
+    /// true, `set_all_arenas` skips the per-file O(files) rebuild of those two
+    /// maps (they are file-independent and identical for every checker), which
+    /// removes an O(files^2) term from large-program checking.
+    pub module_specifiers_prebuilt: bool,
+
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
@@ -975,6 +982,28 @@ pub struct CheckerContext<'a> {
     /// method's readiness walk O(1) instead of O(signature size). Pure speed
     /// memo: identical to recomputing on demand.
     pub(crate) type_queries_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[tsz_solver::SymbolRef]>>>,
+
+    /// Per-`DefId` history of body `TypeId`s already published to the
+    /// definition store, used to suppress redundant cache invalidation when a
+    /// generic alias re-resolves to an equivalent-but-distinct interned body.
+    ///
+    /// A type reference like `Chain<X>` re-resolves the alias declaration on
+    /// every application (`type_reference_symbol_type_with_params`), and the
+    /// re-lowering can produce one of a small set of structurally-equivalent
+    /// interned bodies (observed: a 2-state flip-flop between the
+    /// declaration-time body and the application-time re-lowered body). Each
+    /// `body_changed` re-publication previously fired a full
+    /// `clear_type_evaluation_caches_for_def` sweep, so a file with `N` distinct
+    /// applications of the same alias paid `O(N)` sweeps over an `O(N)`-growing
+    /// `env_eval_cache` — `O(N^2)`. Recording the bodies a def has already held
+    /// lets the registration path recognize the oscillation: re-publishing a
+    /// body the def already published before is a benign re-resolution that
+    /// introduces no new staleness beyond what the first occurrence already
+    /// invalidated, so the sweep is skipped. The set is tiny (bounded by the
+    /// number of distinct equivalent re-lowerings, typically 1-2 per def) and
+    /// is keyed by `DefId`, a structural identity, not by any name or fixture.
+    pub(crate) def_published_bodies:
+        RefCell<FxHashMap<tsz_solver::def::DefId, smallvec::SmallVec<[TypeId; 2]>>>,
 
     /// Memoizes parsed `package.json` payloads (keyed by package-root path) for
     /// the `typesVersions` import-redirect fallback. Without it,

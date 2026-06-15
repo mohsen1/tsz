@@ -1315,6 +1315,52 @@ impl<'a> CheckerState<'a> {
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
         self.pop_symbol_dependency();
 
+        // Fold cross-file `declare module` augmentations into an exported
+        // interface's materialized body at this canonical resolution point, so
+        // every downstream cache (symbol_types, both type environments, the
+        // shared def store) observes the SAME augmented body. Doing it only on
+        // the type-reference path (`type_reference_symbol_type`) left this path —
+        // reached for the solver's def-store registration and cross-file
+        // delegation — publishing the un-augmented body, which then shadowed the
+        // augmented form at every `keyof` / Application / assignability site
+        // (#13653, extends the same-module #13509 fix to the cross-file path).
+        // `apply_self_module_augmentations` is a no-op unless the program has
+        // augmentations and the symbol is an exported, non-imported interface.
+        // The `program_has_module_augmentations` guard keeps augmentation-free
+        // programs from paying for the symbol lookup on every interface.
+        //
+        // Only merge when `result` is ALREADY a concrete object/callable shape:
+        // a `Lazy`/unresolved cross-file body (e.g. when this symbol's home file
+        // is not the file currently being checked) would otherwise fall into the
+        // augmentation intersection fallback and cache a degenerate type. Those
+        // cases are handled by the import/type-reference path once the body
+        // resolves; here we only need to keep the *materialized* body augmented
+        // so it cannot shadow that path's result in the shared def store.
+        // Cheap checks first: the program-wide augmentation guard, then the
+        // interface-flag test, and only then the per-`TypeId`
+        // `classify_for_augmentation` lookup — so non-interface symbols never pay
+        // for the classification.
+        let result = if self.ctx.program_has_module_augmentations()
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+                .is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::INTERFACE)
+                        && !symbol.has_any_flags(symbol_flags::CLASS)
+                })
+            && matches!(
+                crate::query_boundaries::common::classify_for_augmentation(self.ctx.types, result),
+                crate::query_boundaries::common::AugmentationTargetKind::Object(_)
+                    | crate::query_boundaries::common::AugmentationTargetKind::ObjectWithIndex(_)
+                    | crate::query_boundaries::common::AugmentationTargetKind::Callable(_)
+            ) {
+            self.apply_self_module_augmentations(sym_id, result)
+        } else {
+            result
+        };
+
         // Pop from resolution stack
         if use_local_symbol_state {
             self.ctx.symbol_resolution_stack.pop();
