@@ -359,11 +359,23 @@ function validateMeasurementProfileConsistency(profiles) {
   return warnings;
 }
 
+// Project-compatibility validation is split into two severities (issue #13607):
+//   - blocking: conditions that make the merged artifact itself unsafe to trust,
+//     so the merge step must exit non-zero. Today this is only DUPLICATE project
+//     rows (a corrupt/double-counted artifact).
+//   - advisory: project-compatibility metadata gaps (a project row absent, a
+//     missing compatibility object/field, fixture-source or red/yellow blocker
+//     metadata gaps). These degrade a row to non-green/incomplete downstream but
+//     must NOT block publishing the benchmark TIMING data, which is the website's
+//     primary content. The genuinely-unsafe TIMING conditions (fewer than the
+//     expected shards, a missing REQUIRED timing row) are enforced independently
+//     by the bench.yml shard-count gate and check-artifact-readiness.mjs.
 function collectProjectCompatibilityFailures(rows) {
+  const blocking = [];
+  const advisory = [];
   const projectRows = rows.filter((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
-  if (projectRows.length === 0) return [];
+  if (projectRows.length === 0) return { blocking, advisory };
 
-  const failures = [];
   const seenNames = new Set();
   const duplicateNames = new Set();
 
@@ -374,14 +386,16 @@ function collectProjectCompatibilityFailures(rows) {
       seenNames.add(row.name);
     }
   }
+  // Duplicate rows are always blocking: a duplicated project row means the
+  // artifact double-counts a benchmark, which corrupts win/timing totals.
   for (const name of [...duplicateNames].sort()) {
-    failures.push(`${name}: duplicate project row`);
+    blocking.push(`${name}: duplicate project row`);
   }
 
   if (projectRows.some((row) => REQUIRED_PROJECT_ROW_SET.has(row.name))) {
     for (const name of REQUIRED_PROJECT_ROWS) {
       if (!seenNames.has(name)) {
-        failures.push(`${name}: missing project row`);
+        advisory.push(`${name}: missing project row`);
       }
     }
   }
@@ -392,32 +406,32 @@ function collectProjectCompatibilityFailures(rows) {
     // before the artifact step ran). They must never appear as speed wins.
     if (row.artifact_missing === true) continue;
     if (!row.compatibility || typeof row.compatibility !== "object") {
-      failures.push(`${row.name}: missing compatibility object`);
+      advisory.push(`${row.name}: missing compatibility object`);
       continue;
     }
     for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
       if (!Object.hasOwn(row.compatibility, field)) {
-        failures.push(`${row.name}: missing compatibility.${field}`);
+        advisory.push(`${row.name}: missing compatibility.${field}`);
       }
     }
-    failures.push(...collectFixtureSourceFailures(row.name, row.compatibility.fixture_sources));
+    advisory.push(...collectFixtureSourceFailures(row.name, row.compatibility.fixture_sources));
     const state = String(row.compatibility.state || "").toLowerCase();
     if (state === "red" || state === "yellow") {
       if (!isNonEmptyString(row.compatibility.first_failure_class)) {
-        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must name the first blocker`);
+        advisory.push(`${row.name}: red/yellow compatibility.first_failure_class must name the first blocker`);
       }
       if (!isNonEmptyStringArray(row.compatibility.known_blockers)) {
-        failures.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
+        advisory.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
       } else if (
         isNonEmptyString(row.compatibility.first_failure_class) &&
         row.compatibility.first_failure_class.trim() !== row.compatibility.known_blockers.find(isNonEmptyString).trim()
       ) {
-        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must match the first known blocker`);
+        advisory.push(`${row.name}: red/yellow compatibility.first_failure_class must match the first known blocker`);
       }
     }
   }
 
-  return failures;
+  return { blocking, advisory };
 }
 
 function firstNonEmpty(...values) {
@@ -517,10 +531,19 @@ function main() {
     compatibilityJsonlFiles,
   );
 
-  const failures = collectProjectCompatibilityFailures(results);
-  if (failures.length > 0) {
-    console.error("Project compatibility artifact validation failed:");
-    for (const failure of failures) {
+  const { blocking: compatBlocking, advisory: compatAdvisory } = collectProjectCompatibilityFailures(results);
+  if (compatAdvisory.length > 0) {
+    // Advisory project-compatibility gaps must NOT block publishing benchmark
+    // timing data (issue #13607). Surface them as GitHub annotations and keep
+    // going so the merged artifact is still written and published.
+    console.warn("::warning::Project compatibility validation found advisory gaps; publishing benchmark timing data anyway:");
+    for (const failure of compatAdvisory) {
+      console.warn(`  - ${failure}`);
+    }
+  }
+  if (compatBlocking.length > 0) {
+    console.error("Project compatibility artifact validation failed (blocking):");
+    for (const failure of compatBlocking) {
       console.error(`  - ${failure}`);
     }
     process.exit(1);
@@ -562,6 +585,7 @@ function main() {
       runner_signature_required: requireRunnerSignature,
       runner_environment_warnings: runnerEnvironmentWarnings,
       measurement_profile_warnings: measurementProfileWarnings,
+      project_compatibility_advisory: compatAdvisory,
     },
     ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
     ...(measurementProfile ? { measurement_profile: measurementProfile } : {}),

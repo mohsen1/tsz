@@ -104,9 +104,23 @@ pub fn widen_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -
     }
     // Note: literals, unions, intersections, objects, arrays, and tuples may
     // still contain widenable data, so they must go through the full path.
+    //
+    // Widening is a pure function of the immutable interned type, but the call
+    // below allocates a fresh per-call recursion guard, so a wide union widened
+    // once per reference recomputes the full O(N) member walk every time —
+    // O(N^2) over an N-arm discriminated-union switch (#13598). Memoize the
+    // canonical-flag result root-wide so repeats collapse to O(1). Only this
+    // entry uses the memo; `widen_type_deep`/display variants compute different
+    // results for the same `TypeId` (e.g. they descend function parameters) and
+    // must not read or write it.
+    if let Some(widened) = db.widen_type_memo(type_id) {
+        return widened;
+    }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false, false, false)
+    let result = widen_type_cached(db, type_id, &mut cache, true, true, false, false, false);
+    db.set_widen_type_memo(type_id, result);
+    result
 }
 
 /// Widen for diagnostic display: like `widen_type` but preserves boolean

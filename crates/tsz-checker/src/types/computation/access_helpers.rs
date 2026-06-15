@@ -903,11 +903,12 @@ impl<'a> CheckerState<'a> {
         // parameter) cannot produce a member-wise TS2536 in tsc against a
         // CONCRETE receiver union: tsc keeps the matching receiver deferred as
         // `Map[T]`, and `keyof Map[T] <= keyof Map[T]` holds by identity. tsz
-        // eagerly distributes small `Map[T]` receivers into their value-type
-        // union (see `LARGE_OBJECT_DEFERRAL_THRESHOLD` in the index-access
-        // evaluator), which would otherwise manufacture a member-keyof
-        // mismatch tsc never checks (conformance `intersectionsOfLargeUnions2`
-        // after predicate narrowing to `U extends ElementTagNameMap[T]`).
+        // distributes a `Map[T]` receiver into its value-type union when the
+        // distribution is lossless (see `keyof_constraint_distribution_is_lossy`
+        // in the index-access evaluator), which would otherwise manufacture a
+        // member-keyof mismatch tsc never checks (conformance
+        // `intersectionsOfLargeUnions2` after predicate narrowing to
+        // `U extends ElementTagNameMap[T]`).
         //
         // The suppression deliberately requires BOTH:
         // - generic `keyof` inner (a concrete `P extends keyof A` against an

@@ -1014,20 +1014,38 @@ fn maybe_nullable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `T extends X | undefined` reference is seen as possibly-undefined at a
 /// property/element access or call target.
 pub fn is_generic_type_with_union_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
+    // Intrinsics can never be instantiable or a union/intersection of such, so
+    // short-circuit before the memo lookup (cheaper than a cache probe).
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    // The answer is a pure function of the type structure (instantiable kinds and
+    // their structural base constraints), so memoize it root-wide. Constraint
+    // positions re-ask this for every reference to the same symbol, which for a
+    // wide N-member union turns into an O(N) member scan per reference — O(N^2)
+    // over an N-arm discriminated-union switch (#13598). The memo collapses the
+    // repeated scans of the same union `TypeId` to O(1).
+    if let Some(cached) = db.is_generic_with_union_constraint_cached(type_id) {
+        return cached;
+    }
+    let result = match db.lookup(type_id) {
         Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
             .type_list(list)
             .iter()
             .any(|&member| is_generic_type_with_union_constraint(db, member)),
         _ => {
-            if !is_instantiable_type(db, type_id) {
-                return false;
+            if is_instantiable_type(db, type_id) {
+                let base = get_base_constraint_or_type(db, type_id);
+                base != type_id
+                    && (matches!(db.lookup(base), Some(TypeData::Union(_)))
+                        || maybe_nullable(db, base))
+            } else {
+                false
             }
-            let base = get_base_constraint_or_type(db, type_id);
-            base != type_id
-                && (matches!(db.lookup(base), Some(TypeData::Union(_))) || maybe_nullable(db, base))
         }
-    }
+    };
+    db.set_is_generic_with_union_constraint_cache(type_id, result);
+    result
 }
 
 /// tsc's `isGenericTypeWithoutNullableConstraint`, combined with the `someType`
@@ -1040,7 +1058,16 @@ pub fn is_generic_type_with_union_constraint(db: &dyn TypeDatabase, type_id: Typ
 /// constraint and the index is a generic index type, the access keeps its
 /// deferred `T[K]` form instead of being substituted.
 pub fn is_generic_type_without_nullable_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    // Pure function of type structure; memoized root-wide for the same reason as
+    // `is_generic_type_with_union_constraint` — the `obj[key]` constraint-position
+    // exception re-asks it per reference over potentially wide unions (#13598).
+    if let Some(cached) = db.is_generic_without_nullable_constraint_cached(type_id) {
+        return cached;
+    }
+    let result = match db.lookup(type_id) {
         Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
             .type_list(list)
             .iter()
@@ -1049,7 +1076,9 @@ pub fn is_generic_type_without_nullable_constraint(db: &dyn TypeDatabase, type_i
             is_instantiable_type(db, type_id)
                 && !maybe_nullable(db, get_base_constraint_or_type(db, type_id))
         }
-    }
+    };
+    db.set_is_generic_without_nullable_constraint_cache(type_id, result);
+    result
 }
 
 /// Substitute a constraint-position reference's type with its base constraint,

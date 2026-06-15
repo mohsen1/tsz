@@ -998,21 +998,20 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         kind: NameLookupKind,
     ) {
-        if matches!(kind, NameLookupKind::ExportedMember) {
-            return;
-        }
+        // `ExportedMember` lookups never produce a not-found diagnostic here; the
+        // exhaustive match (no wildcard) returns early for it, so adding a
+        // `NameLookupKind` variant forces a decision instead of compiling silently.
+        let req = match kind {
+            NameLookupKind::Value => NameResolutionRequest::value(name, idx),
+            NameLookupKind::Type => NameResolutionRequest::type_ref(name, idx),
+            NameLookupKind::Namespace => NameResolutionRequest::namespace(name, idx),
+            NameLookupKind::ExportedMember => return,
+        };
 
         // Delegate to the shared suggestion collector which applies all
         // suppression predicates (accessibility modifiers, spread elements,
         // arguments, max cap, parse errors).
         let suggestions = self.collect_spelling_suggestions(name, idx);
-
-        let req = match kind {
-            NameLookupKind::Value => NameResolutionRequest::value(name, idx),
-            NameLookupKind::Type => NameResolutionRequest::type_ref(name, idx),
-            NameLookupKind::Namespace => NameResolutionRequest::namespace(name, idx),
-            NameLookupKind::ExportedMember => unreachable!(),
-        };
 
         let failure = if suggestions.is_empty() {
             ResolutionFailure::not_found()

@@ -26,23 +26,6 @@ use crate::objects::apparent::literal_value_intrinsic_kind;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
 
-/// Threshold at which `O[T]` with a generic `T extends keyof O` index should
-/// be left deferred instead of distributed into the per-key value-type union.
-///
-/// Below this many properties, the eager expansion is cheap and downstream
-/// callers (property/method lookup, contextual typing, narrowing) rely on the
-/// resolved value-type union to find members like `Array<O[T]>.push`. At or
-/// above this many properties — `JSX.IntrinsicElements` from `react16.d.ts`
-/// (~150 keys, each a complex generic `DetailedHTMLProps<...>` application) is
-/// the canonical case — the expansion becomes quadratic in `|keyof O|`,
-/// hitting tens of seconds on a single relation and ballooning the type
-/// graph at every relation site. tsc keeps these accesses deferred; this
-/// matches the pre-evaluation key-identity rejection that the upper layers
-/// apply for the same shape, so downstream relation diagnostics see the
-/// unevaluated `IndexAccess` and can emit the canonical TS2322 + TS5075
-/// elaboration on it instead of comparing two identical value-type unions.
-const LARGE_OBJECT_DEFERRAL_THRESHOLD: usize = 60;
-
 struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
     evaluator: &'b mut TypeEvaluator<'a, R>,
     object_type: TypeId,
@@ -239,6 +222,34 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         self.constraint_is_keyof_of_object(constraint)
     }
 
+    /// True when resolving `O[K]` for a bare type-parameter index `K extends
+    /// keyof O` through `K`'s constraint would distribute over two or more
+    /// properties whose value types are not all identical — i.e. it would
+    /// collapse the generic indexed access into a *lossy* value-type union
+    /// (`O["a"] | O["b"] | …`).
+    ///
+    /// tsc keeps `O[K]` deferred for a generic key: `getIndexedAccessType`
+    /// returns an `IndexedAccessType`, never the value union. tsz's
+    /// constraint-distribution fallback is a convenience that is only sound when
+    /// it does not lose information — a single property, or several properties
+    /// that all share one value type, resolve to the same thing the deferred
+    /// form would per key, so distributing is harmless. When the value types
+    /// differ the distributed union is observably wrong: a homomorphic mapped
+    /// element function `(x: O[K]) => O[K]`, once invoked, would otherwise
+    /// return `O[keyof O]` (every value type) instead of `O[K]`, producing a
+    /// false TS2322 against the declared `O[K]` return. This check gates the
+    /// distribution to the lossless case and defers the lossy one.
+    fn keyof_constraint_distribution_is_lossy(&mut self, props: &[PropertyInfo]) -> bool {
+        if !self.index_is_type_param_constrained_by_keyof_of_this_object() {
+            return false;
+        }
+        let mut value_types = props.iter().map(|prop| prop.type_id);
+        let Some(first) = value_types.next() else {
+            return false;
+        };
+        value_types.any(|value_type| value_type != first)
+    }
+
     /// True iff `constraint` (possibly nested in an intersection) is structurally
     /// `keyof X` where `X` is the same as `self.object_type` (modulo evaluation).
     /// We accept either form: the raw `KeyOf(X)` TypeData or its evaluated form
@@ -265,8 +276,45 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         let Some(inner) = inner else {
             return false;
         };
+        // Key-preserving wrappers (`Partial<O>`, `Readonly<O>`) evaluate to an
+        // object whose key set equals `O`'s, so `keyof O` is still the exact key
+        // space of the object being indexed even though the wrapper changed
+        // modifiers/values; the distribution is just as lossy, so `Partial<O>[K]`
+        // must defer like `O[K]`. Otherwise fall back to identical property-name
+        // sets (no applicable index signature on either side).
         self.evaluator
             .constraints_semantically_match(inner, self.object_type)
+            || self.constraint_inner_keys_match_object(inner)
+    }
+
+    /// True when `inner` evaluates to an object whose property-name set is exactly
+    /// `self.object_type`'s, with neither carrying an applicable index signature.
+    fn constraint_inner_keys_match_object(&mut self, inner: TypeId) -> bool {
+        use crate::visitors::visitor::object_shape_id;
+
+        let evaluated_inner = self.evaluator.evaluate(inner);
+        let interner = self.evaluator.interner();
+        let (Some(o_id), Some(i_id)) = (
+            object_shape_id(interner, self.object_type),
+            object_shape_id(interner, evaluated_inner),
+        ) else {
+            return false;
+        };
+        let (o_shape, i_shape) = (interner.object_shape(o_id), interner.object_shape(i_id));
+        if o_shape.string_index.is_some()
+            || o_shape.number_index.is_some()
+            || i_shape.string_index.is_some()
+            || i_shape.number_index.is_some()
+            || o_shape.properties.is_empty()
+            || o_shape.properties.len() != i_shape.properties.len()
+        {
+            return false;
+        }
+        let mut o_keys: Vec<_> = o_shape.properties.iter().map(|p| p.name).collect();
+        let mut i_keys: Vec<_> = i_shape.properties.iter().map(|p| p.name).collect();
+        o_keys.sort_unstable();
+        i_keys.sort_unstable();
+        o_keys == i_keys
     }
 
     /// Check if the index type is an intersection that contains the mapped type's constraint.
@@ -637,19 +685,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .object_shape(ObjectShapeId(shape_id));
 
-        // Defer `O[T]` when the index is a type parameter whose constraint is
-        // `keyof O` (the object currently being indexed) AND distributing T's
-        // constraint over every key of O would produce an unmanageable value-type
-        // union — i.e. O has many properties (think `JSX.IntrinsicElements` with
-        // ~150 keys mapped to complex generic Applications). tsc keeps `O[T]`
-        // deferred for any generic key, but the cost of eager expansion is what
-        // matters at scale: small Os can be expanded safely (and downstream code
-        // still relies on the eager value-type union for property/method lookup
-        // on Array-of-O[T] etc.). The threshold is the smallest property count
-        // above which the quadratic expansion becomes noticeable in CI.
-        if shape.properties.len() >= LARGE_OBJECT_DEFERRAL_THRESHOLD
-            && self.index_is_type_param_constrained_by_keyof_of_this_object()
-        {
+        // Defer `O[K]` when the index is a bare type parameter `K extends keyof O`
+        // (the object currently being indexed) and distributing `K`'s constraint
+        // over every key would produce a lossy value-type union. tsc keeps such a
+        // generic indexed access deferred; resolving it through the constraint here
+        // collapses `O[K]` into `O["a"] | O["b"] | …`, which breaks call-return
+        // computation for homomorphic mapped element functions `(x: O[K]) => O[K]`
+        // (the invocation would return the value union instead of `O[K]` and fire a
+        // false TS2322). The lossless case (single key, or all value types
+        // identical) still resolves through the constraint, matching the per-key
+        // answer downstream conditional-mapped evaluation relies on. Indexing by
+        // `keyof O` itself (a `KeyOf`, not a type parameter) is unaffected, so
+        // `{ [P in keyof T]: T[P] }[keyof T]` stays a union. The deferral also
+        // sidesteps the quadratic value-union expansion for large interfaces
+        // (e.g. `JSX.IntrinsicElements`) independent of property count.
+        if self.keyof_constraint_distribution_is_lossy(&shape.properties) {
             return None;
         }
 
@@ -678,8 +728,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .object_shape(ObjectShapeId(shape_id));
 
-        if shape.properties.len() >= LARGE_OBJECT_DEFERRAL_THRESHOLD
-            && self.index_is_type_param_constrained_by_keyof_of_this_object()
+        // See `visit_object`: defer a lossy `O[K]` distribution for a bare type
+        // parameter constrained by `keyof O`. An object with an applicable index
+        // signature can satisfy any key, so its presence makes the distribution
+        // non-lossy (the deferred form would resolve through the same signature).
+        if shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && self.keyof_constraint_distribution_is_lossy(&shape.properties)
         {
             return None;
         }

@@ -275,7 +275,13 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 self.emit_js_synthetic_expression_statement(stmt_idx);
             }
-            _ => unreachable!(),
+            // `kind` is matched against `u16` syntax-kind constants, so a catch-all
+            // is required; non-declaration kinds already returned early via
+            // `is_declaration_kind`, so reaching here is a contract violation.
+            _ => unreachable!(
+                "only declaration-kind statements reach this dispatch; \
+                 non-declaration kinds return early via `is_declaration_kind`"
+            ),
         }
 
         let did_emit = self.writer.len() != before_len;

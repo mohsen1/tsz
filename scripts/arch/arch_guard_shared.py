@@ -1367,7 +1367,18 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3155→3040 after the #8204 module-path ratchet PR's
         # arch-smoke run caught current-main slack in the live count.
-        3040,
+        #
+        # Bumped 3040→3045 for the deferred generic `O[K]` parity fix: the
+        # source constraint-widening relation fallback
+        # (`relation_outcome_helpers.rs`), the deferred-target literal
+        # sensitivity probe (`error_reporter/core/diagnostic_source.rs`), and the
+        # contextual-literal constraint recursion (`computed_helpers.rs`) consult
+        # the index-access shape through `query_boundaries::common` helpers
+        # (`index_access_types`, `type_param_info`, `is_index_access_type`) — the
+        # only sanctioned exposure of those solver structural queries to the
+        # checker, matching the direct-call pattern already used throughout these
+        # files. No new quarantine entry.
+        3045,
     ),
 ]
 
