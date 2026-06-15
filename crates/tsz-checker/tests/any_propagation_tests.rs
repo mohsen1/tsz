@@ -12,8 +12,7 @@
 //! - any in function signatures
 //! - any with strict mode pragmas
 
-use crate::checker::context::CheckerOptions;
-use crate::test_fixtures::TestContext;
+use tsz_checker::context::CheckerOptions;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -30,12 +29,11 @@ interface Promise<T> {}
 
 fn test_no_errors(source: &str) {
     let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
-    let ctx = TestContext::new();
-    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
         &source,
         "test.ts",
         CheckerOptions::default(),
-        &ctx.lib_files,
+        &[],
     );
     let semantic_errors: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
     if !semantic_errors.is_empty() {
@@ -52,12 +50,11 @@ fn test_no_errors(source: &str) {
 
 fn test_expect_error(source: &str, expected_error_substring: &str) {
     let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
-    let ctx = TestContext::new();
-    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
         &source,
         "test.ts",
         CheckerOptions::default(),
-        &ctx.lib_files,
+        &[],
     );
     let found_error = diagnostics
         .iter()

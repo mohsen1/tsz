@@ -827,6 +827,28 @@ impl Server {
                 }));
             }
 
+            // `fixClassIncorrectlyImplementsInterface` is served here by the
+            // synthetic planner rather than `tsz_lsp`'s AST `implement_interface`
+            // provider (issue #13063). The two are NOT interchangeable yet:
+            //   - The synthetic planner resolves the interface across sibling
+            //     open files / imports and inserts the required `import { … }`
+            //     lines; the AST provider only handles same-file interfaces and
+            //     adds no imports.
+            //   - The synthetic planner emits the tsserver protocol shape this
+            //     family's fourslash baselines expect: `fixName`/`fixId`
+            //     `fixClassIncorrectlyImplementsInterface` plus
+            //     `fixAllDescription`, as a whole-file replacement. The AST
+            //     provider emits a cursor-positioned insertion titled
+            //     "Implement N missing member(s)" with `data: None`, which the
+            //     handler maps to a plain `quickfix` with no `fixId`.
+            // The same text-scraping helpers also back the cross-file `TS2420`
+            // diagnostic synthesis (`synthetic_implements_interface_diagnostics`)
+            // that this fix services, so they are not dead either. Rerouting is
+            // tracked in #13063 behind porting cross-file + import support and
+            // the protocol shape into the AST provider, gated on fourslash.
+            //
+            // The `retain` below de-dupes a provider-emitted action carrying this
+            // `fixId` should one ever appear, keeping a single canonical fix.
             if let Some(action) = self.synthetic_implement_interface_codefix(
                 file_path,
                 &content,
