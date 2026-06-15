@@ -16,6 +16,7 @@
 
 use super::instantiate::TypeSubstitution;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::options::solver_options;
 use crate::types::TypeId;
 
 /// Bit positions for the packed instantiator mode byte. This byte layout is
@@ -41,53 +42,16 @@ pub struct InstantiationOptions {
     shallow_this_only: bool,
 }
 
+// The `const new` / `with_*` / getter triple is macro-generated from the flag
+// list; only the `mode_bits` packing is bespoke to this stage.
+solver_options!(InstantiationOptions {
+    substitute_infer / with_substitute_infer,
+    preserve_meta_types / with_preserve_meta_types,
+    preserve_unsubstituted_type_params / with_preserve_unsubstituted_type_params,
+    shallow_this_only / with_shallow_this_only,
+});
+
 impl InstantiationOptions {
-    /// Construct the default option set (every flag off).
-    pub const fn new() -> Self {
-        Self {
-            substitute_infer: false,
-            preserve_meta_types: false,
-            preserve_unsubstituted_type_params: false,
-            shallow_this_only: false,
-        }
-    }
-
-    pub const fn with_substitute_infer(mut self, enabled: bool) -> Self {
-        self.substitute_infer = enabled;
-        self
-    }
-
-    pub const fn with_preserve_meta_types(mut self, enabled: bool) -> Self {
-        self.preserve_meta_types = enabled;
-        self
-    }
-
-    pub const fn with_preserve_unsubstituted_type_params(mut self, enabled: bool) -> Self {
-        self.preserve_unsubstituted_type_params = enabled;
-        self
-    }
-
-    pub const fn with_shallow_this_only(mut self, enabled: bool) -> Self {
-        self.shallow_this_only = enabled;
-        self
-    }
-
-    pub const fn substitute_infer(self) -> bool {
-        self.substitute_infer
-    }
-
-    pub const fn preserve_meta_types(self) -> bool {
-        self.preserve_meta_types
-    }
-
-    pub const fn preserve_unsubstituted_type_params(self) -> bool {
-        self.preserve_unsubstituted_type_params
-    }
-
-    pub const fn shallow_this_only(self) -> bool {
-        self.shallow_this_only
-    }
-
     /// Pack the option set into the `u8` mode-bits expected by
     /// [`InstantiationCacheKey`].
     pub const fn mode_bits(self) -> u8 {

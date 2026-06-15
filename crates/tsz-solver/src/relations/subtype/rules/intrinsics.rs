@@ -125,6 +125,58 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Apply a structural predicate over a composite `source` — a union,
+    /// intersection, or type parameter — using the variance-correct policy that
+    /// every such predicate must share:
+    ///
+    /// - **Union (`all`)**: the predicate holds only if it holds for *every*
+    ///   member (a union value could be any member, so all must qualify).
+    /// - **Intersection (`any`)**: the predicate holds if it holds for *any*
+    ///   member (an intersection value is all members at once, so one qualifying
+    ///   member suffices). Omitted entirely when `check_intersection` is `false`
+    ///   — `is_global_object_interface_type` deliberately has no intersection arm.
+    /// - **Type parameter**: the predicate holds if the parameter has a
+    ///   constraint that satisfies `constraint_leaf`.
+    ///
+    /// This is the all-over-union / any-over-intersection soundness contract;
+    /// centralizing it means a future predicate cannot silently drop a branch.
+    /// The recursion leaf is parameterized because it differs per predicate
+    /// (some recurse into themselves, `is_object_keyword_type` falls back to a
+    /// `check_subtype(_, OBJECT)` for its constraint arm), so this is a helper
+    /// rather than a verbatim macro.
+    ///
+    /// Returns `Some(result)` when `source` matched one of the composite arms,
+    /// or `None` when it is not a composite source so the caller falls through to
+    /// its own leaf checks. The union/intersection/type-parameter `TypeData`
+    /// variants are mutually exclusive, so the internal arm order does not change
+    /// any outcome.
+    fn predicate_over_composite(
+        &mut self,
+        source: TypeId,
+        member_leaf: fn(&mut Self, TypeId) -> bool,
+        constraint_leaf: fn(&mut Self, TypeId) -> bool,
+        check_intersection: bool,
+    ) -> Option<bool> {
+        if let Some(members) = union_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return Some(members.iter().all(|&m| member_leaf(self, m)));
+        }
+
+        if check_intersection && let Some(members) = intersection_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return Some(members.iter().any(|&m| member_leaf(self, m)));
+        }
+
+        if let Some(info) = type_param_info(self.interner, source) {
+            return Some(
+                info.constraint
+                    .is_some_and(|constraint| constraint_leaf(self, constraint)),
+            );
+        }
+
+        None
+    }
+
     /// Check if a type is assignable to the `object` keyword type.
     ///
     /// The `object` keyword represents non-primitive types in TypeScript.
@@ -193,20 +245,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(inner, TypeId::OBJECT).is_true();
         }
 
-        if let Some(members) = union_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members.iter().all(|&m| self.is_object_keyword_type(m));
-        }
-
-        if let Some(members) = intersection_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members.iter().any(|&m| self.is_object_keyword_type(m));
-        }
-
-        if let Some(info) = type_param_info(self.interner, source) {
-            return info.constraint.is_some_and(|constraint| {
-                self.check_subtype(constraint, TypeId::OBJECT).is_true()
-            });
+        // Union (all) / intersection (any) / type-parameter recursion. The
+        // member leaf recurses into this predicate; the type-parameter
+        // constraint instead defers to `check_subtype(_, OBJECT)`.
+        if let Some(result) = self.predicate_over_composite(
+            source,
+            Self::is_object_keyword_type,
+            |checker, constraint| checker.check_subtype(constraint, TypeId::OBJECT).is_true(),
+            true,
+        ) {
+            return result;
         }
 
         if let Some(def_id) = lazy_def_id(self.interner, source) {
@@ -233,21 +281,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .unwrap_or(true);
         }
 
-        if let Some(members) = union_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members
-                .iter()
-                .all(|&member| self.is_global_object_interface_type(member));
+        // Union (all) / type-parameter recursion, both recursing into this
+        // predicate. The global `Object` interface accepts primitives, so unlike
+        // `object`/`Function` it deliberately has *no* intersection arm
+        // (`check_intersection` is `false`): an intersection is handled by the
+        // `true` fallthrough below, not by an any-over-members check.
+        if let Some(result) = self.predicate_over_composite(
+            source,
+            Self::is_global_object_interface_type,
+            Self::is_global_object_interface_type,
+            false,
+        ) {
+            return result;
         }
 
         if let Some(inner) = readonly_inner_type(self.interner, source) {
             return self.is_global_object_interface_type(inner);
-        }
-
-        if let Some(info) = type_param_info(self.interner, source) {
-            return info
-                .constraint
-                .is_some_and(|constraint| self.is_global_object_interface_type(constraint));
         }
 
         true
@@ -309,20 +358,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
 
-        if let Some(members) = union_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members.iter().all(|&m| self.is_callable_type(m));
-        }
-
-        if let Some(members) = intersection_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members.iter().any(|&m| self.is_callable_type(m));
-        }
-
-        if let Some(info) = type_param_info(self.interner, source) {
-            return info
-                .constraint
-                .is_some_and(|constraint| self.is_callable_type(constraint));
+        // Union (all) / intersection (any) / type-parameter recursion, all
+        // recursing into this predicate.
+        if let Some(result) = self.predicate_over_composite(
+            source,
+            Self::is_callable_type,
+            Self::is_callable_type,
+            true,
+        ) {
+            return result;
         }
 
         false

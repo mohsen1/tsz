@@ -6,6 +6,7 @@
 //! engine is staged into explicit pipeline steps.
 
 use crate::narrowing::core::{GuardSense, TypeGuard};
+use crate::options::IndexAccessOptions;
 use crate::types::TypeId;
 
 /// Options that affect narrowing results.
@@ -14,36 +15,43 @@ use crate::types::TypeId;
 /// named boolean fields. Any compiler option that changes which type a guard
 /// produces must appear here so the narrowing cache key stays accurate without
 /// ad-hoc bit-flag maintenance.
+///
+/// Embeds the shared [`IndexAccessOptions`] newtype, which `EvaluationOptions`
+/// also embeds, so the `{no_unchecked_indexed_access,
+/// exact_optional_property_types}` pair has a single definition. The derived
+/// `Hash` reduces to that newtype's `Hash`, which hashes the two `bool` fields
+/// in the same order as before, keeping `NarrowTypeCacheKey` hashing
+/// byte-identical.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub struct NarrowingOptions {
-    no_unchecked_indexed_access: bool,
-    exact_optional_property_types: bool,
+    index_access: IndexAccessOptions,
 }
 
 impl NarrowingOptions {
     pub const fn new() -> Self {
         Self {
-            no_unchecked_indexed_access: false,
-            exact_optional_property_types: false,
+            index_access: IndexAccessOptions::new(),
         }
     }
 
     pub const fn with_no_unchecked_indexed_access(mut self, enabled: bool) -> Self {
-        self.no_unchecked_indexed_access = enabled;
+        self.index_access = self.index_access.with_no_unchecked_indexed_access(enabled);
         self
     }
 
     pub const fn with_exact_optional_property_types(mut self, enabled: bool) -> Self {
-        self.exact_optional_property_types = enabled;
+        self.index_access = self
+            .index_access
+            .with_exact_optional_property_types(enabled);
         self
     }
 
     pub const fn no_unchecked_indexed_access(self) -> bool {
-        self.no_unchecked_indexed_access
+        self.index_access.no_unchecked_indexed_access()
     }
 
     pub const fn exact_optional_property_types(self) -> bool {
-        self.exact_optional_property_types
+        self.index_access.exact_optional_property_types()
     }
 }
 

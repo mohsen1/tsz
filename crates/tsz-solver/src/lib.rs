@@ -40,6 +40,7 @@ mod limits;
 pub mod narrowing;
 pub mod objects;
 pub mod operations;
+pub mod options;
 pub mod recursion;
 pub mod relations;
 #[cfg(test)]
