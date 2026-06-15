@@ -126,7 +126,7 @@ for (const e of s) { const b: boolean = e; }
     );
 }
 
-/// `for await ... of` over a DeepReadonly async-iterable must likewise keep the
+/// `for await ... of` over a `DeepReadonly` async-iterable must likewise keep the
 /// `[Symbol.asyncIterator]` member.
 #[test]
 fn for_await_of_deep_readonly_async_iterable_no_ts2504() {
