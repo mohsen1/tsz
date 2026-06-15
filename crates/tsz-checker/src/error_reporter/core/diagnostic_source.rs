@@ -1288,6 +1288,34 @@ impl<'a> CheckerState<'a> {
         if target == TypeId::UNDEFINED || target == TypeId::NULL {
             return true;
         }
+        // A deferred generic indexed access `O[K]` (K a type parameter, e.g.
+        // `K extends keyof O`) stays unevaluated rather than distributing into
+        // the value-type union. tsc still preserves a source literal against
+        // such a target when the value union reachable through `K`'s constraint
+        // admits it (`Type '123' is not assignable to type 'Type[K]'`, not
+        // `'number'`). Consult the constraint value union `O[keyof O]` for the
+        // literal-sensitivity decision; the displayed target text stays `O[K]`.
+        if let Some((object_type, index_type)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+            && let Some(index_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+            && let Some(index_constraint) = index_param.constraint
+        {
+            self.ensure_relation_input_ready(object_type);
+            let evaluated_object = self.evaluate_type_with_env(object_type);
+            let value_index_access = self
+                .ctx
+                .types
+                .factory()
+                .index_access(evaluated_object, index_constraint);
+            let value_union = self.evaluate_type_with_env(value_index_access);
+            if value_union != target
+                && value_union != TypeId::ERROR
+                && self.is_literal_sensitive_assignment_target_inner(value_union)
+            {
+                return true;
+            }
+        }
         self.is_literal_sensitive_assignment_target_inner(target)
     }
 

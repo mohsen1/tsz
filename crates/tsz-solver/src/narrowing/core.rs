@@ -693,6 +693,75 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// True when distributing `object_type[index_type]` through `index_type`'s
+    /// constraint would be *lossy* — i.e. `index_type` is a bare type parameter
+    /// constrained by `keyof object_type` and `object_type` has two or more
+    /// named properties whose value types are not all identical, with no
+    /// applicable index signature to make the access uniform.
+    ///
+    /// Mirrors the index-access evaluator's `keyof_constraint_distribution_is_lossy`
+    /// so narrowing keeps a generic `O[K]` deferred for exactly the shapes the
+    /// evaluator defers, instead of collapsing it into the value-type union
+    /// `O["a"] | O["b"] | …`. The lossless case (single key, or all value types
+    /// identical) is left to distribute through the constraint as before.
+    fn keyof_index_distribution_is_lossy(&self, object_type: TypeId, index_type: TypeId) -> bool {
+        use crate::visitor::{keyof_inner_type, object_shape_id};
+
+        let Some(info) = type_param_info(self.db, index_type) else {
+            return false;
+        };
+        let Some(constraint) = info.constraint else {
+            return false;
+        };
+        // The constraint must be `keyof X` where `X` is the indexed object
+        // (modulo evaluation), so the deferred key space is exactly `keyof O`.
+        let Some(keyof_inner) = keyof_inner_type(self.db, constraint).or_else(|| {
+            let evaluated = self.db.evaluate_type(constraint);
+            (evaluated != constraint)
+                .then(|| keyof_inner_type(self.db, evaluated))
+                .flatten()
+        }) else {
+            return false;
+        };
+        let Some(shape_id) = object_shape_id(self.db, object_type) else {
+            return false;
+        };
+        let shape = self.db.object_shape(shape_id);
+        // An applicable index signature makes the access uniform, so the deferred
+        // form would resolve through the same signature — not lossy.
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            return false;
+        }
+        // The constrained key space `keyof <inner>` must cover exactly the indexed
+        // object's keys, so the deferral applies to `O[K]` (and key-preserving
+        // wrappers like `Partial<O>[K]`, whose keys equal `O`'s) but not to an
+        // unrelated `B[K]` where `K extends keyof A` and `B`'s keys differ.
+        if keyof_inner != object_type && self.db.evaluate_type(keyof_inner) != object_type {
+            let Some(inner_shape_id) = object_shape_id(self.db, self.db.evaluate_type(keyof_inner))
+            else {
+                return false;
+            };
+            let inner_shape = self.db.object_shape(inner_shape_id);
+            let mut object_keys: Vec<Atom> =
+                shape.properties.iter().map(|prop| prop.name).collect();
+            let mut inner_keys: Vec<Atom> = inner_shape
+                .properties
+                .iter()
+                .map(|prop| prop.name)
+                .collect();
+            object_keys.sort_unstable();
+            inner_keys.sort_unstable();
+            if object_keys != inner_keys {
+                return false;
+            }
+        }
+        let mut values = shape.properties.iter().map(|prop| prop.type_id);
+        let Some(first) = values.next() else {
+            return false;
+        };
+        values.any(|value_type| value_type != first)
+    }
+
     fn resolve_type_uncached(&self, mut type_id: TypeId) -> TypeId {
         // Prevent infinite loops with a fuel counter
         let mut fuel = 100;
@@ -803,7 +872,25 @@ impl<'a> NarrowingContext<'a> {
                 Some(TypeData::IndexAccess(obj, idx)) => {
                     let resolved_obj = self.resolve_type(obj);
                     let resolved_idx = if let Some(info) = type_param_info(self.db, idx) {
-                        info.constraint.map(|c| self.resolve_type(c)).unwrap_or(idx)
+                        // Substitute `K`'s constraint (e.g. `keyof O`) to distribute
+                        // `O[K]` — but only when that distribution is *lossless*.
+                        // For a bare `K extends keyof O` over an object whose
+                        // properties have differing value types, distributing
+                        // collapses `O[K]` into the value-type union `O["a"] |
+                        // O["b"] | …`, which the index-access evaluator deliberately
+                        // defers (tsc keeps a generic `O[K]` an `IndexedAccessType`).
+                        // Distributing it here let a truthiness-narrowed
+                        // `Partial<O>[K]` local widen its property access to the
+                        // value union (correlatedUnions `if (myObj) myObj.name`).
+                        // The lossless case (single key, or all value types
+                        // identical — e.g. `A[K]` for `A` with one property) still
+                        // substitutes, so `value !== null` narrowing of `A[K]`
+                        // resolves to the concrete value union it then refines.
+                        if self.keyof_index_distribution_is_lossy(resolved_obj, idx) {
+                            idx
+                        } else {
+                            info.constraint.map(|c| self.resolve_type(c)).unwrap_or(idx)
+                        }
                     } else {
                         self.resolve_type(idx)
                     };

@@ -426,6 +426,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
+        // Nested generic indexed-access target `O[K]["p"]`: the outer index
+        // `"p"` is concrete but the inner object `O[K]` is a deferred generic
+        // indexed access (e.g. `MyObj[K]["name"]`). tsc relates the source to the
+        // constraint of such a target — the value union reachable through `K`'s
+        // constraint, indexed by the outer key — so `string | number <=
+        // MyObj[K]["name"]` holds (correlatedUnions). Compute the inner upper
+        // bounds, index each by the outer key, and check the source against the
+        // resulting constraint.
+        if type_param_info(self.interner, t_idx).is_none()
+            && index_access_parts(self.interner, t_obj).is_some()
+            && self.source_fits_nested_index_access_constraint(source, t_obj, t_idx)
+        {
+            return true;
+        }
+
         // Check if index is a generic type parameter
         let Some(t_param) = type_param_info(self.interner, t_idx) else {
             return false;
@@ -482,6 +497,58 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         true
+    }
+
+    /// Relate `source` to a nested deferred indexed-access target
+    /// `inner_obj[outer_key]` where `inner_obj` is itself a generic indexed
+    /// access (`O[K]`) and `outer_key` is concrete (`"name"`).
+    ///
+    /// tsc keeps `O[K]["name"]` deferred but relates a source to its constraint:
+    /// the value union reachable through `K`'s constraint (`O[keyof O]`), indexed
+    /// by the outer key — `({ name: string } | { name: number })["name"]` =
+    /// `string | number`. The source is accepted when it is assignable to that
+    /// constraint. This is the target-side analogue of the source-side
+    /// constraint widening; it only relaxes the target via its declared upper
+    /// bound, so an unrelated source (e.g. `boolean`) is still rejected.
+    fn source_fits_nested_index_access_constraint(
+        &mut self,
+        source: TypeId,
+        inner_obj: TypeId,
+        outer_key: TypeId,
+    ) -> bool {
+        let Some((object_type, key_type)) = index_access_parts(self.interner, inner_obj) else {
+            return false;
+        };
+        let original = self.interner.index_access(object_type, key_type);
+        let mut candidates = Vec::new();
+        self.collect_index_access_upper_bound_candidates(
+            object_type,
+            key_type,
+            original,
+            &mut candidates,
+        );
+
+        let mut indexed_constraints = Vec::new();
+        for candidate in candidates {
+            if candidate == original || candidate == TypeId::ERROR {
+                continue;
+            }
+            let indexed = self.evaluate_type(self.interner.index_access(candidate, outer_key));
+            // Skip an indexed result that is still a deferred index access — it
+            // carries no concrete constraint to compare against and would loop.
+            if indexed == TypeId::ERROR || index_access_parts(self.interner, indexed).is_some() {
+                continue;
+            }
+            if !indexed_constraints.contains(&indexed) {
+                indexed_constraints.push(indexed);
+            }
+        }
+
+        if indexed_constraints.is_empty() {
+            return false;
+        }
+        let constraint = crate::utils::union_or_single(self.interner, indexed_constraints);
+        self.check_subtype(source, constraint).is_true()
     }
 
     pub(crate) fn check_index_access_source_upper_bound_subtype(

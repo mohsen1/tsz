@@ -369,6 +369,41 @@ impl<'a> CheckerState<'a> {
                 return self.contextual_type_allows_literal_inner(prop_type, literal_type, visited);
             }
         }
+        // Deferred generic indexed access `O[K]` where `K` is a type parameter
+        // (e.g. `K extends keyof O`): tsc keeps `O[K]` deferred but, for literal
+        // preservation, `isLiteralOfContextualType` recurses through the
+        // constraint of the indexed access — the value-type union `O[keyof O]`
+        // reachable through `K`'s constraint. A return/assignment of a literal
+        // against a contextual `O[K]` therefore stays a literal whenever the
+        // value union admits it. Without this, deferring `O[K]` (instead of
+        // distributing it into the value union, as the index-access evaluator
+        // now does) would widen the source literal — e.g. `return 123` against
+        // `Type[K]` would display `number` rather than `123`. The constraint is
+        // evaluated for the literal check only; the contextual type itself is
+        // left deferred so display and relation positions still see `O[K]`.
+        if let Some((object_type, index_type)) = index_access_types(self.ctx.types, ctx_type)
+            && let Some(index_param) = common::type_param_info(self.ctx.types, index_type)
+            && let Some(index_constraint) = index_param.constraint
+        {
+            self.ensure_relation_input_ready(object_type);
+            let evaluated_object = self.evaluate_type_with_env(object_type);
+            let value_index_access = self
+                .ctx
+                .types
+                .factory()
+                .index_access(evaluated_object, index_constraint);
+            let value_union = self.evaluate_type_with_env(value_index_access);
+            if value_union != ctx_type
+                && value_union != TypeId::ERROR
+                && !visited.contains(&value_union)
+            {
+                return self.contextual_type_allows_literal_inner(
+                    value_union,
+                    literal_type,
+                    visited,
+                );
+            }
+        }
         // Generic `keyof` contexts preserve literal arguments.
         if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
             && (common::type_param_info(self.ctx.types, keyof_inner).is_some()

@@ -50,6 +50,62 @@ pub struct SubtypeVisitor<'a, 'b, R: TypeResolver> {
     pub target: TypeId,
 }
 
+impl<R: TypeResolver> SubtypeVisitor<'_, '_, R> {
+    /// Distribute the source intersection over its first union member, dropping
+    /// arms whose intersection with the remaining members reduces to `never`.
+    ///
+    /// `(A | undefined) & B` becomes `(A & B) | (undefined & B)`; for a `B`
+    /// disjoint from `undefined` the second arm is `never`, leaving `A & B`.
+    /// This simplification is what tsc applies before relating such a source to
+    /// a target, and it is what lets a deferred member (`A = O[K]`) relate even
+    /// though the unevaluated `A | undefined` union never reduces on its own.
+    ///
+    /// Returns `Some(simplified)` only when at least one arm dropped to `never`
+    /// (so the result is a strict simplification); otherwise `None`, leaving the
+    /// caller's other relation paths to decide.
+    fn distribute_intersection_over_union_member(
+        &mut self,
+        member_list: &[TypeId],
+    ) -> Option<TypeId> {
+        let union_pos = member_list
+            .iter()
+            .position(|&m| union_list_id(self.checker.interner, m).is_some())?;
+        let union_member = member_list[union_pos];
+        let arms = {
+            let list_id = union_list_id(self.checker.interner, union_member)?;
+            self.checker.interner.type_list(list_id)
+        };
+        let others: Vec<TypeId> = member_list
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &m)| (i != union_pos).then_some(m))
+            .collect();
+
+        let mut distributed = Vec::with_capacity(arms.len());
+        let mut dropped_arm = false;
+        for &arm in arms.iter() {
+            let mut intersection_members = Vec::with_capacity(others.len() + 1);
+            intersection_members.push(arm);
+            intersection_members.extend_from_slice(&others);
+            let arm_intersection = self.checker.interner.intersection(intersection_members);
+            let evaluated = self.checker.evaluate_type(arm_intersection);
+            if evaluated == TypeId::NEVER {
+                dropped_arm = true;
+                continue;
+            }
+            distributed.push(evaluated);
+        }
+
+        if !dropped_arm || distributed.is_empty() {
+            return None;
+        }
+        Some(crate::utils::union_or_single(
+            self.checker.interner,
+            distributed,
+        ))
+    }
+}
+
 impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     type Output = SubtypeResult;
 
@@ -303,6 +359,26 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 if self.checker.check_subtype(member, self.target).is_true() {
                     return SubtypeResult::True;
                 }
+            }
+
+            // Distribute the intersection over a union member, dropping arms that
+            // reduce to `never`. tsc relates `(A | undefined) & B` to a target by
+            // first simplifying it to `(A & B) | (undefined & B)` = `A & B` (the
+            // `undefined & B` arm is `never` for disjoint `B`). When a deferred
+            // member like `A = O[K]` keeps the union unevaluated, the plain
+            // member-subtype check above misses this — neither `A | undefined`
+            // nor `B` alone is a subtype, but the simplified `A & B` is. Only
+            // fire when distribution actually drops an arm (otherwise it is a
+            // no-op that risks looping), and reuse the existing relation on the
+            // simplified union.
+            if let Some(simplified) = self.distribute_intersection_over_union_member(&member_list)
+                && simplified != self.source
+                && self
+                    .checker
+                    .check_subtype(simplified, self.target)
+                    .is_true()
+            {
+                return SubtypeResult::True;
             }
         }
 
