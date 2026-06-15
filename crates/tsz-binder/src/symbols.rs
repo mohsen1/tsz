@@ -753,6 +753,44 @@ impl SymbolTable {
         self.symbols.iter()
     }
 
+    /// Merge entries from `source` whose `SymbolId` satisfies `keep`, preserving
+    /// both the authoritative name keys and the same-arena `AstAtom` side-index.
+    ///
+    /// Used when promoting a namespace/module scope's declarations into its
+    /// export table at scope exit: the source scope table already carries atom
+    /// side-keys (populated by `declare_in_persistent_scope_with_atom`), and
+    /// copying them forward keeps export-table lookups atom-backed instead of
+    /// degrading to string-only on every namespace boundary. The name map stays
+    /// authoritative, so equality and iteration over names are byte-identical to
+    /// a plain string copy; the atom side-index is a pure accelerator that
+    /// resolves to the same strings within the same arena.
+    pub fn merge_filtered_from<F>(&mut self, source: &Self, mut keep: F)
+    where
+        F: FnMut(SymbolId) -> bool,
+    {
+        // First pass: copy the authoritative name entries for retained symbols.
+        // This mirrors the prior string-only copy exactly, including which
+        // names win on collision (later inserts overwrite earlier ones).
+        let names = Arc::make_mut(&mut self.symbols);
+        for (name, &sym_id) in source.symbols.iter() {
+            if keep(sym_id) {
+                names.insert(name.clone(), sym_id);
+            }
+        }
+        // Second pass: carry the same-arena atom side-keys for retained symbols.
+        // The atom map is keyed by `(arena_owner, AstAtom)` and never collides
+        // across arenas, so copying retained entries cannot resolve a foreign
+        // atom to a local symbol.
+        if !source.atom_symbols.is_empty() {
+            let atoms = Arc::make_mut(&mut self.atom_symbols);
+            for (&key, &sym_id) in source.atom_symbols.iter() {
+                if keep(sym_id) {
+                    atoms.insert(key, sym_id);
+                }
+            }
+        }
+    }
+
     /// Estimate the heap bytes owned by this table (map buckets + name
     /// strings). Capacity-based estimate for residency accounting (#13249
     /// step 1); called only at perf-counter snapshot time.
