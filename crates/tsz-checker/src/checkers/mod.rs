@@ -118,6 +118,12 @@ pub fn clear_all_thread_local_state() {
     // mid-resolution bail-out could leave it non-zero and suppress the cycle
     // drain for every later row on this worker thread (#12299).
     crate::types_domain::queries::lib_resolution::reset_lib_resolution_state();
+
+    // Drop the module-specifier candidate memo. It is a pure function of the
+    // specifier text (no correctness dependence on row state), but clearing at
+    // row boundaries keeps it from accumulating every project's specifiers on a
+    // reused worker thread while preserving within-compilation cross-file reuse.
+    crate::module_resolution::reset_module_specifier_candidates_memo();
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch
