@@ -32,7 +32,7 @@ fn diagnostic_codes(source: &str) -> Vec<u32> {
     diags.into_iter().map(|d| d.code).collect()
 }
 
-/// The reduced DeepReadonly-style recursive homomorphic mapped type that
+/// The reduced `DeepReadonly`-style recursive homomorphic mapped type that
 /// reproduces the ts-essentials micro-bench failure: the template is a
 /// *conditional wrapper* over `T[K]` (non-identity), which forces the per-key
 /// `DeepReadonly<T[K]>` instantiation path through indexed access by the
