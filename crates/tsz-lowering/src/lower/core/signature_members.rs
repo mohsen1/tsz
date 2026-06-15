@@ -1,4 +1,5 @@
 use super::*;
+use crate::lower::host::LoweringHost;
 
 impl<'a> TypeLowering<'a> {
     /// Lower a function-like declaration (Method, Constructor, Function) to a `TypeId`.
@@ -630,13 +631,9 @@ impl<'a> TypeLowering<'a> {
             // binding identity, which matters when user code shadows `Symbol`.
             // The arena-aware variant takes precedence: it distinguishes the same
             // NodeIndex value across different arenas (cross-arena lowering).
-            let arena_ptr: *const NodeArena = self.arena;
-            if let Some(resolver) = self.computed_name_resolver_with_arena
-                && let Some(name) = resolver(computed.expression, arena_ptr)
-            {
-                return Some(name);
-            } else if let Some(resolver) = self.computed_name_resolver
-                && let Some(name) = resolver(computed.expression)
+            if let Some(name) = self
+                .host
+                .resolve_computed_name(computed.expression, self.arena)
             {
                 return Some(name);
             }
@@ -668,12 +665,13 @@ impl<'a> TypeLowering<'a> {
         let Some(computed) = self.arena.get_computed_property(node) else {
             return false;
         };
-        let arena_ptr: *const NodeArena = self.arena;
-        if let Some(resolver) = self.computed_symbol_name_resolver_with_arena {
-            return resolver(computed.expression, arena_ptr);
-        }
-        if let Some(resolver) = self.computed_symbol_name_resolver {
-            return resolver(computed.expression);
+        // A wired symbol resolver answers outright; otherwise fall back to the
+        // syntax-only well-known-`Symbol` check.
+        if let Some(is_symbol) = self
+            .host
+            .computed_name_is_symbol(computed.expression, self.arena)
+        {
+            return is_symbol;
         }
         self.get_well_known_symbol_name(computed.expression)
             .is_some()

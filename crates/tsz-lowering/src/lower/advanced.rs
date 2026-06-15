@@ -2,6 +2,7 @@
 //! literal parsing, type references, and remaining simple type forms.
 
 use super::core::*;
+use super::host::LoweringHost;
 
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -14,8 +15,7 @@ use tsz_solver::types::{
 impl<'a> TypeLowering<'a> {
     fn lower_lazy_def_reference(&self, def_id: tsz_solver::def::DefId) -> TypeId {
         let lazy = self.interner.lazy(def_id);
-        if let Some(resolve_params) = self.lazy_type_params_resolver
-            && let Some(type_params) = resolve_params(def_id)
+        if let Some(type_params) = self.host.resolve_lazy_type_params(def_id)
             && !type_params.is_empty()
             && type_params.iter().all(|param| param.default.is_some())
             && let Some(default_args) =
@@ -528,9 +528,8 @@ impl<'a> TypeLowering<'a> {
 
             // Module resolution requires &mut self (checker state); pick up the
             // checker's pre-resolved result before falling through to the generic lowering.
-            if let Some(resolver) = self.import_type_resolver
-                && self.has_import_call_in_type_name(data.type_name)
-                && let Some(resolved) = resolver(data.type_name)
+            if self.has_import_call_in_type_name(data.type_name)
+                && let Some(resolved) = self.host.resolve_import_type(data.type_name)
             {
                 if let Some(args) = &data.type_arguments
                     && !args.nodes.is_empty()
@@ -572,8 +571,7 @@ impl<'a> TypeLowering<'a> {
                 // params, so resolve them through the solver helper instead of
                 // copying the raw default type.
                 if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                    && let Some(resolve_params) = self.lazy_type_params_resolver
-                    && let Some(type_params) = resolve_params(def_id)
+                    && let Some(type_params) = self.host.resolve_lazy_type_params(def_id)
                     && type_args.len() < type_params.len()
                     && type_params[type_args.len()..]
                         .iter()
@@ -590,8 +588,7 @@ impl<'a> TypeLowering<'a> {
             }
 
             if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                && let Some(resolve_params) = self.lazy_type_params_resolver
-                && let Some(type_params) = resolve_params(def_id)
+                && let Some(type_params) = self.host.resolve_lazy_type_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
                 && let Some(default_args) = tsz_solver::computation::fill_application_defaults(
@@ -832,9 +829,7 @@ impl<'a> TypeLowering<'a> {
             // Check for a pre-resolved type from the checker (e.g., flow-narrowed typeof).
             // This allows `typeof c` inside a type alias body to pick up the narrowed
             // type of `c` when control flow has narrowed it at the declaration site.
-            if let Some(override_fn) = &self.type_query_override
-                && let Some(resolved) = override_fn(data.expr_name)
-            {
+            if let Some(resolved) = self.host.resolve_type_query_override(data.expr_name) {
                 if let Some(args) = &data.type_arguments
                     && !args.nodes.is_empty()
                 {
