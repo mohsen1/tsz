@@ -1378,7 +1378,18 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # only sanctioned exposure of those solver structural queries to the
         # checker, matching the direct-call pattern already used throughout these
         # files. No new quarantine entry.
-        3045,
+        #
+        # Bumped 3045->3057 for the deferred-conditional indexed-access parity
+        # fix (#13654): keeping `O[K]` deferred over a deferred conditional base
+        # adds request-shaped `query_boundaries::common` reads in
+        # `indexed_access.rs`, `constrained_type_param_assertion.rs`,
+        # `signatures_and_advanced.rs`, and `comparability.rs`
+        # (`contains_free_type_parameters`, `types_are_comparable_for_assertion`,
+        # `conditional_branch_union_constraint`, `index_access_types`,
+        # `is_keyof_type`, `is_conditional_type`, `is_generic_application`,
+        # `is_index_access_type`). All are existing request-shaped boundary
+        # helpers already used throughout the checker — no new quarantine entry.
+        3057,
     ),
 ]
 
