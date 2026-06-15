@@ -778,3 +778,165 @@ type UseLocal = Local<string>;
         "Current-file generic aliases must not read type parameters from a colliding cross-file raw SymbolId; got: {diags:#?}"
     );
 }
+
+/// Regression guard for #13599: the cross-arena type-parameter readers must
+/// validate the declaration name before attributing its parameters to a symbol.
+///
+/// A symbol's `decl_idx` is only meaningful inside the arena that owns the
+/// symbol. When an imported symbol's `decl_idx` is read against the importing
+/// file's arena, the same numeric index can land on an unrelated declaration; a
+/// non-generic imported alias then inherited a sibling generic's free type
+/// parameters and the polluted form was cached program-wide. The behavioral leak
+/// only surfaces at real multi-file program-graph depth (it is not reproducible
+/// through the unit-test program builder), so this guards the structural
+/// invariant directly: every arena reader name-guards its type-alias and class
+/// branches (the interface branch always did) via `decl_name_matches_in_arena`.
+#[test]
+fn cross_arena_type_param_readers_name_guard_type_alias_and_class() {
+    let source = std::fs::read_to_string("src/state/type_environment/type_params.rs")
+        .expect("read type_params helper module");
+
+    assert!(
+        source.contains("fn decl_name_matches_in_arena"),
+        "a shared declaration-name guard helper must exist so a foreign \
+         declaration at a colliding node index cannot leak its type parameters"
+    );
+
+    // Each arena-reading helper that extracts type parameters must run the guard.
+    for reader in [
+        "fn type_param_names_in_arena",
+        "fn count_required_params_in_arena",
+        "fn extract_simple_type_params_from_decl_in_arena",
+        "fn extract_type_params_from_decl",
+    ] {
+        let body_start = source
+            .find(reader)
+            .unwrap_or_else(|| panic!("expected reader `{reader}` to exist"));
+        // Look at a generous window of the function body for the guard call.
+        let window = &source[body_start..(body_start + 2200).min(source.len())];
+        assert!(
+            window.matches("decl_name_matches_in_arena").count() >= 1,
+            "reader `{reader}` must name-guard its declaration reads (issue #13599)"
+        );
+    }
+}
+
+/// Positive behavioral companion: a non-generic alias imported from another file
+/// and referenced bare inside a file that also declares an unrelated generic must
+/// produce no arity diagnostics. (Binder names are varied per the anti-hardcoding
+/// gate.)
+#[test]
+fn imported_non_generic_alias_bare_reference_has_no_arity_error() {
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "src/plain.ts",
+                r#"
+export type CharsetConfig = {
+    splitOnNumbers?: boolean;
+    splitOnPunctuation?: boolean;
+};
+export type CharsetDefaults = {
+    splitOnNumbers: true;
+    splitOnPunctuation: false;
+};
+"#,
+            ),
+            (
+                "src/casing.ts",
+                r#"
+import type { CharsetDefaults, CharsetConfig } from "./plain";
+
+export type WidenedConfig = CharsetConfig & {
+    preserveLeadingMarkers?: boolean;
+};
+
+export type WidenedDefaults = CharsetDefaults & {
+    preserveLeadingMarkers: false;
+};
+
+type LeadingMarkers<Type extends string, Markers extends string = ""> =
+    Type extends `_${infer Rest}` ? LeadingMarkers<Rest, `_${Markers}`> : Markers;
+"#,
+            ),
+        ],
+        "src/casing.ts",
+        CheckerOptions::default(),
+    );
+
+    let arity_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2707))
+        .collect();
+    assert_eq!(
+        arity_errors.len(),
+        0,
+        "bare reference to a non-generic imported alias must not report arity \
+         errors; got: {diags:#?}"
+    );
+}
+
+/// Companion to the regression above: an imported *generic* alias keeps its own
+/// arity even when the importing file declares an unrelated generic, and a bare
+/// reference to it still produces the correct missing-argument diagnostic. This
+/// pins that the name guard rejects only foreign declarations, not the symbol's
+/// own cross-file declaration.
+#[test]
+fn imported_generic_alias_keeps_own_arity_across_unrelated_local_generic() {
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "src/shapes.ts",
+                r#"
+export type Wrapper<Payload, Extra = unknown> = {
+    readonly payload: Payload;
+    readonly extra: Extra;
+};
+"#,
+            ),
+            (
+                "src/site.ts",
+                r#"
+import type { Wrapper } from "./shapes";
+
+type GoodUse = Wrapper<string, number>;
+type DefaultedUse = Wrapper<string>;
+type MissingArgs = Wrapper;
+
+type TrimZeros<Whole extends string, Kept extends string = ""> =
+    Whole extends `0${infer Rest}`
+        ? TrimZeros<Rest, `0${Kept}`>
+        : Kept;
+"#,
+            ),
+        ],
+        "src/site.ts",
+        CheckerOptions::default(),
+    );
+
+    // `Wrapper` has one required param (Payload) and one defaulted (Extra), so a
+    // bare reference reports exactly one "between 1 and 2" diagnostic (TS2707) —
+    // and crucially the arity (and the displayed param names) come from Wrapper
+    // itself, not from the importer's local 2-param generic.
+    let arity_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2707))
+        .collect();
+    assert_eq!(
+        arity_errors.len(),
+        1,
+        "Imported generic alias must keep its own arity (1 required of 2) for the \
+         bare reference, independent of the importer's local generic; got: {diags:#?}"
+    );
+    let arity = &arity_errors[0];
+    assert_eq!(
+        arity.code, 2707,
+        "single-required + one-defaulted generic should emit TS2707; got: {diags:#?}"
+    );
+    assert!(
+        arity.message_text.contains("Wrapper<Payload, Extra>"),
+        "the diagnostic must display Wrapper's own parameters, not the importer's \
+         local generic's; got: {:?}",
+        arity.message_text
+    );
+}

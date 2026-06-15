@@ -15,7 +15,7 @@ Use for PR checks, CI triage, ready state, queue evidence, and landing. Use
   high`).
 - The PR author lands their own PR; never idle-wait on CI between pushes.
 - Never merge draft/WIP PRs (`draft`, `WIP`, `[WIP]`, or body/branch says WIP).
-- Ready PRs run heavy CI. Draft PRs intentionally run light CI.
+- Every open PR runs the full CI suite (draft or not); path-based content skips apply only to docs-only or tooling-only diffs.
 - Ready PRs land through GitHub's native merge queue.
 - If asked to land, verify `state: MERGED`; an armed queue request alone is not enough.
 
