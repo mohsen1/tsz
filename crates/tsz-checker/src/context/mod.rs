@@ -963,6 +963,19 @@ pub struct CheckerContext<'a> {
     /// a pure speed memo: identical to recomputing on demand.
     pub(crate) lazy_def_ids_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[DefId]>>>,
 
+    /// Memoizes the set of `TypeQuery` (`typeof X`) symbol references reachable
+    /// from a type (the structural `collect_type_queries` walk). Like
+    /// `lazy_def_ids_cache`, the walk is pure over the immutable interned type
+    /// structure, so the result is stable for a `TypeId`. It is re-run for the
+    /// same (large, lib-heavy) types from the relation-readiness worklist
+    /// (`ensure_refs_resolved`) once per distinct DOM/lib method signature, where
+    /// it re-walks the whole signature tree — usually finding zero `typeof`
+    /// references — and shows up in `walk_referenced_types` on DOM-heavy files.
+    /// Caching (including the common empty result) makes the Nth distinct
+    /// method's readiness walk O(1) instead of O(signature size). Pure speed
+    /// memo: identical to recomputing on demand.
+    pub(crate) type_queries_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[tsz_solver::SymbolRef]>>>,
+
     /// Memoizes parsed `package.json` payloads (keyed by package-root path) for
     /// the `typesVersions` import-redirect fallback. Without it,
     /// `types_versions_redirected_target_index` re-reads and re-parses the same

@@ -71,6 +71,30 @@ impl<'a> CheckerContext<'a> {
         collected
     }
 
+    /// Memoized `collect_type_queries`: like `collect_lazy_def_ids_cached`, the
+    /// walk is pure over the immutable interned type structure, so the reachable
+    /// `TypeQuery` (`typeof X`) `SymbolRef` set is stable per `type_id`. The
+    /// relation-readiness worklist (`ensure_refs_resolved`) re-walks the whole
+    /// signature tree once per distinct DOM/lib method signature; lib method
+    /// signatures almost never contain `typeof`, so the walk usually returns the
+    /// empty set after a full traversal. Caching that result (empty or not)
+    /// removes the per-distinct-method re-walk. Returns an `Rc` slice for cheap
+    /// clone-on-hit.
+    pub(crate) fn collect_type_queries_cached(
+        &self,
+        type_id: TypeId,
+    ) -> std::rc::Rc<[tsz_solver::SymbolRef]> {
+        if let Some(cached) = self.type_queries_cache.borrow().get(&type_id) {
+            return std::rc::Rc::clone(cached);
+        }
+        let collected: std::rc::Rc<[tsz_solver::SymbolRef]> =
+            crate::query_boundaries::common::collect_type_queries(self.types, type_id).into();
+        self.type_queries_cache
+            .borrow_mut()
+            .insert(type_id, std::rc::Rc::clone(&collected));
+        collected
+    }
+
     fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
         self.collect_lazy_def_ids_cached(type_id).contains(&def_id)
     }

@@ -27,10 +27,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_ts2411_type(&mut self, type_id: TypeId) -> String {
-        let type_queries =
-            crate::query_boundaries::common::collect_type_queries(self.ctx.types, type_id);
+        let type_queries = self.ctx.collect_type_queries_cached(type_id);
         let mut replacements = Vec::new();
-        for symbol_ref in type_queries {
+        for symbol_ref in type_queries.iter().copied() {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
             let value_type = self.get_type_of_symbol(sym_id);
             if value_type != TypeId::ANY

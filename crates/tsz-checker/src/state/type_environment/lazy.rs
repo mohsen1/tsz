@@ -1,8 +1,7 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    TypeResolver, collect_type_queries, contains_lazy_or_recursive, enum_def_id,
-    get_type_query_symbol_ref, lazy_def_id,
+    TypeResolver, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::query_boundaries::type_defaults::fill_application_defaults;
@@ -686,8 +685,8 @@ impl<'a> CheckerState<'a> {
     /// correctly evaluate the conditional type, but `ensure_relation_input_ready` is
     /// skipped because we're inside symbol resolution.
     fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {
-        let type_queries = collect_type_queries(self.ctx.types, type_id);
-        for symbol_ref in type_queries {
+        let type_queries = self.ctx.collect_type_queries_cached(type_id);
+        for symbol_ref in type_queries.iter().copied() {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
             let _ = self.get_type_of_symbol(sym_id);
             let value_type = self
