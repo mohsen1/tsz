@@ -251,8 +251,9 @@ count_ts_files() {
 diagnostic_lines_from_file() {
   local label="$1"
   local file="$2"
+  local max="${3:-20}"
 
-  awk -v label="$label" '
+  awk -v label="$label" -v max="$max" '
     {
       sub(/\r$/, "")
       if ($0 ~ /^[[:space:]]*$/) {
@@ -260,7 +261,7 @@ diagnostic_lines_from_file() {
       }
       print label ": " $0
       seen += 1
-      if (seen >= 20) {
+      if (seen >= max) {
         exit
       }
     }
@@ -345,6 +346,7 @@ record_project_compatibility() {
   COMPAT_SOURCE_ROOT="$source_root" \
   COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
   COMPAT_FIXTURE_SOURCES="$fixture_sources" \
+  COMPAT_TSZ_COMMAND_ENV_PREFIX="TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=${TSZ_RUST_MIN_STACK:-536870912}" \
   node scripts/ci/project-compatibility.mjs record
 }
 
@@ -606,7 +608,7 @@ check_project() {
     if [[ "$rc" -eq 124 ]]; then
       timeout_note="$(tsz_timeout_contention_note "$PROJECT_TIMEOUT" \
         "$LAST_TIMEOUT_CPU_SECONDS" "$MIN_CPU_SHARE_PCT")"
-      diagnostic_delta="tsz: ${timeout_note}"$'\n'"$diagnostic_delta"
+      diagnostic_delta="tsz: ${timeout_note}"$'\n'"$(diagnostic_lines_from_file "tsz" "$log" 19)"
       if ! tsz_timeout_is_cpu_bound "$PROJECT_TIMEOUT" "$LAST_TIMEOUT_CPU_SECONDS" "$MIN_CPU_SHARE_PCT"; then
         timeout_unmeasured=1
       fi
@@ -890,7 +892,13 @@ canary_row_in_shard() {
   if [[ -z "$count" ]]; then
     return 0
   fi
+  if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+    fail "_TSZ_CI_CANARY_SHARD_COUNT must be a positive integer, got: $count"
+  fi
   local shard="${_TSZ_CI_CANARY_SHARD_INDEX:-0}"
+  if [[ ! "$shard" =~ ^(0|[1-9][0-9]*)$ ]] || (( shard >= count )); then
+    fail "_TSZ_CI_CANARY_SHARD_INDEX must be an integer in [0, $count), got: $shard"
+  fi
   if (( index % count == shard )); then
     return 0
   fi
