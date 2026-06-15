@@ -364,6 +364,7 @@ impl<'a> CheckerContext<'a> {
             pending_implicit_any_vars: crate::context::CowCache::default(),
             pending_circular_return_sites: PendingCircularReturnSites::default(),
             non_closure_circular_return_tracking_depth: 0,
+            inferred_return_type_memo: FxHashMap::default(),
             reported_implicit_any_vars: crate::context::CowCache::default(),
             inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
