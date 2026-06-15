@@ -27,6 +27,7 @@ symbol_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reas
 symbol_instance_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 enum_namespace_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 var_decl_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+def_published_bodies = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "per-DefId published-body history for benign generic-alias re-resolution detection; reset at file-session boundary" }
 lib_type_resolution_caches = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "file-session lib type and lazy lib-member lookup caches; reset at file-session boundary" }
 lib_delegation_cache = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_member_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
@@ -69,6 +70,7 @@ js_export_surface_resolution_set = { lifetime = "FileLocalReset", capability = "
 expando_property_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 module_specifiers = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 module_path_specifiers = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+module_specifiers_prebuilt = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "marks that the program-stable shared module-specifier maps are installed so set_all_arenas skips the per-file rebuild; set when ProgramContext shares them, valid for the compilation" }
 class_instance_type_to_decl = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 class_instance_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 class_constructor_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
