@@ -1347,6 +1347,64 @@ fn is_substitution_dependent_type_classifies_lazy_vs_type_param() {
     assert!(!is_substitution_dependent_type(&interner, TypeId::ANY));
 }
 
+/// `is_structurally_eval_inert` is the read gate for the resolver-independent
+/// fixed-point fast path: it must be `true` only for types that evaluate to
+/// themselves under every evaluator and resolver. A `Lazy`/`Application`/
+/// `TypeQuery`/type-parameter anywhere in the full structural surface (including
+/// nested under arrays/unions/tuples) disqualifies the type, because a
+/// better-equipped resolver or a substitution could rewrite it. The check is
+/// purely structural (name-agnostic) and stable across the cold and cached
+/// walks.
+#[test]
+fn is_structurally_eval_inert_excludes_resolver_and_substitution_dependent_nodes() {
+    let interner = TypeInterner::new();
+
+    // Intrinsics and concrete structural composites are inert.
+    assert!(is_structurally_eval_inert(&interner, TypeId::STRING));
+    let arr_concrete = interner.array(TypeId::NUMBER);
+    let union_concrete = interner.union2(TypeId::STRING, arr_concrete);
+    assert!(is_structurally_eval_inert(&interner, arr_concrete));
+    assert!(is_structurally_eval_inert(&interner, union_concrete));
+    // Cached re-read is stable.
+    assert!(is_structurally_eval_inert(&interner, union_concrete));
+
+    // A bare Lazy ref is a deferral the resolver could expand: NOT inert, even
+    // though it is not substitution-dependent.
+    let lazy = interner.lazy(crate::def::DefId(7));
+    assert!(!is_structurally_eval_inert(&interner, lazy));
+
+    // A Lazy buried under array/union wrappers still disqualifies the whole
+    // type (full-surface descent).
+    let union_with_lazy = interner.union2(TypeId::STRING, interner.array(lazy));
+    assert!(!is_structurally_eval_inert(&interner, union_with_lazy));
+
+    // An Application is a meta-type the evaluator rewrites: NOT inert.
+    let app = interner.application(lazy, vec![TypeId::STRING]);
+    assert!(!is_structurally_eval_inert(&interner, app));
+
+    // An IndexAccess / KeyOf meta-operation is NOT inert even over concrete
+    // operands (the evaluator computes the element / key set).
+    let idx = interner.index_access(TypeId::OBJECT, TypeId::STRING);
+    let keyof = interner.keyof(TypeId::OBJECT);
+    assert!(!is_structurally_eval_inert(&interner, idx));
+    assert!(!is_structurally_eval_inert(&interner, keyof));
+
+    // Type parameters (any spelling) are substitution-dependent: NOT inert,
+    // and the rule is name-agnostic.
+    for name in ["T", "K", "Element"] {
+        let tp = interner.type_param(crate::types::TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        assert!(!is_structurally_eval_inert(&interner, tp));
+        // Buried inside an array it still propagates up.
+        assert!(!is_structurally_eval_inert(&interner, interner.array(tp)));
+    }
+}
+
 /// The deeply-cached `contains_type_parameters_db` must agree with the
 /// non-cached generic walker for the same shapes, regardless of the iteration
 /// variable's spelling (anti-hardcoding: the rule is structural, not name-based).
