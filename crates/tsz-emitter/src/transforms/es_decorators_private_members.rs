@@ -530,7 +530,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         "has: obj => {has_helper}({private_state}, obj), get: obj => {get_helper}(obj, {private_state}, \"a\", {get_temp}), set: (obj, value) => {{ {set_helper}(obj, {private_state}, value, \"a\", {set_temp}); }}"
                     )
                 }
-                MemberKind::Field => unreachable!(),
+                MemberKind::Field => unreachable!(
+                    "needs_es2015_private_descriptor only matches Method/Getter/Setter/Accessor"
+                ),
             };
         }
 

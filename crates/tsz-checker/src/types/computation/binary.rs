@@ -365,14 +365,20 @@ impl<'a> CheckerState<'a> {
                             }
                             check
                         };
+                    // `should_check_contextual_right` already requires
+                    // `outer_context.is_some()`; rebind it here (rather than
+                    // re-proving via `expect`) so the value is carried by the type
+                    // system. The `is_some()` guard above is retained purely as a
+                    // cheap early-out before the parent-node walk.
                     if should_check_contextual_right
+                        && let Some(outer_context) = outer_context
                         && right_type != TypeId::ANY
                         && right_type != TypeId::ERROR
                         && right_type != TypeId::UNKNOWN
                     {
                         let _ = self.check_assignable_or_report_at_exact_anchor(
                             right_type,
-                            outer_context.expect("guarded by outer_context.is_some() check"),
+                            outer_context,
                             right_idx,
                             right_idx,
                         );

@@ -1332,7 +1332,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
                 UnionCallSignatureCompatibility::Unknown => {}
-                UnionCallSignatureCompatibility::Incompatible => unreachable!(),
+                UnionCallSignatureCompatibility::Incompatible => unreachable!(
+                    "an Incompatible result returns NotCallable early when `compatibility` \
+                     is computed, so it never reaches per-member aggregation"
+                ),
             }
 
             // Arguments resolved successfully — now check deferred `this` error.

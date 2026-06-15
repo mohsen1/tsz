@@ -722,39 +722,21 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Directly compute the class type using the cross-arena class node.
-                // We must re-fetch the class reference between calls because
-                // get_class_instance_type/get_class_constructor_type take &mut self.
-                let (result, cross_instance_type) = if checker
+                // `get_class_instance_type`/`get_class_constructor_type` take
+                // `&mut self`, so a borrow of the arena cannot be held across them.
+                // Clone the class data once (binding it by value) instead of
+                // re-fetching and re-`expect`ing the same arena chain per phase.
+                let cross_class = checker
                     .ctx
                     .arena
                     .get(cross_decl_idx)
                     .and_then(|n| checker.ctx.arena.get_class(n))
-                    .is_some()
-                {
+                    .cloned();
+                let (result, cross_instance_type) = if let Some(class) = cross_class {
                     // Phase 1: compute instance type
-                    let class_ref = checker
-                        .ctx
-                        .arena
-                        .get(cross_decl_idx)
-                        .expect("cross_decl_idx presence was verified by is_some() above");
-                    let class = checker
-                        .ctx
-                        .arena
-                        .get_class(class_ref)
-                        .expect("cross_decl class shape verified by is_some() above");
-                    let instance_type = checker.get_class_instance_type(cross_decl_idx, class);
-                    // Phase 2: compute constructor type (re-fetch class reference)
-                    let class_ref = checker
-                        .ctx
-                        .arena
-                        .get(cross_decl_idx)
-                        .expect("cross_decl_idx presence was verified by is_some() above");
-                    let class = checker
-                        .ctx
-                        .arena
-                        .get_class(class_ref)
-                        .expect("cross_decl class shape verified by is_some() above");
-                    let ctor_type = checker.get_class_constructor_type(cross_decl_idx, class);
+                    let instance_type = checker.get_class_instance_type(cross_decl_idx, &class);
+                    // Phase 2: compute constructor type (same cloned class)
+                    let ctor_type = checker.get_class_constructor_type(cross_decl_idx, &class);
                     (ctor_type, Some(instance_type))
                 } else {
                     (TypeId::UNKNOWN, None)

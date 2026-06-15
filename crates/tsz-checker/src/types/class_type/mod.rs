@@ -2,6 +2,7 @@
 
 pub mod constructor;
 mod core;
+mod core_heritage_merge;
 mod entry;
 mod helpers;
 mod heritage_identity;
