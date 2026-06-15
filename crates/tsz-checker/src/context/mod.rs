@@ -945,6 +945,13 @@ pub struct CheckerContext<'a> {
     /// told apart in `import("<path>").X` messages.
     pub module_path_specifiers: Arc<FxHashMap<u32, String>>,
 
+    /// Set when `ProgramContext::apply_to` pre-populated `module_specifiers`
+    /// and `module_path_specifiers` from the shared program-level maps. When
+    /// true, `set_all_arenas` skips the per-file O(files) rebuild of those two
+    /// maps (they are file-independent and identical for every checker), which
+    /// removes an O(files^2) term from large-program checking.
+    pub module_specifiers_prebuilt: bool,
+
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
