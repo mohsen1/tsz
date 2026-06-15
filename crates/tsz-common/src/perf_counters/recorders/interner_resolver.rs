@@ -18,6 +18,18 @@ pub fn record_interner_string_intern_call() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a `TypeInterner::intern_string` call that was served from the
+/// thread-local string cache (no shard `RwLock`, no `ShardedInterner::intern`).
+#[inline]
+pub fn record_interner_string_intern_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .interner_string_intern_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_type_list` call (covers both the
 /// owning `Vec` entry point and the borrowed-slice entry point).
 #[inline]

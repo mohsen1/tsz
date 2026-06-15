@@ -235,6 +235,10 @@ pub struct PerfCounters {
     pub interner_intern_hits: AtomicU64,
     pub interner_intern_misses: AtomicU64,
     pub interner_string_intern_calls: AtomicU64,
+    /// `intern_string` calls served from the thread-local string cache
+    /// (no shard `RwLock` / `ShardedInterner::intern`). The cache hit rate is
+    /// `interner_string_intern_cache_hits / interner_string_intern_calls`.
+    pub interner_string_intern_cache_hits: AtomicU64,
     pub interner_type_list_intern_calls: AtomicU64,
     pub interner_object_shape_intern_calls: AtomicU64,
     pub interner_function_shape_intern_calls: AtomicU64,
@@ -407,6 +411,7 @@ impl PerfCounters {
             interner_intern_hits: AtomicU64::new(0),
             interner_intern_misses: AtomicU64::new(0),
             interner_string_intern_calls: AtomicU64::new(0),
+            interner_string_intern_cache_hits: AtomicU64::new(0),
             interner_type_list_intern_calls: AtomicU64::new(0),
             interner_object_shape_intern_calls: AtomicU64::new(0),
             interner_function_shape_intern_calls: AtomicU64::new(0),

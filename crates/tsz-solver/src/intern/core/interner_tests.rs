@@ -479,3 +479,104 @@ mod shape_identity {
         );
     }
 }
+
+/// The thread-local string-intern cache must not change `Atom` identity:
+/// interning must stay deterministic (same string -> same `Atom`), and a hit
+/// must never return the `Atom` of a different string.
+mod string_cache {
+    use super::*;
+    use tsz_common::interner::Atom;
+
+    #[test]
+    fn repeated_intern_returns_identical_atom() {
+        let interner = TypeInterner::new();
+        // First call misses the cache and mints the atom; later calls hit it.
+        let a0 = interner.intern_string("length");
+        let a1 = interner.intern_string("length");
+        let a2 = interner.intern_string("length");
+        assert_eq!(a0, a1);
+        assert_eq!(a1, a2);
+        // The atom round-trips back to the original string.
+        assert_eq!(&*interner.resolve_atom_ref(a0), "length");
+    }
+
+    #[test]
+    fn distinct_strings_get_distinct_atoms_through_the_cache() {
+        let interner = TypeInterner::new();
+        let names = [
+            "T",
+            "U",
+            "length",
+            "value",
+            "[Symbol.iterator]",
+            "__@iterator",
+            "prototype",
+            "call",
+            "apply",
+            "bind",
+            "next",
+            "done",
+        ];
+        let mut atoms = Vec::new();
+        // Two interleaved passes exercise both the miss (first pass) and the
+        // hit (second pass) paths for every name.
+        for _ in 0..2 {
+            for (i, name) in names.iter().enumerate() {
+                let atom = interner.intern_string(name);
+                if atoms.len() <= i {
+                    atoms.push(atom);
+                } else {
+                    assert_eq!(atoms[i], atom, "cache changed the atom for {name:?}");
+                }
+                assert_eq!(&*interner.resolve_atom_ref(atom), *name);
+            }
+        }
+        // All distinct names must have distinct atoms (no collision aliasing).
+        for i in 0..atoms.len() {
+            for j in (i + 1)..atoms.len() {
+                assert_ne!(
+                    atoms[i], atoms[j],
+                    "distinct names {:?}/{:?} collapsed to one atom",
+                    names[i], names[j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cache_agrees_with_uncached_shard_interner() {
+        let interner = TypeInterner::new();
+        for name in [
+            "T",
+            "length",
+            "value",
+            "averylongpropertynamethatdoesnotfitinline",
+        ] {
+            // The cached entry point and the raw shard interner must agree.
+            let via_cache = interner.intern_string(name);
+            let via_shard = interner.string_interner.intern(name);
+            assert_eq!(
+                via_cache, via_shard,
+                "cache disagreed with shard for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_string_is_the_none_atom() {
+        let interner = TypeInterner::new();
+        assert_eq!(interner.intern_string(""), Atom::NONE);
+    }
+
+    #[test]
+    fn long_strings_bypass_cache_but_stay_deterministic() {
+        let interner = TypeInterner::new();
+        // Longer than STRING_KEY_INLINE_CAP (23): never cached, always re-interned.
+        let long = "ThisIsAVeryLongTypeParameterOrPropertyNameExceedingInlineCap";
+        assert!(long.len() > 23);
+        let a0 = interner.intern_string(long);
+        let a1 = interner.intern_string(long);
+        assert_eq!(a0, a1);
+        assert_eq!(&*interner.resolve_atom_ref(a0), long);
+    }
+}
