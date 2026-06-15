@@ -4,8 +4,7 @@
 //! to widened variables, preventing excess property checking when the variable
 //! is used as a source in subsequent assignments.
 
-use crate::checker::context::CheckerOptions;
-use crate::test_fixtures::TestContext;
+use tsz_checker::context::CheckerOptions;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -22,12 +21,11 @@ interface Promise<T> {}
 
 fn test_no_errors(source: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-    let ctx = TestContext::new();
-    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
         &source,
         "test.ts",
         CheckerOptions::default(),
-        &ctx.lib_files,
+        &[],
     );
     let errors: Vec<_> = diagnostics
         .iter()
@@ -48,12 +46,11 @@ fn test_no_errors(source: &str) {
 
 fn test_expect_error(source: &str, expected_error_substring: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-    let ctx = TestContext::new();
-    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
         &source,
         "test.ts",
         CheckerOptions::default(),
-        &ctx.lib_files,
+        &[],
     );
     let found_error = diagnostics
         .iter()
