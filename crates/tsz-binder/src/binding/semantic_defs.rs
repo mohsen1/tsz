@@ -31,6 +31,40 @@ impl BinderState {
             .collect()
     }
 
+    /// Compute the type-parameter arity and names from a type-parameter
+    /// `NodeList` in lockstep.
+    ///
+    /// The arity is the node count cast to `u16`, and the names come from
+    /// `collect_type_param_names`. Reading both from the same `Option<&NodeList>`
+    /// in one place prevents the count and names desyncing across the binder's
+    /// type-bearing declaration sites.
+    pub(crate) fn type_param_info(
+        arena: &NodeArena,
+        type_params: Option<&NodeList>,
+    ) -> (u16, Vec<String>) {
+        let count = type_params.map_or(0, |tp| tp.nodes.len() as u16);
+        let names = Self::collect_type_param_names(arena, type_params);
+        (count, names)
+    }
+
+    /// Record a semantic def for a type-bearing declaration.
+    ///
+    /// Thin wrapper over `record_semantic_def_ext` so each type-declaration bind
+    /// site collapses to a single recorder call after computing its
+    /// `SemanticDefDetails`. The recorded write is byte-identical to calling
+    /// `record_semantic_def_ext` directly (the `record_semantic_def` and
+    /// `record_semantic_def_with_declare` variants also delegate here).
+    pub(crate) fn record_type_decl_semantic_def(
+        &mut self,
+        sym_id: SymbolId,
+        kind: crate::state::SemanticDefKind,
+        name: &str,
+        declaration: NodeIndex,
+        details: SemanticDefDetails,
+    ) {
+        self.record_semantic_def_ext(sym_id, kind, name, declaration, details);
+    }
+
     pub(crate) fn record_semantic_def(
         &mut self,
         sym_id: SymbolId,
