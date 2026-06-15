@@ -49,7 +49,9 @@ impl<'a> Printer<'a> {
                     AttrGroup::InlinedObjectLiteral(expr) => {
                         self.emit_jsx_inline_object_literal_props(*expr, &mut first);
                     }
-                    AttrGroup::Spread(_) => unreachable!(),
+                    AttrGroup::Spread(_) => unreachable!(
+                        "`all_inlinable` guarantees no Spread group reaches this branch"
+                    ),
                 }
             }
             self.write(" }");

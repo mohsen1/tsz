@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::Visibility;
+use crate::types::{PropertyInfo, Visibility};
 
 mod common {
     include!("common/mod.rs");

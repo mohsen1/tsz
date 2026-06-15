@@ -309,38 +309,41 @@ impl<'a> CheckerState<'a> {
         {
             use tsz_common::common::ModuleKind;
             let module = self.ctx.compiler_options.module;
+            // Node module kinds only emit this error for CJS-format files (determined
+            // by the package.json "type" field, with a file-extension fallback).
+            let file_is_cjs = match self.ctx.file_is_esm {
+                Some(true) => false,
+                Some(false) => true,
+                None => {
+                    // Fallback: use file extension heuristic
+                    let f = &self.ctx.file_name;
+                    !f.ends_with(".mjs") && !f.ends_with(".mts")
+                }
+            };
+            // Every variant is listed explicitly (no wildcard) so adding a
+            // `ModuleKind` variant breaks the build instead of silently choosing a
+            // branch.
             let module_name = match module {
                 ModuleKind::CommonJS => Some("CommonJS"),
                 ModuleKind::AMD => Some("AMD"),
                 ModuleKind::UMD => Some("UMD"),
                 ModuleKind::System => Some("System"),
-                // For Node module kinds, only emit for CJS-format files
+                ModuleKind::Node16 if file_is_cjs => Some("Node16"),
+                ModuleKind::Node18 if file_is_cjs => Some("Node18"),
+                ModuleKind::Node20 if file_is_cjs => Some("Node20"),
+                ModuleKind::NodeNext if file_is_cjs => Some("NodeNext"),
+                // ES-format Node files and pure ES/script module kinds don't trigger
+                // this error.
                 ModuleKind::Node16
                 | ModuleKind::Node18
                 | ModuleKind::Node20
-                | ModuleKind::NodeNext => {
-                    let file_is_cjs = match self.ctx.file_is_esm {
-                        Some(true) => false,
-                        Some(false) => true,
-                        None => {
-                            // Fallback: use file extension heuristic
-                            let f = &self.ctx.file_name;
-                            !f.ends_with(".mjs") && !f.ends_with(".mts")
-                        }
-                    };
-                    if file_is_cjs {
-                        match module {
-                            ModuleKind::Node16 => Some("Node16"),
-                            ModuleKind::Node18 => Some("Node18"),
-                            ModuleKind::Node20 => Some("Node20"),
-                            ModuleKind::NodeNext => Some("NodeNext"),
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        None
-                    }
-                }
-                _ => None, // ES modules and None don't trigger this error
+                | ModuleKind::NodeNext
+                | ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
+                | ModuleKind::None => None,
             };
             if let Some(module_name) = module_name {
                 self.error_at_node(

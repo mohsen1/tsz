@@ -49,26 +49,42 @@ fn in_operator_lhs_key_diagnostic_uses_relation_outcome_boundary() {
 
 #[test]
 fn in_operator_rhs_primitive_constraint_uses_relation_outcome_boundary() {
-    let source = fs::read_to_string("src/types/computation/binary_support.rs")
-        .expect("failed to read binary support source");
+    // The pure TS2638 classification lives in the query boundary; it probes the
+    // primitive constraint only through the checker-supplied
+    // `primitive_constraint_relates` callback, never a raw assignability gate.
+    let boundary = fs::read_to_string("src/query_boundaries/type_computation/in_operator.rs")
+        .expect("failed to read in_operator boundary source");
     let body = function_body_until(
-        &source,
-        "fn type_may_represent_primitive(",
-        "\n    /// True when `ty` is an `in`-operator RHS shape",
+        &boundary,
+        "pub(crate) fn type_may_represent_primitive(",
+        "\n/// True when `ty` is an `in`-operator RHS shape",
+    );
+    assert!(
+        body.contains("cx.primitive_constraint_relates(TypeId::STRING, c)"),
+        "`in` operator TS2638 primitive constraint check should route through the classifier callback"
+    );
+    assert!(
+        !body.contains("is_assignable_to(TypeId::STRING, c)")
+            && !body.contains("assign_relation_outcome(TypeId::STRING, c)"),
+        "`in` operator TS2638 primitive constraint check should not use a raw or generic assignability gate"
     );
 
+    // The checker-side callback keeps the routing on the dedicated
+    // `in_operator_primitive_constraint` relation request.
+    let source = fs::read_to_string("src/types/computation/binary_support.rs")
+        .expect("failed to read binary support source");
+    let impl_body = function_body_until(&source, "fn primitive_constraint_relates(", "\n}");
+    let compact_impl = compact(impl_body);
     assert!(
-        body.contains("self.in_operator_primitive_constraint_relation_outcome(TypeId::STRING, c)")
-            && body.contains(".related"),
-        "`in` operator TS2638 primitive constraint check should route through the dedicated relation outcome"
+        compact_impl
+            .contains("self.in_operator_primitive_constraint_relation_outcome(source,target)")
+            && compact_impl.contains(".related"),
+        "the classifier callback should route through the dedicated relation outcome"
     );
     assert!(
-        !body.contains("self.assign_relation_outcome(TypeId::STRING, c)"),
-        "`in` operator TS2638 primitive constraint check should not use the generic assign relation outcome"
-    );
-    assert!(
-        !body.contains("ctx.types.is_assignable_to(TypeId::STRING, c)"),
-        "`in` operator TS2638 primitive constraint check should not use a raw solver relation gate"
+        !compact_impl.contains("self.assign_relation_outcome(source,target)")
+            && !compact_impl.contains("is_assignable_to(source,target)"),
+        "the classifier callback should not use the generic or raw assignability gate"
     );
 }
 

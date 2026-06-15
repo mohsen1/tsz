@@ -1339,7 +1339,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return candidate;
             }
         }
-        unreachable!()
+        unreachable!("the `1..` range is unbounded, so an unused candidate is always returned")
     }
 
     pub(crate) fn emit_namespace_export_clause(&mut self, clause_idx: NodeIndex) {

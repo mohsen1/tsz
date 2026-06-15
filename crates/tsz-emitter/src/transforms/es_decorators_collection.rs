@@ -502,18 +502,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let var_base = format!("_{prefix}{kind_prefix}{base_name}");
 
         // For computed/string members, only increment counter on NEW member names.
-        // Getter/setter pairs with the same name share the same suffix.
-        let is_computed_or_string = matches!(
-            member.name,
-            MemberName::StringLiteral(_) | MemberName::Computed(_)
-        );
+        // Getter/setter pairs with the same name share the same suffix. The
+        // exhaustive match (no wildcard) binds the name once and derives the
+        // computed/string flag from it.
+        let computed_or_string_name = match &member.name {
+            MemberName::StringLiteral(s) => Some(s.clone()),
+            MemberName::Computed(idx) => Some(self.node_text(*idx)),
+            MemberName::Identifier(_) | MemberName::Private(_) => None,
+        };
+        let is_computed_or_string = computed_or_string_name.is_some();
 
-        if is_computed_or_string {
-            let current_name = match &member.name {
-                MemberName::StringLiteral(s) => s.clone(),
-                MemberName::Computed(idx) => self.node_text(*idx),
-                _ => unreachable!(),
-            };
+        if let Some(current_name) = computed_or_string_name {
             let is_new_name = last_computed_name
                 .as_ref()
                 .is_none_or(|prev| *prev != current_name);

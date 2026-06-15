@@ -6,6 +6,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::core::{
     WriteTargetLogicalOperator, WriteTargetLogicalResult,
 };
+use crate::query_boundaries::type_computation::in_operator::{self, InOperatorRhsClassifier};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -27,7 +28,7 @@ enum SyntacticNullishness {
     Never,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Recover the un-widened literal type of a logical-operator (`&&`/`||`/`??`)
     /// operand for the result union, when a literal-preserving context requested
     /// it (`ctx.preserve_logical_operand_literals`).
@@ -381,53 +382,6 @@ impl<'a> CheckerState<'a> {
         // etc.) are never nullish.
         SyntacticNullishness::Never
     }
-    fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
-        use crate::query_boundaries::dispatch as query;
-
-        if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::OBJECT) {
-            return true;
-        }
-
-        // For type parameters, check if their constraint is assignable to object.
-        // Unconstrained type params are NOT valid (could be primitive) → TS2322.
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                ty,
-            ) {
-                Some(c) => self.is_valid_in_operator_rhs(c),
-                None => false,
-            };
-        }
-
-        if query::is_object_like_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        if let Some(members) = query::union_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .all(|&member| self.is_valid_in_operator_rhs(member));
-        }
-
-        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .any(|&member| self.is_valid_in_operator_rhs(member));
-        }
-
-        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
-            self.ctx.types,
-            &self.ctx,
-            ty,
-        );
-        if evaluated != ty {
-            return self.is_valid_in_operator_rhs(evaluated);
-        }
-
-        false
-    }
-
     /// Check if an AST node is a nullish coalescing expression (`??`) or a
     /// literal value (string, number, boolean, bigint, template), unwrapping
     /// parentheses. TSC only emits TS2869 for these syntactic forms; general
@@ -468,203 +422,6 @@ impl<'a> CheckerState<'a> {
             || kind == SyntaxKind::TrueKeyword as u16
             || kind == SyntaxKind::FalseKeyword as u16
             || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
-    }
-
-    /// Check if a type "may represent a primitive value" for TS2638.
-    ///
-    /// In tsc, this fires for "instantiable" types (type parameters, conditional types)
-    /// whose constraint is missing or could accept primitive values. Concrete object
-    /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
-    /// the constraint of a type parameter that could be instantiated with a primitive.
-    fn type_may_represent_primitive(&mut self, ty: TypeId) -> bool {
-        // The intrinsic `object` type excludes primitives by definition
-        if ty == TypeId::OBJECT {
-            return false;
-        }
-
-        // `unknown` can represent any value including primitives — TS2638
-        if ty == TypeId::UNKNOWN {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or could be primitive.
-        // A type param with no constraint or constraint `{}` may represent a primitive
-        // because it could be instantiated with string, number, etc.
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                ty,
-            ) {
-                None => true,                            // Unconstrained type param may be primitive
-                Some(c) if c == TypeId::OBJECT => false, // `extends object` excludes primitives
-                Some(c) => {
-                    // Check if the constraint itself could accept primitives.
-                    // This handles `T extends {}` (may represent primitive) vs
-                    // `T extends object` (may not) vs `T extends { a: number }` (may not).
-                    if self.type_may_represent_primitive(c) {
-                        return true;
-                    }
-                    // For concrete constraints, check if a primitive is assignable.
-                    self.in_operator_primitive_constraint_relation_outcome(TypeId::STRING, c)
-                        .related
-                }
-            };
-        }
-
-        // Union: any member may represent primitive
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .any(|&m| self.type_may_represent_primitive(m));
-        }
-
-        // Intersection: `T & {}` still may represent a primitive because `{}`
-        // only removes nullish values. However, `T & object`, `T & { x: ... }`,
-        // and `T & Interface` exclude primitives through the object-like member.
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
-        {
-            let has_instantiable_primitive_member = members.iter().any(|&member| {
-                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member)
-                    && self.type_may_represent_primitive(member)
-            });
-            if has_instantiable_primitive_member
-                && !members
-                    .iter()
-                    .any(|&member| self.in_operator_intersection_member_excludes_primitive(member))
-            {
-                return true;
-            }
-
-            return members
-                .iter()
-                .all(|&m| self.type_may_represent_primitive(m));
-        }
-
-        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
-            self.ctx.types,
-            &self.ctx,
-            ty,
-        );
-        if evaluated != ty {
-            return self.type_may_represent_primitive(evaluated);
-        }
-
-        // Concrete object types are NOT considered "may represent primitive" —
-        // only type parameters can be instantiated with primitives at runtime.
-        false
-    }
-
-    /// True when `ty` is an `in`-operator RHS shape that tsc reports via
-    /// TS2322 (assignability to `object`) rather than TS2638 (primitive
-    /// runtime warning).
-    ///
-    /// tsc routes these to the assignability gateway:
-    /// - bare type parameters (`T`)
-    /// - unions that contain a type parameter/primitive assignability member
-    ///   (`T | U`, `string | number | T`, `T | { a: string }`)
-    /// - intersections whose every member is a type parameter or
-    ///   primitive constraint (`T & U`, `T & (0 | 1 | 2)`)
-    ///
-    /// It keeps TS2638 for shapes whose apparent type is reported with a
-    /// `NonNullable<T>`-style message — typically intersections with
-    /// `{}`-shaped object constraints. For those, the empty-object
-    /// member excludes some nullish cases without committing to the
-    /// `object` constraint, and tsc emits TS2638 with the
-    /// `NonNullable<T>` apparent-type display.
-    fn in_rhs_is_type_parameter_assignability_shape(&self, ty: TypeId) -> bool {
-        use crate::query_boundaries::common;
-
-        if common::is_type_parameter_like(self.ctx.types, ty) {
-            return true;
-        }
-        if let Some(members) = common::union_members(self.ctx.types, ty) {
-            // A union containing a bare generic or primitive constituent is
-            // reported through assignability to `object`, even when other
-            // constituents are object-like. This is the shape produced by a
-            // false branch of `("a" in x && "b" in x)`: `T | (T & Record<...>)`.
-            return members
-                .iter()
-                .any(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
-        }
-        if let Some(members) = common::intersection_members(self.ctx.types, ty) {
-            // Intersections with an empty-object-constraint member
-            // (e.g. `T & {}`, `T & EmptyAlias`) collapse to
-            // `NonNullable<T>` in tsc's apparent-type rendering and stay
-            // on the TS2638 path. Recognize that by requiring every
-            // member to be either a type parameter or a primitive — if
-            // any member is an empty-object shape, defer to TS2638.
-            if members.iter().any(|&m| {
-                common::object_shape_for_type(self.ctx.types, m)
-                    .is_some_and(|shape| shape.properties.is_empty())
-            }) {
-                return false;
-            }
-            return members
-                .iter()
-                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
-        }
-        // Concrete primitives (string, number, ...) are also routed to
-        // the assignability gateway when they're combined with type
-        // parameters in a union / intersection that we already verified
-        // above. A bare primitive (no generics involved) keeps the
-        // TS2638 path because the user can fix it without touching a
-        // generic position.
-        common::is_primitive_type(self.ctx.types, ty)
-    }
-
-    fn in_operator_type_contains_empty_object_shape(&self, ty: TypeId) -> bool {
-        use crate::query_boundaries::common;
-
-        if common::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        if let Some(members) = common::union_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .any(|&member| self.in_operator_type_contains_empty_object_shape(member));
-        }
-
-        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
-            self.ctx.types,
-            &self.ctx,
-            ty,
-        );
-        evaluated != ty && self.in_operator_type_contains_empty_object_shape(evaluated)
-    }
-
-    fn in_operator_intersection_member_excludes_primitive(&self, ty: TypeId) -> bool {
-        use crate::query_boundaries::{common, dispatch as query};
-
-        if ty == TypeId::OBJECT {
-            return true;
-        }
-
-        if common::is_type_parameter_like(self.ctx.types, ty) {
-            return crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                ty,
-            )
-            .is_some_and(|constraint| {
-                self.in_operator_intersection_member_excludes_primitive(constraint)
-            });
-        }
-
-        if let Some(members) = query::union_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .all(|&member| self.in_operator_intersection_member_excludes_primitive(member));
-        }
-
-        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
-            return members
-                .iter()
-                .any(|&member| self.in_operator_intersection_member_excludes_primitive(member));
-        }
-
-        query::is_object_like_type(self.ctx.types, ty)
-            && !common::is_empty_object_type(self.ctx.types, ty)
     }
 
     /// Format the apparent type for display in TS2638 error messages.
@@ -712,7 +469,7 @@ impl<'a> CheckerState<'a> {
         // First check if the narrowed type includes the empty object `{}`.
         // After previous `in` checks, flow can preserve both the truthiness-
         // narrowed unknown branch and the record branch as a union.
-        if !self.in_operator_type_contains_empty_object_shape(narrowed_type) {
+        if !in_operator::in_operator_type_contains_empty_object_shape(self, narrowed_type) {
             return false;
         }
 
@@ -1566,14 +1323,17 @@ impl<'a> CheckerState<'a> {
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
         } else {
-            let type_may_represent_primitive = self.type_may_represent_primitive(right_type);
+            let type_may_represent_primitive =
+                in_operator::type_may_represent_primitive(self, right_type);
             let truthiness_narrowed_unknown = self
                 .truthiness_narrowed_from_unknown(right_idx, right_type)
                 && !self.in_rhs_has_typeof_object_guard(right_idx);
             if type_may_represent_primitive || truthiness_narrowed_unknown {
-                let truthiness_guarded_type_parameter = self
-                    .in_rhs_is_type_parameter_assignability_shape(right_type)
-                    && self.in_rhs_has_direct_truthiness_guard(right_idx);
+                let truthiness_guarded_type_parameter =
+                    in_operator::in_rhs_is_type_parameter_assignability_shape(
+                        self.ctx.types,
+                        right_type,
+                    ) && self.in_rhs_has_direct_truthiness_guard(right_idx);
                 // tsc reports TS2322 ("Type 'T' is not assignable to type
                 // 'object'") rather than TS2638 ("may represent a primitive
                 // value") for type-parameter-shaped RHS values: bare `T`,
@@ -1585,8 +1345,10 @@ impl<'a> CheckerState<'a> {
                 // keep the existing TS2638 path because tsc emits that code
                 // with a `NonNullable<T>`-style message rather than a bare
                 // assignability failure.
-                if self.in_rhs_is_type_parameter_assignability_shape(right_type)
-                    && !truthiness_guarded_type_parameter
+                if in_operator::in_rhs_is_type_parameter_assignability_shape(
+                    self.ctx.types,
+                    right_type,
+                ) && !truthiness_guarded_type_parameter
                 {
                     let _ = self.check_assignable_or_report_at_exact_anchor(
                         right_type,
@@ -1603,7 +1365,7 @@ impl<'a> CheckerState<'a> {
                     let code = tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND;
                     self.error_at_node_msg(right_idx, code, &[&type_str]);
                 }
-            } else if !self.is_valid_in_operator_rhs(right_type) {
+            } else if !in_operator::is_valid_in_operator_rhs(self, right_type) {
                 // Route through the check_assignable_or_report(...) gateway family
                 // so computation-layer mismatches stay on the centralized path.
                 let _ = self.check_assignable_or_report_at_exact_anchor(
@@ -1656,5 +1418,29 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+}
+
+/// Supplies the checker-side leaf capabilities the `in`-operator RHS
+/// classifier needs: resolver-backed evaluation and the dedicated TS2638
+/// primitive-constraint relation outcome. The pure structural rules live in
+/// [`in_operator`]; this keeps the relation routed through the canonical
+/// `in_operator_primitive_constraint` request.
+impl InOperatorRhsClassifier for CheckerState<'_> {
+    fn types(&self) -> &dyn tsz_solver::construction::QueryDatabase {
+        self.ctx.types
+    }
+
+    fn evaluate(&mut self, type_id: TypeId) -> TypeId {
+        crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            type_id,
+        )
+    }
+
+    fn primitive_constraint_relates(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.in_operator_primitive_constraint_relation_outcome(source, target)
+            .related
     }
 }
