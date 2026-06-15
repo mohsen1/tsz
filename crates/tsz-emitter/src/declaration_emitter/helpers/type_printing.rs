@@ -656,11 +656,21 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
+    ///
+    /// The generic (non-inferred) printer path lets the solver's
+    /// `TypeEvaluator` (run inside `print_type_id_with_policy`) resolve any
+    /// in-interner `IndexAccess(object, key)` to its member type before the
+    /// `TypePrinter` renders it. Cross-file imported indexed accesses whose
+    /// member type lives in a foreign arena (the only case the rendered-text
+    /// pass `expand_imported_indexed_access_type_text` can still resolve)
+    /// reach declaration emit through the inferred-declaration and raw
+    /// expression-text paths, not through this generic resolved-`TypeId`
+    /// entry point; this path therefore does not post-process its own
+    /// rendering. See `print_type_id_for_inferred_declaration_with_optional_setter_names`
+    /// and the `preferred_expression_type_text` callers for the surviving
+    /// text-pass sites tracked by #13048.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
-        let printed = self
-            .print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit);
-        self.expand_imported_indexed_access_type_text(&printed)
-            .unwrap_or(printed)
+        self.print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit)
     }
 
     pub(crate) fn print_type_id_for_inferred_declaration(
