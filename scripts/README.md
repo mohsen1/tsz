@@ -71,7 +71,8 @@ scripts/
 ### Architecture & Linting
 | Script | Purpose |
 |--------|---------|
-| `scripts/arch/arch_guard.py` | Architecture boundary violation detection |
+| `scripts/arch/arch_guard.py` | Architecture boundary violation detection (regex policy) |
+| `scripts/arch/run-ast-grep.sh` | AST-native architecture invariants via ast-grep (#13451) |
 | `scripts/arch/check-checker-boundaries.sh` | Checker boundary enforcement |
 | `scripts/arch/render_architecture_report.py` | Render architecture guard markdown report |
 
