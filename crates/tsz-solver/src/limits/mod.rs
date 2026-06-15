@@ -223,6 +223,24 @@ impl LimitBudgets {
             solver_stack_frames: Cell::new(0),
         }
     }
+
+    /// Zero every transient budget/guard counter back to its fresh-process
+    /// value. All fields are per-compilation scratch state (chain depth/fuel,
+    /// per-query op budget, cross-evaluator depth, per-file evaluation fuel,
+    /// solver recursion frames, and the two cache-poisoning sentinels); none
+    /// of them carry meaning across a compilation boundary. New fields added
+    /// to [`LimitBudgets`] MUST be reset here so batch/row reuse stays
+    /// schedule-independent (see [`reset_subtype_thread_local_state`]).
+    fn reset_all(&self) {
+        self.subtype_state.set(0);
+        self.lazy_resolve_failures.set(0);
+        self.weak_type_sensitivity.set(0);
+        self.eval_query_active.set(0);
+        self.eval_query_ops.set(0);
+        self.global_eval_depth.set(0);
+        self.evaluation_fuel.set(0);
+        self.solver_stack_frames.set(0);
+    }
 }
 
 thread_local! {
@@ -360,15 +378,23 @@ pub(crate) fn poison_sentinel_counts() -> (u64, u64) {
     LIMIT_BUDGETS.with(|b| (b.lazy_resolve_failures.get(), b.weak_type_sensitivity.get()))
 }
 
-/// Reset subtype chain depth/fuel and the cache-poisoning sentinel counters.
-/// Called between compilation sessions to prevent stale state from a
-/// previous compilation (e.g., if it panicked and left counters dirty).
+/// Reset every transient thread-local limit budget to its fresh-process value.
+///
+/// Called between compilation sessions (batch/row reuse) to prevent stale
+/// state from a previous compilation leaking into the next on a reused worker
+/// thread. Originally this reset only the subtype chain depth/fuel and the two
+/// cache-poisoning sentinels, but [`LimitBudgets`] also carries the per-query
+/// op budget, the cross-evaluator eval depth, the per-file evaluation fuel, and
+/// the solver recursion-frame count. Some of those use manual (non-RAII)
+/// enter/leave, so a compilation that bailed via the stack/depth breaker or a
+/// caught-and-swallowed panic could leave them non-zero — making the next
+/// compilation's depth/fuel/op verdicts (and the eval-query-gated
+/// `reset_query_memo`, which only clears when the op-budget frame count
+/// transitions from zero) schedule-dependent (#13368). Resetting the whole
+/// struct keeps batch results byte-identical to a fresh process regardless of
+/// what ran before on the thread.
 pub fn reset_subtype_thread_local_state() {
-    LIMIT_BUDGETS.with(|b| {
-        b.subtype_state.set(0);
-        b.lazy_resolve_failures.set(0);
-        b.weak_type_sensitivity.set(0);
-    });
+    LIMIT_BUDGETS.with(LimitBudgets::reset_all);
 }
 
 // -----------------------------------------------------------------------------
@@ -579,6 +605,43 @@ pub(crate) fn limit_result_cache_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for #13368: batch/row reuse runs many compilations on
+    /// one worker thread and relies on [`reset_subtype_thread_local_state`] to
+    /// isolate them. A compilation that bailed via the depth/stack breaker or a
+    /// caught-and-swallowed panic can leave any [`LimitBudgets`] counter dirty.
+    /// Before the fix the reset cleared only three of the eight fields, so the
+    /// per-query op budget, cross-evaluator eval depth, per-file evaluation
+    /// fuel, and solver recursion-frame count leaked into the next compilation
+    /// and made its depth/fuel verdicts schedule-dependent. Dirty every field
+    /// the way an aborted mid-evaluation row would and assert the reset zeroes
+    /// all of them.
+    #[test]
+    fn reset_clears_every_limit_budget_field() {
+        LIMIT_BUDGETS.with(|b| {
+            b.subtype_state.set(pack_depth_fuel(7, 9));
+            b.lazy_resolve_failures.set(3);
+            b.weak_type_sensitivity.set(5);
+            b.eval_query_active.set(11);
+            b.eval_query_ops.set(13);
+            b.global_eval_depth.set(17);
+            b.evaluation_fuel.set(19);
+            b.solver_stack_frames.set(23);
+        });
+
+        reset_subtype_thread_local_state();
+
+        LIMIT_BUDGETS.with(|b| {
+            assert_eq!(b.subtype_state.get(), 0, "subtype chain state");
+            assert_eq!(b.lazy_resolve_failures.get(), 0, "lazy-resolve sentinel");
+            assert_eq!(b.weak_type_sensitivity.get(), 0, "weak-type sentinel");
+            assert_eq!(b.eval_query_active.get(), 0, "per-query active frames");
+            assert_eq!(b.eval_query_ops.get(), 0, "per-query op count");
+            assert_eq!(b.global_eval_depth.get(), 0, "cross-evaluator eval depth");
+            assert_eq!(b.evaluation_fuel.get(), 0, "per-file evaluation fuel");
+            assert_eq!(b.solver_stack_frames.get(), 0, "solver recursion frames");
+        });
+    }
 
     /// The packed subtype chain state round-trips depth and fuel through the
     /// consolidated accessors with the exact pre/post semantics the relation

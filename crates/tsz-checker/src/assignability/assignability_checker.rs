@@ -15,6 +15,61 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+thread_local! {
+    /// `TypeId`s whose assignability-display evaluation is in flight on this
+    /// thread.
+    ///
+    /// Keys are interner-instance-local, so the set must be empty between
+    /// compilations: a leaked entry would make a fresh `TypeId` reusing the
+    /// same value read as `already_visiting` and return unevaluated,
+    /// suppressing the normalized form an assignability diagnostic depends on.
+    /// Membership is owned by the RAII [`AssignabilityEvalVisitGuard`], which
+    /// removes the entry on drop — on the normal return path, the fuel-bail
+    /// path, *and* when `evaluate_type_for_assignability_inner` unwinds via a
+    /// panic a caller (`try_tsz`, LSP) catches and swallows mid-recursion.
+    /// (Before #13368 the removals were manual post-call statements skipped on
+    /// unwind, leaking the key into the next compilation on a reused worker
+    /// thread.)
+    static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
+        std::cell::RefCell::new(FxHashSet::default());
+}
+
+/// RAII membership guard for the assignability-display evaluation walk.
+///
+/// [`enter`](Self::enter) returns `None` when `type_id` is already being
+/// evaluated on this thread; the caller returns the type unevaluated. Otherwise
+/// it records membership and clears it on drop, so the set is restored even if
+/// evaluation unwinds.
+#[must_use]
+struct AssignabilityEvalVisitGuard(TypeId);
+
+impl AssignabilityEvalVisitGuard {
+    fn enter(type_id: TypeId) -> Option<Self> {
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| {
+            if visiting.borrow_mut().insert(type_id) {
+                Some(Self(type_id))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Whether `type_id`'s evaluation is already in flight on this thread,
+    /// without taking membership. Used for the pre-memo cycle short-circuit
+    /// that must return the type opaque rather than serve a memoized result.
+    fn is_visiting(type_id: TypeId) -> bool {
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow().contains(&type_id))
+    }
+}
+
+impl Drop for AssignabilityEvalVisitGuard {
+    fn drop(&mut self) {
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| {
+            visiting.borrow_mut().remove(&self.0);
+        });
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
     ///
@@ -1393,14 +1448,10 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        thread_local! {
-            static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
-                Default::default();
-        }
-
-        let already_visiting =
-            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow().contains(&type_id));
-        if already_visiting {
+        // Re-entrant cycle: return the type opaque. This check precedes the
+        // memo lookup on purpose — an in-flight type must not be served a
+        // memoized result computed by a now-superseded outer evaluation.
+        if AssignabilityEvalVisitGuard::is_visiting(type_id) {
             return type_id;
         }
 
@@ -1414,19 +1465,17 @@ impl<'a> CheckerState<'a> {
             return memoized;
         }
 
-        let entered =
-            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().insert(type_id));
-        if !entered {
+        // Take membership for the duration of the evaluation. The guard removes
+        // the entry on every exit below (normal return, fuel bail, or unwind).
+        let Some(_visit_guard) = AssignabilityEvalVisitGuard::enter(type_id) else {
             return type_id;
-        }
+        };
 
         if !crate::error_reporter::display_budget::try_consume_eval_fuel() {
-            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
             return type_id;
         }
 
         let result = self.evaluate_type_for_assignability_inner(type_id);
-        ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
         // Cycle-truncated returns above are never recorded — only complete
         // results are safe to replay for later calls in this scope.
         crate::error_reporter::display_budget::record_eval(type_id, result);
@@ -1885,4 +1934,43 @@ fn signature_has_param_capacity(
         return true;
     }
     params.len() >= source_param_count
+}
+
+#[cfg(test)]
+mod assignability_eval_visit_guard_tests {
+    use super::{AssignabilityEvalVisitGuard, TypeId};
+
+    #[test]
+    fn reentry_of_in_flight_type_is_rejected() {
+        let t = TypeId(4242);
+        let outer = AssignabilityEvalVisitGuard::enter(t).expect("first entry succeeds");
+        assert!(AssignabilityEvalVisitGuard::is_visiting(t));
+        assert!(
+            AssignabilityEvalVisitGuard::enter(t).is_none(),
+            "re-entering an in-flight TypeId must short-circuit"
+        );
+        drop(outer);
+        assert!(
+            !AssignabilityEvalVisitGuard::is_visiting(t),
+            "drop must restore membership"
+        );
+    }
+
+    /// #13368: the guard must clear membership even when evaluation unwinds via
+    /// a panic a caller (`try_tsz`, LSP) catches, so a stale interner-local key
+    /// can never leak into the next compilation on a reused worker thread.
+    #[test]
+    fn membership_is_restored_on_unwind() {
+        let t = TypeId(99);
+        let result = std::panic::catch_unwind(|| {
+            let _guard = AssignabilityEvalVisitGuard::enter(t).expect("entry succeeds");
+            assert!(AssignabilityEvalVisitGuard::is_visiting(t));
+            panic!("simulated mid-evaluation panic");
+        });
+        assert!(result.is_err(), "the closure panicked");
+        assert!(
+            !AssignabilityEvalVisitGuard::is_visiting(t),
+            "guard Drop must remove the key during unwind"
+        );
+    }
 }
