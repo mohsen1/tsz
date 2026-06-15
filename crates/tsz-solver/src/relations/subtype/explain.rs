@@ -218,24 +218,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
         let pair = (source, target);
-        // Result memo: the same `(source, target)` sub-pair is re-explored down
-        // sibling object-member / function-parameter / conditional-branch
-        // branches, and the depth/cycle `guard` is only a visiting set (it
-        // removes the pair on `leave`), so without memoization the walk
-        // re-derives identical reasons exponentially on deeply-nested generic
-        // shapes. A cached reason is byte-identical to recomputing because
-        // `explain_failure_body` is pure over `(source, target)` plus this
-        // checker's fixed config. See `explain_cache`.
-        if let Some(cached) = self.explain_cache.get(&pair) {
-            return cached.clone();
-        }
         match self.guard.enter(pair) {
             crate::recursion::RecursionResult::Entered => {}
             crate::recursion::RecursionResult::Cycle
             | crate::recursion::RecursionResult::DepthExceeded
             | crate::recursion::RecursionResult::IterationExceeded => {
-                // Path-dependent bail (depends on the current stack/iteration
-                // budget, not on the pair alone) — never cache it.
                 return Some(SubtypeFailureReason::TypeMismatch {
                     source_type: source,
                     target_type: target,
@@ -244,14 +231,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         let result = self.explain_failure_body(source, target);
         self.guard.leave(pair);
-        // Only memoize a converged result. If this pair's subtree tripped the
-        // sticky depth/iteration guard, the reason is path-dependent (a deeper
-        // sibling visit could produce a different elaboration), so leave it
-        // uncached and recompute on the next visit, matching the pre-memo
-        // behavior exactly.
-        if !self.guard.is_exceeded() {
-            self.explain_cache.insert(pair, result.clone());
-        }
         result
     }
 

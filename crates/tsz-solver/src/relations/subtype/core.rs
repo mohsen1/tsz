@@ -321,32 +321,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// parity, issue #13241). See `cache::MaybeRelationEntry` and
     /// `finish_relation_frame` in the `cache` module.
     pub(crate) maybe_keys: Vec<super::cache::MaybeRelationEntry>,
-    /// Memoizes the elaborated failure reason for a `(source, target)` pair
-    /// within this checker's lifetime (the failure-reason walk; see
-    /// `explain_failure_guarded`).
-    ///
-    /// The elaboration is a recursive DFS: `explain_object_failure` recurses
-    /// into every target member, `explain_function_failure` into every
-    /// parameter/return, and `explain_conditional_branch_failure` into both
-    /// branches. The depth/cycle `guard` brackets the walk but only as a
-    /// *visiting set* — it removes a pair on `leave`, so the same
-    /// `(source, target)` sub-pair re-explored down a sibling branch is walked
-    /// again from scratch. On deeply-nested generic shapes (e.g. kysely's
-    /// query-builder generics, whose instantiation-depth bails now surface a
-    /// large partial type instead of the old `ERROR` sentinel, #13652) the
-    /// member × branch × parameter product re-explores the same pairs
-    /// exponentially. Caching each pair's converged reason collapses that to
-    /// O(distinct pairs).
-    ///
-    /// Behavior-preserving: `explain_failure_body` is a pure function of
-    /// `(source, target)` plus this checker's fixed policy/config, so the cached
-    /// reason equals a recomputation. Only *converged* results are cached — a
-    /// pair whose subtree tripped the sticky depth/iteration `guard` (`is_exceeded`)
-    /// is left uncached so the path-dependent bail reason is never reused. Lives
-    /// exactly one relation-failure query (the checker is built per query) and
-    /// is cleared by `reset`.
-    pub(crate) explain_cache:
-        FxHashMap<(TypeId, TypeId), Option<crate::diagnostics::SubtypeFailureReason>>,
 }
 
 /// Operation-local cache statistics for [`SubtypeChecker`].
@@ -420,7 +394,6 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
-            explain_cache: FxHashMap::default(),
         }
     }
 }
@@ -471,7 +444,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
-            explain_cache: FxHashMap::default(),
         }
     }
 
@@ -583,7 +555,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.sym_visiting.clear();
         self.eval_cache.clear();
         self.maybe_keys.clear();
-        self.explain_cache.clear();
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.

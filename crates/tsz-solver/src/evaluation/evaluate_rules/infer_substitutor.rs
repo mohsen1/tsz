@@ -590,28 +590,27 @@ impl<'a> InferSubstitutor<'a> {
 
     fn with_shadowed_binding<T>(&mut self, name: Atom, f: impl FnOnce(&mut Self) -> T) -> T {
         let masked = self.bindings.remove(&name);
-        let Some(masked) = masked else {
-            // `name` was not bound, so the binding environment is unchanged and
-            // no entry is invalidated: every memoized substitution is still
-            // valid. Skipping the wipe is what keeps a deep mapped-over-
-            // conditional substitution from re-walking shared substructure once
-            // per mapped level — the wipe-always path turned that into an
-            // exponential re-walk on the large partial types #13652's
-            // instantiation-depth bail now surfaces (kysely query-builder
-            // generics). The mapped binder still recurses; it just reuses the
-            // memo it could already safely reuse.
-            return f(self);
-        };
-        // A real outer binding is masked, so cached substitutions formed under
-        // it (any type whose subtree referenced `name`) may differ in this
-        // scope and must not leak across the boundary. Swap in a fresh memo for
-        // the duration and restore the outer one on exit. (Freeing the inner
-        // memo on exit also bounds residency, unlike a generation-tagged memo
-        // that would retain every scope's entries.)
+        // The mapped binder shadows the binding environment for `name_type` and
+        // `template`: inside the scope `name` is unbound, so any cached
+        // substitution whose subtree referenced `name` may differ here and must
+        // not leak across the boundary. The `visiting` memo doubles as the
+        // cycle-detection set (each in-flight `TypeId` is self-mapped before it
+        // recurses), and those entries are only valid for the current binding
+        // environment. Swap in a fresh memo for the duration and restore the
+        // outer one on exit. Restoring (rather than leaving the inner memo in
+        // place) also bounds residency: a deeply-nested mapped-over-conditional
+        // type would otherwise accumulate every scope's entries into one
+        // unbounded map (kysely/valibot/drizzle/typebox/remeda query-builder
+        // generics over the large partial types #13652's instantiation-depth
+        // bail surfaces — see #13685), and reusing the outer memo across the
+        // boundary is not sound (it dropped genuine `T` vs `Readonly<T>` TS2345
+        // mismatches on kysely).
         let outer_visiting = std::mem::take(&mut self.visiting);
         let result = f(self);
         self.visiting = outer_visiting;
-        self.bindings.insert(name, masked);
+        if let Some(masked) = masked {
+            self.bindings.insert(name, masked);
+        }
         result
     }
 }
