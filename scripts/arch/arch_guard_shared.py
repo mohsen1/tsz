@@ -1388,7 +1388,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # route is an existing request-shaped helper already used throughout the
         # indexed-access checker — no new quarantine entry. Removal condition
         # remains #8225 narrowing this quarantine.
-        3051,
+        #
+        # Bumped by 2 (#13654 deferred-conditional indexed-access fix): the new
+        # `deferred_conditional_index_is_in_key_space` /
+        # `indexed_access_key_space_is_resolved` helpers in
+        # `indexed_access/indexed_access_helpers.rs` reach the conditional
+        # apparent-constraint and `KeyOf` predicates through the existing
+        # `query_boundaries::common` gateway (`conditional_default_constraint`,
+        # `is_keyof_type`) — no new quarantine entry.
+        3053,
     ),
 ]
 

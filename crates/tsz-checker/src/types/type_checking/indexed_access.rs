@@ -17,21 +17,6 @@ use indexed_access_helpers::{
 };
 
 impl<'a> CheckerState<'a> {
-    /// Only suppresses TS2536 when the base of the indexed access is a type parameter
-    /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
-    /// (e.g., `DataFetchFns[T]` where `DataFetchFns` is a known type).
-    fn is_deferred_indexed_access_object(&self, ty: TypeId) -> bool {
-        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
-            return false;
-        }
-        if let Some((base, _index)) =
-            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
-        {
-            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
-        }
-        false
-    }
-
     /// Check if two AST nodes have the same text representation.
     fn nodes_have_same_text(&self, a: NodeIndex, b: NodeIndex) -> bool {
         let a_node = self.ctx.arena.get(a);
@@ -830,6 +815,20 @@ impl<'a> CheckerState<'a> {
             node_idx,
             data.object_type,
             index_type_for_check,
+        ) {
+            return;
+        }
+        // A deferred conditional object base has no key space of its own; tsc
+        // resolves it through `getApparentType` to its default constraint (the
+        // union of branch results) and validates the index key against that.
+        // When the key is in that key space the access is valid (tsc emits no
+        // error), even though the access itself stays deferred. The object type
+        // is left untouched so an out-of-range key still flows to the existing
+        // TS2536 path rather than the concrete property-missing (TS2339) path.
+        if self.deferred_conditional_index_is_in_key_space(
+            object_type_for_check,
+            index_type_for_check,
+            index_type,
         ) {
             return;
         }

@@ -11,7 +11,7 @@ use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
+use crate::types::{ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -143,6 +143,96 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
         _ => type_id,
     }
+}
+
+/// Compute the default constraint of a deferred conditional type, mirroring
+/// tsc's `getDefaultConstraintOfConditionalType`: the union of the inferred
+/// true-branch type and the false-branch type.
+///
+/// For `T extends U ? X : Y`, the inferred true type is `X` with the check type
+/// narrowed to `T & U` (handled here for the common Extract-style patterns where
+/// the true branch is the check type or a nested conditional over the same check
+/// type); the default constraint is then `inferredTrue | Y`. When either branch
+/// is `any`, only the other branch is returned so the constraint does not
+/// collapse to `any` (since `X | any = any`).
+///
+/// Returns `None` when `type_id` is not a `Conditional`, or when neither the
+/// check type nor the extends type contains type parameters (the conditional is
+/// not deferred — the evaluator would already have selected a branch).
+///
+/// This is the apparent type of a deferred conditional (tsc's `getApparentType`
+/// resolves a conditional through this constraint), so it is the key space used
+/// to validate an indexed access into, or a comparability/assertion against, a
+/// deferred conditional.
+pub fn get_conditional_default_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+    conditional_default_constraint_from_data(db, &cond)
+}
+
+/// [`get_conditional_default_constraint`] for an already-resolved
+/// [`ConditionalType`]. Shared by the subtype relation's constraint reduction.
+pub fn conditional_default_constraint_from_data(
+    db: &dyn TypeDatabase,
+    cond: &ConditionalType,
+) -> Option<TypeId> {
+    let is_check_type_param =
+        matches!(db.lookup(cond.check_type), Some(TypeData::TypeParameter(_)));
+    let check_has_params = is_check_type_param || contains_type_parameters_db(db, cond.check_type);
+
+    // If neither operand contains type parameters, the evaluator would have
+    // already picked a branch — there is no deferred constraint to compute.
+    // Only walk `extends_type` when the check side did not already qualify.
+    if !check_has_params && !contains_type_parameters_db(db, cond.extends_type) {
+        return None;
+    }
+
+    // Inferred true type: the true branch with the check type narrowed to
+    // `check_type & extends_type`. We handle the Extract-style patterns that do
+    // not require full instantiation:
+    //   - `T extends U ? T : Y`              -> inferred true = T & U
+    //   - `T extends U ? (T extends V ? T : never) : never` (nested) -> T & U & V
+    // Otherwise the true branch is used unchanged (its key space is unaffected
+    // by narrowing the check parameter).
+    let inferred_true = if cond.true_type == cond.check_type {
+        db.intersection2(cond.check_type, cond.extends_type)
+    } else if is_check_type_param {
+        match nested_conditional_default_constraint(db, cond.true_type, cond.check_type) {
+            Some(inner) => db.intersection2(inner, cond.extends_type),
+            None => cond.true_type,
+        }
+    } else {
+        cond.true_type
+    };
+
+    let constraint = if inferred_true == TypeId::ANY || cond.false_type == TypeId::ANY {
+        inferred_true
+    } else {
+        db.union2(inferred_true, cond.false_type)
+    };
+    Some(constraint)
+}
+
+/// Default constraint of a nested conditional whose check type matches
+/// `outer_check_type`, recursing for arbitrary Extract-chain depth.
+fn nested_conditional_default_constraint(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    outer_check_type: TypeId,
+) -> Option<TypeId> {
+    if ty.is_intrinsic() {
+        return None;
+    }
+    if let Some(TypeData::Conditional(inner_cond_id)) = db.lookup(ty) {
+        let inner = db.conditional_type(inner_cond_id);
+        if inner.check_type == outer_check_type {
+            return conditional_default_constraint_from_data(db, &inner);
+        }
+    }
+    None
 }
 
 /// Resolve a type to its base constraint for display purposes, recursively reducing
