@@ -10,7 +10,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TupleElement, TypeId};
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
         &mut self,
         decl_arena: &NodeArena,
@@ -821,7 +821,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            let params = self.extract_declared_type_params_for_reference_symbol(sym_id, &name);
+            let params = self
+                .extract_declared_type_params_for_reference_symbol(sym_id, &name)
+                .unwrap_or_default();
             if !params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, params);
             }
