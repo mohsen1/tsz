@@ -938,6 +938,9 @@ path = "tests/ts2340_super_accessor_tests.rs"
 name = "ts2344_infer_conditional_constraint"
 path = "tests/ts2344_infer_conditional_constraint.rs"
 [[test]]
+name = "ts2344_fuel_exhaustion_suppression"
+path = "tests/ts2344_fuel_exhaustion_suppression.rs"
+[[test]]
 name = "ts2344_generic_ref_scoped_param_concrete_constraint"
 path = "tests/ts2344_generic_ref_scoped_param_concrete_constraint.rs"
 [[test]]

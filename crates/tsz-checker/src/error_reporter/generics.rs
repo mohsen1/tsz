@@ -573,6 +573,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress when the per-file evaluation-fuel budget was exhausted. The
+        // fuel cap (`MAX_EVALUATION_FUEL`) bails an in-flight evaluation by
+        // returning `TypeId::ERROR`; for key-space helpers such as
+        // `RequiredKeysOf<O>` / `OptionalKeysOf<O>` that bail is then absorbed by
+        // the surrounding `Omit`/`Record`/`Simplify` into a structurally-degraded
+        // *but error-free* constraint bound, so the `contains_error_type` guard
+        // above no longer catches it. A "does not satisfy" decision computed
+        // against such a truncated bound (or arg) is unreliable: `tsc` surfaces
+        // excessively-deep instantiation as TS2589 and never derives a false
+        // TS2344 from it. This is schedule-independent — a cold per-file checker
+        // re-evaluates the whole helper chain from scratch and exhausts the
+        // budget where a cache-warmed run stays under it, which is exactly why the
+        // same project flips between clean and false-positive depending on which
+        // file warmed the caches first.
+        if self.ctx.types.is_evaluation_fuel_exhausted() {
+            return;
+        }
+
         self.ensure_refs_resolved(type_arg);
         self.ensure_refs_resolved(constraint);
         let ready_constraint = self.resolve_lazy_type(constraint);
