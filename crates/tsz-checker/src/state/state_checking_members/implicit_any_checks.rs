@@ -1567,13 +1567,28 @@ impl<'a> CheckerState<'a> {
         }
 
         // Re-check closures whose TS7006 was emitted during return-type inference
-        // speculation and then rolled back. These closures had genuinely untyped
-        // parameters at the time of first processing (inside infer_return_type_from_body).
-        // Even if a later call inference retry provided contextual types (adding the
-        // closure to implicit_any_contextual_closures), tsc would have kept the TS7006
-        // from the initial inference pass. So we unconditionally re-emit here.
+        // speculation and then rolled back. These closures had untyped parameters at
+        // the time of the speculative processing inside `infer_return_type_from_body`,
+        // because that speculative re-evaluation did not re-establish a contextual
+        // callback signature for them.
+        //
+        // A closure that received genuine contextual parameter types in its real
+        // (non-speculative) syntactic position must NOT be re-emitted — tsc reports no
+        // TS7006 for it. `closure_has_contextual_type` consults the checked/contextual
+        // closure sets recorded during real statement checking; those marks persist
+        // past the speculative rollback, and this pass runs after all statements are
+        // checked, so the mark is authoritative. This mirrors the guard already applied
+        // to the deferred-closure loop above. It fixes false TS7006 on a contextually
+        // typed callback (e.g. an `Array.prototype.reduce` callback typed by the
+        // resolved overload) whose result later flows into a deferred-inference chain
+        // such as `let r = arr.reduce(cb, init); Promise.resolve(r).then(...)`, which
+        // re-evaluates the reduce call speculatively without re-applying its overload
+        // context.
         let speculative = std::mem::take(&mut self.ctx.speculative_implicit_any_closures);
         for func_idx in speculative {
+            if self.closure_has_contextual_type(func_idx) {
+                continue;
+            }
             if self.find_jsdoc_for_function(func_idx).is_some() {
                 continue;
             }
