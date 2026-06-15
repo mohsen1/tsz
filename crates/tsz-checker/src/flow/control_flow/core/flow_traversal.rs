@@ -1,5 +1,7 @@
 use super::super::flow_dp::FlowConditionDpMemos;
-use super::{FlowAnalyzer, defer_to_antecedent, flow_boundary, flow_step_budget, query};
+use super::{
+    FlowAnalyzer, FlowDeferMemos, defer_to_antecedent, flow_boundary, flow_step_budget, query,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags};
@@ -102,7 +104,10 @@ impl<'a> FlowAnalyzer<'a> {
         let mut cacheable_walk = true;
         let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
         let mut condition_dp_memos = FlowConditionDpMemos::default();
-        let mut antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
+        // Per-walk defer / CALL narrow-divert classification memos, shared by the
+        // chase and the defer classifier so a call-dense scope classifies each node
+        // (and extracts each call's predicate signature) at most once per walk.
+        let mut defer_memos = FlowDeferMemos::default();
         let mut condition_antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
         condition_dp_memos.clear();
 
@@ -169,7 +174,7 @@ impl<'a> FlowAnalyzer<'a> {
                 },
                 visited,
                 results,
-                &mut antecedent_defer_memo,
+                &mut defer_memos,
                 flow_id,
                 &mut passthrough_run_contains_flow_id,
             );
@@ -914,7 +919,7 @@ impl<'a> FlowAnalyzer<'a> {
                         ant,
                         reference,
                         symbol_id,
-                        &mut antecedent_defer_memo,
+                        &mut defer_memos,
                     ) && !visited.contains(&ant)
                         && !results.contains_key(&ant)
                     {
@@ -935,7 +940,7 @@ impl<'a> FlowAnalyzer<'a> {
                         ant,
                         reference,
                         symbol_id,
-                        &mut antecedent_defer_memo,
+                        &mut defer_memos,
                     )
                     && !visited.contains(&ant)
                     && !results.contains_key(&ant)
@@ -1002,7 +1007,7 @@ impl<'a> FlowAnalyzer<'a> {
                         ant,
                         reference,
                         symbol_id,
-                        &mut antecedent_defer_memo,
+                        &mut defer_memos,
                     ) {
                         self.get_flow_type(reference, current_type, ant)
                     } else {
@@ -1208,7 +1213,7 @@ impl<'a> FlowAnalyzer<'a> {
         gate: PassthroughGate,
         visited: &FxHashSet<FlowNodeId>,
         results: &FxHashMap<FlowNodeId, TypeId>,
-        antecedent_defer_memo: &mut FxHashMap<FlowNodeId, bool>,
+        memos: &mut FlowDeferMemos,
         alias_flow_id: FlowNodeId,
         run_contains_alias_flow_id: &mut bool,
     ) -> FlowNodeId {
@@ -1288,19 +1293,16 @@ impl<'a> FlowAnalyzer<'a> {
             // `call_node_may_narrow_or_divert` (the same positive predicate the
             // worklist uses in `antecedent_requires_defer`).
             if pure_passthrough_call(flow.flags) {
-                if self.call_node_may_narrow_or_divert(flow) {
+                if self.call_node_may_narrow_or_divert_cached(current, flow, &mut memos.call_divert)
+                {
                     return current;
                 }
                 let [ant] = flow.antecedent.as_slice() else {
                     return current;
                 };
                 let ant = *ant;
-                if self.antecedent_requires_defer_cached(
-                    ant,
-                    reference,
-                    symbol_id,
-                    antecedent_defer_memo,
-                ) || visited.contains(&ant)
+                if self.antecedent_requires_defer_cached(ant, reference, symbol_id, memos)
+                    || visited.contains(&ant)
                     || results.contains_key(&ant)
                 {
                     return current;
@@ -1369,12 +1371,8 @@ impl<'a> FlowAnalyzer<'a> {
             // Never skip past an antecedent that carries pending narrowing, and
             // never skip one already finalized/cached (let the worklist reuse the
             // existing answer for it).
-            if self.antecedent_requires_defer_cached(
-                ant,
-                reference,
-                symbol_id,
-                antecedent_defer_memo,
-            ) || visited.contains(&ant)
+            if self.antecedent_requires_defer_cached(ant, reference, symbol_id, memos)
+                || visited.contains(&ant)
                 || results.contains_key(&ant)
             {
                 return current;
@@ -1394,18 +1392,18 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    fn antecedent_requires_defer_cached(
+    pub(super) fn antecedent_requires_defer_cached(
         &self,
         antecedent: FlowNodeId,
         reference: NodeIndex,
         symbol_id: Option<SymbolId>,
-        memo: &mut FxHashMap<FlowNodeId, bool>,
+        memos: &mut FlowDeferMemos,
     ) -> bool {
-        if let Some(&cached) = memo.get(&antecedent) {
+        if let Some(&cached) = memos.defer.get(&antecedent) {
             return cached;
         }
-        let result = self.antecedent_requires_defer(antecedent, reference, symbol_id);
-        memo.insert(antecedent, result);
+        let result = self.antecedent_requires_defer(antecedent, reference, symbol_id, memos);
+        memos.defer.insert(antecedent, result);
         result
     }
 

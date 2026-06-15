@@ -213,6 +213,20 @@ const fn flow_step_budget(flow_node_count: usize) -> usize {
     }
 }
 
+/// Per-walk classification memos shared by the linear-passthrough chase and the
+/// defer classifier. Both decisions are pure functions of a flow node within a
+/// single backward walk (`reference`/`symbol_id` are fixed and the type / type-
+/// predicate caches are immutable mid-walk), so each is computed at most once per
+/// node per walk. Bundling them keeps the chase within its argument budget while
+/// the recursion in `antecedent_requires_defer` reuses both tables.
+#[derive(Default)]
+pub(super) struct FlowDeferMemos {
+    /// `antecedent_requires_defer` result keyed by flow-node id.
+    pub(super) defer: FxHashMap<FlowNodeId, bool>,
+    /// `call_node_may_narrow_or_divert` result keyed by flow-node id.
+    pub(super) call_divert: FxHashMap<FlowNodeId, bool>,
+}
+
 /// Find a symbol's representative identifier node, preferring a usage site over
 /// a declaration identifier (binding/variable/parameter), because usage nodes
 /// carry richer flow facts (e.g. switch discriminants).
@@ -1313,6 +1327,7 @@ impl<'a> FlowAnalyzer<'a> {
         antecedent: FlowNodeId,
         reference: NodeIndex,
         symbol_id: Option<SymbolId>,
+        memos: &mut FlowDeferMemos,
     ) -> bool {
         let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
             return false;
@@ -1340,9 +1355,17 @@ impl<'a> FlowAnalyzer<'a> {
         // is a POSITIVE predicate (defer only when narrowing provably flows
         // through); an unclassifiable call defaults to defer.
         let ant_is_deferring_call = (ant_flags & flow_flags::CALL) != 0 && {
-            self.call_node_may_narrow_or_divert(ant_flow)
+            self.call_node_may_narrow_or_divert_cached(antecedent, ant_flow, &mut memos.call_divert)
                 || ant_flow.antecedent.first().is_some_and(|&grandparent| {
-                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                    // Recurse through the memoized wrapper, not the raw routine: a
+                    // pass-through CALL chain (`f(); g(); h(); …`) would otherwise
+                    // re-classify every ancestor on each visit, and the chase
+                    // re-invokes this per worklist pop, so the uncached recursion was
+                    // O(chain length) per call node and O(N^2) over a large scope.
+                    // The defer result is a pure function of the node within one walk
+                    // (`reference`/`symbol_id` are fixed), so caching by node id is
+                    // identical in value.
+                    self.antecedent_requires_defer_cached(grandparent, reference, symbol_id, memos)
                 })
         };
 
@@ -1431,6 +1454,31 @@ impl<'a> FlowAnalyzer<'a> {
         };
         self.predicate_signature_for_type(callee_type)
             .is_some_and(|sig| sig.predicate.asserts)
+    }
+
+    /// Per-walk memoized wrapper around [`Self::call_node_may_narrow_or_divert`].
+    ///
+    /// The classification is a pure function of the CALL flow node within a single
+    /// backward walk (it reads the immutable per-check type cache and resolved
+    /// type-predicate tables; `reference`/`symbol_id` do not enter it). Both the
+    /// linear-passthrough chase and the defer classifier re-derive it for the same
+    /// node many times per walk — the chase alone re-scans overlapping pass-through
+    /// runs on every worklist pop — so without a memo a call-dense scope pays the
+    /// full predicate-signature extraction (`classify_for_predicate_signature`,
+    /// `callable_shape`) thousands of times per reference read. Caching by flow-node
+    /// id collapses that to one extraction per node per walk with no change in value.
+    pub(super) fn call_node_may_narrow_or_divert_cached(
+        &self,
+        flow_id: FlowNodeId,
+        ant_flow: &FlowNode,
+        memo: &mut FxHashMap<FlowNodeId, bool>,
+    ) -> bool {
+        if let Some(&cached) = memo.get(&flow_id) {
+            return cached;
+        }
+        let result = self.call_node_may_narrow_or_divert(ant_flow);
+        memo.insert(flow_id, result);
+        result
     }
 
     /// Helper function for call handling in iterative mode.
