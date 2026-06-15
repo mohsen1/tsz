@@ -154,6 +154,20 @@ impl<'a> CheckerState<'a> {
         acc
     }
 
+    /// `true` when `symbol` has at least one `interface` declaration that
+    /// resolves in the *current* arena. Used to keep a locally-declared
+    /// interface on the local declaration-merging path instead of delegating its
+    /// type computation to a foreign arena.
+    fn symbol_has_local_interface_declaration(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_interface(node))
+                .is_some()
+        })
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -279,18 +293,33 @@ impl<'a> CheckerState<'a> {
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = cross_file_symbol
             && symbol.has_any_flags(symbol_flags::INTERFACE)
+            && self.symbol_has_local_interface_declaration(symbol)
         {
-            let has_local_interface = symbol.declarations.iter().any(|&d| {
-                self.ctx
-                    .arena
-                    .get(d)
-                    .and_then(|n| self.ctx.arena.get_interface(n))
-                    .is_some()
-            });
-            if has_local_interface {
-                delegate_arena = None; // Handle locally with merge
-                interface_has_local_decl = true;
-            }
+            delegate_arena = None; // Handle locally with merge
+            interface_has_local_decl = true;
+        }
+
+        // The guard above only fires when `symbol_arenas` already points at a
+        // foreign arena. A locally-declared interface that is re-exported
+        // (`export * from "./x"`) and pulled in through a namespace import
+        // (`import * as ns from "./re-exporter"`) instead has its canonical file
+        // index point at the *re-exporting* module, while `symbol_arenas` is
+        // unset or current — so `interface_has_local_decl` stays false and the
+        // `resolve_symbol_file_index` path below delegates to the re-exporter's
+        // arena. That arena has no body for the interface's `Lazy(DefId)`, so the
+        // delegation returns the `error` sentinel, which then poisons every
+        // derived-class member typed by the interface. Inspect the *local* binder
+        // symbol (raw file-local `SymbolId`s are interpreted in the current
+        // arena, mirroring the FUNCTION path below) so any genuine current-arena
+        // interface declaration pins resolution locally regardless of how the
+        // canonical file index resolved.
+        if !interface_has_local_decl
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::INTERFACE)
+            && self.symbol_has_local_interface_declaration(symbol)
+        {
+            delegate_arena = None; // Handle locally with merge
+            interface_has_local_decl = true;
         }
 
         // Raw `SymbolId`s are file-local: `SymbolId(0)` may name `f` (FUNCTION) in

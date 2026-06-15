@@ -554,6 +554,76 @@ const notPL: PromiseLike<unknown> = na;
         );
     }
 
+    /// Issue #13484 (baseline): a generic base-class member typed by a base type
+    /// parameter (`_def: Def`) must type-check against the concrete `Def` even
+    /// when `Def` is a locally-declared interface that is *also* re-exported
+    /// through a barrel (`export *`) and pulled in by a namespace import
+    /// (`import * as ns`).
+    ///
+    /// At project scale (real driver, with module resolutions threaded through)
+    /// the re-export + namespace materialization pointed the interface's
+    /// canonical file index at the re-exporting barrel; tsz then delegated the
+    /// interface's type computation to the barrel arena, which has no body for
+    /// its `Lazy(DefId)`, so the delegation returned the `error` sentinel. That
+    /// `error` flowed into the derived class's inherited `_def` member, so
+    /// `this._def.checks` became `error[]` and `new Schema({ ...this._def, ... })`
+    /// reported a spurious `TS2345`. `tsc` accepts this program. The structural
+    /// reproduction is project-scale (see the PR's standalone repro and the zod
+    /// corpus row); this end-to-end assertion pins that the re-export + namespace
+    /// + generic-heritage shape stays clean through the driver pipeline.
+    ///
+    /// Names here intentionally avoid the zod/kysely identifiers to keep the
+    /// assertion structural (no identifier/file-name dependence).
+    #[test]
+    fn project_mode_reexport_namespace_interface_heritage_no_error_leak() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/schema.ts",
+                    r#"
+export interface SchemaDef { readonly tag: string }
+export abstract class Schema<Out, Def extends SchemaDef = SchemaDef, In = Out> {
+  readonly _out!: Out;
+  readonly _in!: In;
+  readonly _def!: Def;
+  constructor(def: Def) { this._def = def; }
+  abstract parse(data: unknown): Out;
+}
+export interface NumberCheck { readonly kind: "min" | "max"; readonly value: number }
+export interface NumberDef extends SchemaDef { readonly checks: NumberCheck[] }
+export class NumberSchema extends Schema<number, NumberDef> {
+  parse(_data: unknown): number { return 0; }
+  addCheck(check: NumberCheck): NumberSchema {
+    return new NumberSchema({ ...this._def, checks: [...this._def.checks, check] });
+  }
+}
+"#,
+                ),
+                ("/p/barrel.ts", "export * from \"./schema\";\n"),
+                (
+                    "/p/index.ts",
+                    "import * as ns from \"./barrel\";\nexport * from \"./barrel\";\nexport { ns };\n",
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2345 | 2322 | 2339))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "inherited base-type-parameter member degraded to `error` across a \
+             re-export barrel + namespace import (issue #13484); expected no \
+             assignability/property diagnostics, got: {leaked:#?}"
+        );
+    }
+
     #[test]
     fn project_mode_merged_interface_and_const_value_keep_distinct_shapes_across_files() {
         let options = project_mode_es2015_strict_options();
