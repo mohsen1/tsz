@@ -34,6 +34,8 @@ fn empty_program_context() -> ProgramContext {
         global_module_binder_index: None,
         global_arena_index: None,
         global_file_name_index: None,
+        module_specifiers: None,
+        module_path_specifiers: None,
         program_reexports: None,
         program_wildcard_reexports: None,
         program_module_exports: None,

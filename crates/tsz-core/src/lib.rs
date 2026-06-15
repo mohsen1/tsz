@@ -314,25 +314,17 @@ mod constructor_accessibility;
 #[path = "../../tsz-checker/tests/void_return_exception.rs"]
 mod void_return_exception;
 
-// Any-propagation tests
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/any_propagation.rs"]
-mod any_propagation;
-
-// Tests that depend on test_fixtures (require root crate context)
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/any_propagation_tests.rs"]
-mod any_propagation_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/const_assertion_tests.rs"]
-mod const_assertion_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/freshness_stripping_tests.rs"]
-mod freshness_stripping_tests;
-// `function_bivariance`, `global_type_tests`, and `ts2304_tests` are owned by
-// `tsz-checker` (they depend only on `tsz_checker::*`, not on `tsz-core`'s
-// `test_fixtures`). They run in `tsz-checker`'s own test runner; do not
-// re-mount them here (#13109).
+// `function_bivariance`, `global_type_tests`, and `ts2304_tests` (#13633), plus
+// `any_propagation`, `any_propagation_tests`, `const_assertion_tests`, and
+// `freshness_stripping_tests` (#13109) are owned by `tsz-checker`: they depend
+// only on `tsz_checker::*` (via `tsz_checker::test_utils::check_source_with_libs`
+// with no lib files), not on `tsz-core`'s `test_fixtures`. They run in
+// `tsz-checker`'s own test runner via `[[test]]` entries; do not re-mount here.
+//
+// The remaining mounts below still depend on `tsz-core`'s `test_fixtures`
+// (`TestContext`, `setup_lib_contexts`, `merge_shared_lib_symbols`), which load
+// embedded lib symbols and have no `tsz_checker::test_utils` equivalent. They
+// cannot relocate until those fixtures move into `tsz-checker` (#13109).
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;

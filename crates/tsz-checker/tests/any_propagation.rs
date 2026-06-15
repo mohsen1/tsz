@@ -3,8 +3,7 @@
 //! These tests verify that `any` behaves as both Top and Bottom type
 //! in the Lawyer layer, respecting strict mode settings.
 
-use crate::checker::context::CheckerOptions;
-use crate::test_fixtures::TestContext;
+use tsz_checker::context::CheckerOptions;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -20,17 +19,16 @@ interface IArguments {}
 
 fn test_no_errors(source: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-    let ctx = TestContext::new();
-    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
         &source,
         "test.ts",
         CheckerOptions::default(),
-        &ctx.lib_files,
+        &[],
     );
     let errors: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
+            d.category == tsz_checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
         })
         .collect();
 
