@@ -637,6 +637,15 @@ impl TypePredicateCache for QueryCache<'_> {
             .set_contains_resolver_dependent_cache(type_id, result);
     }
 
+    fn structurally_eval_inert_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.structurally_eval_inert_cached(type_id)
+    }
+
+    fn set_structurally_eval_inert_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_structurally_eval_inert_cache(type_id, result);
+    }
+
     fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.contains_conditional_cached(type_id)
     }

@@ -206,6 +206,136 @@ pub fn contains_this_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_content_cached(db, type_id, &ThisTypePredicate)
 }
 
+/// Whether evaluating `type_id` is a no-op under *every* evaluator and resolver
+/// in a project run — i.e. the type contains no node whose evaluation depends on
+/// the resolver (alias/`typeof` resolution) or the substitution environment
+/// (type-parameter mapper, bound `this`).
+///
+/// A `true` answer means `evaluate(type_id)` returns `type_id` unchanged for any
+/// `TypeEvaluator`, because the type holds none of the kinds the evaluator's
+/// `visit_type_key` rewrites nor any substitution-dependent leaf:
+/// `Conditional`, `IndexAccess`, `Mapped`, `KeyOf`, `TypeQuery`, `Application`,
+/// `TemplateLiteral`, `Lazy`, `Recursive`, `StringIntrinsic`, `NoInfer`,
+/// `UnresolvedTypeName`, `TypeParameter`, `Infer`, `ThisType`, `BoundParameter`.
+///
+/// The walk descends the *entire* structural surface
+/// ([`ChildPolicy::EVERYTHING`], including `Application` bases, write types,
+/// index keys, and callable index-signature values) — narrower child policies
+/// could hide an unresolved `Lazy` in a skipped position and wrongly classify a
+/// deferral as inert. The per-node answer is immutable per `TypeId` (it asks a
+/// purely structural question), so it is memoized in the shared
+/// [`PredicateCacheKind::StructurallyEvalInert`] bit and amortized O(1) after the
+/// first walk.
+///
+/// [`PredicateCacheKind::StructurallyEvalInert`]:
+///     crate::intern::core::interner::PredicateCacheKind
+pub fn is_structurally_eval_inert(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return true;
+    }
+    if let Some(cached) = db.structurally_eval_inert_cached(type_id) {
+        return cached;
+    }
+    let mut walker = EvalInertWalker {
+        db,
+        visiting: FxHashSet::default(),
+    };
+    !walker.contains_eval_affecting(type_id).0
+}
+
+/// Whether `key` is itself an evaluation-affecting node (resolver- or
+/// substitution-dependent). Mirrors the kinds the evaluator's `visit_type_key`
+/// rewrites plus the substitution-dependent leaves.
+const fn is_eval_affecting_node(key: &TypeData) -> bool {
+    matches!(
+        key,
+        TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Mapped(_)
+            | TypeData::KeyOf(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::Application(_)
+            | TypeData::TemplateLiteral(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::StringIntrinsic { .. }
+            | TypeData::NoInfer(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+    )
+}
+
+/// Cycle-tracking walker backing [`is_structurally_eval_inert`]. Descends the
+/// full structural surface and writes only fully-resolved (untainted) per-node
+/// answers to the shared cache.
+struct EvalInertWalker<'a> {
+    db: &'a dyn TypeDatabase,
+    visiting: FxHashSet<TypeId>,
+}
+
+impl EvalInertWalker<'_> {
+    /// Returns `(contains_eval_affecting, cycle_tainted)`.
+    fn contains_eval_affecting(&mut self, type_id: TypeId) -> (bool, bool) {
+        if type_id.is_intrinsic() {
+            return (false, false);
+        }
+        // The cache stores inertness (the negation), so a cached `true` means
+        // "no eval-affecting node".
+        if let Some(inert) = self.db.structurally_eval_inert_cached(type_id) {
+            return (!inert, false);
+        }
+        let Some(key) = self.db.lookup(type_id) else {
+            return (false, false);
+        };
+        if is_eval_affecting_node(&key) {
+            // A matching node is a definite fact: not inert, untainted.
+            self.db.set_structurally_eval_inert_cache(type_id, false);
+            return (true, false);
+        }
+        if !has_policy_children(&key, &ChildPolicy::EVERYTHING) {
+            // A childless inert leaf: definitely inert.
+            self.db.set_structurally_eval_inert_cache(type_id, true);
+            return (false, false);
+        }
+        if !self.visiting.insert(type_id) {
+            // Re-entering an in-progress node contributes nothing new; mark
+            // tainted so the ancestor does not persist a provisional answer.
+            return (false, true);
+        }
+        let mut tainted = false;
+        let found = try_for_each_child_with_policy::<(), _>(
+            self.db,
+            &key,
+            &ChildPolicy::EVERYTHING,
+            &mut |child| {
+                let (child_found, child_tainted) = self.contains_eval_affecting(child);
+                tainted |= child_tainted;
+                if child_found {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        )
+        .is_break();
+        self.visiting.remove(&type_id);
+        if found {
+            // A found eval-affecting node is a definite, untainted fact.
+            self.db.set_structurally_eval_inert_cache(type_id, false);
+            (true, false)
+        } else {
+            if !tainted {
+                // Only persist fully-resolved (untainted) inert answers.
+                self.db.set_structurally_eval_inert_cache(type_id, true);
+            }
+            (false, tainted)
+        }
+    }
+}
+
 pub(super) struct SubstitutionDependentPredicate;
 impl ContentPredicate for SubstitutionDependentPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {

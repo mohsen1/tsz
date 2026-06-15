@@ -126,6 +126,15 @@ pub(crate) enum PredicateCacheKind {
     ContainsFileRelative = 11,
     IsGenericWithUnionConstraint = 12,
     IsGenericWithoutNullableConstraint = 13,
+    /// `type_id` contains no node whose evaluation depends on the resolver or
+    /// substitution environment (no `Conditional`/`IndexAccess`/`Mapped`/
+    /// `KeyOf`/`TypeQuery`/`Application`/`TemplateLiteral`/`Lazy`/`Recursive`/
+    /// `StringIntrinsic`/`NoInfer`/`UnresolvedTypeName`/`TypeParameter`/`Infer`/
+    /// `ThisType`/`BoundParameter`). Such a type evaluates to itself under every
+    /// evaluator and resolver in a project run, so a recorded identity result is
+    /// a permanent structural fixed point. Backs the evaluator's resolver-
+    /// independent fixed-point fast path (issues #13250 / #8356).
+    StructurallyEvalInert = 14,
 }
 
 impl PredicateCacheKind {
