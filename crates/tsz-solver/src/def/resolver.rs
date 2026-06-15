@@ -1081,6 +1081,52 @@ impl TypeEnvironment {
         }
     }
 
+    /// Return the first `DefId`-keyed entry on which `self` and `other` disagree.
+    ///
+    /// The checker owns two `TypeEnvironment` instances with distinct
+    /// lifecycles: the evaluator env (`type_env`, authoritative) and the
+    /// flow-analyzer env (`type_environment`, reconciled from the evaluator env
+    /// via [`Self::overlay_missing_from`] at the file-preparation boundary).
+    /// Because `overlay_missing_from` is a vacancy-only superset merge that
+    /// keeps `self`'s value on key collisions, after reconciliation the two
+    /// envs must *agree* on every shared `DefId -> TypeId` (and the related
+    /// `DefId`-keyed structural) entry. A disagreement means a mirror-write was
+    /// applied to one env but not the other with a different value — exactly the
+    /// silent `DefId -> TypeId` divergence that produces query-site-dependent
+    /// wrong types.
+    ///
+    /// Returns `None` when the two envs are consistent. The returned tuple is
+    /// `(map_name, raw_key, self_value, other_value)` for diagnostics. This is a
+    /// read-only consistency probe used by the checker's debug-mode reconciliation
+    /// assertion; it never mutates either env and is not on any hot path.
+    #[must_use]
+    pub fn first_def_divergence_from(&self, other: &Self) -> Option<(&'static str, u32, u32, u32)> {
+        // Only keys present in *both* maps can disagree; vacancy-fill cannot
+        // create a conflicting value, so missing-on-one-side is not divergence.
+        for (&key, &value) in &self.def_types {
+            if let Some(&other_value) = other.def_types.get(&key)
+                && other_value != value
+            {
+                return Some(("def_types", key, value.0, other_value.0));
+            }
+        }
+        for (&key, &value) in &self.class_instance_types {
+            if let Some(&other_value) = other.class_instance_types.get(&key)
+                && other_value != value
+            {
+                return Some(("class_instance_types", key, value.0, other_value.0));
+            }
+        }
+        for (&key, &value) in &self.class_extends {
+            if let Some(&other_value) = other.class_extends.get(&key)
+                && other_value != value
+            {
+                return Some(("class_extends", key, value.0, other_value.0));
+            }
+        }
+        None
+    }
+
     /// Snapshot the local DefId -> TypeId cache for downstream consumers like declaration emit.
     pub fn snapshot_def_types(&self) -> FxHashMap<u32, TypeId> {
         self.def_types.clone()
@@ -1813,6 +1859,52 @@ mod tests {
             target.get_def(shared_def),
             Some(TypeId(301)),
             "existing target value must not be overwritten on key collision"
+        );
+    }
+
+    #[test]
+    fn first_def_divergence_from_detects_conflicting_shared_def_body() {
+        let shared_def = DefId(42);
+
+        let mut evaluator = TypeEnvironment::new();
+        evaluator.insert_def(shared_def, TypeId(100));
+        // An evaluator-only entry the flow env never received: not a divergence.
+        evaluator.insert_def(DefId(7), TypeId(101));
+
+        let mut flow = TypeEnvironment::new();
+        flow.insert_def(shared_def, TypeId(200));
+
+        // Probe is order-symmetric on the conflicting key.
+        let divergence = flow.first_def_divergence_from(&evaluator);
+        assert_eq!(
+            divergence,
+            Some(("def_types", shared_def.0, 200, 100)),
+            "conflicting shared def body must be reported"
+        );
+    }
+
+    #[test]
+    fn first_def_divergence_from_clean_after_overlay() {
+        let shared_def = DefId(42);
+        let eval_only_def = DefId(7);
+        let flow_only_class = DefId(99);
+
+        let mut evaluator = TypeEnvironment::new();
+        evaluator.insert_def(shared_def, TypeId(100));
+        evaluator.insert_def(eval_only_def, TypeId(101));
+
+        let mut flow = TypeEnvironment::new();
+        // Flow-analyzer-only mapping the evaluator never wrote.
+        flow.register_class_extends(flow_only_class, DefId(98));
+        // After the production reconciliation step, the flow env is overlaid
+        // from the evaluator env. With no conflicting writes this must leave the
+        // two envs consistent on every shared key.
+        flow.overlay_missing_from(&evaluator);
+
+        assert_eq!(
+            flow.first_def_divergence_from(&evaluator),
+            None,
+            "post-overlay envs must agree on every shared DefId entry"
         );
     }
 }
