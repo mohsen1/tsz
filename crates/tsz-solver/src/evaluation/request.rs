@@ -4,6 +4,7 @@
 //! This module names the request/options stage so cache keys and evaluator
 //! configuration stay in one place as the monolithic evaluator is split.
 
+use crate::options::IndexAccessOptions;
 use crate::types::TypeId;
 
 /// Cache key for option-sensitive type evaluation.
@@ -15,11 +16,14 @@ use crate::types::TypeId;
 /// under a different option set if the owning interner's options ever change
 /// between writes and reads (the explicit cache reset boundary described in
 /// issue #10970).
+///
+/// The two flags are carried by the shared [`IndexAccessOptions`] newtype. Its
+/// derived `Hash`/`Eq` hashes both `bool` fields in the same order as the
+/// formerly inlined pair, so this key's hashing is byte-identical.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct EvaluationCacheKey {
     type_id: TypeId,
-    no_unchecked_indexed_access: bool,
-    exact_optional_property_types: bool,
+    index_access: IndexAccessOptions,
 }
 
 impl EvaluationCacheKey {
@@ -30,8 +34,9 @@ impl EvaluationCacheKey {
     ) -> Self {
         Self {
             type_id,
-            no_unchecked_indexed_access,
-            exact_optional_property_types,
+            index_access: IndexAccessOptions::new()
+                .with_no_unchecked_indexed_access(no_unchecked_indexed_access)
+                .with_exact_optional_property_types(exact_optional_property_types),
         }
     }
 
@@ -40,45 +45,50 @@ impl EvaluationCacheKey {
     }
 
     pub const fn no_unchecked_indexed_access(self) -> bool {
-        self.no_unchecked_indexed_access
+        self.index_access.no_unchecked_indexed_access()
     }
 
     pub const fn exact_optional_property_types(self) -> bool {
-        self.exact_optional_property_types
+        self.index_access.exact_optional_property_types()
     }
 }
 
 /// Options that affect type evaluation results.
+///
+/// Embeds the shared [`IndexAccessOptions`] newtype, which `NarrowingOptions`
+/// also embeds, so the `{no_unchecked_indexed_access,
+/// exact_optional_property_types}` pair has a single definition threaded into
+/// both stages' cache keys.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EvaluationOptions {
-    no_unchecked_indexed_access: bool,
-    exact_optional_property_types: bool,
+    index_access: IndexAccessOptions,
 }
 
 impl EvaluationOptions {
     pub const fn new() -> Self {
         Self {
-            no_unchecked_indexed_access: false,
-            exact_optional_property_types: false,
+            index_access: IndexAccessOptions::new(),
         }
     }
 
     pub const fn with_no_unchecked_indexed_access(mut self, enabled: bool) -> Self {
-        self.no_unchecked_indexed_access = enabled;
+        self.index_access = self.index_access.with_no_unchecked_indexed_access(enabled);
         self
     }
 
     pub const fn with_exact_optional_property_types(mut self, enabled: bool) -> Self {
-        self.exact_optional_property_types = enabled;
+        self.index_access = self
+            .index_access
+            .with_exact_optional_property_types(enabled);
         self
     }
 
     pub const fn no_unchecked_indexed_access(self) -> bool {
-        self.no_unchecked_indexed_access
+        self.index_access.no_unchecked_indexed_access()
     }
 
     pub const fn exact_optional_property_types(self) -> bool {
-        self.exact_optional_property_types
+        self.index_access.exact_optional_property_types()
     }
 }
 
