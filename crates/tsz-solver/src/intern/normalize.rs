@@ -1546,22 +1546,12 @@ mod tests {
                 let payload = interner.intern_string(&format!("p{i}"));
                 interner.object(vec![
                     crate::types::PropertyInfo {
-                        name: kind,
-                        type_id: interner.literal_number(i as f64),
                         write_type: TypeId::NEVER,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
+                        ..crate::types::PropertyInfo::new(kind, interner.literal_number(i as f64))
                     },
                     crate::types::PropertyInfo {
-                        name: payload,
-                        type_id: TypeId::NUMBER,
                         write_type: TypeId::NEVER,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
+                        ..crate::types::PropertyInfo::new(payload, TypeId::NUMBER)
                     },
                 ])
             })
