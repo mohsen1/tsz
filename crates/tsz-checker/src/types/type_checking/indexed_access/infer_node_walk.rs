@@ -1,17 +1,15 @@
-//! AST-walk helpers for locating `infer` type nodes and testing AST descendancy
-//! while validating indexed-access types.
-//!
-//! Extracted from `indexed_access.rs` to keep that file under the 2000-line
-//! checker-boundary limit enforced by `scripts/arch/arch_guard.py`. Pure code
-//! motion: these are arena-only traversals with no type semantics.
+//! AST traversal helpers for locating `infer` type nodes within an indexed
+//! access constraint subtree. Split out of `indexed_access.rs` to keep that
+//! file under the per-file LOC ceiling; behavior is unchanged.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
-    /// Collect all `INFER_TYPE` node indices in a subtree, using parent-tracking.
-    /// Walks all nodes whose parent chain leads back to `root_idx`.
+    /// Collect every `infer` type node within the subtree rooted at `root_idx`,
+    /// walking the type-node children explicitly so nested `infer Y`
+    /// constraints in the same scope are also captured.
     pub(super) fn collect_infer_nodes_in_subtree(&self, root_idx: NodeIndex) -> Vec<NodeIndex> {
         let mut result = Vec::new();
         let mut stack = vec![root_idx];
@@ -37,7 +35,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Push child indices of a type node onto the stack for traversal.
-    pub(super) fn push_type_node_children(
+    fn push_type_node_children(
         &self,
         _idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
@@ -92,17 +90,5 @@ impl<'a> CheckerState<'a> {
         if let Some(tp) = self.ctx.arena.get_type_parameter(node) {
             stack.extend_from_slice(&[tp.constraint, tp.default]);
         }
-    }
-
-    /// Check if `node_a` is a descendant of `node_b` in the AST.
-    pub(super) fn is_descendant_of(&self, node_a: NodeIndex, node_b: NodeIndex) -> bool {
-        let mut current = Some(node_a);
-        while let Some(idx) = current {
-            if idx == node_b {
-                return true;
-            }
-            current = self.ctx.arena.parent_of(idx);
-        }
-        false
     }
 }
