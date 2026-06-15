@@ -644,6 +644,54 @@ impl<'a> CheckerState<'a> {
                 .contains(&node_idx)
     }
 
+    /// The enclosing call expression for which `func_idx` is a direct argument,
+    /// or `None` when `func_idx` is not a call argument.
+    fn enclosing_call_for_argument(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        let call_idx = self.ctx.arena.get_extended(func_idx)?.parent;
+        let call_node = self.ctx.arena.get(call_idx)?;
+        if call_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+            && call_node.kind != tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION
+        {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(call_node)?;
+        let is_argument = call
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.nodes.contains(&func_idx));
+        is_argument.then_some(call_idx)
+    }
+
+    /// A deferred callback closure may be left without a recorded contextual type
+    /// when its enclosing call resolved to a cached result computed before the
+    /// call's contextual signature was available (e.g. a second `Array.reduce`
+    /// nested inside another function expression, whose call type is cached during
+    /// environment building and not re-resolved during statement checking). The
+    /// closure's parameters are nonetheless contextually typed by the resolved
+    /// signature, so tsc reports no TS7006. Re-resolve the enclosing call (with the
+    /// closure's stale cache invalidated) so the contextual-typing pass runs and
+    /// records the closure; diagnostics produced by the re-resolution are discarded
+    /// because they were already reported (or correctly suppressed) by the original
+    /// resolution. Returns whether the closure is now known to be contextually typed.
+    fn reresolve_enclosing_call_contextual_type(&mut self, func_idx: NodeIndex) -> bool {
+        let Some(call_idx) = self.enclosing_call_for_argument(func_idx) else {
+            return false;
+        };
+        let snap = self.ctx.snapshot_full();
+        self.invalidate_node_type_cache(call_idx);
+        self.invalidate_expression_for_contextual_retry(func_idx);
+        let _ = self.get_type_of_node(call_idx);
+        let contextual = self.closure_has_contextual_type(func_idx);
+        // Discard diagnostics/state mutations from the speculative re-resolution; it
+        // exists only to determine whether the closure is contextually typed. They
+        // were already reported (or correctly suppressed) by the original resolution.
+        self.ctx.rollback_full(&snap);
+        if contextual {
+            self.ctx.implicit_any_contextual_closures.insert(func_idx);
+        }
+        contextual
+    }
+
     pub(crate) fn maybe_report_implicit_any_parameter(
         &mut self,
         param: &tsz_parser::parser::node::ParameterData,
@@ -1519,6 +1567,16 @@ impl<'a> CheckerState<'a> {
         let deferred = std::mem::take(&mut self.ctx.deferred_implicit_any_closures);
         for func_idx in deferred {
             if self.closure_has_contextual_type(func_idx) {
+                continue;
+            }
+            // A deferred callback whose enclosing call resolved to a cached result
+            // (computed before the call's contextual signature was available) may not
+            // be recorded as contextually typed even though its parameters are. Give
+            // it one re-resolution so the contextual-typing pass can run before we
+            // commit to TS7006. This recovers parity for callbacks nested inside other
+            // function expressions (e.g. a second `Array.reduce` whose call type was
+            // cached during environment building).
+            if self.reresolve_enclosing_call_contextual_type(func_idx) {
                 continue;
             }
             // Skip closures with JSDoc annotations — JSDoc @param, @type, @template
