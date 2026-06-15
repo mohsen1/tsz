@@ -84,13 +84,10 @@ impl BinderState {
     ) {
         if let Some(module) = arena.get_module(node) {
             if self.in_module_augmentation
-                && let Some(ref module_spec) = self.current_augmented_module
+                && let Some(module_spec) = self.current_augmented_module.clone()
                 && let Some(name) = Self::get_identifier_name(arena, module.name)
             {
-                Arc::make_mut(&mut self.module_augmentations)
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                self.record_module_augmentation_entry(&module_spec, name, idx);
             }
 
             let is_global_augmentation = node.is_global_augmentation()
@@ -250,10 +247,7 @@ impl BinderState {
 
                 if self.in_global_augmentation {
                     let aug_flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
-                    Arc::make_mut(&mut self.global_augmentations)
-                        .entry(name.clone())
-                        .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx, aug_flags));
+                    self.push_global_augmentation(&name, idx, aug_flags);
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
