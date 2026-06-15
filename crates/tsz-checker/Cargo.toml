@@ -959,6 +959,9 @@ path = "tests/mapped_type_interface_tests.rs"
 name = "homomorphic_mapped_empty_keyspace_tests"
 path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
 [[test]]
+name = "homomorphic_mapped_symbol_iterator_tests"
+path = "tests/homomorphic_mapped_symbol_iterator_tests.rs"
+[[test]]
 name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 [[test]]
