@@ -847,14 +847,13 @@ impl<'a> CheckerState<'a> {
         // where the base instance is already the raw `TypeId::ERROR` sentinel,
         // carrying no `Lazy` to recover the definition from).
         let resolved_base = self.resolve_lazy_type(base_instance_type);
-        if resolved_base == TypeId::ERROR {
-            if let Some(base_def_id) =
+        if resolved_base == TypeId::ERROR
+            && let Some(base_def_id) =
                 crate::query_boundaries::common::lazy_def_id(self.ctx.types, base_instance_type)
                     .or(deferral_def_id)
-            {
-                let lazy_base = self.ctx.types.lazy(base_def_id);
-                return self.ctx.types.application(lazy_base, type_args);
-            }
+        {
+            let lazy_base = self.ctx.types.lazy(base_def_id);
+            return self.ctx.types.application(lazy_base, type_args);
         }
 
         let base_instance_type = resolved_base;
