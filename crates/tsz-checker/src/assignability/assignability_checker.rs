@@ -250,21 +250,35 @@ impl<'a> CheckerState<'a> {
 
     fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         // Depth guard: prevents stack overflow from mutually recursive types
-        // (e.g., Foo<T> ↔ Bar<T>) where each fresh visited set misses cross-function cycles.
+        // (e.g., Foo<T> ↔ Bar<T>) where each fresh visited set misses
+        // cross-function cycles. The decrement is owned by an RAII guard so the
+        // depth is restored on every exit — including when the inner walk
+        // unwinds via a panic a caller (`try_tsz`, LSP) catches mid-recursion.
+        // A manual post-call decrement would be skipped on unwind, leaking a
+        // positive depth into the next compilation on a reused batch worker
+        // thread; later normalizations at that stale depth would bail at the cap
+        // and return the type unnormalized, suppressing the assignability
+        // comparison and making diagnostics schedule-dependent (#13368). The
+        // counter is function-private, so the batch boundary reset cannot reach
+        // it — RAII self-cleaning is the only correct isolation here.
         thread_local! { static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+        struct DepthReset;
+        impl Drop for DepthReset {
+            fn drop(&mut self) {
+                DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            }
+        }
         let depth = DEPTH.with(|d| {
             let v = d.get();
             d.set(v + 1);
             v
         });
+        let _depth_reset = DepthReset;
         if depth >= 10 {
-            DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
             return type_id;
         }
         let mut visited = FxHashSet::default();
-        let result = self.normalize_nested_type_for_assignability_inner(type_id, &mut visited);
-        DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-        result
+        self.normalize_nested_type_for_assignability_inner(type_id, &mut visited)
     }
 
     fn normalize_nested_type_for_assignability_inner(
