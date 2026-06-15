@@ -5,7 +5,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(crate) fn declaration_file_type_shadow_for_lib_name(
         &self,
         name: &str,

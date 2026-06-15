@@ -10,7 +10,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TupleElement, TypeId};
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
         &mut self,
         decl_arena: &NodeArena,

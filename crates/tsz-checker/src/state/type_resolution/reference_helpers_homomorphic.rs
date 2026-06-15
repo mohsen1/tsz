@@ -14,7 +14,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Returns `true` when the type alias body is **directly** a homomorphic mapped type
     /// whose template is an identity self-reference: `type A<T> = { [P in keyof T]: A<T> }`.
     ///
