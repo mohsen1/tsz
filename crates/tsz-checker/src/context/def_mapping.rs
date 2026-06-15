@@ -1508,6 +1508,35 @@ impl<'a> CheckerContext<'a> {
             .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
+    /// Create a `TypeFormatter` configured for the failed-instantiation
+    /// (`TS2635`) display surface produced by
+    /// `format_type_diagnostic_for_instantiation_expression`.
+    ///
+    /// This is the structural base shared by every instantiation-display
+    /// formatter in that helper: diagnostic mode, the strict-null / exact-optional
+    /// flags, and `with_display_properties` so object/callable shapes render their
+    /// members inline. Unlike [`Self::create_diagnostic_type_formatter`] it does
+    /// *not* enable the `BuiltinIteratorReturn` substitution — the TS2635 surface
+    /// renders the raw instantiated shape.
+    ///
+    /// The structural call sites (anonymous function / callable / call-signature
+    /// shapes) use the returned builder as-is. The named-callable entry point
+    /// chains the module-name / current-file qualification context
+    /// (`with_namespace_module_names`, `with_module_specifiers`,
+    /// `with_module_path_specifiers`, `with_current_file_id`, `with_def_store`)
+    /// onto it so lib-interface names resolve.
+    pub fn create_instantiation_display_formatter(
+        &self,
+    ) -> crate::query_boundaries::common::TypeFormatter<'_> {
+        use crate::query_boundaries::common::TypeFormatter;
+
+        TypeFormatter::with_symbols(self.types, &self.binder.symbols)
+            .with_diagnostic_mode()
+            .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
+            .with_display_properties()
+    }
+
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.
     ///
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
