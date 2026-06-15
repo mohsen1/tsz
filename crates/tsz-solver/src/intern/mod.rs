@@ -23,6 +23,7 @@
 mod core;
 mod intersection;
 mod normalize;
+mod shallow_subtype;
 mod template;
 mod template_intersection;
 mod tuple_normalization;
