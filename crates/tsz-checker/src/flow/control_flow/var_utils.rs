@@ -602,15 +602,15 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // typeof: check operator polarity
-        let is_positive_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
-        let is_negative_equality = bin.operator_token
-            == SyntaxKind::ExclamationEqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
-
-        if !is_positive_equality && !is_negative_equality {
+        let Some(comparison) =
+            crate::query_boundaries::operator_wrappers::classify_equality_comparison(
+                bin.operator_token,
+            )
+        else {
             return false;
-        }
+        };
+        let is_positive_equality = comparison.is_equals;
+        let is_negative_equality = !comparison.is_equals;
 
         // Determine if this is the "positive sense" branch:
         // - `=== "type"` + TRUE_CONDITION → positive
