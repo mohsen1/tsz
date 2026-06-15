@@ -249,6 +249,56 @@ pub(crate) fn env_flag(name: &str) -> bool {
     matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
+/// Apply tsc's `type: "json"` import-attribute escape hatch to a TS2732 outcome.
+///
+/// When a module lookup fails with TS2732 (`resolveJsonModule` not enabled for
+/// this specifier) but the import carries a `with { type: "json" }` attribute,
+/// the attribute itself enables the JSON module under Node18+/NodeNext import
+/// conditions. In that case tsc re-resolves the specifier and, if it lands on a
+/// `.json` file, treats the import as resolved instead of erroring.
+///
+/// `has_type_json_import_attribute` is computed by the caller (the two call
+/// sites obtain it differently — one precomputes, one reads it from the
+/// specifier node) so this helper only owns the shared TS2732 override that was
+/// previously duplicated verbatim across the source-discovery and
+/// source-resolution-setup paths.
+pub(crate) fn apply_json_type_import_attribute_override(
+    outcome: &mut tsz::module_resolver::ModuleLookupOutcome,
+    has_type_json_import_attribute: bool,
+    containing_file: &Path,
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+    known_files: &rustc_hash::FxHashSet<PathBuf>,
+) {
+    if outcome
+        .error
+        .as_ref()
+        .is_some_and(|error| error.code == 2732)
+        && has_type_json_import_attribute
+        && json_type_attribute_enables_json_module(
+            options,
+            containing_file,
+            base_dir,
+            resolution_cache,
+        )
+        && let Some(resolved_path) = resolve_module_specifier(
+            containing_file,
+            specifier,
+            options,
+            base_dir,
+            resolution_cache,
+            known_files,
+        )
+        && resolved_path.extension().is_some_and(|ext| ext == "json")
+    {
+        outcome.resolved_path = Some(resolved_path);
+        outcome.is_resolved = true;
+        outcome.error = None;
+    }
+}
+
 #[cfg(test)]
 #[path = "resolution_tests.rs"]
 mod resolution_tests;
