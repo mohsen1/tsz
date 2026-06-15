@@ -15,7 +15,7 @@ mod miss_kind;
 
 pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     fn resolve_cross_file_heritage_type_arg(
         &mut self,
         arena: &tsz_parser::NodeArena,
@@ -154,6 +154,20 @@ impl<'a> CheckerState<'a> {
         acc
     }
 
+    /// `true` when `symbol` has at least one `interface` declaration that
+    /// resolves in the *current* arena. Used to keep a locally-declared
+    /// interface on the local declaration-merging path instead of delegating its
+    /// type computation to a foreign arena.
+    fn symbol_has_local_interface_declaration(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_interface(node))
+                .is_some()
+        })
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -279,18 +293,33 @@ impl<'a> CheckerState<'a> {
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = cross_file_symbol
             && symbol.has_any_flags(symbol_flags::INTERFACE)
+            && self.symbol_has_local_interface_declaration(symbol)
         {
-            let has_local_interface = symbol.declarations.iter().any(|&d| {
-                self.ctx
-                    .arena
-                    .get(d)
-                    .and_then(|n| self.ctx.arena.get_interface(n))
-                    .is_some()
-            });
-            if has_local_interface {
-                delegate_arena = None; // Handle locally with merge
-                interface_has_local_decl = true;
-            }
+            delegate_arena = None; // Handle locally with merge
+            interface_has_local_decl = true;
+        }
+
+        // The guard above only fires when `symbol_arenas` already points at a
+        // foreign arena. A locally-declared interface that is re-exported
+        // (`export * from "./x"`) and pulled in through a namespace import
+        // (`import * as ns from "./re-exporter"`) instead has its canonical file
+        // index point at the *re-exporting* module, while `symbol_arenas` is
+        // unset or current — so `interface_has_local_decl` stays false and the
+        // `resolve_symbol_file_index` path below delegates to the re-exporter's
+        // arena. That arena has no body for the interface's `Lazy(DefId)`, so the
+        // delegation returns the `error` sentinel, which then poisons every
+        // derived-class member typed by the interface. Inspect the *local* binder
+        // symbol (raw file-local `SymbolId`s are interpreted in the current
+        // arena, mirroring the FUNCTION path below) so any genuine current-arena
+        // interface declaration pins resolution locally regardless of how the
+        // canonical file index resolved.
+        if !interface_has_local_decl
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::INTERFACE)
+            && self.symbol_has_local_interface_declaration(symbol)
+        {
+            delegate_arena = None; // Handle locally with merge
+            interface_has_local_decl = true;
         }
 
         // Raw `SymbolId`s are file-local: `SymbolId(0)` may name `f` (FUNCTION) in
@@ -1702,287 +1731,10 @@ impl<'a> CheckerState<'a> {
 
         Some(results)
     }
-
-    /// Detect and record cross-file `SymbolIds`.
-    ///
-    /// In multi-file mode, the driver copies target file's `module_exports` into
-    /// the local binder, so `SymbolIds` may be from another file's binder. We
-    /// detect this by checking if the `SymbolId` maps to a symbol with the expected
-    /// name in the current binder. If not, we search `all_binders` to find the
-    /// correct source file.
-    pub(crate) fn record_cross_file_symbol_if_needed(
-        &self,
-        sym_id: SymbolId,
-        expected_name: &str,
-        module_name: &str,
-    ) {
-        // Skip if already recorded
-        if self.ctx.has_symbol_file_index(sym_id) {
-            return;
-        }
-
-        // Try resolve_import_target first (most reliable). This avoids SymbolId
-        // collision issues: after lib_symbols_merged, different files' binders share
-        // the same base_offset, so binder.get_symbol(sym_id) can return the WRONG
-        // symbol from the current file that happens to share the same index offset.
-        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
-            if target_file_idx != self.ctx.current_file_idx {
-                self.ctx
-                    .register_symbol_file_target(sym_id, target_file_idx);
-            }
-            return;
-        }
-
-        // resolve_import_target didn't work (the module specifier may be relative
-        // to a different file). Fall back to the binder locality check.
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.escaped_name.as_str() == expected_name
-        {
-            return;
-        }
-
-        // Fast-path: use global_file_locals_index for O(1) name→binder lookup.
-        // Only covers top-level file_locals symbols; nested symbols (class members,
-        // namespace exports) fall through to the O(N) scan below.
-        if let Some(entries) = self
-            .ctx
-            .global_file_locals_index
-            .as_ref()
-            .and_then(|idx| idx.get(expected_name))
-            && let Some(binders) = &self.ctx.all_binders
-        {
-            for &(file_idx, _) in entries {
-                if let Some(binder) = binders.get(file_idx)
-                    && let Some(symbol) = binder.get_symbol(sym_id)
-                    && symbol.escaped_name.as_str() == expected_name
-                {
-                    self.ctx.register_symbol_file_target(sym_id, file_idx);
-                    return;
-                }
-            }
-        }
-        // Full fallback: the symbol may be nested (not in file_locals).
-        if let Some(binders) = &self.ctx.all_binders {
-            for (idx, binder) in binders.iter().enumerate() {
-                if let Some(symbol) = binder.get_symbol(sym_id)
-                    && symbol.escaped_name.as_str() == expected_name
-                {
-                    self.ctx.register_symbol_file_target(sym_id, idx);
-                    return;
-                }
-            }
-            // For ambient module `export =` entries, the exports table key is
-            // "export=" but the actual symbol has a different escaped_name (e.g.,
-            // "passport"). Fall back to matching by SymbolId alone when the name
-            // didn't match — this is safe because SymbolId uniquely identifies the
-            // symbol within its owning binder.
-            if expected_name == "export=" {
-                for (idx, binder) in binders.iter().enumerate() {
-                    if binder.get_symbol(sym_id).is_some() {
-                        self.ctx.register_symbol_file_target(sym_id, idx);
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Lower a single interface declaration from a cross-file arena.
-    ///
-    /// When an interface is declared across multiple files (e.g., global script
-    /// interface merging), each cross-file declaration lives in a different
-    /// `NodeArena`. This method creates a `TypeLowering` bound to the source arena
-    /// and uses name-based resolution via `file_locals` to resolve type references.
-    pub(crate) fn lower_cross_file_interface_decl(
-        &self,
-        arena: &std::sync::Arc<tsz_parser::parser::node::NodeArena>,
-        decl_idx: NodeIndex,
-        sym_id: SymbolId,
-    ) -> TypeId {
-        use crate::query_boundaries::type_predicates::is_compiler_managed_type;
-        use tsz_lowering::TypeLowering;
-
-        let arena_ref: &tsz_parser::parser::node::NodeArena = arena.as_ref();
-        let lib_binders = self.get_lib_binders();
-
-        // Cross-file type resolver: reads identifier text from the cross-file
-        // arena, then resolves by name in the current binder's file_locals
-        // (which includes merged global symbols from all files).
-        let cross_type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = arena_ref.get(node_idx)?;
-            let ident = arena_ref.get_identifier(node)?;
-            let name = ident.escaped_text.as_str();
-            if is_compiler_managed_type(name) {
-                return None;
-            }
-            let sym = self.ctx.binder.file_locals.get(name)?;
-            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
-            if symbol.has_any_flags(symbol_flags::TYPE) {
-                return Some(sym.0);
-            }
-            None
-        };
-
-        let cross_def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-            let node = arena_ref.get(node_idx)?;
-            let ident = arena_ref.get_identifier(node)?;
-            let name = ident.escaped_text.as_str();
-            if is_compiler_managed_type(name) {
-                return None;
-            }
-            let sym = self.ctx.binder.file_locals.get(name)?;
-            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
-            if symbol.has_any_flags(symbol_flags::TYPE) {
-                Some(self.ctx.get_or_create_def_id(sym))
-            } else {
-                None
-            }
-        };
-
-        let cross_value_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = arena_ref.get(node_idx)?;
-            let ident = arena_ref.get_identifier(node)?;
-            let name = ident.escaped_text.as_str();
-            let sym = self.ctx.binder.file_locals.get(name)?;
-            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
-            if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
-                Some(sym.0)
-            } else {
-                None
-            }
-        };
-
-        let type_param_bindings = self.get_type_param_bindings();
-        let lowering = TypeLowering::with_hybrid_resolver(
-            arena_ref,
-            self.ctx.types,
-            &cross_type_resolver,
-            &cross_def_id_resolver,
-            &cross_value_resolver,
-        )
-        .with_type_param_bindings(type_param_bindings);
-
-        lowering.lower_interface_declarations_with_symbol(&[decl_idx], sym_id)
-    }
-
-    /// Merge heritage types from cross-file interface declarations.
-    ///
-    /// `merge_interface_heritage_types` uses `self.ctx.arena` to read heritage
-    /// clauses, so it silently skips cross-file declarations. This method handles
-    /// those skipped declarations by reading from the source arena and resolving
-    /// base types via `file_locals` name lookup.
-    pub(crate) fn merge_cross_file_heritage(
-        &mut self,
-        declarations: &[NodeIndex],
-        sym_id: SymbolId,
-        mut derived_type: TypeId,
-    ) -> TypeId {
-        use tsz_scanner::SyntaxKind;
-
-        for &decl_idx in declarations {
-            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
-                continue;
-            };
-            for arena in arenas.iter() {
-                // Skip the local arena (already processed by merge_interface_heritage_types)
-                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                    continue;
-                }
-                let Some(node) = arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(interface) = arena.get_interface(node) else {
-                    continue;
-                };
-                let Some(ref heritage_clauses) = interface.heritage_clauses else {
-                    continue;
-                };
-
-                for &clause_idx in &heritage_clauses.nodes {
-                    let Some(clause_node) = arena.get(clause_idx) else {
-                        continue;
-                    };
-                    let Some(heritage) = arena.get_heritage_clause(clause_node) else {
-                        continue;
-                    };
-                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                        continue;
-                    }
-
-                    for &type_idx in &heritage.types.nodes {
-                        let Some(type_node) = arena.get(type_idx) else {
-                            continue;
-                        };
-
-                        let (expr_idx, type_arguments) =
-                            if let Some(expr) = arena.get_expr_type_args(type_node) {
-                                (expr.expression, expr.type_arguments.as_ref())
-                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                if let Some(type_ref) = arena.get_type_ref(type_node) {
-                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
-                                } else {
-                                    (type_idx, None)
-                                }
-                            } else {
-                                (type_idx, None)
-                            };
-
-                        let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
-                            continue;
-                        };
-                        let Some(base_sym_id) = self.resolve_cross_file_global_type_symbol(&name)
-                        else {
-                            continue;
-                        };
-
-                        let mut base_type = self.get_type_of_symbol(base_sym_id);
-                        if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
-                            continue;
-                        }
-                        if let Some(type_arguments) = type_arguments {
-                            let base_params = self.get_type_params_for_symbol(base_sym_id);
-                            if !base_params.is_empty() {
-                                let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
-                                for &arg_idx in &type_arguments.nodes {
-                                    type_args.push(
-                                        self.resolve_cross_file_heritage_type_arg(arena, arg_idx),
-                                    );
-                                }
-                                while type_args.len() < base_params.len() {
-                                    let param = &base_params[type_args.len()];
-                                    type_args.push(
-                                        param
-                                            .default
-                                            .or(param.constraint)
-                                            .unwrap_or(TypeId::UNKNOWN),
-                                    );
-                                }
-                                if type_args.len() > base_params.len() {
-                                    type_args.truncate(base_params.len());
-                                }
-                                let substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::from_args(
-                                        self.ctx.types,
-                                        &base_params,
-                                        &type_args,
-                                    );
-                                base_type = crate::query_boundaries::common::instantiate_type(
-                                    self.ctx.types,
-                                    base_type,
-                                    &substitution,
-                                );
-                            }
-                        }
-
-                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
-                    }
-                }
-            }
-        }
-
-        derived_type
-    }
 }
+
+#[path = "cross_file_lowering.rs"]
+mod cross_file_lowering;
 
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
