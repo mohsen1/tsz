@@ -69,6 +69,9 @@ path = "tests/nested_discriminant_narrowing_tests.rs"
 name = "homomorphic_self_indexed_mapped_modifier_tests"
 path = "tests/homomorphic_self_indexed_mapped_modifier_tests.rs"
 [[test]]
+name = "homomorphic_mapped_well_known_symbol_iterable_tests"
+path = "tests/homomorphic_mapped_well_known_symbol_iterable_tests.rs"
+[[test]]
 name = "inference_placeholder_determinism_tests"
 path = "tests/inference_placeholder_determinism_tests.rs"
 [[test]]

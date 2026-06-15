@@ -748,10 +748,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_atom = source_symbol_prop_names
                 .get(&source_sym_ref)
                 .copied()
-                .unwrap_or_else(|| {
-                    self.interner()
-                        .intern_string(&format!("__unique_{}", source_sym_ref.0))
-                });
+                .unwrap_or_else(|| self.symbol_named_atom_from_unique_symbol_ref(source_sym_ref));
             let source_info = source_prop_map.get(&source_atom);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
@@ -815,8 +812,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     else {
                         continue;
                     };
-                    self.interner()
-                        .intern_string(&format!("__unique_{}", remapped_sym_ref.0))
+                    self.symbol_named_atom_from_unique_symbol_ref(remapped_sym_ref)
                 };
                 properties.push(PropertyInfo {
                     name: remapped_atom,
