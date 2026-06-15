@@ -631,11 +631,11 @@ impl<'a> TypeLowering<'a> {
             // The arena-aware variant takes precedence: it distinguishes the same
             // NodeIndex value across different arenas (cross-arena lowering).
             let arena_ptr: *const NodeArena = self.arena;
-            if let Some(resolver) = self.computed_name_resolver_with_arena
+            if let Some(resolver) = self.resolvers.computed_name_resolver_with_arena
                 && let Some(name) = resolver(computed.expression, arena_ptr)
             {
                 return Some(name);
-            } else if let Some(resolver) = self.computed_name_resolver
+            } else if let Some(resolver) = self.resolvers.computed_name_resolver
                 && let Some(name) = resolver(computed.expression)
             {
                 return Some(name);
@@ -669,10 +669,10 @@ impl<'a> TypeLowering<'a> {
             return false;
         };
         let arena_ptr: *const NodeArena = self.arena;
-        if let Some(resolver) = self.computed_symbol_name_resolver_with_arena {
+        if let Some(resolver) = self.resolvers.computed_symbol_name_resolver_with_arena {
             return resolver(computed.expression, arena_ptr);
         }
-        if let Some(resolver) = self.computed_symbol_name_resolver {
+        if let Some(resolver) = self.resolvers.computed_symbol_name_resolver {
             return resolver(computed.expression);
         }
         self.get_well_known_symbol_name(computed.expression)

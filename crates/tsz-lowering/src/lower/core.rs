@@ -79,11 +79,17 @@ pub(super) type TypeParamScopeStack = RefCell<Vec<TypeParamScope>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub type LoweredInterfaceMemberTypes = (Vec<TypeParamInfo>, Vec<(NodeIndex, TypeId)>);
 
-/// Type lowering context.
-/// Converts AST type nodes into interned `TypeIds`.
-pub struct TypeLowering<'a> {
-    pub(super) arena: &'a NodeArena,
-    pub(super) interner: &'a dyn TypeDatabase,
+/// The per-construction-site resolver/host callbacks threaded into
+/// [`TypeLowering`].
+///
+/// These are the only `TypeLowering` fields that vary across construction
+/// sites: which resolvers are active is a property of each call site, not the
+/// type. Grouping them into one `Copy` bundle keeps `with_arena` a single
+/// covariant move instead of a field-by-field copy that silently drops any
+/// newly added resolver, and gives the "which resolvers are wired" question a
+/// single home.
+#[derive(Default, Clone, Copy)]
+pub(super) struct Resolvers<'a> {
     /// Optional type resolver - resolves identifier nodes to `SymbolIds`.
     /// If provided, this enables correct abstract class detection.
     pub(super) type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
@@ -127,23 +133,6 @@ pub struct TypeLowering<'a> {
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
-    /// Optional compiler-controlled intrinsic replacement for the lib-only
-    /// `BuiltinIteratorReturn` alias.
-    pub(super) builtin_iterator_return_type: Option<TypeId>,
-    /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
-    /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
-    /// may refer to different identifiers in different arenas.
-    pub(super) prefer_name_def_id_resolution: bool,
-    /// Optional direct self-reference for merged interface lowering.
-    pub(super) preferred_self_name: Option<String>,
-    pub(super) preferred_self_def_id: Option<DefId>,
-    /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
-    pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
-    /// Value-parameter scopes for `typeof paramName` in signature return types.
-    pub(super) typeof_param_scopes: Rc<TypeofParamScopeStack>,
-    /// Whether strictNullChecks is enabled. When true, optional parameters
-    /// in function types include `| undefined` in their type.
-    pub(super) strict_null_checks: bool,
     /// Optional override for type query resolution. When provided, this callback
     /// is consulted before creating a `TypeQuery` type. If it returns `Some(type_id)`,
     /// that type is used directly instead of creating a deferred `TypeQuery`.
@@ -158,6 +147,32 @@ pub struct TypeLowering<'a> {
     /// `type_name` `NodeIndex` (either the `CALL_EXPRESSION` itself or the `QUALIFIED_NAME`
     /// rooted in it). Returns `Some` when pre-resolved, `None` to fall through to `ERROR`.
     pub(super) import_type_resolver: Option<&'a NodeIndexResolver<'a, TypeId>>,
+    /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
+    /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
+    /// may refer to different identifiers in different arenas.
+    pub(super) prefer_name_def_id_resolution: bool,
+}
+
+/// Type lowering context.
+/// Converts AST type nodes into interned `TypeIds`.
+pub struct TypeLowering<'a> {
+    pub(super) arena: &'a NodeArena,
+    pub(super) interner: &'a dyn TypeDatabase,
+    /// Per-construction-site resolver/host callbacks. See [`Resolvers`].
+    pub(super) resolvers: Resolvers<'a>,
+    /// Optional compiler-controlled intrinsic replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    pub(super) builtin_iterator_return_type: Option<TypeId>,
+    /// Optional direct self-reference for merged interface lowering.
+    pub(super) preferred_self_name: Option<String>,
+    pub(super) preferred_self_def_id: Option<DefId>,
+    /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
+    pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
+    /// Value-parameter scopes for `typeof paramName` in signature return types.
+    pub(super) typeof_param_scopes: Rc<TypeofParamScopeStack>,
+    /// Whether strictNullChecks is enabled. When true, optional parameters
+    /// in function types include `| undefined` in their type.
+    pub(super) strict_null_checks: bool,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -419,61 +434,35 @@ fn merge_type_param_metadata(collected: &mut [TypeParamInfo], extra: Vec<TypePar
     }
 }
 
-/// Resolver bundle threaded into the various `TypeLowering` constructors.
-///
-/// Only the resolver fields differ across the public entry points (`new`,
-/// `with_resolver`, `with_resolvers`, `with_def_id_resolver`,
-/// `with_hybrid_resolver`); every other field is initialized identically.
-/// This bundle lets the public constructors share the single private
-/// `from_resolvers` builder below, eliminating five copies of the same
-/// 17-field literal.
-#[derive(Default)]
-pub(super) struct LoweringResolvers<'a> {
-    pub(super) type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
-    pub(super) def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
-    pub(super) value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
-}
-
 impl<'a> TypeLowering<'a> {
     /// Single private builder used by all public constructors. The five
     /// `pub fn` entry points only differ in which resolver fields they
     /// populate; everything else (interning, scope stack, operation
     /// counter, limit flag, `None`/`false` defaults) is initialized here
-    /// once.
+    /// once. Resolver defaults live in [`Resolvers`]'s `Default` impl, so a
+    /// new resolver only needs a field on that bundle.
     fn from_resolvers(
         arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
-        resolvers: LoweringResolvers<'a>,
+        resolvers: Resolvers<'a>,
     ) -> Self {
         TypeLowering {
             arena,
             interner: interner.as_type_database(),
-            type_resolver: resolvers.type_resolver,
-            def_id_resolver: resolvers.def_id_resolver,
-            local_shadow_def_id_resolver: None,
-            value_resolver: resolvers.value_resolver,
-            computed_name_resolver: None,
-            computed_name_resolver_with_arena: None,
-            computed_symbol_name_resolver: None,
-            computed_symbol_name_resolver_with_arena: None,
-            lazy_type_params_resolver: None,
+            resolvers,
             builtin_iterator_return_type: None,
-            prefer_name_def_id_resolution: false,
             preferred_self_name: None,
             preferred_self_def_id: None,
-            name_def_id_resolver: None,
             strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             typeof_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
-            type_query_override: None,
-            import_type_resolver: None,
         }
     }
 
     pub fn new(arena: &'a NodeArena, interner: &'a dyn QueryDatabase) -> Self {
-        Self::from_resolvers(arena, interner, LoweringResolvers::default())
+        Self::from_resolvers(arena, interner, Resolvers::default())
     }
 
     /// Create a `TypeLowering` with a symbol resolver.
@@ -486,10 +475,10 @@ impl<'a> TypeLowering<'a> {
         Self::from_resolvers(
             arena,
             interner,
-            LoweringResolvers {
+            Resolvers {
                 type_resolver: Some(resolver),
-                def_id_resolver: None,
                 value_resolver: Some(resolver),
+                ..Resolvers::default()
             },
         )
     }
@@ -504,10 +493,10 @@ impl<'a> TypeLowering<'a> {
         Self::from_resolvers(
             arena,
             interner,
-            LoweringResolvers {
+            Resolvers {
                 type_resolver: Some(type_resolver),
-                def_id_resolver: None,
                 value_resolver: Some(value_resolver),
+                ..Resolvers::default()
             },
         )
     }
@@ -526,10 +515,10 @@ impl<'a> TypeLowering<'a> {
         Self::from_resolvers(
             arena,
             interner,
-            LoweringResolvers {
-                type_resolver: None,
+            Resolvers {
                 def_id_resolver: Some(def_id_resolver),
                 value_resolver: Some(value_resolver),
+                ..Resolvers::default()
             },
         )
     }
@@ -548,10 +537,11 @@ impl<'a> TypeLowering<'a> {
         Self::from_resolvers(
             arena,
             interner,
-            LoweringResolvers {
+            Resolvers {
                 type_resolver: Some(type_resolver),
                 def_id_resolver: Some(def_id_resolver),
                 value_resolver: Some(value_resolver),
+                ..Resolvers::default()
             },
         )
     }
@@ -565,23 +555,15 @@ impl<'a> TypeLowering<'a> {
         TypeLowering {
             arena,
             interner: self.interner,
-            type_resolver: self.type_resolver,
-            def_id_resolver: self.def_id_resolver,
-            local_shadow_def_id_resolver: self.local_shadow_def_id_resolver,
-            value_resolver: self.value_resolver,
-            computed_name_resolver: self.computed_name_resolver,
-            computed_name_resolver_with_arena: self.computed_name_resolver_with_arena,
-            computed_symbol_name_resolver: self.computed_symbol_name_resolver,
-            computed_symbol_name_resolver_with_arena: self.computed_symbol_name_resolver_with_arena,
-            lazy_type_params_resolver: self.lazy_type_params_resolver,
+            // The whole resolver bundle re-lifetimes in one covariant move:
+            // `Resolvers<'a>` is a subtype of `Resolvers<'b>` for `'a: 'b`, so
+            // adding a resolver never needs another line here (the field-by-field
+            // copy this replaced silently dropped any resolver left out).
+            resolvers: self.resolvers,
             builtin_iterator_return_type: self.builtin_iterator_return_type,
-            prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
-            name_def_id_resolver: self.name_def_id_resolver,
             strict_null_checks: self.strict_null_checks,
-            type_query_override: self.type_query_override,
-            import_type_resolver: self.import_type_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
@@ -843,7 +825,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex) -> Option<Atom>,
     ) -> Self {
-        self.computed_name_resolver = Some(resolver);
+        self.resolvers.computed_name_resolver = Some(resolver);
         self
     }
 
@@ -856,7 +838,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>,
     ) -> Self {
-        self.computed_name_resolver_with_arena = Some(resolver);
+        self.resolvers.computed_name_resolver_with_arena = Some(resolver);
         self
     }
 
@@ -865,7 +847,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex) -> bool,
     ) -> Self {
-        self.computed_symbol_name_resolver = Some(resolver);
+        self.resolvers.computed_symbol_name_resolver = Some(resolver);
         self
     }
 
@@ -875,7 +857,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> bool,
     ) -> Self {
-        self.computed_symbol_name_resolver_with_arena = Some(resolver);
+        self.resolvers.computed_symbol_name_resolver_with_arena = Some(resolver);
         self
     }
 
@@ -885,7 +867,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
     ) -> Self {
-        self.lazy_type_params_resolver = Some(resolver);
+        self.resolvers.lazy_type_params_resolver = Some(resolver);
         self
     }
 
@@ -902,7 +884,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(&str) -> Option<DefId>,
     ) -> Self {
-        self.name_def_id_resolver = Some(resolver);
+        self.resolvers.name_def_id_resolver = Some(resolver);
         self
     }
 
@@ -914,7 +896,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
     ) -> Self {
-        self.local_shadow_def_id_resolver = Some(resolver);
+        self.resolvers.local_shadow_def_id_resolver = Some(resolver);
         self
     }
 
@@ -923,7 +905,7 @@ impl<'a> TypeLowering<'a> {
     /// This should only be enabled in cross-arena lowering contexts where `NodeIndex`
     /// collisions between declaration arenas are possible.
     pub const fn prefer_name_def_id_resolution(mut self) -> Self {
-        self.prefer_name_def_id_resolution = true;
+        self.resolvers.prefer_name_def_id_resolution = true;
         self
     }
 
@@ -937,7 +919,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
     ) -> Self {
-        self.type_query_override = Some(resolver);
+        self.resolvers.type_query_override = Some(resolver);
         self
     }
 
@@ -951,7 +933,7 @@ impl<'a> TypeLowering<'a> {
         mut self,
         resolver: &'a NodeIndexResolver<'a, TypeId>,
     ) -> Self {
-        self.import_type_resolver = Some(resolver);
+        self.resolvers.import_type_resolver = Some(resolver);
         self
     }
 
@@ -964,7 +946,8 @@ impl<'a> TypeLowering<'a> {
 
     /// Resolve an identifier name to a `DefId` using the name-based resolver.
     pub(super) fn resolve_def_id_by_name(&self, name: &str) -> Option<DefId> {
-        self.name_def_id_resolver
+        self.resolvers
+            .name_def_id_resolver
             .and_then(|resolver| resolver(name))
     }
 
@@ -1050,27 +1033,32 @@ impl<'a> TypeLowering<'a> {
 
     /// Resolve a node to a type symbol ID if a resolver is provided.
     pub(super) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
-        self.type_resolver.and_then(|resolver| resolver(node_idx))
+        self.resolvers
+            .type_resolver
+            .and_then(|resolver| resolver(node_idx))
     }
 
     /// Resolve a node to a `DefId` if a `DefId` resolver is provided.
     ///
     /// `DefIds` are Solver-owned identifiers that don't require Binder context.
     pub(super) fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
-        self.def_id_resolver.and_then(|resolver| resolver(node_idx))
+        self.resolvers
+            .def_id_resolver
+            .and_then(|resolver| resolver(node_idx))
     }
 
     /// Resolve a node to the `DefId` of a function- or block-local declaration
     /// that shadows a same-named file-level type, if such a resolver is provided.
     /// Returns `None` for every non-shadowing reference.
     pub(super) fn resolve_local_shadow_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
-        self.local_shadow_def_id_resolver
+        self.resolvers
+            .local_shadow_def_id_resolver
             .and_then(|resolver| resolver(node_idx))
     }
 
     /// Resolve a node to a value symbol ID if a resolver is provided.
     pub(super) fn resolve_value_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
-        if let Some(resolver) = self.value_resolver {
+        if let Some(resolver) = self.resolvers.value_resolver {
             resolver(node_idx)
         } else {
             self.resolve_type_symbol(node_idx)

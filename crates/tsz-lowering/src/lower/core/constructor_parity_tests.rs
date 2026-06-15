@@ -7,14 +7,14 @@ fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
     assert_eq!(*lowering.operations.borrow(), 0);
     assert!(!*lowering.limit_exceeded.borrow());
     // Optional knobs default to disabled.
-    assert!(lowering.computed_name_resolver.is_none());
-    assert!(lowering.lazy_type_params_resolver.is_none());
-    assert!(!lowering.prefer_name_def_id_resolution);
+    assert!(lowering.resolvers.computed_name_resolver.is_none());
+    assert!(lowering.resolvers.lazy_type_params_resolver.is_none());
+    assert!(!lowering.resolvers.prefer_name_def_id_resolution);
     assert!(lowering.preferred_self_name.is_none());
     assert!(lowering.preferred_self_def_id.is_none());
-    assert!(lowering.name_def_id_resolver.is_none());
+    assert!(lowering.resolvers.name_def_id_resolver.is_none());
     assert!(!lowering.strict_null_checks);
-    assert!(lowering.type_query_override.is_none());
+    assert!(lowering.resolvers.type_query_override.is_none());
 }
 
 #[test]
@@ -23,9 +23,9 @@ fn new_initializes_invariant_defaults() {
     let interner = TypeInterner::new();
     let lowering = TypeLowering::new(&arena, &interner);
     assert_invariant_defaults(&lowering);
-    assert!(lowering.type_resolver.is_none());
-    assert!(lowering.def_id_resolver.is_none());
-    assert!(lowering.value_resolver.is_none());
+    assert!(lowering.resolvers.type_resolver.is_none());
+    assert!(lowering.resolvers.def_id_resolver.is_none());
+    assert!(lowering.resolvers.value_resolver.is_none());
 }
 
 #[test]
@@ -36,9 +36,9 @@ fn with_resolver_initializes_invariant_defaults() {
     let lowering = TypeLowering::with_resolver(&arena, &interner, &resolver);
     assert_invariant_defaults(&lowering);
     // `with_resolver` wires the same closure into both type and value slots.
-    assert!(lowering.type_resolver.is_some());
-    assert!(lowering.def_id_resolver.is_none());
-    assert!(lowering.value_resolver.is_some());
+    assert!(lowering.resolvers.type_resolver.is_some());
+    assert!(lowering.resolvers.def_id_resolver.is_none());
+    assert!(lowering.resolvers.value_resolver.is_some());
 }
 
 #[test]
@@ -49,9 +49,9 @@ fn with_resolvers_initializes_invariant_defaults() {
     let value_resolver = |_: NodeIndex| -> Option<u32> { None };
     let lowering = TypeLowering::with_resolvers(&arena, &interner, &type_resolver, &value_resolver);
     assert_invariant_defaults(&lowering);
-    assert!(lowering.type_resolver.is_some());
-    assert!(lowering.def_id_resolver.is_none());
-    assert!(lowering.value_resolver.is_some());
+    assert!(lowering.resolvers.type_resolver.is_some());
+    assert!(lowering.resolvers.def_id_resolver.is_none());
+    assert!(lowering.resolvers.value_resolver.is_some());
 }
 
 #[test]
@@ -63,9 +63,9 @@ fn with_def_id_resolver_initializes_invariant_defaults() {
     let lowering =
         TypeLowering::with_def_id_resolver(&arena, &interner, &def_id_resolver, &value_resolver);
     assert_invariant_defaults(&lowering);
-    assert!(lowering.type_resolver.is_none());
-    assert!(lowering.def_id_resolver.is_some());
-    assert!(lowering.value_resolver.is_some());
+    assert!(lowering.resolvers.type_resolver.is_none());
+    assert!(lowering.resolvers.def_id_resolver.is_some());
+    assert!(lowering.resolvers.value_resolver.is_some());
 }
 
 #[test]
@@ -83,9 +83,9 @@ fn with_hybrid_resolver_initializes_invariant_defaults() {
         &value_resolver,
     );
     assert_invariant_defaults(&lowering);
-    assert!(lowering.type_resolver.is_some());
-    assert!(lowering.def_id_resolver.is_some());
-    assert!(lowering.value_resolver.is_some());
+    assert!(lowering.resolvers.type_resolver.is_some());
+    assert!(lowering.resolvers.def_id_resolver.is_some());
+    assert!(lowering.resolvers.value_resolver.is_some());
 }
 
 #[test]

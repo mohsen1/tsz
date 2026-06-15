@@ -14,7 +14,7 @@ use tsz_solver::types::{
 impl<'a> TypeLowering<'a> {
     fn lower_lazy_def_reference(&self, def_id: tsz_solver::def::DefId) -> TypeId {
         let lazy = self.interner.lazy(def_id);
-        if let Some(resolve_params) = self.lazy_type_params_resolver
+        if let Some(resolve_params) = self.resolvers.lazy_type_params_resolver
             && let Some(type_params) = resolve_params(def_id)
             && !type_params.is_empty()
             && type_params.iter().all(|param| param.default.is_some())
@@ -528,7 +528,7 @@ impl<'a> TypeLowering<'a> {
 
             // Module resolution requires &mut self (checker state); pick up the
             // checker's pre-resolved result before falling through to the generic lowering.
-            if let Some(resolver) = self.import_type_resolver
+            if let Some(resolver) = self.resolvers.import_type_resolver
                 && self.has_import_call_in_type_name(data.type_name)
                 && let Some(resolved) = resolver(data.type_name)
             {
@@ -572,7 +572,7 @@ impl<'a> TypeLowering<'a> {
                 // params, so resolve them through the solver helper instead of
                 // copying the raw default type.
                 if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                    && let Some(resolve_params) = self.lazy_type_params_resolver
+                    && let Some(resolve_params) = self.resolvers.lazy_type_params_resolver
                     && let Some(type_params) = resolve_params(def_id)
                     && type_args.len() < type_params.len()
                     && type_params[type_args.len()..]
@@ -590,7 +590,7 @@ impl<'a> TypeLowering<'a> {
             }
 
             if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                && let Some(resolve_params) = self.lazy_type_params_resolver
+                && let Some(resolve_params) = self.resolvers.lazy_type_params_resolver
                 && let Some(type_params) = resolve_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
@@ -619,7 +619,7 @@ impl<'a> TypeLowering<'a> {
         //
         // Cross-arena lib lowering opts into name-first resolution because raw
         // NodeIndex values are arena-local and cannot be resolved across arenas.
-        if self.prefer_name_def_id_resolution {
+        if self.resolvers.prefer_name_def_id_resolution {
             if let Some(name) = self.type_name_text(node_idx)
                 && let Some(def_id) = self.resolve_def_id_by_name(&name)
             {
@@ -759,7 +759,7 @@ impl<'a> TypeLowering<'a> {
             // preserves the exact bound symbol, including namespace-local bindings.
             // Cross-arena lowering can opt into name-first resolution because raw
             // NodeIndex values are arena-local and can collide across declarations.
-            if self.prefer_name_def_id_resolution {
+            if self.resolvers.prefer_name_def_id_resolution {
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
@@ -832,7 +832,7 @@ impl<'a> TypeLowering<'a> {
             // Check for a pre-resolved type from the checker (e.g., flow-narrowed typeof).
             // This allows `typeof c` inside a type alias body to pick up the narrowed
             // type of `c` when control flow has narrowed it at the declaration site.
-            if let Some(override_fn) = &self.type_query_override
+            if let Some(override_fn) = &self.resolvers.type_query_override
                 && let Some(resolved) = override_fn(data.expr_name)
             {
                 if let Some(args) = &data.type_arguments
