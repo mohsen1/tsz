@@ -34,6 +34,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     pub(super) fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
+        tsz_common::perf_counters::record_relation_weak_violation_probes(1);
         // For weak intersections, tsc gathers properties from ALL members before
         // testing common-property overlap — a source that shares a name with any
         // member does not violate the rule.
@@ -127,6 +128,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     pub(super) fn violates_weak_union(&self, source: TypeId, target: TypeId) -> bool {
+        tsz_common::perf_counters::record_relation_weak_violation_probes(1);
         // Intrinsics never resolve to Union; skip the dyn lookup.
         if target.is_intrinsic() {
             return false;
