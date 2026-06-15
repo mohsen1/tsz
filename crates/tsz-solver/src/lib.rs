@@ -27,6 +27,10 @@
 //! should prefer the module-based imports for clarity.
 
 mod caches;
+// Shared cache-keyed option-bag scaffolding lives under `caches::options`
+// (the crate-root file budget is full); re-export it as `crate::options` so the
+// evaluation / narrowing / instantiation request modules keep their paths.
+pub(crate) use caches::options;
 pub mod canonicalize;
 pub mod classes;
 mod contextual;
@@ -40,7 +44,6 @@ mod limits;
 pub mod narrowing;
 pub mod objects;
 pub mod operations;
-pub mod options;
 pub mod recursion;
 pub mod relations;
 #[cfg(test)]

@@ -1,5 +1,8 @@
 //! Shared option-bag scaffolding for cache-keyed solver stages.
 //!
+//! Lives under `caches` (the crate-root file budget is full) and is re-exported
+//! as `crate::options`, the path the request modules import.
+//!
 //! Several solver stages (`evaluation`, `narrowing`, `instantiation`) carry a
 //! small bag of boolean compiler-option flags that participate in their cache
 //! key. Idiomatic Rust derives the `const new` / `with_*` / getter builder once
