@@ -33,12 +33,6 @@ pub struct ConformanceShardPlanEntry {
     pub weight: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SkipPolicy {
-    IncludeSkipped,
-    ExcludeSkipped,
-}
-
 #[derive(Debug, Default)]
 struct ShardAccumulator {
     total: usize,
@@ -76,7 +70,19 @@ fn build_shard_plan_with_baseline(
         anyhow::bail!("--plan count must be greater than zero");
     }
 
-    let files = discover_candidate_tests(args, SkipPolicy::ExcludeSkipped)?;
+    // Plan over the exact candidate set the runner partitions. The runner's
+    // membership source (`discover_tests`) includes skipped tests, so the
+    // planner must too. The weighted strategy's greedy bin-packing depends on
+    // the full input set: dropping skipped tests here would place real tests in
+    // different shards than the runner, so the planner and runner would disagree
+    // on per-shard membership and a real test could be double-counted or dropped
+    // (#13397, option 3). Using the identical candidate set makes the plan's
+    // per-shard membership byte-identical to the runner's for a given checkout.
+    //
+    // A skipped test is reported as SKIP at runtime, never as a PASS, so it
+    // contributes to a shard's `total` (matching the runner's coverage count)
+    // but never to `passed`, regardless of any stale baseline `PASS` entry.
+    let files = discover_candidate_tests(args)?;
     let test_dir = Path::new(&args.test_dir);
     let baseline_passes = load_baseline_passes(baseline_path)?;
     let weights = args
@@ -92,7 +98,7 @@ fn build_shard_plan_with_baseline(
             for path in files {
                 let index = stable_shard_for_path(&path, test_dir, shard_count);
                 let weight = estimated_test_weight(weights.as_ref(), &path, test_dir);
-                let passed = is_baseline_pass(&baseline_passes, &path, test_dir);
+                let passed = plan_path_passes(&baseline_passes, &path, test_dir)?;
                 shards[index].add(passed, weight);
             }
         }
@@ -104,7 +110,7 @@ fn build_shard_plan_with_baseline(
             {
                 for path in paths {
                     let weight = estimated_test_weight(weights.as_ref(), &path, test_dir);
-                    let passed = is_baseline_pass(&baseline_passes, &path, test_dir);
+                    let passed = plan_path_passes(&baseline_passes, &path, test_dir)?;
                     shards[index].add(passed, weight);
                 }
             }
@@ -131,7 +137,7 @@ fn build_shard_plan_with_baseline(
 }
 
 pub(crate) fn discover_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files = discover_candidate_tests(args, SkipPolicy::IncludeSkipped)?;
+    let mut files = discover_candidate_tests(args)?;
 
     if let Some((shard_index, shard_count)) = parse_shard_spec(args.shard.as_deref())? {
         let test_dir_path = Path::new(&args.test_dir);
@@ -195,7 +201,14 @@ pub(crate) fn parse_shard_spec(spec: Option<&str>) -> anyhow::Result<Option<(usi
     Ok(Some((index, count)))
 }
 
-fn discover_candidate_tests(args: &Args, skip_policy: SkipPolicy) -> anyhow::Result<Vec<PathBuf>> {
+// Discover the full candidate set (including tests with a `@skip` directive).
+// Both the planner (`build_shard_plan`) and the runner membership source
+// (`discover_tests`) consume this identical set so their partitions agree
+// byte-for-byte (#13397). Skip status is applied later: at plan time it zeroes
+// a test's pass contribution (`plan_path_passes`), and at run time the runner
+// reports the test as SKIP. It never removes a test from the partition, because
+// dropping members would shift the weighted bin-packing of the remaining tests.
+fn discover_candidate_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in WalkDir::new(&args.test_dir)
         .follow_links(true)
@@ -210,9 +223,6 @@ fn discover_candidate_tests(args: &Args, skip_policy: SkipPolicy) -> anyhow::Res
             continue;
         }
         if !matches_path_filter(path, args.filter.as_deref()) {
-            continue;
-        }
-        if skip_policy == SkipPolicy::ExcludeSkipped && has_skip_directive(path)? {
             continue;
         }
         files.push(path.to_path_buf());
@@ -252,6 +262,22 @@ fn load_baseline_passes(path: &Path) -> anyhow::Result<HashSet<String>> {
         passes.insert(path);
     }
     Ok(passes)
+}
+
+// A test counts toward a shard's planned `passed` only when the baseline
+// records it as a PASS and it is not skipped. A `@skip` test is reported as
+// SKIP at run time, never PASS, so it must not be counted as a planned pass
+// even if a stale baseline entry marks it PASS — that would let the planner's
+// expected-pass total drift above what the runner can ever report.
+fn plan_path_passes(
+    baseline_passes: &HashSet<String>,
+    path: &Path,
+    test_dir: &Path,
+) -> anyhow::Result<bool> {
+    if !is_baseline_pass(baseline_passes, path, test_dir) {
+        return Ok(false);
+    }
+    Ok(!has_skip_directive(path)?)
 }
 
 fn is_baseline_pass(baseline_passes: &HashSet<String>, path: &Path, test_dir: &Path) -> bool {
@@ -301,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_excludes_skipped_tests_and_counts_baseline_passes() {
+    fn plan_includes_skipped_tests_but_never_counts_them_as_passed() {
         let temp = tempfile::tempdir().expect("tempdir");
         let cases = temp.path().join("TypeScript/tests/cases");
         write(&cases.join("compiler/pass.ts"), "let pass = 1;\n");
@@ -316,6 +342,8 @@ mod tests {
         );
         write(&cases.join("fourslash/quickInfo.ts"), "ignored\n");
         let baseline = temp.path().join("baseline.txt");
+        // skipped.ts carries a stale baseline PASS to prove the planner never
+        // counts a skipped test as passed (it is SKIP at run time).
         write(
             &baseline,
             "PASS TypeScript/tests/cases/compiler/pass.ts\n\
@@ -333,15 +361,148 @@ mod tests {
         let plan = build_shard_plan_with_baseline(&args, 2, &baseline).unwrap();
 
         assert_eq!(plan.shard_count, 2);
-        assert_eq!(plan.total, 2);
+        // pass.ts, fail.js, and skipped.ts are all conformance candidates; the
+        // skipped test stays in the partition so the planner's membership
+        // matches the runner's `discover_tests` set (which includes skips).
+        assert_eq!(plan.total, 3);
+        // Only pass.ts counts as a planned pass; the skipped test's stale
+        // baseline PASS is ignored.
         assert_eq!(plan.passed, 1);
         assert_eq!(
             plan.shards.iter().map(|shard| shard.total).sum::<usize>(),
-            2
+            3
         );
         assert_eq!(
             plan.shards.iter().map(|shard| shard.passed).sum::<usize>(),
             1
+        );
+    }
+
+    /// The planner's per-shard membership must equal the runner's per-shard
+    /// membership for every shard, including under the weighted strategy whose
+    /// greedy bin-packing is sensitive to the candidate set. Otherwise a real
+    /// test counted by the plan could run on a different shard (or be dropped),
+    /// which is the within-run divergence #13397 calls out.
+    #[test]
+    fn plan_and_runner_agree_on_per_shard_membership_weighted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cases = temp.path().join("TypeScript/tests/cases");
+        for i in 0..12 {
+            write(
+                &cases.join(format!("compiler/t{i}.ts")),
+                &format!("let t{i} = 1;\n"),
+            );
+        }
+        // A couple of skipped tests with non-trivial weight: they must occupy a
+        // shard slot in both the plan and the runner so neither side reweights
+        // the bin-packing of the real tests differently.
+        write(
+            &cases.join("compiler/skip_a.ts"),
+            "// @skip: tracked\nlet skip_a = 1;\n",
+        );
+        write(
+            &cases.join("compiler/skip_b.ts"),
+            "// @skip: tracked\nlet skip_b = 1;\n",
+        );
+        let baseline = temp.path().join("baseline.txt");
+        write(&baseline, "");
+        let weights = temp.path().join("weights.json");
+        write(
+            &weights,
+            &serde_json::json!({
+                "path_weights": {
+                    "TypeScript/tests/cases/compiler/t0.ts": 9.0,
+                    "TypeScript/tests/cases/compiler/t1.ts": 8.0,
+                    "TypeScript/tests/cases/compiler/t2.ts": 7.0,
+                    "TypeScript/tests/cases/compiler/t3.ts": 6.0,
+                    "TypeScript/tests/cases/compiler/skip_a.ts": 5.0,
+                    "TypeScript/tests/cases/compiler/skip_b.ts": 4.0
+                }
+            })
+            .to_string(),
+        );
+
+        let shard_count = 4usize;
+        let plan_args = parse_args(&[
+            "tsz-conformance",
+            "--plan",
+            "4",
+            "--test-dir",
+            cases.to_str().unwrap(),
+            "--shard-strategy",
+            "weighted",
+            "--shard-weights",
+            weights.to_str().unwrap(),
+        ]);
+        let plan = build_shard_plan_with_baseline(&plan_args, shard_count, &baseline).unwrap();
+
+        let mut runner_total = 0usize;
+        for shard_index in 0..shard_count {
+            let runner_args = parse_args(&[
+                "tsz-conformance",
+                "--shard",
+                &format!("{shard_index}/{shard_count}"),
+                "--test-dir",
+                cases.to_str().unwrap(),
+                "--shard-strategy",
+                "weighted",
+                "--shard-weights",
+                weights.to_str().unwrap(),
+            ]);
+            let members = discover_tests(&runner_args).unwrap();
+            runner_total += members.len();
+            // The planner counts the same number of tests in this shard as the
+            // runner actually places there.
+            assert_eq!(
+                plan.shards[shard_index].total,
+                members.len(),
+                "plan and runner disagree on shard {shard_index} membership count"
+            );
+        }
+        // No test is double-counted or dropped across shards.
+        assert_eq!(runner_total, plan.total);
+    }
+
+    /// Two plan builds with identical inputs must be byte-identical: the
+    /// per-SHA shard partition cannot depend on wall-clock or mutable state.
+    #[test]
+    fn plan_is_deterministic_for_fixed_inputs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cases = temp.path().join("TypeScript/tests/cases");
+        for i in 0..20 {
+            write(
+                &cases.join(format!("compiler/case{i}.ts")),
+                &format!("let case{i} = {i};\n"),
+            );
+        }
+        let baseline = temp.path().join("baseline.txt");
+        write(&baseline, "PASS TypeScript/tests/cases/compiler/case0.ts\n");
+        let weights = temp.path().join("weights.json");
+        write(
+            &weights,
+            &serde_json::json!({
+                "hash_bucket_weights": { "shard_count": 4, "weights": [9.0, 7.0, 5.0, 3.0] }
+            })
+            .to_string(),
+        );
+
+        let args = parse_args(&[
+            "tsz-conformance",
+            "--plan",
+            "4",
+            "--test-dir",
+            cases.to_str().unwrap(),
+            "--shard-strategy",
+            "weighted",
+            "--shard-weights",
+            weights.to_str().unwrap(),
+        ]);
+        let first = build_shard_plan_with_baseline(&args, 4, &baseline).unwrap();
+        let second = build_shard_plan_with_baseline(&args, 4, &baseline).unwrap();
+        assert_eq!(
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap(),
+            "shard plan must be byte-identical for identical inputs"
         );
     }
 

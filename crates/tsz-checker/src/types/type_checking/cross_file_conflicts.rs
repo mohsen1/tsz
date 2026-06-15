@@ -1040,6 +1040,23 @@ impl<'a> CheckerState<'a> {
     }
 
     fn collect_program_jsx_runtime_modules(&self, modules: &mut FxHashSet<String>) {
+        // The jsx-runtime module set is a pure function of the bound program
+        // (all arenas' leading pragmas) plus the compiler options — it does NOT
+        // depend on the current file. Computing it per file rescanned every
+        // arena's source text for jsx pragmas on every checked file, which is
+        // O(files²) string scanning and produces an empty set for the common
+        // non-jsx project. Build it once per checker and reuse.
+        let program_set = self.ctx.program_jsx_runtime_modules.get_or_init(|| {
+            let mut set = FxHashSet::default();
+            self.build_program_jsx_runtime_modules(&mut set);
+            set
+        });
+        if !program_set.is_empty() {
+            modules.extend(program_set.iter().cloned());
+        }
+    }
+
+    fn build_program_jsx_runtime_modules(&self, modules: &mut FxHashSet<String>) {
         use tsz_common::checker_options::JsxMode;
 
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {

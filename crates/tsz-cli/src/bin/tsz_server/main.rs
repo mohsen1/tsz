@@ -57,7 +57,6 @@ mod handlers_project_info;
 mod handlers_quickinfo;
 mod handlers_quickinfo_text;
 mod handlers_structure;
-mod text_edits;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -107,6 +106,62 @@ pub(crate) struct ServerProjectCacheKey {
 pub(crate) struct ServerProjectCache {
     pub(crate) key: ServerProjectCacheKey,
     pub(crate) project: tsz::lsp::Project,
+}
+
+/// A single cached parse+bind result for one file.
+///
+/// Keyed in [`ParseBindCache`] by file path; the `content_hash` discriminates
+/// stale entries so an edited/closed-and-reopened file with the same path but
+/// different content re-parses instead of returning a stale AST. The heavy
+/// payload fields (`NodeArena`, `BinderState`) are `Arc`-backed internally, so
+/// handing a clone back to a handler is a handful of refcount bumps rather than
+/// a deep copy or a re-parse + re-bind.
+pub(crate) struct ParseBindEntry {
+    pub(crate) content_hash: u64,
+    pub(crate) arena: NodeArena,
+    pub(crate) binder: BinderState,
+    pub(crate) root: NodeIndex,
+    pub(crate) content: String,
+}
+
+/// Per-file parse+bind cache for the tsz-server request loop.
+///
+/// LSP requests re-enter `parse_and_bind_file` many times per request (handlers
+/// scan related files) and again across requests over unchanged files. Without
+/// a cache each call re-runs scanner + parser + binder for the same content.
+/// This cache stores the most recent parse+bind per file path and reuses it
+/// when the current content hashes equal — correctness is preserved because a
+/// content change yields a different hash and forces a fresh parse.
+///
+/// Bounded by `MAX_ENTRIES` so a session that touches very many files cannot
+/// grow the cache without limit; the cache is also dropped wholesale on any
+/// file mutation / session reset via `clear_completion_project_cache`.
+#[derive(Default)]
+pub(crate) struct ParseBindCache {
+    entries: FxHashMap<String, ParseBindEntry>,
+}
+
+impl ParseBindCache {
+    /// Upper bound on cached files. Past this we drop the cache to keep server
+    /// memory bounded; the hot working set for an LSP session is small.
+    const MAX_ENTRIES: usize = 256;
+
+    fn get(&self, file_path: &str, content_hash: u64) -> Option<&ParseBindEntry> {
+        self.entries
+            .get(file_path)
+            .filter(|entry| entry.content_hash == content_hash)
+    }
+
+    fn insert(&mut self, file_path: String, entry: ParseBindEntry) {
+        if self.entries.len() >= Self::MAX_ENTRIES && !self.entries.contains_key(&file_path) {
+            self.entries.clear();
+        }
+        self.entries.insert(file_path, entry);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
 }
 
 fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -613,6 +668,11 @@ pub(crate) struct Server {
     /// Reused by project-backed navigation operations such as references,
     /// type-definition, implementations, and file references.
     pub(crate) project_cache: RefCell<Option<ServerProjectCache>>,
+    /// Per-file parse+bind cache. `parse_and_bind_file` consults this before
+    /// re-running scanner + parser + binder for a file whose content is
+    /// unchanged. Content-hash keyed, so an edited file re-parses; cleared on
+    /// any file mutation / session reset alongside the project caches.
+    pub(crate) parse_bind_cache: RefCell<ParseBindCache>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Completion/codefix preference: import module specifier preference.
@@ -727,6 +787,7 @@ impl Server {
             external_project_files: FxHashMap::default(),
             completion_project_cache: None,
             project_cache: RefCell::new(None),
+            parse_bind_cache: RefCell::new(ParseBindCache::default()),
             completion_import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             organize_imports_type_order: None,
@@ -800,6 +861,7 @@ impl Server {
     pub(crate) fn clear_completion_project_cache(&mut self) {
         self.completion_project_cache = None;
         self.project_cache.borrow_mut().take();
+        self.parse_bind_cache.borrow_mut().clear();
     }
 
     fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -829,12 +891,48 @@ impl Server {
             let raw = Self::read_virtual_harness_path(file_path)?;
             Self::normalize_fourslash_virtual_content(file_path, &raw)
         };
+
+        // Reuse a prior parse+bind for this exact content. The cached payload is
+        // `Arc`-backed (`NodeArena`, `BinderState`'s symbol storage), so the
+        // clone we hand back is refcount bumps rather than a re-parse + re-bind.
+        // Content-hash keying makes this self-invalidating: an edited file (or a
+        // different file at the same virtual path) hashes differently and falls
+        // through to a fresh parse.
+        let content_hash = Self::hash_parse_bind_content(&content);
+        if let Some(entry) = self.parse_bind_cache.borrow().get(file_path, content_hash) {
+            return Some((
+                entry.arena.clone(),
+                entry.binder.clone(),
+                entry.root,
+                entry.content.clone(),
+            ));
+        }
+
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
         let arena = parser.into_arena();
         let mut binder = BinderState::new();
         binder.bind_source_file(&arena, root);
+
+        self.parse_bind_cache.borrow_mut().insert(
+            file_path.to_string(),
+            ParseBindEntry {
+                content_hash,
+                arena: arena.clone(),
+                binder: binder.clone(),
+                root,
+                content: content.clone(),
+            },
+        );
+
         Some((arena, binder, root, content))
+    }
+
+    fn hash_parse_bind_content(content: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn read_virtual_harness_path(file_path: &str) -> Option<String> {

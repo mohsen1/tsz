@@ -24,6 +24,7 @@ fn make_server() -> Server {
         external_project_files: FxHashMap::default(),
         completion_project_cache: None,
         project_cache: std::cell::RefCell::new(None),
+        parse_bind_cache: std::cell::RefCell::new(crate::ParseBindCache::default()),
         _server_mode: ServerMode::Semantic,
         _log_config: LogConfig {
             level: LogLevel::Off,

@@ -427,6 +427,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 resolved_source,
                 &mut source_props,
             );
+            // Map each symbol-named source property's `SymbolRef` to the atom it
+            // is stored under (e.g. `Symbol.iterator` -> `"[Symbol.iterator]"`).
+            // The symbol-key emission loop below looks `source_prop_map` up by
+            // this atom to recover the declared method type; without the mapping
+            // it falls back to the synthetic `__unique_<id>` atom, which is not a
+            // `source_prop_map` key, so `T[Symbol.iterator]` resolved to
+            // `undefined` and the homomorphic result silently dropped the
+            // iterator method. This must run for every homomorphic mapped type,
+            // not only the `as`-clause (name_type) path.
+            for prop in &source_props {
+                if prop.is_symbol_named
+                    && let Some(sym_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name)
+                {
+                    source_symbol_prop_names.entry(sym_ref).or_insert(prop.name);
+                }
+            }
             if mapped.name_type.is_some() {
                 let mut seen_string_keys: FxHashSet<Atom> =
                     key_set.keys.iter().map(|key| key.name).collect();
@@ -748,10 +764,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_atom = source_symbol_prop_names
                 .get(&source_sym_ref)
                 .copied()
-                .unwrap_or_else(|| {
-                    self.interner()
-                        .intern_string(&format!("__unique_{}", source_sym_ref.0))
-                });
+                .unwrap_or_else(|| self.symbol_named_atom_from_unique_symbol_ref(source_sym_ref));
             let source_info = source_prop_map.get(&source_atom);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
@@ -815,8 +828,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     else {
                         continue;
                     };
-                    self.interner()
-                        .intern_string(&format!("__unique_{}", remapped_sym_ref.0))
+                    self.symbol_named_atom_from_unique_symbol_ref(remapped_sym_ref)
                 };
                 properties.push(PropertyInfo {
                     name: remapped_atom,

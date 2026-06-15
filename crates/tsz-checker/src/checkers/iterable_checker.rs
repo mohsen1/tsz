@@ -97,7 +97,18 @@ impl<'a> CheckerState<'a> {
                 // Lazy(DefId) bases that can't be resolved through the type classification.
                 // Use the full property access resolution which handles all the complex
                 // resolution paths including Application types with Lazy bases from lib files.
-                self.type_has_symbol_iterator_via_property_access(type_id)
+                if self.type_has_symbol_iterator_via_property_access(type_id) {
+                    return true;
+                }
+                // A mapped-type alias application such as `DeepReadonlyObject<Iterable<T>>`
+                // (the homomorphic branch a recursive conditional like `DeepReadonly`
+                // selects) does not expose `[Symbol.iterator]` until its mapped body is
+                // instantiated and evaluated. `tsc` checks iterability against the
+                // apparent type, so resolve the alias application the same way a
+                // property-access receiver is resolved, then re-classify. The
+                // `resolved != type_id` guard avoids looping when it stays opaque.
+                let resolved = self.resolve_type_for_property_access(type_id);
+                resolved != type_id && self.is_iterable_type(resolved)
             }
             FullIterableTypeKind::TypeParameter { constraint } => {
                 if let Some(c) = constraint {
@@ -112,8 +123,18 @@ impl<'a> CheckerState<'a> {
                 // Unwrap readonly wrapper and check inner type
                 self.is_iterable_type(inner)
             }
-            // Index access, Conditional, Mapped - not directly iterable
-            FullIterableTypeKind::ComplexType => false,
+            // Index access, Conditional, Mapped: not iterable in their deferred
+            // form, but `tsc` checks iterability against the *apparent* type. A
+            // mapped type like `{ [K in keyof Iterable<T>]: ... }` resolves to an
+            // object that keeps the `[Symbol.iterator]` method, so for-of must see
+            // through it. Resolve the receiver the same way property access does
+            // and re-classify; the `resolved != type_id` guard prevents looping
+            // on a form that stays deferred (e.g. a conditional that genuinely
+            // depends on a free type parameter).
+            FullIterableTypeKind::ComplexType => {
+                let resolved = self.resolve_type_for_property_access(type_id);
+                resolved != type_id && self.is_iterable_type(resolved)
+            }
             // Functions, classes without Symbol.iterator are not iterable
             FullIterableTypeKind::FunctionOrCallable => {
                 // Callable types can have properties (including [Symbol.iterator])

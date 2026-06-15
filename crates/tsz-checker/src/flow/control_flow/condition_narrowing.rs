@@ -1236,19 +1236,14 @@ impl<'a> FlowAnalyzer<'a> {
             return self.narrow_by_in_operator(type_id, bin, target, is_true_branch);
         }
 
-        let (is_equals, is_strict) = match operator {
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => (true, true),
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => (false, true),
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => (true, false),
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => (false, false),
-            _ => return type_id,
+        let Some(comparison) =
+            crate::query_boundaries::operator_wrappers::classify_equality_comparison(operator)
+        else {
+            return type_id;
         };
+        let is_strict = comparison.is_strict;
 
-        let effective_truth = if is_equals {
-            is_true_branch
-        } else {
-            !is_true_branch
-        };
+        let effective_truth = comparison.effective_truth(is_true_branch);
         let mut type_id = type_id;
 
         // Optional-chain equality transport:
@@ -1591,14 +1586,9 @@ impl<'a> FlowAnalyzer<'a> {
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         // Only handle strict/loose equality/inequality operators
-        let is_strict_eq = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16;
-        let is_strict_neq = bin.operator_token == SyntaxKind::ExclamationEqualsEqualsToken as u16;
-        let is_loose_eq = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
-        let is_loose_neq = bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
-
-        if !is_strict_eq && !is_strict_neq && !is_loose_eq && !is_loose_neq {
-            return None;
-        }
+        let comparison = crate::query_boundaries::operator_wrappers::classify_equality_comparison(
+            bin.operator_token,
+        )?;
 
         // Check for true/false on either side
         let (guard_expr, is_compared_to_true) = if self.is_boolean_literal(bin.right) {
@@ -1635,7 +1625,7 @@ impl<'a> FlowAnalyzer<'a> {
         // `expr === false` in true branch → narrow as if expr is false
         // `expr !== true` in true branch → narrow as if expr is false
         // `expr !== false` in true branch → narrow as if expr is true
-        let is_negated = is_strict_neq || is_loose_neq;
+        let is_negated = !comparison.is_equals;
         let effective_sense = if is_compared_to_true {
             if is_negated {
                 !is_true_branch

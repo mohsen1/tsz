@@ -1472,6 +1472,42 @@ impl<'a> CheckerContext<'a> {
             .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
+    /// Create a `TypeFormatter` configured for assignability (`TS2322`/`TS2345`)
+    /// diagnostic surfaces.
+    ///
+    /// Unlike [`Self::create_diagnostic_type_formatter`], this factory deliberately
+    /// omits the module-name / current-file qualification context: assignability
+    /// messages render type names structurally and must not pick up
+    /// `import("<specifier>")` or namespace prefixes that the hover-style factory
+    /// adds. It does enable diagnostic mode, optional-parameter surface syntax
+    /// (`(a?: T)`), the `BuiltinIteratorReturn` substitution, and the strict-null /
+    /// exact-optional flags so optional members render exactly as tsc prints them.
+    ///
+    /// This is the single construction site for the assignability formatter base;
+    /// callers that need an extra policy flag (e.g.
+    /// `with_skip_application_display_alias_chase`) chain it onto the returned
+    /// builder.
+    pub fn create_assignability_type_formatter(
+        &self,
+    ) -> crate::query_boundaries::common::TypeFormatter<'_> {
+        use crate::query_boundaries::common::TypeFormatter;
+
+        TypeFormatter::with_symbols(self.types, &self.binder.symbols)
+            .with_def_store(&self.definition_store)
+            .with_diagnostic_mode()
+            // Match tsc: optional parameters display as `(a?: T)`.
+            .with_preserve_optional_parameter_surface_syntax(true)
+            .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_builtin_iterator_return_type(
+                if self.compiler_options.strict_builtin_iterator_return {
+                    tsz_solver::TypeId::UNDEFINED
+                } else {
+                    tsz_solver::TypeId::ANY
+                },
+            )
+            .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
+    }
+
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.
     ///
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`

@@ -1556,9 +1556,7 @@ impl<'a> CheckerState<'a> {
         alias_type: TypeId,
         type_node: NodeIndex,
     ) -> TypeId {
-        if crate::query_boundaries::common::collect_type_queries(self.ctx.types, alias_type)
-            .is_empty()
-        {
+        if self.ctx.collect_type_queries_cached(alias_type).is_empty() {
             return alias_type;
         }
 

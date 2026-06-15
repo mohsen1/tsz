@@ -649,8 +649,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined
         // TypeScript treats these as nullish equality (narrows to null | undefined)
-        let is_loose_equality = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+        let is_loose_equality =
+            crate::query_boundaries::operator_wrappers::is_loose_equality_operator(
+                bin.operator_token,
+            );
         if is_loose_equality
             && let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target)
         {
@@ -1827,11 +1829,9 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         bin: &tsz_parser::parser::node::BinaryExprData,
     ) -> Option<(TypeGuard, NodeIndex)> {
-        let is_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::ExclamationEqualsEqualsToken as u16
-            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
-        if !is_equality {
+        if !crate::query_boundaries::operator_wrappers::is_equality_comparison_operator(
+            bin.operator_token,
+        ) {
             return None;
         }
 
