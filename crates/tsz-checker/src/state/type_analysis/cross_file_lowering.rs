@@ -8,7 +8,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Detect and record cross-file `SymbolIds`.
     ///
     /// In multi-file mode, the driver copies target file's `module_exports` into

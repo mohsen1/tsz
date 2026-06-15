@@ -15,7 +15,7 @@ mod miss_kind;
 
 pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     fn resolve_cross_file_heritage_type_arg(
         &mut self,
         arena: &tsz_parser::NodeArena,
