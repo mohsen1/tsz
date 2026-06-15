@@ -73,11 +73,12 @@ default_cargo_build_jobs() {
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     dist-binaries)
-      # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
-      # GitHub CI) so every codegen unit compiles from scratch. Keep the
-      # default 7168 MiB/job budget so the 8 vCPU x 32 GiB Cloud Run runner can
-      # build at -j4; -j3 has repeatedly finished cargo just after the runner's
-      # external cancellation window and before artifact upload.
+      # sccache is enabled for dist-binaries (READ_ONLY on PRs, READ_WRITE on
+      # merge_group/push) so warm codegen units are reused from the shared GCS
+      # cache instead of recompiling from scratch. Keep the default 7168 MiB/job
+      # budget so the 8 vCPU x 32 GiB Cloud Run runner can build at -j4; -j3 has
+      # repeatedly finished cargo just after the runner's external cancellation
+      # window and before artifact upload.
       mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-7168}"
       ;;
     *)

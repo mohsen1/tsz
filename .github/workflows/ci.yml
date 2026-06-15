@@ -625,10 +625,15 @@ jobs:
       # when Cargo.lock/profile inputs changed and the gate intentionally ran
       # main CI to refresh the exact shared cache key.
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
-      # Keep artifact production independent from sccache service hangs. The
-      # dist-fast build is short enough without sccache, and all harness suites
-      # are blocked until this artifact uploads.
-      TSZ_CI_DISABLE_SCCACHE: "1"
+      # dist-fast (lto=false, codegen-units=8) is built for sccache, yet it is the
+      # longest artifact-blocking job (~11m cold) and recompiles the same
+      # first-party crates unit/lint already populate in the shared GCS cache.
+      # Enable sccache for warm-cache reuse. PRs run READ_ONLY so the job that
+      # gates every harness suite never stalls on the sccache write path; merge_group
+      # and push run READ_WRITE to keep the dist-fast cache warm. configure_sccache
+      # falls back to no wrapper if the server fails to start, and a mid-build GCS
+      # stall is bounded by this job's timeout-minutes: 30.
+      SCCACHE_GCS_RW_MODE: ${{ github.event_name == 'pull_request' && 'READ_ONLY' || 'READ_WRITE' }}
     steps:
       - uses: actions/checkout@v4
         with:
