@@ -155,6 +155,26 @@ pub trait TypePredicateCache {
     /// `contains_generic_type_parameters_db` walk. Default no-op.
     fn set_contains_generic_params_root_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached `is_generic_type_with_union_constraint(type_id)` result.
+    /// Default `None`.
+    fn is_generic_with_union_constraint_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record an `is_generic_type_with_union_constraint(type_id)` result.
+    /// Default no-op.
+    fn set_is_generic_with_union_constraint_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `is_generic_type_without_nullable_constraint(type_id)`
+    /// result. Default `None`.
+    fn is_generic_without_nullable_constraint_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record an `is_generic_type_without_nullable_constraint(type_id)` result.
+    /// Default no-op.
+    fn set_is_generic_without_nullable_constraint_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached result of the evaluator's `type_contains_infer`
     /// walk (structural `Infer` nodes only; descends `Application` bases).
     /// Default impl returns `None` (no caching).
@@ -423,6 +443,23 @@ pub trait TypeApplicationEvalCache {
     }
 }
 
+/// Cache for the canonical `widen_type` result keyed by `TypeId`.
+///
+/// Kept separate from [`TypeDatabase`] so the broad query trait stays under
+/// its method cap (#8205); `TypeDatabase` re-exposes these via the supertrait
+/// bound, so `&dyn TypeDatabase` callers are unaffected.
+pub trait TypeWidenCache {
+    /// Look up the memoized canonical `widen_type` result for `type_id`.
+    /// Default `None` (no caching). Only the canonical semantic `widen_type`
+    /// entry populates this; see `TypeInterner::widen_type_cache`.
+    fn widen_type_memo(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Record the canonical `widen_type` result for `type_id`. Default no-op.
+    fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -433,6 +470,7 @@ pub trait TypeDatabase:
     + TypeDisplayProvenance
     + TypeCompilerOptions
     + TypeApplicationEvalCache
+    + TypeWidenCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -754,6 +792,33 @@ impl TypePredicateCache for TypeInterner {
         );
     }
 
+    fn is_generic_with_union_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::IsGenericWithUnionConstraint)
+    }
+
+    fn set_is_generic_with_union_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::IsGenericWithUnionConstraint,
+            result,
+        );
+    }
+
+    fn is_generic_without_nullable_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(
+            type_id,
+            PredicateCacheKind::IsGenericWithoutNullableConstraint,
+        )
+    }
+
+    fn set_is_generic_without_nullable_constraint_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::IsGenericWithoutNullableConstraint,
+            result,
+        );
+    }
+
     fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::EvalContainsInfer)
     }
@@ -854,6 +919,16 @@ impl TypeCompilerOptions for TypeInterner {
 }
 
 impl TypeApplicationEvalCache for TypeInterner {}
+
+impl TypeWidenCache for TypeInterner {
+    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::widen_type_memo(self, type_id)
+    }
+
+    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        Self::set_widen_type_memo(self, type_id, result);
+    }
+}
 
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
