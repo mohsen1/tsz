@@ -11,7 +11,7 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(crate) fn resolve_type_only_import_alias_target_symbol(
         &mut self,
         name: &str,
@@ -143,12 +143,10 @@ impl<'a> CheckerState<'a> {
                         // TS2314 and treats the erroneous annotation as any-like. Type aliases
                         // keep the old resolution-set skip because tsc handles those through
                         // circularity detection.
-                        let is_class_or_interface = self
-                            .ctx
-                            .binder
-                            .get_symbol(sym_id)
-                            .map(|s| s.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE))
-                            .unwrap_or(false);
+                        let is_class_or_interface =
+                            self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+                                s.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+                            });
                         let should_emit_ts2314 = !self.ctx.symbol_resolution_set.contains(&sym_id)
                             || is_class_or_interface;
                         if should_emit_ts2314 {
@@ -365,16 +363,12 @@ impl<'a> CheckerState<'a> {
         let def_id = self.ctx.get_or_create_def_id(sym_id);
 
         // Step 2: extract and cache type parameters if not already cached.
-        let should_extract_params = self
-            .ctx
-            .get_def_type_params(def_id)
-            .map(|cached| {
-                !cached.is_empty()
-                    && cached
-                        .iter()
-                        .all(|param| param.constraint.is_none() && param.default.is_none())
-            })
-            .unwrap_or(true);
+        let should_extract_params = self.ctx.get_def_type_params(def_id).is_none_or(|cached| {
+            !cached.is_empty()
+                && cached
+                    .iter()
+                    .all(|param| param.constraint.is_none() && param.default.is_none())
+        });
         if should_extract_params {
             let params = self
                 .extract_declared_type_params_for_reference_symbol(sym_id, name)
@@ -396,8 +390,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .type_env
                 .try_borrow()
-                .map(|env| env.get_def(def_id).is_some())
-                .unwrap_or(false);
+                .is_ok_and(|env| env.get_def(def_id).is_some());
             if !has_body {
                 let _ = self.resolve_lib_type_by_name(name);
             }
@@ -659,7 +652,7 @@ impl<'a> CheckerState<'a> {
                     };
                     Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
                         decl_arena,
-                        &type_alias.type_parameters,
+                        type_alias.type_parameters.as_ref(),
                         params,
                         effective_file_idx,
                     ))
@@ -757,7 +750,7 @@ impl<'a> CheckerState<'a> {
                     };
                     Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
                         decl_arena,
-                        &iface.type_parameters,
+                        iface.type_parameters.as_ref(),
                         params,
                         effective_file_idx,
                     ))
@@ -865,7 +858,7 @@ impl<'a> CheckerState<'a> {
                         .collect_type_parameters(type_parameters);
                         Some(self.apply_omitted_defaults_to_cross_file_param_constraints(
                             decl_arena,
-                            &class.type_parameters,
+                            class.type_parameters.as_ref(),
                             params,
                             effective_file_idx,
                         ))
@@ -968,7 +961,7 @@ impl<'a> CheckerState<'a> {
     fn apply_omitted_defaults_to_cross_file_param_constraints(
         &mut self,
         decl_arena: &NodeArena,
-        type_parameters: &Option<NodeList>,
+        type_parameters: Option<&NodeList>,
         mut params: Vec<tsz_solver::TypeParamInfo>,
         effective_file_idx: Option<usize>,
     ) -> Vec<tsz_solver::TypeParamInfo> {
@@ -1027,8 +1020,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol_from_registered_file_target(target_sym_id)
             .or_else(|| self.get_cross_file_symbol(target_sym_id))
             .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
-            .map(|symbol| symbol.escaped_name.clone())
-            .unwrap_or_else(|| name.to_string());
+            .map_or_else(|| name.to_string(), |symbol| symbol.escaped_name.clone());
         let type_params = self.get_reference_type_params_for_symbol(target_sym_id, &target_name);
         if type_params.is_empty() {
             return None;
