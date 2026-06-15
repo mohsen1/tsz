@@ -328,6 +328,12 @@ fn write_batch_residency_report(
         stdout,
         "Batch estimated eviction savings: {eviction_savings_kb:.1}K"
     )?;
+    let cleanup_action = if batch_residency_should_clear(pressure) {
+        "clear finished-project thread-local state"
+    } else {
+        "observe only"
+    };
+    writeln!(stdout, "Batch residency cleanup action: {cleanup_action}")?;
     Ok(Some(pressure))
 }
 
