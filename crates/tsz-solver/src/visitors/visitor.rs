@@ -631,7 +631,22 @@ pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
 }
 
 /// Collect all unique type-query symbol references reachable from `root`.
+///
+/// Most types reachable on the hot symbol-resolution and relation-closure
+/// paths contain no `typeof X` at all (lib-interface closures, instantiated
+/// object shapes), yet callers re-walk the full closure on every resolution.
+/// The memoized [`contains_type_query_db`](crate::type_queries::contains_type_query_db)
+/// predicate answers "is there any `TypeQuery` under `root`?" in O(1) after
+/// the first walk (project-wide per-node cache), so gate the unmemoized full
+/// traversal on it: when no `TypeQuery` exists the returned set is necessarily
+/// empty and every caller's loop body is a no-op. This defers the eager
+/// closure walk to the rare types that actually carry `typeof` references,
+/// matching tsc's demand-driven `typeof` resolution.
 pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<SymbolRef> {
+    if !crate::type_queries::contains_type_query_db(types, root) {
+        return Vec::new();
+    }
+
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
 
