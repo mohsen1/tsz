@@ -4,6 +4,7 @@
 //! and emits the appropriate diagnostic for regular params, rest params, and
 //! destructuring patterns.
 
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -677,7 +678,7 @@ impl<'a> CheckerState<'a> {
         let Some(call_idx) = self.enclosing_call_for_argument(func_idx) else {
             return false;
         };
-        let snap = self.ctx.snapshot_full();
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
         self.invalidate_node_type_cache(call_idx);
         self.invalidate_expression_for_contextual_retry(func_idx);
         let _ = self.get_type_of_node(call_idx);
@@ -685,7 +686,7 @@ impl<'a> CheckerState<'a> {
         // Discard diagnostics/state mutations from the speculative re-resolution; it
         // exists only to determine whether the closure is contextually typed. They
         // were already reported (or correctly suppressed) by the original resolution.
-        self.ctx.rollback_full(&snap);
+        snap.rollback(&mut self.ctx.speculation_state());
         if contextual {
             self.ctx.implicit_any_contextual_closures.insert(func_idx);
         }
