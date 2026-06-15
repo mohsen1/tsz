@@ -36,7 +36,18 @@ pub(super) struct HeritageCycleGuard<'g> {
     pub visited_nodes: &'g FxHashSet<NodeIndex>,
 }
 
-impl<'a> CheckerState<'a> {
+/// The property/index accumulators shared by both merge phases.
+///
+/// Bundling these keeps the per-phase helpers within the clippy
+/// `too_many_arguments` threshold without a per-site suppression, and lets the
+/// orchestrator reborrow the same accumulators across both phases.
+struct InstanceMemberAcc<'m> {
+    properties: &'m mut FxHashMap<Atom, PropertyInfo>,
+    string_index: &'m mut Option<IndexSignature>,
+    number_index: &'m mut Option<IndexSignature>,
+}
+
+impl CheckerState<'_> {
     /// Merge base-class instance members and any merged interface declarations
     /// into the in-progress class instance `properties`/index signatures.
     ///
@@ -59,10 +70,57 @@ impl<'a> CheckerState<'a> {
             number_index,
             merged_interface_type_for_class,
         } = members;
+        let mut acc = InstanceMemberAcc {
+            properties,
+            string_index,
+            number_index,
+        };
+        // Phase 1: merge base-class instance members. This can detect a cycle
+        // and request an early return from the caller.
+        if let Some(early_return) = self.merge_base_class_heritage(
+            class,
+            class_idx,
+            current_sym,
+            guard,
+            did_insert_into_global_set,
+            &mut acc,
+        ) {
+            return Some(early_return);
+        }
+
+        // Phase 2: merge interface declarations (class members take precedence).
+        self.merge_class_interface_declarations(
+            current_sym,
+            apply_module_augmentations,
+            &mut acc,
+            merged_interface_type_for_class,
+        );
+
+        None
+    }
+
+    /// Phase 1 of [`Self::merge_class_heritage_and_interfaces`]: merge base-class
+    /// instance members into the in-progress `properties`/index signatures.
+    ///
+    /// Returns `Some(type)` when a cycle or forward-reference cycle was detected
+    /// and the caller must early-return that value (after the global-set cleanup
+    /// performed here); `None` to continue building the instance type normally.
+    fn merge_base_class_heritage(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+        class_idx: NodeIndex,
+        current_sym: Option<SymbolId>,
+        guard: HeritageCycleGuard<'_>,
+        did_insert_into_global_set: bool,
+        acc: &mut InstanceMemberAcc<'_>,
+    ) -> Option<TypeId> {
         let HeritageCycleGuard {
             visited,
             visited_nodes,
         } = guard;
+        let properties = &mut *acc.properties;
+        let string_index = &mut *acc.string_index;
+        let number_index = &mut *acc.number_index;
         // Merge base class instance properties (derived members take precedence).
         // In JS files, an empty @augments/@extends tag overrides the structural
         // extends clause — tsc does not merge base-class properties in that case.
@@ -384,6 +442,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        None
+    }
+
+    /// Phase 2 of [`Self::merge_class_heritage_and_interfaces`]: merge interface
+    /// declarations for class/interface merging (class members take precedence).
+    ///
+    /// Covers the local/cross-arena interface declaration merge plus the
+    /// lib-interface fallback for symbols whose interface declarations live in a
+    /// lib arena.
+    fn merge_class_interface_declarations(
+        &mut self,
+        current_sym: Option<SymbolId>,
+        apply_module_augmentations: bool,
+        acc: &mut InstanceMemberAcc<'_>,
+        merged_interface_type_for_class: &mut Option<TypeId>,
+    ) {
+        let properties = &mut *acc.properties;
+        let string_index = &mut *acc.string_index;
+        let number_index = &mut *acc.number_index;
         // Merge interface declarations for class/interface merging (class members take precedence)
         if let Some(sym_id) = current_sym
             && let Some((symbol_flags, symbol_declarations, symbol_name)) =
@@ -546,7 +623,5 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        None
     }
 }
