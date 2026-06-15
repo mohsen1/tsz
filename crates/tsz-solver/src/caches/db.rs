@@ -443,6 +443,23 @@ pub trait TypeApplicationEvalCache {
     }
 }
 
+/// Cache for the canonical `widen_type` result keyed by `TypeId`.
+///
+/// Kept separate from [`TypeDatabase`] so the broad query trait stays under
+/// its method cap (#8205); `TypeDatabase` re-exposes these via the supertrait
+/// bound, so `&dyn TypeDatabase` callers are unaffected.
+pub trait TypeWidenCache {
+    /// Look up the memoized canonical `widen_type` result for `type_id`.
+    /// Default `None` (no caching). Only the canonical semantic `widen_type`
+    /// entry populates this; see `TypeInterner::widen_type_cache`.
+    fn widen_type_memo(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Record the canonical `widen_type` result for `type_id`. Default no-op.
+    fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -453,6 +470,7 @@ pub trait TypeDatabase:
     + TypeDisplayProvenance
     + TypeCompilerOptions
     + TypeApplicationEvalCache
+    + TypeWidenCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -462,16 +480,6 @@ pub trait TypeDatabase:
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
-
-    /// Look up the memoized canonical `widen_type` result for `type_id`.
-    /// Default `None` (no caching). Only the canonical semantic `widen_type`
-    /// entry populates this; see `TypeInterner::widen_type_cache`.
-    fn widen_type_memo(&self, _type_id: TypeId) -> Option<TypeId> {
-        None
-    }
-
-    /// Record the canonical `widen_type` result for `type_id`. Default no-op.
-    fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
     fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]>;
     fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]>;
@@ -912,6 +920,16 @@ impl TypeCompilerOptions for TypeInterner {
 
 impl TypeApplicationEvalCache for TypeInterner {}
 
+impl TypeWidenCache for TypeInterner {
+    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::widen_type_memo(self, type_id)
+    }
+
+    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        Self::set_widen_type_memo(self, type_id, result);
+    }
+}
+
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
         Self::intern(self, key)
@@ -935,14 +953,6 @@ impl TypeDatabase for TypeInterner {
 
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
         Self::resolve_atom_ref(self, atom)
-    }
-
-    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
-        Self::widen_type_memo(self, type_id)
-    }
-
-    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
-        Self::set_widen_type_memo(self, type_id, result);
     }
 
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {

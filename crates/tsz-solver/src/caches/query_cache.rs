@@ -7,7 +7,7 @@
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
     QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeDatabase,
-    TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
+    TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -895,6 +895,16 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
     }
 }
 
+impl TypeWidenCache for QueryCache<'_> {
+    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.widen_type_memo(type_id)
+    }
+
+    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
+        self.interner.set_widen_type_memo(type_id, result);
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -906,14 +916,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
         self.interner.lookup_alloc_order(id)
-    }
-
-    fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {
-        self.interner.widen_type_memo(type_id)
-    }
-
-    fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
-        self.interner.set_widen_type_memo(type_id, result);
     }
 
     fn intern_string(&self, s: &str) -> Atom {
