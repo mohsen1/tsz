@@ -11,7 +11,7 @@
 use super::helpers::{can_skip_base_instantiation, declaration_is_module_augmentation};
 use super::instance::ClassInstanceBuilder;
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
-use crate::query_boundaries::common::{ObjectFlags, TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
@@ -583,7 +583,7 @@ impl<'a> CheckerState<'a> {
             shape.mark_has_late_bound_members();
         }
         if !apply_module_augmentations {
-            shape.flags |= ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP;
+            shape.mark_no_module_augmentation_lookup();
         }
         let mut instance_type = factory.object_with_index(shape);
 
