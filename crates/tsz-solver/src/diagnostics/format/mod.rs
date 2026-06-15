@@ -167,10 +167,52 @@ pub struct TypeFormatter<'a> {
     /// source/display origin was recorded. This is used by narrow diagnostic
     /// surfaces where tsc does not preserve source-written union order.
     ignore_union_origins: bool,
+    /// Per-formatter memo for the Application display-reduction decision.
+    ///
+    /// Formatting a generic `Application` attempts up to four alias-reduction
+    /// strategies (`scalar_mapped_alias_application_display`,
+    /// `distributed_conditional_application_display`,
+    /// `reducing_conditional_application_display`,
+    /// `variadic_tuple_alias_application_display`). Each strategy runs a fresh
+    /// `instantiate_generic` + `evaluate_type` over the alias body. Deeply
+    /// nested generic receiver types (e.g. drizzle's relational builders) form
+    /// a *DAG* of shared `Application` nodes, so the formatter — which walks
+    /// the type as a tree — re-reaches the same `Application` `TypeId` through
+    /// many parents and re-runs the whole cascade each time, turning display
+    /// formatting into super-linear re-evaluation (#13480).
+    ///
+    /// The reduction is a pure function of the input `TypeId` for a fixed
+    /// formatter configuration (the interner is immutable for the formatter's
+    /// lifetime and every reduction input derives from the `Application`'s base
+    /// and args). Memoizing it keyed on the `Application` `TypeId` collapses the
+    /// repeated cascade to one evaluation per distinct node. The cached value is
+    /// the reduced `TypeId` to format in place, or `None` to fall through to the
+    /// structural `Name<Args>` rendering. `RefCell` keeps the `&self` reduction
+    /// helpers untouched. Invalidation: none — the cache lives for the single
+    /// diagnostic the formatter instance serves.
+    application_reduction_cache: std::cell::RefCell<FxHashMap<TypeId, Option<TypeId>>>,
+    /// Per-formatter memo for `is_recursive_type_alias_application_base`, keyed
+    /// on the application *base* `TypeId`. The predicate runs an uncached
+    /// recursive `type_reaches_alias_def` walk over the alias body; the same
+    /// base recurs across the shared `Application` DAG, so memoizing the
+    /// boolean verdict removes the repeated graph walk. Same purity and
+    /// lifetime contract as `application_reduction_cache`.
+    recursive_alias_base_cache: std::cell::RefCell<FxHashMap<TypeId, bool>>,
 }
 
 impl<'a> TypeFormatter<'a> {
     pub(super) fn is_recursive_type_alias_application_base(&self, base: TypeId) -> bool {
+        if let Some(&cached) = self.recursive_alias_base_cache.borrow().get(&base) {
+            return cached;
+        }
+        let result = self.compute_is_recursive_type_alias_application_base(base);
+        self.recursive_alias_base_cache
+            .borrow_mut()
+            .insert(base, result);
+        result
+    }
+
+    fn compute_is_recursive_type_alias_application_base(&self, base: TypeId) -> bool {
         let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
             return false;
         };
@@ -381,6 +423,40 @@ impl<'a> TypeFormatter<'a> {
         Some(evaluated)
     }
 
+    /// Memoized dispatch for the four `Application` display-reduction strategies.
+    ///
+    /// Tries, in order, `scalar_mapped_alias_application_display`,
+    /// `distributed_conditional_application_display`,
+    /// `reducing_conditional_application_display`, and
+    /// `variadic_tuple_alias_application_display`; the first that fires wins and
+    /// its reduced `TypeId` is returned for the caller to format in place of the
+    /// `Name<Args>` application surface. Each strategy runs `instantiate_generic`
+    /// then `evaluate_type` over the alias body, which is expensive; because the
+    /// formatter walks the receiver type as a tree but the type is a DAG, the
+    /// same `Application` `TypeId` is reached through many parents. The result is
+    /// memoized per `Application` `TypeId` so the cascade runs at most once per
+    /// distinct node (#13480). The verdict is a pure function of `type_id` for a
+    /// fixed formatter: every input derives from the application's base and args,
+    /// and the interner is immutable for the formatter's lifetime.
+    fn application_display_reduction(
+        &self,
+        type_id: TypeId,
+        app: &crate::types::TypeApplication,
+    ) -> Option<TypeId> {
+        if let Some(&cached) = self.application_reduction_cache.borrow().get(&type_id) {
+            return cached;
+        }
+        let reduced = self
+            .scalar_mapped_alias_application_display(type_id, app.base, &app.args)
+            .or_else(|| self.distributed_conditional_application_display(app.base, &app.args))
+            .or_else(|| self.reducing_conditional_application_display(type_id))
+            .or_else(|| self.variadic_tuple_alias_application_display(app.base, &app.args));
+        self.application_reduction_cache
+            .borrow_mut()
+            .insert(type_id, reduced);
+        reduced
+    }
+
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
     /// whose `obj` is fully concrete (no type parameters, no infer
     /// placeholders) and `idx` is a literal, resolve the indexed access for
@@ -551,6 +627,8 @@ impl<'a> TypeFormatter<'a> {
             expand_scalar_mapped_alias_applications: false,
             expand_primitive_key_union: false,
             ignore_union_origins: false,
+            application_reduction_cache: std::cell::RefCell::new(FxHashMap::default()),
+            recursive_alias_base_cache: std::cell::RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -842,6 +920,8 @@ impl<'a> TypeFormatter<'a> {
             expand_scalar_mapped_alias_applications: false,
             expand_primitive_key_union: false,
             ignore_union_origins: false,
+            application_reduction_cache: std::cell::RefCell::new(FxHashMap::default()),
+            recursive_alias_base_cache: std::cell::RefCell::new(FxHashMap::default()),
         }
     }
 
