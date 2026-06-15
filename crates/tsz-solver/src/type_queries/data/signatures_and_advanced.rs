@@ -145,6 +145,77 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
 }
 
+/// Base constraint of a deferred conditional type, computed as the union of its
+/// two branch results (`getBaseConstraintOfType` of a conditional in tsc, which
+/// is `getUnionType([trueType, falseType])`).
+///
+/// This is the apparent type used to validate an index-access key or an
+/// assertion source against a *deferred* conditional whose check type still
+/// contains unresolved type parameters — e.g. `C<T>['x']` where
+/// `C<T> = T extends string ? { x: 1 } : { x: 3 }` validates `'x'` against
+/// `keyof ({ x: 1 } | { x: 3 })`. The conditional itself stays deferred so a
+/// later concrete instantiation still resolves to the selected branch; only the
+/// key/overlap *validation* uses this union.
+///
+/// A branch that is itself a *deferred conditional* (e.g. a recursive
+/// `ParsePathParams<Rest>` chained through `extends` clauses) is flattened into
+/// its own branch results, bounded by a small depth/fuel guard so a recursive
+/// conditional alias cannot re-enter unboundedly. Only the key/value *domain*
+/// is collected this way — branches are not distributed into instantiations.
+///
+/// Returns `None` when the type is not a `Conditional`, or when a branch is a
+/// bare type parameter / `infer` placeholder (tsc keeps those branches'
+/// constraints opaque, so a union-of-branches check would be unreliable — mirror
+/// the property-access deferral in `operations::property`).
+pub fn conditional_branch_union_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    fn collect(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        out: &mut Vec<TypeId>,
+        depth: u8,
+    ) -> Option<()> {
+        let cond = get_conditional_type(db, type_id)?;
+        let is_bare_param = |t: TypeId| {
+            matches!(
+                db.lookup(t),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        };
+        if is_bare_param(cond.true_type) || is_bare_param(cond.false_type) {
+            return None;
+        }
+        for branch in [cond.true_type, cond.false_type] {
+            // Descend into a nested conditional branch (recursive utility types),
+            // bounded by the depth/fuel guard. Self-referential branches that
+            // re-intern to the outer conditional contribute nothing new.
+            if depth < 8
+                && branch != type_id
+                && get_conditional_type(db, branch).is_some()
+                && collect(db, branch, out, depth + 1).is_some()
+            {
+                continue;
+            }
+            out.push(branch);
+        }
+        Some(())
+    }
+
+    let mut branches = Vec::new();
+    collect(db, type_id, &mut branches, 0)?;
+    if branches.is_empty() {
+        return None;
+    }
+    let union = db.union(branches);
+    // No progress (e.g. one branch is the conditional itself) — keep deferred.
+    if union == type_id {
+        return None;
+    }
+    Some(union)
+}
+
 /// Resolve a type to its base constraint for display purposes, recursively reducing
 /// type parameters inside unions and intersections.
 ///
