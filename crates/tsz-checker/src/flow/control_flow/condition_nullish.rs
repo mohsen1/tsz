@@ -2,7 +2,6 @@ use super::FlowAnalyzer;
 use super::flow_dp::{DpMemo, resolve_backward_dp};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> FlowAnalyzer<'a> {
@@ -93,22 +92,19 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(bin) = self.arena.get_binary_expr(node) else {
             return false;
         };
-        let (is_equals, is_strict) = match bin.operator_token {
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => (true, true),
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => (false, true),
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => (true, false),
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => (false, false),
-            _ => return false,
+        let Some(comparison) =
+            crate::query_boundaries::operator_wrappers::classify_equality_comparison(
+                bin.operator_token,
+            )
+        else {
+            return false;
         };
+        let is_strict = comparison.is_strict;
         let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) else {
             return false;
         };
         let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-        let effective_truth = if is_equals {
-            is_true_branch
-        } else {
-            !is_true_branch
-        };
+        let effective_truth = comparison.effective_truth(is_true_branch);
 
         if is_strict {
             nullish == TypeId::NULL && !effective_truth
