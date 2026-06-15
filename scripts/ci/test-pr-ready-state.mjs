@@ -197,8 +197,8 @@ assert.doesNotMatch(
 
 assert.match(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary",/,
-  "CI Summary must wait for the project compile canary before reporting required full-run success",
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary-aggregate[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary-aggregate",/,
+  "CI Summary must wait for the project compile canary aggregate (the shard recombiner) before reporting required full-run success",
 );
 
 for (const job of ["lint", "cargo-shear", "cargo-deny"]) {

@@ -878,14 +878,35 @@ run_required_projects() {
   return 0
 }
 
+# True when the canary row at 0-based array position $1 belongs to this shard.
+# Sharding is keyed on the row's stable index in TSZ_COMPILE_GUARD_CANARY_ROWS
+# (a deterministic, ordered list) so the union of all shards equals the full
+# set with no overlap, independent of which rows are filtered out by
+# should_check_project. When _TSZ_CI_CANARY_SHARD_COUNT is unset (local and
+# `all`-set runs) every index is in-shard, preserving the serial behavior.
+canary_row_in_shard() {
+  local index="$1"
+  local count="${_TSZ_CI_CANARY_SHARD_COUNT:-}"
+  if [[ -z "$count" ]]; then
+    return 0
+  fi
+  local shard="${_TSZ_CI_CANARY_SHARD_INDEX:-0}"
+  if (( index % count == shard )); then
+    return 0
+  fi
+  return 1
+}
+
 run_canary_projects() {
   local name
+  local index=0
   for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"; do
-    if should_check_project "$name"; then
+    if canary_row_in_shard "$index" && should_check_project "$name"; then
       if ! run_project_row "$name"; then
         return 1
       fi
     fi
+    index=$((index + 1))
   done
   return 0
 }

@@ -718,18 +718,33 @@ jobs:
         run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
 
   project-compile-canary:
-    name: project-compile-canary
+    # Canary rows run serially per shard. Sharding the row set 3-way (mirrors
+    # the conformance shard fan-out) lets three self-hosted runners share the
+    # canary set in parallel, cutting ~9-10 min off the wave-2 CI tail. The
+    # per-shard partition is keyed on each row's stable index in
+    # TSZ_COMPILE_GUARD_CANARY_ROWS (see scripts/ci/project-compile-guard.sh),
+    # so the union of all shards is the full set with no overlap. The
+    # project-compile-canary-aggregate job recombines the per-shard
+    # compatibility jsonl/summary into the same project-compile-canary-logs
+    # artifact the single job produced.
+    name: project-compile-canary-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     env:
       npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile-canary
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_PROJECT_COMPILE_SET: canary
       TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
       TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0"
+      _TSZ_CI_CANARY_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_CANARY_SHARD_COUNT: 3
     steps:
       - uses: actions/checkout@v4
         with:
@@ -743,6 +758,120 @@ jobs:
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run compile canaries
         run: scripts/ci/project-compile-guard.sh
+      - name: Upload compile canary logs
+        if: always()
+        id: project_compile_canary_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-compile-canary-logs-${{ matrix.shard }}
+          path: |
+            .target/project-compile-guard/*.log
+            .target/project-compile-guard/project-compatibility.jsonl
+            .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-readiness-pairing.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
+            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
+      - name: Summarize compile canary compatibility artifact
+        if: always()
+        env:
+          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
+          SUMMARY_TITLE: Compile canary compatibility artifact (shard ${{ matrix.shard }})
+          SUMMARY_ARTIFACT_NAME: project-compile-canary-logs-${{ matrix.shard }}
+          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_canary_artifact.outputs.artifact-url }}
+          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
+        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
+
+  project-compile-canary-aggregate:
+    # Recombine the per-shard canary compatibility data into the single
+    # project-compile-canary-logs artifact the downstream consumers expect.
+    # Mirrors conformance-aggregate: wait for the shard artifacts to index,
+    # download them, concatenate the per-shard project-compatibility.jsonl
+    # rows into one combined jsonl, and regenerate
+    # project-compatibility-summary.json from the combined rows so the summary
+    # is byte-shape-identical to the pre-shard single-job output.
+    name: project-compile-canary-aggregate
+    needs: [gate, project-compile-canary]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.project-compile-canary.result != 'skipped' && needs.project-compile-canary.result != 'cancelled'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    continue-on-error: true
+    env:
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_PROJECT_COMPILE_SET: canary
+      TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Wait for canary shard artifacts to be indexed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          EXPECTED=3
+          MAX_WAIT=180
+          INTERVAL=10
+          elapsed=0
+          count=0
+          echo "Polling for all ${EXPECTED} project-compile-canary-logs-* artifacts (max ${MAX_WAIT}s)..."
+          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+            api_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              2>/dev/null || echo '{}')
+            count=$(echo "$api_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('project-compile-canary-logs-'))
+          print(c)
+          " 2>/dev/null || echo 0)
+            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
+            if [ "${count}" -ge "${EXPECTED}" ]; then
+              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
+              break
+            fi
+            jobs_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+              2>/dev/null || echo '{}')
+            shard_summary=$(echo "$jobs_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('project-compile-canary-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+            echo "  shard jobs: ${shard_summary}"
+            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
+            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
+            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
+              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
+              break
+            fi
+            sleep "${INTERVAL}"
+            elapsed=$(( elapsed + INTERVAL ))
+          done
+          if [ "${count}" -lt "${EXPECTED}" ]; then
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
+          fi
+      - name: Download canary shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: project-compile-canary-logs-*
+          path: .canary-shards
+          merge-multiple: false
+      - name: Aggregate canary compatibility results
+        id: project_compile_canary_aggregate
+        run: scripts/ci/project-compile-canary-aggregate.sh
       - name: Upload compile canary logs
         if: always()
         id: project_compile_canary_artifact
@@ -1356,7 +1485,7 @@ jobs:
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
-      - project-compile-canary
+      - project-compile-canary-aggregate
       - wasm
       - wasm-web
       - node-harness-prep
@@ -1519,7 +1648,7 @@ jobs:
           if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
-                  "project-compile-canary",
+                  "project-compile-canary-aggregate",
                   "conformance-snapshot-gate",
               })
               required.update({
