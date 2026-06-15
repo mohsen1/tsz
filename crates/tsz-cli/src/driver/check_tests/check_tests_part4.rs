@@ -521,3 +521,90 @@ export const r = x["a"];
         );
     }
 
+    // ------------------------------------------------------------------
+    // Generic base-class member typed by an alias over its own type
+    // parameter, accessed through a derived subclass chain (#13044/#13484).
+    //
+    // Structural rule: when a generic base class declares a member whose
+    // type mentions a base type parameter `P` through a generic alias
+    // (e.g. `from<TE extends List<DB>>(): Builder<DB, TE>`), and that member
+    // is read on a derived instance whose `P` is bound to a concrete type
+    // argument, `tsc` binds `P` to the derived class's type argument.
+    //
+    // tsz previously degraded `P` to the internal `error` sentinel when the
+    // base class was resolved transitively while a derived subclass chain
+    // (`C extends B extends A extends Base<DB>`) was mid-resolution: the
+    // base instance type resolved to the in-progress class-instance cycle
+    // sentinel `TypeId::ERROR`, and substituting the derived type arguments
+    // into that sentinel baked `error` into every inherited member. The fix
+    // keeps the base reference deferred as `Application(Lazy(base), args)`
+    // when the base instance is the cycle sentinel, so `DB` is never
+    // collapsed to `error` and the member resolves once the base completes.
+    //
+    // Names here intentionally avoid the kysely/zod identifiers to keep the
+    // assertion structural (no identifier/file-name dependence).
+    #[test]
+    fn project_mode_generic_base_member_alias_subclass_chain_no_error_leak() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/creator.ts",
+                    r#"
+export type AnyKey<DB> = keyof DB & string;
+export type KeyOrList<DB> = AnyKey<DB> | ReadonlyArray<AnyKey<DB>>;
+export interface Builder<DB, TE> {
+  pick(key: AnyKey<DB>): Builder<DB, TE>;
+  rows(): DB[keyof DB];
+}
+export class Creator<DB> {
+  from<TE extends KeyOrList<DB>>(target: TE): Builder<DB, TE> {
+    return null as unknown as Builder<DB, TE>;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/chain.ts",
+                    r#"
+import { Creator } from "./creator";
+export class Handle<DB> extends Creator<DB> { readonly handle = "h"; }
+export class Scope<DB> extends Handle<DB> { readonly scope = true; }
+export class Nested<DB> extends Scope<DB> { readonly nested = true; }
+"#,
+                ),
+                (
+                    "/p/index.ts",
+                    "export * from \"./creator\";\nexport * from \"./chain\";\n",
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { Handle } from "./index";
+interface Schema { person: { id: number }; pet: { name: string } }
+export function run(h: Handle<Schema>) {
+  const b = h.from("person");
+  return b.pick("pet");
+}
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2345 | 2322 | 2339 | 7006))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "a generic base-class member typed by an alias over its own type \
+             parameter degraded to `error` through a derived subclass chain \
+             (issue #13044/#13484); expected no assignability/property/implicit-any \
+             diagnostics, got: {leaked:#?}"
+        );
+    }
+

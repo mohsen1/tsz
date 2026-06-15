@@ -248,13 +248,35 @@ impl CheckerState<'_> {
                 // We already resolved a concrete class declaration (`base_class_idx`) above, so
                 // we can read through the declaration cache directly and avoid an extra symbol
                 // resolution round trip on this hot inheritance path.
-                let base_instance_type = self
+                let raw_base_instance_type = self
                     .ctx
                     .class_instance_type_cache
                     .get(&base_class_idx)
                     .copied()
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
-                let base_instance_type = self.resolve_lazy_type(base_instance_type);
+                let base_instance_type = self.resolve_lazy_type(raw_base_instance_type);
+                // Mint-prevention for the base-class poison cycle (#13044/#13484):
+                // when the base instance resolves to the in-progress class-instance
+                // cycle sentinel `TypeId::ERROR`, keep the base reference deferred as
+                // `Application(Lazy(base), args)` instead of substituting the derived
+                // type arguments into `error` and baking the spurious `error` into
+                // every inherited member. The base resolves later, once complete.
+                if base_instance_type == TypeId::ERROR
+                    && !type_args.is_empty()
+                    && let Some(base_class_sym) = self.class_declaration_symbol(base_class_idx)
+                {
+                    let base_def_id = self.ctx.get_or_create_def_id(base_class_sym);
+                    let lazy_base = self.ctx.types.lazy(base_def_id);
+                    let deferred = self.ctx.types.application(lazy_base, type_args.clone());
+                    self.merge_base_instance_properties(
+                        deferred,
+                        &mut b.properties,
+                        &mut b.string_index,
+                        &mut b.number_index,
+                    );
+                    self.record_heritage_extends(current_sym, expr_idx, deferred);
+                    break;
+                }
                 let mut base_type_params = Vec::new();
                 let base_instance_type = if can_skip_base_instantiation(
                     base_class
