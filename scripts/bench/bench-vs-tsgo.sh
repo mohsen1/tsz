@@ -1262,7 +1262,9 @@ run_mobx_project_benchmarks() {
 }
 
 run_nextjs_benchmarks() {
-    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
+    # nextjs fixture is gated off by default (kill-switch for an unstable sparse fixture),
+    # but an explicit --filter must still reach the row for local debugging.
+    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ] && [ -z "$FILTER" ]; then
         return
     fi
 

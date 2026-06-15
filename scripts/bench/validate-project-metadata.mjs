@@ -231,6 +231,14 @@ export function validateProjectMetadata({
       }
     }
 
+    if (row.category === "generated") {
+      const hasGeneratedBy = row.generated_by !== undefined;
+      const hasRepoPin = row.repo !== undefined && row.ref !== undefined;
+      if (!hasGeneratedBy && !hasRepoPin) {
+        failures.push(`${row.name}: generated row must declare generated_by or a repo/ref pin`);
+      }
+    }
+
     if (row.generated_by === undefined) continue;
     const generatedByPathIsInvalid =
       typeof row.generated_by !== "string" ||

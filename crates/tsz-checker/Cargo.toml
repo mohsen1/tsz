@@ -33,6 +33,18 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "any_propagation"
+path = "tests/any_propagation.rs"
+[[test]]
+name = "any_propagation_tests"
+path = "tests/any_propagation_tests.rs"
+[[test]]
+name = "const_assertion_tests"
+path = "tests/const_assertion_tests.rs"
+[[test]]
+name = "freshness_stripping_tests"
+path = "tests/freshness_stripping_tests.rs"
+[[test]]
 name = "any_user_predicate_keeps_any_for_object_function_tests"
 path = "tests/any_user_predicate_keeps_any_for_object_function_tests.rs"
 [[test]]
@@ -520,6 +532,9 @@ path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
 name = "hkt_self_augmentation_keyof_repro"
 path = "tests/hkt_self_augmentation_keyof_repro.rs"
+[[test]]
+name = "hkt_cross_file_augmentation_13653_repro"
+path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
 [[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"

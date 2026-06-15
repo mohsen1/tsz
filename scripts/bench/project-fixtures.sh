@@ -1310,8 +1310,31 @@ tsz_write_ts_pattern_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 
+tsz_write_trpc_external_stubs() {
+  # trpc's real root tsconfig sets `"types": ["node", "vitest/globals"]`, so the
+  # upstream build resolves `NodeJS.Timeout` (used in packages/server/src/adapters/ws.ts)
+  # via @types/node. The shared bench baseline pins `"types": []` and the fixture
+  # clone has no node_modules, so without a stub tsz/tsc both emit spurious
+  # TS2833 "Cannot find namespace 'NodeJS'". Mirror the kysely/type-graphql stub
+  # pattern: alias the referenced members as `= any` so the global resolves
+  # without unmasking unrelated assignability diffs.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare namespace NodeJS {
+  type Timeout = any;
+  type Timer = any;
+  type Immediate = any;
+  type ErrnoException = any;
+}
+TYPES
+}
+
 tsz_write_trpc_config() {
-  tsz_write_basic_external_project_config "$1" "packages/server/src"
+  tsz_write_trpc_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "packages/server/src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_query_config() {
   tsz_write_basic_external_project_config "$1" "packages/query-core/src"
@@ -1499,6 +1522,13 @@ declare module 'class-validator' {
   export const validate: any;
   export type validate = any;
 }
+
+declare namespace NodeJS {
+  type ErrnoException = any;
+  type Timeout = any;
+  interface ProcessEnv { [k: string]: string | undefined }
+}
+declare var global: any;
 TYPES
 }
 
@@ -1510,6 +1540,7 @@ tsz_write_type_graphql_config() {
   tsz_write_type_graphql_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
     "paths": {
       "@/*": ["src/*"],
       "*": ["tsz-bench-external-module.d.ts"]

@@ -179,6 +179,13 @@ pub struct PerfCounters {
     /// failure-analysis memo instead of re-running the relation engine plus
     /// the failure-reason walk.
     pub relation_failure_memo_hits: AtomicU64,
+    /// Weak-type/weak-union probes (`violates_weak_union` /
+    /// `violates_weak_type`) executed while collecting a failure reason. The
+    /// boolean (`weak_union_violation`) and the failure reason previously each
+    /// ran these probes; the single-pass `analyze_weak_and_explain` runs them
+    /// once and feeds both, so on weak/union-target-heavy failures this counter
+    /// halves (issue #13243).
+    pub relation_weak_violation_probes: AtomicU64,
 
     // ─── solver concrete materialization (issue #13242) ─────────────────
     pub union_subtype_reduction_calls: AtomicU64,
@@ -386,6 +393,7 @@ impl PerfCounters {
             shared_instantiation_cache_bypasses: AtomicU64::new(0),
             relation_failure_reason_walks: AtomicU64::new(0),
             relation_failure_memo_hits: AtomicU64::new(0),
+            relation_weak_violation_probes: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),
             union_subtype_reduction_members_total: AtomicU64::new(0),
             union_subtype_reduction_members_max: AtomicU64::new(0),
