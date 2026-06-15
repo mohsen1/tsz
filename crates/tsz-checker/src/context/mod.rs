@@ -570,6 +570,26 @@ pub struct FlowSharedCaches {
     /// hash hit.
     pub flow_switch_case_literal_cache: RefCell<FxHashMap<u32, Option<TypeId>>>,
 
+    /// Cache whether a switch's case block consists entirely of pairwise
+    /// distinct recognized literal labels (no `default`, no duplicate label).
+    /// Key: case-block `NodeIndex.0` -> the per-switch boolean.
+    ///
+    /// `narrow_by_switch_case_clause` checks, for each clause, whether *every*
+    /// earlier clause is a distinct literal so it can skip building the
+    /// excluded-literal set. That predecessor scan is O(K) per clause, so an
+    /// N-arm literal `switch` (e.g. a discriminated-union dispatch) re-scans
+    /// O(N^2) clauses total even when each label lookup is an O(1) cache hit
+    /// (the literal materialization itself is already memoized by
+    /// `flow_switch_case_literal_cache`). The all-clauses-distinct property is a
+    /// pure function of the immutable post-bind case block: when it holds, the
+    /// per-clause predecessor check is *always* satisfied, so the whole switch's
+    /// per-clause scans collapse to one O(N) pass computed once and read as an
+    /// O(1) hit thereafter. Behavior is unchanged: a `false` (or absent) entry
+    /// falls through to the existing per-clause logic.
+    ///
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_switch_all_distinct_literals_cache: RefCell<FxHashMap<u32, bool>>,
+
     /// Shared reference-equivalence cache used by flow narrowing.
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
     /// Reused across `FlowAnalyzer` instances within a single file check.
@@ -601,6 +621,7 @@ impl FlowSharedCaches {
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_switch_case_literal_cache: RefCell::new(FxHashMap::default()),
+            flow_switch_all_distinct_literals_cache: RefCell::new(FxHashMap::default()),
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_flow_memo: SymbolFlowMemoCaches::default(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
@@ -923,6 +944,13 @@ pub struct CheckerContext<'a> {
     /// than the basename so that two files sharing the same basename can be
     /// told apart in `import("<path>").X` messages.
     pub module_path_specifiers: Arc<FxHashMap<u32, String>>,
+
+    /// Set when `ProgramContext::apply_to` pre-populated `module_specifiers`
+    /// and `module_path_specifiers` from the shared program-level maps. When
+    /// true, `set_all_arenas` skips the per-file O(files) rebuild of those two
+    /// maps (they are file-independent and identical for every checker), which
+    /// removes an O(files^2) term from large-program checking.
+    pub module_specifiers_prebuilt: bool,
 
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class

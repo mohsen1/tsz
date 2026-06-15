@@ -809,7 +809,15 @@ fn test_instantiate_mapped_with_lazy_application_in_as_clause_defers() {
 }
 
 #[test]
-fn test_instantiation_depth_limit_returns_error() {
+fn test_instantiation_depth_limit_bails_without_error_sentinel() {
+    // Regression for #13652: a depth/frame bail must NOT collapse to the
+    // `TypeId::ERROR` sentinel. The sentinel dropped the active substitution
+    // and let a downstream consumer fall back to the original declaration and
+    // resurface a free `T` into a concrete context (false TS2488 / TS2345).
+    //
+    // The bail now returns a relation-preserving partial walk. For a deeply
+    // nested closed shape the worst case is a deferred/opaque approximation,
+    // but it must never be `ERROR`.
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
 
@@ -831,7 +839,60 @@ fn test_instantiation_depth_limit_returns_error() {
     subst.insert(t_name, TypeId::NUMBER);
     let result = instantiate_type(&interner, deep_type, &subst);
 
-    assert_eq!(result, TypeId::ERROR);
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "depth bail must not surface the ERROR sentinel"
+    );
+    // The result is still an array shape (relation-preserving), not an error.
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Array(_))),
+        "expected a relation-preserving array shape, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_depth_bail_leaf_type_param_resolves_to_substitution() {
+    // When the bail fires directly on a bound `TypeParameter` node, the bail
+    // value resolves it from the substitution so a substitution-bound `T`
+    // never escapes (the leaf case of the #13652 leak).
+    use crate::instantiation::instantiate::TypeInstantiator;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::NUMBER);
+
+    let mut instantiator = TypeInstantiator::new(&interner, &subst);
+    instantiator.force_depth_exceeded_for_test();
+    // With the budget already exhausted, instantiating the bound parameter
+    // must resolve to its binding, not leak a free `T` and not return ERROR.
+    let result = instantiator.instantiate(type_param_t);
+    assert_eq!(result, TypeId::NUMBER);
+    assert_ne!(result, TypeId::ERROR);
+
+    // An unbound parameter is genuinely free at this scope: returning it
+    // unchanged preserves true positives.
+    let u_name = interner.intern_string("U");
+    let type_param_u = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+    let mut instantiator2 = TypeInstantiator::new(&interner, &subst);
+    instantiator2.force_depth_exceeded_for_test();
+    assert_eq!(instantiator2.instantiate(type_param_u), type_param_u);
 }
 
 #[test]

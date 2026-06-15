@@ -551,8 +551,24 @@ impl<'a> CheckerState<'a> {
         // permanently poisoning symbol resolution and causing subsequent type
         // evaluations to return ERROR — which silently suppresses real
         // assignability diagnostics (e.g., TS2322).
+        //
+        // The decrement is owned by an RAII guard so the depth is restored on
+        // every exit — including when the inner walk unwinds via a panic a
+        // caller (`try_tsz`, LSP) catches mid-recursion. A manual post-call
+        // restore would be skipped on unwind, leaking a positive depth into the
+        // next compilation on a reused batch worker thread; later display
+        // normalizations at that stale depth would bail at the cap and return
+        // early, making display/eval differ run-to-run (#13368). The counter is
+        // function-private, so the batch boundary reset cannot reach it — RAII
+        // self-cleaning is the only correct isolation here.
         thread_local! {
             static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        struct DepthReset;
+        impl Drop for DepthReset {
+            fn drop(&mut self) {
+                DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            }
         }
         let depth = DEPTH.get();
         if depth >= 10 {
@@ -560,14 +576,13 @@ impl<'a> CheckerState<'a> {
         }
 
         DEPTH.set(depth + 1);
+        let _depth_reset = DepthReset;
         // The recursion below is depth-capped but not breadth-capped: each
         // node can fan out into freshly interned children, so the work
         // budget is what bounds it (issue #13040).
         let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         let mut visiting = FxHashSet::default();
-        let result = self.normalize_assignability_display_type_inner(ty, &mut visiting, 0);
-        DEPTH.set(depth);
-        result
+        self.normalize_assignability_display_type_inner(ty, &mut visiting, 0)
     }
 
     fn should_truncate_assignability_display_type(&self, ty: TypeId, depth: usize) -> bool {

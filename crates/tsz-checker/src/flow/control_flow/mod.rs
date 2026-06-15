@@ -33,6 +33,7 @@ mod narrowing_helpers;
 mod optional_chain;
 mod predicate_resolution;
 pub(crate) mod references;
+mod switch_distinct_literals;
 pub(crate) mod type_guards;
 mod typeof_exclusions;
 pub(crate) mod var_utils;
