@@ -198,7 +198,33 @@ pub struct TypeFormatter<'a> {
     /// boolean verdict removes the repeated graph walk. Same purity and
     /// lifetime contract as `application_reduction_cache`.
     recursive_alias_base_cache: std::cell::RefCell<FxHashMap<TypeId, bool>>,
+    /// Remaining `format` node budget for bounded display walks.
+    ///
+    /// `format` walks the type as a *tree*; deeply nested generic receiver
+    /// types (e.g. drizzle-orm's relational builders behind a TS2339/TS2322
+    /// receiver) are DAGs whose shared subtrees re-expand combinatorially under
+    /// the relaxed `max_depth` used by the long-property-receiver display path,
+    /// so a single diagnostic can build a multi-megabyte string (#13480). The
+    /// rendered message is truncated for display anyway, so producing the full
+    /// string is wasted work.
+    ///
+    /// When `Some(n)`, each `format` call spends one unit; once the budget
+    /// reaches zero the walk emits the same `...` / `{ ...; }` elision it
+    /// already uses at `max_depth` and stops descending. The budget is a
+    /// deterministic global bound on total walk size (independent of depth and
+    /// fan-out), set only for the long-receiver display path so normal
+    /// diagnostics — which spend orders of magnitude fewer nodes — render
+    /// identically. `None` (the default) leaves formatting unbounded for every
+    /// other surface. tsc likewise caps diagnostic type display length.
+    format_node_budget: Option<std::cell::Cell<u32>>,
 }
+
+/// Default total-`format`-node budget for the long-property-receiver display
+/// path. Calibrated well above the node count any conformance receiver type
+/// needs to render fully (deep mapped/conditional chains, wide unions) yet far
+/// below the millions of redundant nodes a shared-DAG receiver re-expands into.
+/// Retune only with a witness on both the perf row and the conformance corpus.
+pub(crate) const LONG_RECEIVER_FORMAT_NODE_BUDGET: u32 = 200_000;
 
 impl<'a> TypeFormatter<'a> {
     pub(super) fn is_recursive_type_alias_application_base(&self, base: TypeId) -> bool {
@@ -430,8 +456,9 @@ impl<'a> TypeFormatter<'a> {
     /// `reducing_conditional_application_display`, and
     /// `variadic_tuple_alias_application_display`; the first that fires wins and
     /// its reduced `TypeId` is returned for the caller to format in place of the
-    /// `Name<Args>` application surface. Each strategy runs `instantiate_generic`
-    /// + `evaluate_type` over the alias body, which is expensive; because the
+    /// `Name<Args>` application surface. Each strategy runs an
+    /// `instantiate_generic` then `evaluate_type` over the alias body, which is
+    /// expensive; because the
     /// formatter walks the receiver type as a tree but the type is a DAG, the
     /// same `Application` `TypeId` is reached through many parents. The result is
     /// memoized per `Application` `TypeId` so the cascade runs at most once per
@@ -629,6 +656,7 @@ impl<'a> TypeFormatter<'a> {
             ignore_union_origins: false,
             application_reduction_cache: std::cell::RefCell::new(FxHashMap::default()),
             recursive_alias_base_cache: std::cell::RefCell::new(FxHashMap::default()),
+            format_node_budget: None,
         }
     }
 
@@ -922,6 +950,7 @@ impl<'a> TypeFormatter<'a> {
             ignore_union_origins: false,
             application_reduction_cache: std::cell::RefCell::new(FxHashMap::default()),
             recursive_alias_base_cache: std::cell::RefCell::new(FxHashMap::default()),
+            format_node_budget: None,
         }
     }
 
@@ -1013,6 +1042,10 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_long_property_receiver_display(mut self) -> Self {
         self.max_depth = 192;
         self.long_property_receiver_display = true;
+        // Bound the total walk: the relaxed `max_depth` lets a shared-DAG
+        // receiver re-expand combinatorially, so cap the number of `format`
+        // nodes this display path may spend (#13480).
+        self.format_node_budget = Some(std::cell::Cell::new(LONG_RECEIVER_FORMAT_NODE_BUDGET));
         self
     }
 
@@ -1302,6 +1335,31 @@ impl<'a> TypeFormatter<'a> {
             return Cow::Borrowed("...");
         }
         let type_key = self.interner.lookup(type_id);
+        // Total-walk budget for the long-property-receiver display path. Once
+        // exhausted, elide the remaining subtree exactly as the `max_depth`
+        // limit does (objects as `{ ...; }`, everything else as `...`). This
+        // bounds a shared-DAG receiver's combinatorial re-expansion to O(budget)
+        // nodes regardless of depth or fan-out (#13480). The budget is refilled
+        // at every top-level entry (`current_depth == 0`) so each independently
+        // formatted type display — e.g. each diagnostic argument — gets the full
+        // allowance and one large type cannot starve the next. Decrement before
+        // descending; the check is a no-op when no budget is set.
+        if let Some(budget) = &self.format_node_budget {
+            if self.current_depth == 0 {
+                budget.set(LONG_RECEIVER_FORMAT_NODE_BUDGET);
+            }
+            let remaining = budget.get();
+            if remaining == 0 {
+                if matches!(
+                    type_key,
+                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                ) {
+                    return Cow::Borrowed("{ ...; }");
+                }
+                return Cow::Borrowed("...");
+            }
+            budget.set(remaining - 1);
+        }
         if self.long_property_receiver_display
             && (8..=self.long_property_receiver_object_elision_end_depth)
                 .contains(&self.current_depth)
