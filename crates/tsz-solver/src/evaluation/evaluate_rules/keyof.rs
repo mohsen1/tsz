@@ -187,6 +187,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
     }
 
+    /// Inverse of [`Self::unique_symbol_ref_from_symbol_named_atom`]: the
+    /// object-shape property atom that a unique-symbol key is stored under.
+    ///
+    /// Well-known symbols (`Symbol.iterator`, `Symbol.asyncIterator`, …) live
+    /// in shapes under their canonical `[Symbol.xxx]` text key, so a
+    /// `UniqueSymbol(ref)` produced by `keyof`/indexed-access must convert back
+    /// to that text — not the synthetic `__unique_N` placeholder, which only
+    /// names user-authored unique symbols. Using the placeholder for a
+    /// well-known ref makes member lookup and mapped-type materialization miss
+    /// the real member (e.g. dropping `[Symbol.iterator]` from
+    /// `{ [K in keyof T]: ... }` over an `Iterable`).
+    pub(crate) fn symbol_named_atom_from_unique_symbol_ref(&self, symbol: SymbolRef) -> Atom {
+        if let Some(name) = self.resolver().well_known_symbol_name_for_ref(symbol) {
+            self.interner().intern_string(name)
+        } else {
+            self.interner()
+                .intern_string(&format!("__unique_{}", symbol.0))
+        }
+    }
+
     fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
         if prop.is_symbol_named {
             if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {

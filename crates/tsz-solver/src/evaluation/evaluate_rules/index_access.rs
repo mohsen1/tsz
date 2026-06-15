@@ -1273,9 +1273,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index_type: TypeId,
         optional_props: &[tsz_common::Atom],
     ) -> bool {
-        if let Some(name) =
-            crate::type_queries::get_literal_property_name(self.interner(), index_type)
-        {
+        if let Some(name) = self.literal_property_lookup_atom(index_type) {
             return optional_props.contains(&name);
         }
 
@@ -1831,6 +1829,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Property-name atom an indexed-access key should be looked up under.
+    ///
+    /// Like [`crate::type_queries::get_literal_property_name`], but resolves a
+    /// well-known `UniqueSymbol` index (e.g. `typeof Symbol.iterator`) to its
+    /// canonical `[Symbol.xxx]` shape key rather than the synthetic `__unique_N`
+    /// placeholder. Object shapes store well-known symbol members under the
+    /// canonical text, so without this the lookup misses the member and the
+    /// access wrongly evaluates to `undefined`.
+    fn literal_property_lookup_atom(&self, index_type: TypeId) -> Option<tsz_common::Atom> {
+        if let Some(TypeData::UniqueSymbol(sym)) = self.interner().lookup(index_type) {
+            return Some(self.symbol_named_atom_from_unique_symbol_ref(sym));
+        }
+        crate::type_queries::get_literal_property_name(self.interner(), index_type)
+    }
+
     /// Evaluate property access on an object type
     pub(crate) fn evaluate_object_index(
         &self,
@@ -1838,9 +1851,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index_type: TypeId,
     ) -> TypeId {
         // If index is a literal string or unique symbol, look up the property directly
-        if let Some(name) =
-            crate::type_queries::get_literal_property_name(self.interner(), index_type)
-        {
+        if let Some(name) = self.literal_property_lookup_atom(index_type) {
             for prop in props {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1913,9 +1924,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // If index is a literal string or unique symbol, look up the property first,
         // then fallback to string index.
-        if let Some(name) =
-            crate::type_queries::get_literal_property_name(self.interner(), index_type)
-        {
+        if let Some(name) = self.literal_property_lookup_atom(index_type) {
             let is_symbol_key = matches!(
                 self.interner().lookup(index_type),
                 Some(TypeData::UniqueSymbol(_))

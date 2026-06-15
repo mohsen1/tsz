@@ -262,7 +262,9 @@ impl<'a> CheckerState<'a> {
                         let shape_is_genericish =
                             common::contains_infer_types(self.ctx.types, shape_param.0)
                                 || common::contains_type_parameters(self.ctx.types, shape_param.0)
-                                || !common::collect_type_queries(self.ctx.types, shape_param.0)
+                                || !self
+                                    .ctx
+                                    .collect_type_queries_cached(shape_param.0)
                                     .is_empty();
                         let instantiated_is_concrete =
                             !common::contains_infer_types(self.ctx.types, instantiated_param.0)

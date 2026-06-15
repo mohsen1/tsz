@@ -5,7 +5,7 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
@@ -712,35 +712,11 @@ impl<'a> CheckerState<'a> {
         }
         let variable = arena.get_variable_declaration(value_node)?;
         let initializer = arena.skip_parenthesized_and_assertions(variable.initializer);
-        let call_node = arena.get(initializer)?;
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = arena.get_call_expr(call_node)?;
-        let callee_name = expression_name_text_in_arena(arena, call.expression)?;
-        if callee_name != "arrayToEnum" && !callee_name.ends_with(".arrayToEnum") {
-            return None;
-        }
-
-        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
-        let arg = arena.skip_parenthesized_and_assertions(first_arg);
-        let arg_node = arena.get(arg)?;
-        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-
-        let array = arena.get_literal_expr(arg_node)?;
-        let mut members = Vec::new();
-        for &element in &array.elements.nodes {
-            let element = arena.skip_parenthesized_and_assertions(element);
-            let element_node = arena.get(element)?;
-            if (element_node.kind == SyntaxKind::StringLiteral as u16
-                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                && let Some(lit) = arena.get_literal(element_node)
-            {
-                members.push(self.ctx.types.literal_string(&lit.text));
-            }
-        }
+        let members: Vec<_> =
+            crate::symbols_domain::name_text::array_to_enum_call_literal_names(arena, initializer)?
+                .iter()
+                .map(|name| self.ctx.types.literal_string(name))
+                .collect();
 
         (!members.is_empty()).then(|| self.ctx.types.union(members))
     }

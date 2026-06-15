@@ -783,8 +783,25 @@ pub struct CheckerContext<'a> {
     /// Internal counters for request-aware cache usage and cache-clear churn.
     pub request_cache_counters: RequestCacheCounters,
 
-    /// Cached type environment for resolving Ref types during assignability checks.
-    /// Used by `FlowAnalyzer` (via borrowed reference) for type narrowing during control flow analysis.
+    /// Flow-analyzer `TypeEnvironment` (#13086).
+    ///
+    /// One of the context's two `TypeEnvironment` instances. This one is owned
+    /// by the flow analyzer: `FlowAnalyzer::from_ctx` borrows it via
+    /// `with_type_environment(&ctx.type_environment)` and holds that borrow live
+    /// while narrowing reads types. It also carries the legacy `SymbolRef`-keyed
+    /// entries the evaluator env never uses.
+    ///
+    /// It is *not* a redundant copy of [`Self::type_env`]: the two are separate
+    /// `RefCell`s on purpose. While the flow analyzer holds this env borrowed,
+    /// the evaluator must still be able to `try_borrow_mut` [`Self::type_env`] to
+    /// publish freshly resolved `DefId -> TypeId` bodies; collapsing both into
+    /// one cell would make that mutable borrow fail and silently drop writes.
+    /// The dual-write registration helpers (`register_*_in_envs`) mirror every
+    /// `DefId`-keyed registration into both envs (deferring the mirror when this
+    /// cell is borrowed, never dropping it), and `overlay_missing_from` performs
+    /// a vacancy-fill reconciliation at the file-preparation boundary. After
+    /// that boundary the two envs must agree on every shared `DefId` entry; the
+    /// debug assertion in `prepare_source_file_for_checking` enforces it.
     pub type_environment: RefCell<TypeEnvironment>,
 
     /// Dual-env registrations whose mirror-write into `type_environment` lost
@@ -945,6 +962,19 @@ pub struct CheckerContext<'a> {
     /// `walk_referenced_types` on real lib-heavy projects. Caching the result is
     /// a pure speed memo: identical to recomputing on demand.
     pub(crate) lazy_def_ids_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[DefId]>>>,
+
+    /// Memoizes the set of `TypeQuery` (`typeof X`) symbol references reachable
+    /// from a type (the structural `collect_type_queries` walk). Like
+    /// `lazy_def_ids_cache`, the walk is pure over the immutable interned type
+    /// structure, so the result is stable for a `TypeId`. It is re-run for the
+    /// same (large, lib-heavy) types from the relation-readiness worklist
+    /// (`ensure_refs_resolved`) once per distinct DOM/lib method signature, where
+    /// it re-walks the whole signature tree — usually finding zero `typeof`
+    /// references — and shows up in `walk_referenced_types` on DOM-heavy files.
+    /// Caching (including the common empty result) makes the Nth distinct
+    /// method's readiness walk O(1) instead of O(signature size). Pure speed
+    /// memo: identical to recomputing on demand.
+    pub(crate) type_queries_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[tsz_solver::SymbolRef]>>>,
 
     /// Memoizes parsed `package.json` payloads (keyed by package-root path) for
     /// the `typesVersions` import-redirect fallback. Without it,
@@ -1357,8 +1387,14 @@ pub struct CheckerContext<'a> {
     /// enclosing class in the inheritance hierarchy when code is inside nested classes.
     pub enclosing_class_chain: Vec<NodeIndex>,
 
-    /// Type environment for symbol resolution with type parameters.
-    /// Used by the evaluator to expand Application types.
+    /// Evaluator `TypeEnvironment` (#13086) — the authoritative env.
+    ///
+    /// The second of the context's two `TypeEnvironment` instances. The
+    /// evaluator/`state`/`types`/`assignability` paths use this one to resolve
+    /// symbols and expand `Application` types; it is the source of truth for
+    /// `DefId -> TypeId` resolution. `register_*_in_envs` write it directly and
+    /// mirror into [`Self::type_environment`]. See that field's doc for why the
+    /// two are kept as separate `RefCell`s rather than unified into one.
     pub type_env: RefCell<TypeEnvironment>,
 
     // --- DefId Migration Infrastructure ---
@@ -1473,6 +1509,18 @@ pub struct CheckerContext<'a> {
     /// all files contain neither construct, so this collapses those walks to
     /// one pass per checker. Entries preserve (file, statement) order.
     pub global_scope_conflict_candidates: OnceCell<Vec<(usize, tsz_parser::parser::NodeIndex)>>,
+
+    /// Lazily-built per-checker set of JSX-runtime module specifiers
+    /// (`<source>/jsx-runtime`, `<source>/jsx-dev-runtime`) implied by the
+    /// program's jsx mode, `jsxImportSource`, and any `@jsxImportSource` /
+    /// `@jsxRuntime` pragmas across *all* files. The cross-file global
+    /// augmentation conflict check needs this set once per file, but it is a
+    /// pure function of the bound program + compiler options (independent of
+    /// the current file), so the previous per-file recomputation rescanned
+    /// every arena's source text for pragmas on every checked file — O(files²)
+    /// string scanning that does no work at all on the common non-JSX project.
+    /// Building it once per checker collapses that to a single pass.
+    pub program_jsx_runtime_modules: OnceCell<FxHashSet<String>>,
 
     /// Memo for `effective_jsx_mode`, keyed by the file index it was computed
     /// for (child checkers and session resets re-point `current_file_idx`).

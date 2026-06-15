@@ -850,31 +850,16 @@ pub(super) fn read_source_files(
                             Some(&seen),
                         )
                         .classify();
-                    if outcome
-                        .error
-                        .as_ref()
-                        .is_some_and(|error| error.code == 2732)
-                        && has_type_json_import_attribute
-                        && json_type_attribute_enables_json_module(
-                            options,
-                            &path,
-                            base_dir,
-                            &mut resolution_cache,
-                        )
-                        && let Some(resolved_path) = resolve_module_specifier(
-                            &path,
-                            &specifier,
-                            options,
-                            base_dir,
-                            &mut resolution_cache,
-                            &seen,
-                        )
-                        && resolved_path.extension().is_some_and(|ext| ext == "json")
-                    {
-                        outcome.resolved_path = Some(resolved_path);
-                        outcome.is_resolved = true;
-                        outcome.error = None;
-                    }
+                    apply_json_type_import_attribute_override(
+                        &mut outcome,
+                        has_type_json_import_attribute,
+                        &path,
+                        &specifier,
+                        options,
+                        base_dir,
+                        &mut resolution_cache,
+                        &seen,
+                    );
                     if let Some(resolved) = outcome.resolved_path {
                         let canonical = normalize(&resolved, options);
                         if outcome.error.is_none() {

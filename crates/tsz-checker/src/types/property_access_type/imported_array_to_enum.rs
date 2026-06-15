@@ -93,38 +93,11 @@ impl<'a> CheckerState<'a> {
 
         let variable = arena.get_variable_declaration(value_node)?;
         let initializer = arena.skip_parenthesized_and_assertions(variable.initializer);
-        let call_node = arena.get(initializer)?;
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = arena.get_call_expr(call_node)?;
-        let callee_name = crate::symbols_domain::name_text::expression_name_text_in_arena(
-            arena,
-            call.expression,
-        )?;
-        if callee_name != "arrayToEnum" && !callee_name.ends_with(".arrayToEnum") {
-            return None;
-        }
-
-        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
-        let arg = arena.skip_parenthesized_and_assertions(first_arg);
-        let arg_node = arena.get(arg)?;
-        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-        let array = arena.get_literal_expr(arg_node)?;
-        for &element in &array.elements.nodes {
-            let element = arena.skip_parenthesized_and_assertions(element);
-            let element_node = arena.get(element)?;
-            if (element_node.kind == SyntaxKind::StringLiteral as u16
-                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                && let Some(lit) = arena.get_literal(element_node)
-                && lit.text == property_name
-            {
-                return Some(self.ctx.types.literal_string(&lit.text));
-            }
-        }
-
-        None
+        let names =
+            crate::symbols_domain::name_text::array_to_enum_call_literal_names(arena, initializer)?;
+        names
+            .into_iter()
+            .find(|name| *name == property_name)
+            .map(|name| self.ctx.types.literal_string(&name))
     }
 }

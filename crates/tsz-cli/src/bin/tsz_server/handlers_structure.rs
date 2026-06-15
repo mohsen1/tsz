@@ -3,9 +3,9 @@
 //! Handles formatting, inlay hints, selection ranges, call hierarchy,
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
-use super::text_edits::narrow_indentation_only_edit;
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz::lsp::text_edits::narrow_indentation_only_edit;
 
 struct CompileOnSaveProject {
     config_path: String,

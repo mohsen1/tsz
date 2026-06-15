@@ -753,6 +753,44 @@ impl SymbolTable {
         self.symbols.iter()
     }
 
+    /// Merge entries from `source` whose `SymbolId` satisfies `keep`, preserving
+    /// both the authoritative name keys and the same-arena `AstAtom` side-index.
+    ///
+    /// Used when promoting a namespace/module scope's declarations into its
+    /// export table at scope exit: the source scope table already carries atom
+    /// side-keys (populated by `declare_in_persistent_scope_with_atom`), and
+    /// copying them forward keeps export-table lookups atom-backed instead of
+    /// degrading to string-only on every namespace boundary. The name map stays
+    /// authoritative, so equality and iteration over names are byte-identical to
+    /// a plain string copy; the atom side-index is a pure accelerator that
+    /// resolves to the same strings within the same arena.
+    pub fn merge_filtered_from<F>(&mut self, source: &Self, mut keep: F)
+    where
+        F: FnMut(SymbolId) -> bool,
+    {
+        // First pass: copy the authoritative name entries for retained symbols.
+        // This mirrors the prior string-only copy exactly, including which
+        // names win on collision (later inserts overwrite earlier ones).
+        let names = Arc::make_mut(&mut self.symbols);
+        for (name, &sym_id) in source.symbols.iter() {
+            if keep(sym_id) {
+                names.insert(name.clone(), sym_id);
+            }
+        }
+        // Second pass: carry the same-arena atom side-keys for retained symbols.
+        // The atom map is keyed by `(arena_owner, AstAtom)` and never collides
+        // across arenas, so copying retained entries cannot resolve a foreign
+        // atom to a local symbol.
+        if !source.atom_symbols.is_empty() {
+            let atoms = Arc::make_mut(&mut self.atom_symbols);
+            for (&key, &sym_id) in source.atom_symbols.iter() {
+                if keep(sym_id) {
+                    atoms.insert(key, sym_id);
+                }
+            }
+        }
+    }
+
     /// Estimate the heap bytes owned by this table (map buckets + name
     /// strings). Capacity-based estimate for residency accounting (#13249
     /// step 1); called only at perf-counter snapshot time.
@@ -996,10 +1034,24 @@ impl SymbolArena {
         self.symbols.iter()
     }
 
-    /// Number of symbols held in the shared prefix.
+    /// Whether the shared prefix still holds exactly the pristine premerged lib
+    /// universe, i.e. all `lib_symbol_count` lib symbols reside untouched in the
+    /// immutable `shared_prefix` and none were materialized back into the
+    /// private `symbols` segment.
+    ///
+    /// A premerged-lib binder cloned for a user file moves the whole lib
+    /// universe into `shared_prefix` (see
+    /// [`Self::share_current_symbols_for_append`]). Any in-place mutation of a
+    /// lib symbol via [`Self::get_mut`]/[`Self::iter_mut`] collapses the prefix
+    /// (see `materialize_shared_prefix`), after which this returns `false`.
+    ///
+    /// Compaction uses this to choose between the cheap "iterate only private
+    /// appended symbols" path and the full filtered scan. Centralizing the test
+    /// here keeps the prefix/private layering representation owned by the arena
+    /// instead of leaking a raw length comparison to `tsz-core`.
     #[must_use]
-    pub fn shared_prefix_len(&self) -> usize {
-        self.shared_prefix.len()
+    pub fn lib_prefix_is_pristine(&self, lib_symbol_count: usize) -> bool {
+        self.shared_prefix.len() == lib_symbol_count
     }
 
     /// Estimate the heap bytes owned by this arena: symbol slots, per-symbol
@@ -1474,5 +1526,47 @@ mod tests {
             arena.name_index.get("Iterator").map(Vec::as_slice),
             Some([shared_id, local_id].as_slice())
         );
+    }
+
+    #[test]
+    fn lib_prefix_is_pristine_tracks_shared_prefix_state() {
+        let mut arena = SymbolArena::new();
+        arena.alloc(0, "Array".to_owned());
+        arena.alloc(0, "Promise".to_owned());
+
+        // Before sharing, nothing is in the prefix.
+        assert!(!arena.lib_prefix_is_pristine(2));
+        assert!(arena.lib_prefix_is_pristine(0));
+
+        arena.share_current_symbols_for_append();
+        let local = arena.alloc(0, "Local".to_owned());
+
+        // Two lib symbols sit untouched in the shared prefix; the private
+        // append (`Local`) does not affect the prefix.
+        assert!(arena.lib_prefix_is_pristine(2));
+        // A different reported lib count must not match the prefix.
+        assert!(!arena.lib_prefix_is_pristine(3));
+
+        // Mutating the private symbol keeps the prefix pristine.
+        arena.get_mut(local).expect("local symbol").flags = 1;
+        assert!(arena.lib_prefix_is_pristine(2));
+    }
+
+    #[test]
+    fn lib_prefix_is_pristine_false_after_lib_symbol_materialized() {
+        let mut arena = SymbolArena::new();
+        let array_id = arena.alloc(0, "Array".to_owned());
+        arena.alloc(0, "Promise".to_owned());
+        arena.share_current_symbols_for_append();
+        arena.alloc(0, "Local".to_owned());
+
+        assert!(arena.lib_prefix_is_pristine(2));
+
+        // Mutating a shared-prefix (lib) symbol materializes the prefix back
+        // into `symbols`, collapsing the shared prefix to empty. The pristine
+        // invariant must then report `false`, routing compaction to its full
+        // filtered scan instead of the private-only fast path.
+        arena.get_mut(array_id).expect("array symbol").flags = 1;
+        assert!(!arena.lib_prefix_is_pristine(2));
     }
 }

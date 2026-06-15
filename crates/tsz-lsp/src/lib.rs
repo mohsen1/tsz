@@ -49,6 +49,7 @@ pub mod rename;
 pub mod resolver;
 pub mod signature_help;
 pub mod symbols;
+pub mod text_edits;
 pub mod utils;
 
 pub mod fourslash;

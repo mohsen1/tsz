@@ -1784,7 +1784,7 @@ fn collect_retained_lib_symbol_refs(
         retain_if_lib(sym_id, lib_symbol_ids, retained);
     }
 
-    if binder.symbols.shared_prefix_len() == lib_symbol_ids.len() {
+    if binder.symbols.lib_prefix_is_pristine(lib_symbol_ids.len()) {
         for sym in binder.symbols.iter_private_symbols() {
             retain_if_lib(sym.parent, lib_symbol_ids, retained);
             if let Some(exports) = sym.exports.as_ref() {

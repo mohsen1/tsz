@@ -329,18 +329,13 @@ mod const_assertion_tests;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/function_bivariance.rs"]
-mod function_bivariance;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/global_type_tests.rs"]
-mod global_type_tests;
+// `function_bivariance`, `global_type_tests`, and `ts2304_tests` are owned by
+// `tsz-checker` (they depend only on `tsz_checker::*`, not on `tsz-core`'s
+// `test_fixtures`). They run in `tsz-checker`'s own test runner; do not
+// re-mount them here (#13109).
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/ts2304_tests.rs"]
-mod ts2304_tests;
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/ts2305_tests.rs"]
 mod ts2305_tests;

@@ -99,17 +99,16 @@ pattern = '\buse\s+tsz_solver::.*TypeKey|\bintern\(\s*TypeKey::|\bintern\(\s*tsz
 exclude_dirs = ["tests"]
 ignore_comment_lines = true
 
-[[pattern_checks]]
-name = "Checker boundary: direct solver internal imports"
-base = "crates/tsz-checker"
-pattern = '\btsz_solver::types::'
-exclude_dirs = ["tests"]
-ignore_comment_lines = true
-exclude_files = [
-  # Pre-existing baseline debt
-  "crates/tsz-checker/src/query_boundaries/class.rs",
-  "crates/tsz-checker/src/query_boundaries/property_access.rs",
-]
+# MIGRATED to ast-grep (#13451): "Checker boundary: direct solver internal
+# imports" (pattern '\btsz_solver::types::') is now the AST rule
+# `scripts/arch/ast-grep/rules/checker-solver-internal-imports.yml`, run by
+# `scripts/arch/run-ast-grep.sh`. The AST rule matches the
+# `tsz_solver::types` path node structurally, so the regex's
+# `ignore_comment_lines = true` is no longer needed (the comment in
+# `crates/tsz-checker/src/context/resolver.rs` is parsed as a comment, not a
+# path). The two `exclude_files` baseline-debt entries are preserved as
+# `ignores` in the YAML rule. Violation-set parity (net empty after excludes)
+# is verified in the PR.
 
 [[pattern_checks]]
 name = "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)"

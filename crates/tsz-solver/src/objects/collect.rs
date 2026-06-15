@@ -361,16 +361,24 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     }
 
     fn collect_finite_mapped_properties(&mut self, mapped_id: crate::types::MappedTypeId) {
-        let Some(names) =
-            crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+        // Collect keys (not just names) so symbol-keyed output properties keep
+        // their `is_symbol_named` identity. A homomorphic mapped type over a
+        // symbol-keyed source (e.g. `{ [K in keyof Iterable<T>]: ... }`, whose
+        // sole key is `[Symbol.iterator]`) must surface that member as a
+        // symbol-named property. Dropping the flag reshaped the key into a plain
+        // string-named `__unique_<id>` property, which made the result fail the
+        // for-of iterability query (false TS2488) and `keyof` widen to `symbol`.
+        let Some(keys) =
+            crate::type_queries::collect_finite_mapped_property_keys(self.interner, mapped_id)
         else {
             return;
         };
 
         let mapped = self.interner.mapped_type(mapped_id);
-        let mut properties = Vec::with_capacity(names.len());
+        let mut properties = Vec::with_capacity(keys.len());
 
-        for name in names {
+        for key in keys {
+            let name = key.name;
             let name_text = self.interner.resolve_atom(name);
             let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
                 self.interner,
@@ -392,7 +400,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
-                is_symbol_named: false,
+                is_symbol_named: key.is_symbol_named,
                 single_quoted_name: false,
             });
         }

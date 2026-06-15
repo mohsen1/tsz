@@ -434,10 +434,11 @@ impl<'a> CheckerState<'a> {
         // TYPE namespace, so `type X = Static<typeof X>` (where `const X` also exists)
         // is NOT circular. Evaluating such types would re-enter the type alias
         // resolution for the merged symbol and produce a false TS2456.
-        let has_typeof_self =
-            crate::query_boundaries::common::collect_type_queries(self.ctx.types, resolved_type)
-                .iter()
-                .any(|sym_ref| sym_ref.0 == sym_id.0);
+        let has_typeof_self = self
+            .ctx
+            .collect_type_queries_cached(resolved_type)
+            .iter()
+            .any(|sym_ref| sym_ref.0 == sym_id.0);
         let has_deferred_resolution_chain_ref =
             common::is_structurally_deferred_type(self.ctx.types, resolved_type)
                 && self

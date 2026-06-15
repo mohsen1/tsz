@@ -2,6 +2,7 @@
 
 use super::super::state::BinderState;
 use crate::{ContainerKind, SymbolTable, symbol_flags};
+use rustc_hash::FxHashSet;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
@@ -66,32 +67,37 @@ impl BinderState {
                                 });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag.
-                        // Snapshot the (name, id) pairs first so the table borrow drops
-                        // before the mutable `self.symbols` accesses below.
-                        let scope_entries: Vec<(String, crate::SymbolId)> = self
+                        // Snapshot which child SymbolIds pass the export filter
+                        // first so the `self.symbols` borrow drops before the
+                        // scope-table copy and the mutable `self.symbols` access
+                        // below. The set is keyed by SymbolId, so the copy below
+                        // preserves the source scope's atom side-index.
+                        let exported_children: FxHashSet<crate::SymbolId> = self
                             .current_scope()
                             .iter()
-                            .map(|(name, &child_id)| (name.clone(), child_id))
+                            .map(|(_, &child_id)| child_id)
+                            .filter(|&child_id| {
+                                self.symbols.get(child_id).is_some_and(|child| {
+                                    // Check explicit export flag OR if it's an
+                                    // EXPORT_VALUE (from export {}).
+                                    export_all
+                                        || child.is_exported
+                                        || (child.flags & symbol_flags::EXPORT_VALUE) != 0
+                                })
+                            })
                             .collect();
+                        // Copy retained entries from the live scope table,
+                        // preserving both name keys and same-arena atom keys.
+                        let source = self.current_scope().clone();
                         let mut exports = SymbolTable::new();
-                        for (name, child_id) in scope_entries {
-                            if let Some(child) = self.symbols.get(child_id) {
-                                // Check explicit export flag OR if it's an EXPORT_VALUE (from export {})
-                                if export_all
-                                    || child.is_exported
-                                    || (child.flags & symbol_flags::EXPORT_VALUE) != 0
-                                {
-                                    exports.set(name, child_id);
-                                }
-                            }
-                        }
+                        exports.merge_filtered_from(&source, |child_id| {
+                            exported_children.contains(&child_id)
+                        });
 
                         // Persist filtered exports
                         if let Some(symbol) = self.symbols.get_mut(*sym_id) {
                             if let Some(ref mut existing) = symbol.exports {
-                                for (name, &child_id) in exports.iter() {
-                                    existing.set(name.clone(), child_id);
-                                }
+                                existing.merge_filtered_from(&exports, |_| true);
                             } else {
                                 symbol.exports = Some(Box::new(exports));
                             }
