@@ -5,5 +5,7 @@
 
 mod advanced;
 mod core;
+mod host;
 
 pub use self::core::*;
+pub use self::host::{ClosureLoweringHost, LoweringHost};
