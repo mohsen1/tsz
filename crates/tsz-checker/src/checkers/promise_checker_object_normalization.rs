@@ -1,5 +1,79 @@
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
+
+thread_local! {
+    /// `TypeId`s whose `Awaited<…>` assignability normalization is in flight on
+    /// this thread. A re-entered `TypeId` returns opaque (its own input),
+    /// preserving the original cycle behavior and guaranteeing the memo never
+    /// records a result derived from an in-flight (not-yet-fixpointed) walk.
+    ///
+    /// Keys are interner-instance-local, so the set must be empty between
+    /// compilations; the RAII [`AwaitedEvalVisitGuard`] removes its entry on
+    /// every exit (normal, clamp-bail, or panic unwind), and
+    /// `clear_all_thread_local_state` resets it at row boundaries as a backstop.
+    static AWAITED_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
+        std::cell::RefCell::new(FxHashSet::default());
+
+    /// Monotonic counter bumped every time the `depth > 8` clamp fires. A
+    /// memoized normalization result is only recorded when this counter is
+    /// unchanged across the call's subtree — i.e. no clamp degraded any nested
+    /// result. Mirrors how `evaluate_type_for_assignability` refuses to memoize
+    /// depth-clamped/fuel-exhausted evaluations.
+    static AWAITED_EVAL_CLAMP_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Reset the `Awaited<…>` assignability-normalization thread-locals.
+///
+/// Called from `clear_all_thread_local_state` at compilation/row boundaries:
+/// the visiting set keys on arena-local `TypeId`s that are reused across
+/// compilations, so a leaked entry (e.g. a mid-walk bail not caught by the RAII
+/// guard) would make a fresh `TypeId` read as already-visiting and return
+/// unevaluated. The clamp epoch is monotonic and only compared for equality
+/// within a single top-level walk, so resetting it is optional, but it is
+/// zeroed here for total isolation.
+pub(crate) fn reset_awaited_eval_thread_local_state() {
+    AWAITED_EVAL_VISITING.with(|visiting| visiting.borrow_mut().clear());
+    AWAITED_EVAL_CLAMP_EPOCH.with(|epoch| epoch.set(0));
+}
+
+/// RAII membership guard for the `Awaited<…>` assignability-normalization walk.
+///
+/// [`enter`](Self::enter) returns `None` when `type_id` is already in flight on
+/// this thread; the caller returns the type opaque. Otherwise it records
+/// membership and clears it on drop, restoring the set even if the walk unwinds.
+#[must_use]
+struct AwaitedEvalVisitGuard(TypeId);
+
+impl AwaitedEvalVisitGuard {
+    fn enter(type_id: TypeId) -> Option<Self> {
+        AWAITED_EVAL_VISITING.with(|visiting| {
+            if visiting.borrow_mut().insert(type_id) {
+                Some(Self(type_id))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Drop for AwaitedEvalVisitGuard {
+    fn drop(&mut self) {
+        AWAITED_EVAL_VISITING.with(|visiting| {
+            visiting.borrow_mut().remove(&self.0);
+        });
+    }
+}
+
+#[inline]
+fn awaited_eval_clamp_epoch() -> u64 {
+    AWAITED_EVAL_CLAMP_EPOCH.with(std::cell::Cell::get)
+}
+
+#[inline]
+fn bump_awaited_eval_clamp_epoch() {
+    AWAITED_EVAL_CLAMP_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+}
 
 impl<'a> CheckerState<'a> {
     pub(super) fn evaluate_awaited_object_properties_for_assignability(
@@ -62,14 +136,78 @@ impl<'a> CheckerState<'a> {
         self.evaluate_awaited_application_for_assignability_inner(type_id, 0)
     }
 
+    /// Memoizing dispatcher for the recursive `Awaited<…>` assignability
+    /// normalization walk.
+    ///
+    /// The walk is a pure function of `type_id` for a fixed session stamp, so a
+    /// stamp-guarded per-`TypeId` result memo collapses the combinatorial
+    /// re-evaluation of nested `Awaited<…>` sub-applications that are reachable
+    /// through many union/tuple/object-property parents (issue #13040). The
+    /// `depth > 8` clamp and the per-thread cycle guard are preserved exactly:
+    ///
+    /// - The cycle guard ([`AwaitedEvalVisitGuard`]) precedes the memo lookup
+    ///   so an in-flight `type_id` returns opaque rather than serving a result
+    ///   from a now-superseded outer walk, mirroring
+    ///   `evaluate_type_for_assignability`.
+    /// - Only **clamp-clean** results are recorded: a `depth > 8` bail anywhere
+    ///   in the subtree (tracked by the clamp epoch) marks the result as a
+    ///   degraded form a shallower re-evaluation must improve on, so it is never
+    ///   cached — identical to the depth/fuel gate in
+    ///   `evaluate_type_for_assignability`.
     pub(super) fn evaluate_awaited_application_for_assignability_inner(
         &mut self,
         type_id: TypeId,
         depth: u8,
     ) -> TypeId {
         if depth > 8 {
+            bump_awaited_eval_clamp_epoch();
             return type_id;
         }
+
+        // Re-entrant cycle: return the type opaque. Taking membership for the
+        // duration of the walk also means the memo can never observe a result
+        // derived from an in-flight (not-yet-fixpointed) evaluation of the same
+        // type. The guard removes the entry on every exit (normal, clamp-bail,
+        // or panic unwind).
+        let Some(_visit_guard) = AwaitedEvalVisitGuard::enter(type_id) else {
+            return type_id;
+        };
+
+        if let Some(stamp) = self.assignability_eval_memo_stamp()
+            && let Some(memoized) = self
+                .ctx
+                .type_reference_validation_caches
+                .awaited_assignability_eval_memo
+                .get(stamp, type_id)
+        {
+            return memoized;
+        }
+
+        let epoch_before = awaited_eval_clamp_epoch();
+        let result = self.evaluate_awaited_application_for_assignability_body(type_id, depth);
+
+        // Record only clamp-clean completions: a `depth > 8` bail anywhere in
+        // the subtree (epoch moved) produced a degraded form. The stamp is read
+        // after the walk on purpose — the walk grows the type environments and
+        // the result is valid for that post-walk state.
+        if awaited_eval_clamp_epoch() == epoch_before
+            && !self.ctx.depth_exceeded.get()
+            && let Some(stamp) = self.assignability_eval_memo_stamp()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .awaited_assignability_eval_memo
+                .insert(stamp, type_id, result);
+        }
+
+        result
+    }
+
+    fn evaluate_awaited_application_for_assignability_body(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> TypeId {
         if self.awaited_application_arg(type_id).is_none() {
             if let Some(elem) =
                 crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)

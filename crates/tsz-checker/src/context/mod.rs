@@ -12,9 +12,9 @@ mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
     AssignabilityEvalMemo, AssignabilityEvalStamp, AssignabilityFailureKey,
-    AssignabilityFailureMemo, CachedAssignabilityAnalysis, CowCache, NarrowableIdentifierCache,
-    NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
-    TypeReferenceValidationCaches,
+    AssignabilityFailureMemo, AwaitedAssignabilityEvalMemo, CachedAssignabilityAnalysis, CowCache,
+    NarrowableIdentifierCache, NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache,
+    TypeNodeSurfaceCaches, TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;

@@ -124,6 +124,12 @@ pub fn clear_all_thread_local_state() {
     // row boundaries keeps it from accumulating every project's specifiers on a
     // reused worker thread while preserving within-compilation cross-file reuse.
     crate::module_resolution::reset_module_specifier_candidates_memo();
+
+    // Reset the Awaited<…> assignability-normalization cycle guard and clamp
+    // epoch. The visiting set keys on arena-local `TypeId`s reused across
+    // compilations; a leaked entry from a mid-walk bail would suppress
+    // normalization for a colliding fresh `TypeId` on this worker thread.
+    self::promise_checker_object_normalization::reset_awaited_eval_thread_local_state();
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch
