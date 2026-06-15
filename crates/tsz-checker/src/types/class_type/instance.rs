@@ -25,6 +25,18 @@ use tsz_solver::{
     Visibility,
 };
 
+/// Whether Phase 2 swapped in a temporary `enclosing_class` and, if so, the
+/// previous value to restore afterward.
+///
+/// This flattens what would otherwise be an `Option<Option<EnclosingClassInfo>>`
+/// (outer = "did we swap?", inner = "the prior enclosing class, possibly none").
+/// [`RestoreEnclosingClass::Skip`] means no swap happened (leave state as-is);
+/// [`RestoreEnclosingClass::To`] carries the prior value to restore.
+pub(super) enum RestoreEnclosingClass {
+    Skip,
+    To(Option<EnclosingClassInfo>),
+}
+
 /// A get/set accessor deferred to phase 2 so its body is checked under a
 /// partial `this` type built from the class's other members.
 pub(super) struct DeferredAccessor<'b> {
@@ -42,6 +54,10 @@ pub(super) struct DeferredAccessor<'b> {
 /// The orchestrator constructs this after the setup guards, then threads it
 /// through the phase helpers. Each phase reads and extends the accumulators;
 /// the final phase consumes them to build the instance `ObjectShape`.
+// The bools are the original megafn's independent local control-flow flags
+// (lifted verbatim from the ~2000-line function); grouping them would obscure
+// the phase-by-phase reads/writes rather than clarify them.
+#[allow(clippy::struct_excessive_bools)]
 pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) current_sym: Option<SymbolId>,
     pub(super) did_insert_into_global_set: bool,
@@ -61,10 +77,10 @@ pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) deferred_methods:
         Vec<(NodeIndex, &'b tsz_parser::parser::node::MethodDeclData, u32)>,
     pub(super) deferred_accessors: Vec<DeferredAccessor<'b>>,
-    pub(super) restore_enclosing_class: Option<Option<EnclosingClassInfo>>,
+    pub(super) restore_enclosing_class: RestoreEnclosingClass,
 }
 
-impl<'b> ClassInstanceBuilder<'b> {
+impl ClassInstanceBuilder<'_> {
     /// Declaration-order key for the member at `member_pos`.
     ///
     /// Member positions start at 1 (synthesized members keep order 0 and stay
@@ -857,9 +873,9 @@ impl<'a> CheckerState<'a> {
                     type_param_names: class_type_param_names,
                     class_type_parameters: b.class_type_params.clone(),
                 });
-                Some(prev_enclosing_class)
+                RestoreEnclosingClass::To(prev_enclosing_class)
             } else {
-                None
+                RestoreEnclosingClass::Skip
             };
     }
 
@@ -1161,9 +1177,9 @@ impl<'a> CheckerState<'a> {
 
     /// Process deferred accessors under a partial `this` type built from the
     /// class's properties and methods, aggregating getter/setter types.
-    pub(super) fn class_instance_process_deferred_accessors<'b>(
+    pub(super) fn class_instance_process_deferred_accessors(
         &mut self,
-        b: &mut ClassInstanceBuilder<'b>,
+        b: &mut ClassInstanceBuilder<'_>,
     ) {
         let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
@@ -1315,7 +1331,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.pop();
         }
 
-        if let Some(prev_enclosing_class) = b.restore_enclosing_class.take() {
+        if let RestoreEnclosingClass::To(prev_enclosing_class) =
+            std::mem::replace(&mut b.restore_enclosing_class, RestoreEnclosingClass::Skip)
+        {
             self.ctx.enclosing_class = prev_enclosing_class;
             if self.ctx.enclosing_class.is_some() {
                 self.ctx.enclosing_class_chain.pop();
@@ -1325,10 +1343,10 @@ impl<'a> CheckerState<'a> {
 
     /// Convert aggregated accessors and methods into properties, then add the
     /// private brand property for nominal typing if needed.
-    pub(super) fn class_instance_finalize_members<'b>(
+    pub(super) fn class_instance_finalize_members(
         &mut self,
         class_idx: NodeIndex,
-        b: &mut ClassInstanceBuilder<'b>,
+        b: &mut ClassInstanceBuilder<'_>,
     ) {
         let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;

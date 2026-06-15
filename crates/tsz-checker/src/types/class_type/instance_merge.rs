@@ -20,7 +20,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Merge base class instance properties (derived members take precedence).
     ///
     /// Returns `Some(type)` when a cycle/forward-reference is detected and the
@@ -364,10 +364,10 @@ impl<'a> CheckerState<'a> {
 
     /// Merge interface declarations for class/interface merging (class members
     /// take precedence), including cross-arena/lib interface declarations.
-    pub(super) fn class_instance_merge_interface_decls<'b>(
+    pub(super) fn class_instance_merge_interface_decls(
         &mut self,
         apply_module_augmentations: bool,
-        b: &mut ClassInstanceBuilder<'b>,
+        b: &mut ClassInstanceBuilder<'_>,
     ) {
         let current_sym = b.current_sym;
         // Merge interface declarations for class/interface merging (class members take precedence)
@@ -545,13 +545,13 @@ impl<'a> CheckerState<'a> {
     /// Build the final instance type from the accumulated members, run the
     /// final interface-merge / module-augmentation pass, perform the
     /// resolution-set cleanup, and register the result.
-    pub(super) fn class_instance_build_final_type<'b>(
+    pub(super) fn class_instance_build_final_type(
         &mut self,
         class_idx: NodeIndex,
         apply_module_augmentations: bool,
         visited: &mut FxHashSet<SymbolId>,
         visited_nodes: &mut FxHashSet<NodeIndex>,
-        b: ClassInstanceBuilder<'b>,
+        b: ClassInstanceBuilder<'_>,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;

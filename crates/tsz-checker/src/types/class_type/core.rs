@@ -8,7 +8,7 @@
 //! resolution-set cleanup semantics are preserved exactly.
 
 use super::helpers::exceeds_class_inheritance_depth_limit;
-use super::instance::ClassInstanceBuilder;
+use super::instance::{ClassInstanceBuilder, RestoreEnclosingClass};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
             prescan_this_type: None,
             deferred_methods: Vec::with_capacity(member_count / 2),
             deferred_accessors: Vec::with_capacity(4),
-            restore_enclosing_class: None,
+            restore_enclosing_class: RestoreEnclosingClass::Skip,
         };
 
         // Phase 0: Pre-scan annotated properties to push a partial `this`.
