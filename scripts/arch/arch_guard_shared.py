@@ -1378,7 +1378,17 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # only sanctioned exposure of those solver structural queries to the
         # checker, matching the direct-call pattern already used throughout these
         # files. No new quarantine entry.
-        3045,
+        #
+        # Bumped 3045→3051 for the #13655 concrete-tuple generic-index-chain
+        # TS2536 parity fix: the new tuple-chain key-space derivation in
+        # `indexed_access/indexed_access_helpers.rs` adds 6 direct references
+        # (`union_members`, `tuple_elements`, `number_literal_value`,
+        # `type_parameter_constraint`, `is_type_parameter_like`) plus the
+        # current-main live slack the prior 3040→3045 ratchet anticipated. Every
+        # route is an existing request-shaped helper already used throughout the
+        # indexed-access checker — no new quarantine entry. Removal condition
+        # remains #8225 narrowing this quarantine.
+        3051,
     ),
 ]
 
