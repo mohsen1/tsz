@@ -300,11 +300,6 @@ impl<'a> CheckerState<'a> {
         Some(ty)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
-        self.get_type_of_new_expression_with_request(idx, &TypingRequest::NONE)
-    }
-
     pub(crate) fn get_type_of_new_expression_with_request(
         &mut self,
         idx: NodeIndex,
