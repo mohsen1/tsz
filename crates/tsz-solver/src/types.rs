@@ -1268,6 +1268,14 @@ impl ObjectShape {
     pub fn mark_has_late_bound_members(&mut self) {
         self.flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
     }
+
+    /// Mark this class-instance shape as opting out of module-augmentation lookup.
+    ///
+    /// Use this instead of importing `ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP`
+    /// directly outside the solver.
+    pub fn mark_no_module_augmentation_lookup(&mut self) {
+        self.flags |= ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP;
+    }
 }
 
 /// Tuple element information
