@@ -521,6 +521,9 @@ path = "tests/export_star_module_augmentation_tests.rs"
 name = "hkt_self_augmentation_keyof_repro"
 path = "tests/hkt_self_augmentation_keyof_repro.rs"
 [[test]]
+name = "hkt_cross_file_augmentation_13653_repro"
+path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 [[test]]
