@@ -65,6 +65,7 @@ impl PerfCounters {
              intern hits                {:>12}\n  \
              intern misses              {:>12}\n  \
              string intern calls        {:>12}\n  \
+             string intern cache hits   {:>12}\n  \
              type-list intern calls     {:>12}\n  \
              object-shape intern calls  {:>12}\n  \
              function-shape intern calls{:>12}\n  \
@@ -131,6 +132,7 @@ impl PerfCounters {
             snap.interner.intern_hits.unwrap_or(0),
             snap.interner.intern_misses.unwrap_or(0),
             snap.interner.string_intern_calls,
+            snap.interner.string_intern_cache_hits,
             snap.interner.type_list_intern_calls,
             snap.interner.object_shape_intern_calls,
             snap.interner.function_shape_intern_calls,

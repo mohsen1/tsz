@@ -581,6 +581,8 @@ pub struct InternerCounters {
     pub intern_hits: Option<u64>,
     pub intern_misses: Option<u64>,
     pub string_intern_calls: u64,
+    /// `intern_string` calls served from the thread-local string cache.
+    pub string_intern_cache_hits: u64,
     pub type_list_intern_calls: u64,
     pub object_shape_intern_calls: u64,
     pub function_shape_intern_calls: u64,
@@ -733,6 +735,7 @@ impl PerfCounters {
                 intern_hits: Some(load(&c.interner_intern_hits)),
                 intern_misses: Some(load(&c.interner_intern_misses)),
                 string_intern_calls: load(&c.interner_string_intern_calls),
+                string_intern_cache_hits: load(&c.interner_string_intern_cache_hits),
                 type_list_intern_calls: load(&c.interner_type_list_intern_calls),
                 object_shape_intern_calls: load(&c.interner_object_shape_intern_calls),
                 function_shape_intern_calls: load(&c.interner_function_shape_intern_calls),
