@@ -1,12 +1,19 @@
-//! Text edit utilities shared by tsserver handlers.
+//! Text edit utilities shared by LSP and tsserver handlers.
+//!
+//! These helpers operate purely on `TextEdit` geometry (ranges and replacement
+//! text) and do not encode any protocol-specific behavior. They were relocated
+//! from the `tsz-server` binary so that AST-based providers and protocol
+//! adapters can share a single implementation (issue #13063).
 
-use tsz::lsp::formatting::TextEdit;
-use tsz::lsp::position::{LineMap, Range};
+use crate::formatting::TextEdit;
+use crate::position::{LineMap, Range};
 
+/// A `TextEdit` narrowed down to the minimal changed span, decoupled from the
+/// original edit's identity so callers can serialize the trimmed result.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NarrowedTextEdit {
-    pub(crate) range: Range,
-    pub(crate) new_text: String,
+pub struct NarrowedTextEdit {
+    pub range: Range,
+    pub new_text: String,
 }
 
 impl NarrowedTextEdit {
@@ -18,7 +25,16 @@ impl NarrowedTextEdit {
     }
 }
 
-pub(crate) fn narrow_indentation_only_edit(
+/// Trim an indentation-only edit down to the smallest range that actually
+/// differs.
+///
+/// Formatting and refactor passes frequently emit edits that replace an entire
+/// leading-whitespace run even when only a few characters change. For
+/// single-line, whitespace-only edits this strips the common prefix and suffix
+/// so the resulting edit touches the minimal span. Any edit that spans multiple
+/// lines, is zero-width, or whose offsets cannot be resolved is returned
+/// unchanged.
+pub fn narrow_indentation_only_edit(
     source_text: &str,
     line_map: &LineMap,
     edit: &TextEdit,
@@ -90,7 +106,7 @@ pub(crate) fn narrow_indentation_only_edit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz::lsp::position::Position;
+    use crate::position::Position;
 
     fn edit_for_offsets(source_text: &str, start: u32, end: u32, new_text: &str) -> TextEdit {
         let line_map = LineMap::build(source_text);
