@@ -79,18 +79,34 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
-    fn optional_chain_branch_base(&self) -> tsz_binder::FlowNodeId {
+    fn optional_chain_branch_base(&self, chain_idx: NodeIndex) -> tsz_binder::FlowNodeId {
         let current = self.current_flow;
         let Some(flow) = self.graph.nodes.get(current) else {
             return current;
         };
+        // Only unwind a present-condition that belongs to THIS optional chain
+        // (its node lies within the chain expression's span). Unwinding an
+        // enclosing `TRUE_CONDITION` such as a `typeof`/truthiness guard would
+        // strip its narrowing from values evaluated inside the chain. See the
+        // binder twin `optional_chain_branch_base` for the full rationale.
         if flow.has_any_flags(flow_flags::TRUE_CONDITION)
             && let Some(&antecedent) = flow.antecedent.first()
             && antecedent.is_some()
+            && self.flow_condition_within_chain_span(flow.node, chain_idx)
         {
             return antecedent;
         }
         current
+    }
+
+    fn flow_condition_within_chain_span(&self, cond_node: NodeIndex, chain_idx: NodeIndex) -> bool {
+        // `arena.get` returns `None` for the `NodeIndex::NONE` sentinel, so an
+        // absent condition node falls through to `false` without a separate guard.
+        let (Some(cond), Some(chain)) = (self.arena.get(cond_node), self.arena.get(chain_idx))
+        else {
+            return false;
+        };
+        cond.pos >= chain.pos && cond.end <= chain.end
     }
 
     // =============================================================================
@@ -354,7 +370,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         let after_callee_flow = if self.continues_optional_chain(expr_idx)
                             || self.is_optional_chain_access(call.expression)
                         {
-                            self.optional_chain_branch_base()
+                            self.optional_chain_branch_base(expr_idx)
                         } else {
                             after_callee_flow
                         };
@@ -413,7 +429,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         let after_base_flow = if self.continues_optional_chain(expr_idx)
                             || self.is_optional_chain_access(access.expression)
                         {
-                            self.optional_chain_branch_base()
+                            self.optional_chain_branch_base(expr_idx)
                         } else {
                             self.current_flow
                         };

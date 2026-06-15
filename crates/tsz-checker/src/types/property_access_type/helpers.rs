@@ -967,7 +967,18 @@ impl<'a> CheckerState<'a> {
             PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
         );
         if read_has_property {
-            (object_type_no_flow, false)
+            // The receiver sub-expression of a write target is not itself the
+            // write target, so it narrows exactly like a read: tsc reads the
+            // flow-narrowed receiver type and only the final write target keeps
+            // declared semantics. `read_object_type` is the flow-narrowed
+            // receiver and still resolves the written property, so prefer it
+            // over the unnarrowed declared base. Identifier receivers are
+            // already flow-narrowed before reaching here (their write base is
+            // served pre-narrowed from the node cache), so this only changes
+            // dotted/element receivers (`o.c`, `this._c`, `arr[0]`) that
+            // otherwise kept their nullable declared type and reported a
+            // spurious possibly-null error inside `if (o.c) { o.c.next = ... }`.
+            (read_object_type, false)
         } else if self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
             (read_object_type, true)
         } else {
