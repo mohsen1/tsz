@@ -50,7 +50,7 @@ pub struct SubtypeVisitor<'a, 'b, R: TypeResolver> {
     pub target: TypeId,
 }
 
-impl<'a, 'b, R: TypeResolver> SubtypeVisitor<'a, 'b, R> {
+impl<R: TypeResolver> SubtypeVisitor<'_, '_, R> {
     /// Distribute the source intersection over its first union member, dropping
     /// arms whose intersection with the remaining members reduces to `never`.
     ///

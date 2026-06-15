@@ -309,12 +309,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // The object must own the accessed property as a named member and have
         // no applicable index signature (otherwise the constraint fallback's
-        // `V` resolution is the correct apparent type).
-        let shape_id = match self.interner().lookup(eval_obj) {
-            Some(TypeData::Object(shape_id)) => shape_id,
-            // `ObjectWithIndex` has an applicable index signature: not the
-            // named-member homomorphic shape this rule targets.
-            _ => return false,
+        // `V` resolution is the correct apparent type). `ObjectWithIndex` has an
+        // applicable index signature, so it is not the named-member homomorphic
+        // shape this rule targets.
+        let Some(TypeData::Object(shape_id)) = self.interner().lookup(eval_obj) else {
+            return false;
         };
         let shape = self.interner().object_shape(shape_id);
         shape.string_index.is_none()
