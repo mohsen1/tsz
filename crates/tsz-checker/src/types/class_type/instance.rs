@@ -49,18 +49,52 @@ pub(super) struct DeferredAccessor<'b> {
     pub(super) declaration_order: u32,
 }
 
+/// The independent control-flow flags carried across the class-instance build
+/// phases, packed into a single `u8` so the builder stays under the
+/// `clippy::struct_excessive_bools` threshold without a suppression. Each flag
+/// is the same boolean the original megafn tracked as a local; the named bit
+/// constants below document each one.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ClassInstanceFlags(u8);
+
+impl ClassInstanceFlags {
+    /// We inserted `current_sym` into the global resolution set and own its
+    /// cleanup on every exit path.
+    const DID_INSERT_INTO_GLOBAL_SET: u8 = 1 << 0;
+    /// At least one member requires nominal typing (adds the private brand).
+    const HAS_NOMINAL_MEMBERS: u8 = 1 << 1;
+    /// At least one member has an unresolved computed (late-bound) name.
+    const HAS_LATE_BOUND_MEMBERS: u8 = 1 << 2;
+    /// Phase 0 pushed a prescan `this` type that must be popped before Phase 2.
+    const PUSHED_PRESCAN_THIS: u8 = 1 << 3;
+
+    const fn get(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+
+    const fn set(&mut self, bit: u8, value: bool) {
+        if value {
+            self.0 |= bit;
+        } else {
+            self.0 &= !bit;
+        }
+    }
+
+    /// Record whether `current_sym` was inserted into the global resolution set
+    /// (set once at builder construction).
+    pub(super) const fn set_did_insert_into_global_set(&mut self, value: bool) {
+        self.set(Self::DID_INSERT_INTO_GLOBAL_SET, value);
+    }
+}
+
 /// Cross-phase accumulator state for building a class instance type.
 ///
 /// The orchestrator constructs this after the setup guards, then threads it
 /// through the phase helpers. Each phase reads and extends the accumulators;
 /// the final phase consumes them to build the instance `ObjectShape`.
-// The bools are the original megafn's independent local control-flow flags
-// (lifted verbatim from the ~2000-line function); grouping them would obscure
-// the phase-by-phase reads/writes rather than clarify them.
-#[allow(clippy::struct_excessive_bools)]
 pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) current_sym: Option<SymbolId>,
-    pub(super) did_insert_into_global_set: bool,
+    pub(super) flags: ClassInstanceFlags,
     pub(super) class_type_params: Vec<TypeParamInfo>,
     pub(super) class_type_param_updates: Vec<(String, Option<TypeId>, bool)>,
     pub(super) member_count: usize,
@@ -69,10 +103,7 @@ pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) accessors: FxHashMap<Atom, AccessorAggregate>,
     pub(super) string_index: Option<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
-    pub(super) has_nominal_members: bool,
-    pub(super) has_late_bound_members: bool,
     pub(super) merged_interface_type_for_class: Option<TypeId>,
-    pub(super) pushed_prescan_this: bool,
     pub(super) prescan_this_type: Option<TypeId>,
     pub(super) deferred_methods:
         Vec<(NodeIndex, &'b tsz_parser::parser::node::MethodDeclData, u32)>,
@@ -81,6 +112,45 @@ pub(super) struct ClassInstanceBuilder<'b> {
 }
 
 impl ClassInstanceBuilder<'_> {
+    /// Whether we inserted `current_sym` into the global resolution set.
+    pub(super) const fn did_insert_into_global_set(&self) -> bool {
+        self.flags
+            .get(ClassInstanceFlags::DID_INSERT_INTO_GLOBAL_SET)
+    }
+
+    /// Whether any member requires nominal typing.
+    pub(super) const fn has_nominal_members(&self) -> bool {
+        self.flags.get(ClassInstanceFlags::HAS_NOMINAL_MEMBERS)
+    }
+
+    /// Mark that a member requires nominal typing.
+    pub(super) const fn set_has_nominal_members(&mut self) {
+        self.flags
+            .set(ClassInstanceFlags::HAS_NOMINAL_MEMBERS, true);
+    }
+
+    /// Whether any member has an unresolved computed (late-bound) name.
+    pub(super) const fn has_late_bound_members(&self) -> bool {
+        self.flags.get(ClassInstanceFlags::HAS_LATE_BOUND_MEMBERS)
+    }
+
+    /// Mark that a member has an unresolved computed (late-bound) name.
+    pub(super) const fn set_has_late_bound_members(&mut self) {
+        self.flags
+            .set(ClassInstanceFlags::HAS_LATE_BOUND_MEMBERS, true);
+    }
+
+    /// Whether Phase 0 pushed a prescan `this` type.
+    pub(super) const fn pushed_prescan_this(&self) -> bool {
+        self.flags.get(ClassInstanceFlags::PUSHED_PRESCAN_THIS)
+    }
+
+    /// Mark that Phase 0 pushed a prescan `this` type.
+    pub(super) const fn set_pushed_prescan_this(&mut self) {
+        self.flags
+            .set(ClassInstanceFlags::PUSHED_PRESCAN_THIS, true);
+    }
+
     /// Declaration-order key for the member at `member_pos`.
     ///
     /// Member positions start at 1 (synthesized members keep order 0 and stay
@@ -369,7 +439,7 @@ impl<'a> CheckerState<'a> {
                     .insert(class_idx, prescan_type);
                 self.ctx.this_type_stack.push(prescan_type);
                 b.prescan_this_type = Some(prescan_type);
-                b.pushed_prescan_this = true;
+                b.set_pushed_prescan_this();
 
                 // Register prescan body early so that Application property lookup can
                 // resolve Lazy(DefId(Self)) during Phase-2 method body checking. Without
@@ -419,7 +489,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&prop.modifiers, prop.name) {
-                        b.has_nominal_members = true;
+                        b.set_has_nominal_members();
                     }
                     let Some(name) = self.get_property_name_resolved(prop.name) else {
                         if self
@@ -428,7 +498,7 @@ impl<'a> CheckerState<'a> {
                             .get(prop.name)
                             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                         {
-                            b.has_late_bound_members = true;
+                            b.set_has_late_bound_members();
                             tracing::debug!(
                                 member = member_idx.0,
                                 "class member computed name unresolved -> late-bound"
@@ -606,7 +676,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&method.modifiers, method.name) {
-                        b.has_nominal_members = true;
+                        b.set_has_nominal_members();
                     }
 
                     // In JS/checkJs mode, method body `this.prop = value` assignments
@@ -633,7 +703,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&accessor.modifiers, accessor.name) {
-                        b.has_nominal_members = true;
+                        b.set_has_nominal_members();
                     }
                     let Some(name) = self.get_property_name_resolved(accessor.name) else {
                         if self
@@ -642,7 +712,7 @@ impl<'a> CheckerState<'a> {
                             .get(accessor.name)
                             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                         {
-                            b.has_late_bound_members = true;
+                            b.set_has_late_bound_members();
                             tracing::debug!(
                                 member = member_idx.0,
                                 "class member computed name unresolved -> late-bound"
@@ -684,7 +754,7 @@ impl<'a> CheckerState<'a> {
                         if self.has_private_modifier(&param.modifiers)
                             || self.has_protected_modifier(&param.modifiers)
                         {
-                            b.has_nominal_members = true;
+                            b.set_has_nominal_members();
                         }
                         let Some(name) = self.get_property_name(param.name) else {
                             continue;
@@ -839,7 +909,7 @@ impl<'a> CheckerState<'a> {
         b: &mut ClassInstanceBuilder<'b>,
     ) {
         // Pop the prescan `this` type — Phase 2 will push its own partial type.
-        if b.pushed_prescan_this {
+        if b.pushed_prescan_this() {
             self.ctx.this_type_stack.pop();
         }
 
@@ -1136,7 +1206,7 @@ impl<'a> CheckerState<'a> {
                         .get(method.name)
                         .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                     {
-                        b.has_late_bound_members = true;
+                        b.set_has_late_bound_members();
                         tracing::debug!(
                             member = member_idx.0,
                             "class method computed name unresolved -> late-bound"
@@ -1434,7 +1504,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Add private brand property for nominal typing
-        if b.has_nominal_members {
+        if b.has_nominal_members() {
             let brand_name = if let Some(sym_id) = current_sym {
                 format!("__private_brand_{}", sym_id.0)
             } else {

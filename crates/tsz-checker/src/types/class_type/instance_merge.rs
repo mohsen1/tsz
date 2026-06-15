@@ -36,7 +36,7 @@ impl CheckerState<'_> {
         b: &mut ClassInstanceBuilder<'b>,
     ) -> Option<TypeId> {
         let current_sym = b.current_sym;
-        let did_insert_into_global_set = b.did_insert_into_global_set;
+        let did_insert_into_global_set = b.did_insert_into_global_set();
         // Merge base class instance properties (derived members take precedence).
         // In JS files, an empty @augments/@extends tag overrides the structural
         // extends clause — tsc does not merge base-class properties in that case.
@@ -555,7 +555,9 @@ impl CheckerState<'_> {
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
-        let did_insert_into_global_set = b.did_insert_into_global_set;
+        let did_insert_into_global_set = b.did_insert_into_global_set();
+        // Capture before `b.properties` is moved out via `into_values()` below.
+        let has_late_bound_members = b.has_late_bound_members();
 
         // NOTE: Object prototype members (toString, hasOwnProperty, etc.) are NOT
         // merged into the class instance type. The solver handles these via its own
@@ -579,7 +581,7 @@ impl CheckerState<'_> {
             symbol: current_sym,
             ..ObjectShape::default()
         };
-        if b.has_late_bound_members {
+        if has_late_bound_members {
             shape.mark_has_late_bound_members();
         }
         if !apply_module_augmentations {

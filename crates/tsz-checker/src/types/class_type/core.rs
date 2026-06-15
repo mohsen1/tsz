@@ -8,7 +8,7 @@
 //! resolution-set cleanup semantics are preserved exactly.
 
 use super::helpers::exceeds_class_inheritance_depth_limit;
-use super::instance::{ClassInstanceBuilder, RestoreEnclosingClass};
+use super::instance::{ClassInstanceBuilder, ClassInstanceFlags, RestoreEnclosingClass};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -100,9 +100,11 @@ impl<'a> CheckerState<'a> {
 
         // PERF: Pre-size maps based on member count to avoid rehashing
         let member_count = class.members.nodes.len();
+        let mut flags = ClassInstanceFlags::default();
+        flags.set_did_insert_into_global_set(did_insert_into_global_set);
         let mut builder = ClassInstanceBuilder {
             current_sym,
-            did_insert_into_global_set,
+            flags,
             class_type_params,
             class_type_param_updates,
             member_count,
@@ -111,10 +113,7 @@ impl<'a> CheckerState<'a> {
             accessors: FxHashMap::with_capacity_and_hasher(4, Default::default()),
             string_index: None,
             number_index: None,
-            has_nominal_members: false,
-            has_late_bound_members: false,
             merged_interface_type_for_class: None,
-            pushed_prescan_this: false,
             prescan_this_type: None,
             deferred_methods: Vec::with_capacity(member_count / 2),
             deferred_accessors: Vec::with_capacity(4),
