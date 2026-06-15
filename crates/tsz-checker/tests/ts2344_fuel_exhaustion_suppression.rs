@@ -22,7 +22,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeInterner;
 
-/// Larger than `MAX_EVALUATION_FUEL` (2_000_000) so the per-file budget reads
+/// Larger than `MAX_EVALUATION_FUEL` (`2_000_000`) so the per-file budget reads
 /// as exhausted without depending on the exact crate-private constant.
 const FUEL_OVER_BUDGET: u32 = 3_000_000;
 
