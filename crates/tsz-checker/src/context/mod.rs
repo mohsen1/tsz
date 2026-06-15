@@ -570,6 +570,26 @@ pub struct FlowSharedCaches {
     /// hash hit.
     pub flow_switch_case_literal_cache: RefCell<FxHashMap<u32, Option<TypeId>>>,
 
+    /// Cache whether a switch's case block consists entirely of pairwise
+    /// distinct recognized literal labels (no `default`, no duplicate label).
+    /// Key: case-block `NodeIndex.0` -> the per-switch boolean.
+    ///
+    /// `narrow_by_switch_case_clause` checks, for each clause, whether *every*
+    /// earlier clause is a distinct literal so it can skip building the
+    /// excluded-literal set. That predecessor scan is O(K) per clause, so an
+    /// N-arm literal `switch` (e.g. a discriminated-union dispatch) re-scans
+    /// O(N^2) clauses total even when each label lookup is an O(1) cache hit
+    /// (the literal materialization itself is already memoized by
+    /// `flow_switch_case_literal_cache`). The all-clauses-distinct property is a
+    /// pure function of the immutable post-bind case block: when it holds, the
+    /// per-clause predecessor check is *always* satisfied, so the whole switch's
+    /// per-clause scans collapse to one O(N) pass computed once and read as an
+    /// O(1) hit thereafter. Behavior is unchanged: a `false` (or absent) entry
+    /// falls through to the existing per-clause logic.
+    ///
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_switch_all_distinct_literals_cache: RefCell<FxHashMap<u32, bool>>,
+
     /// Shared reference-equivalence cache used by flow narrowing.
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
     /// Reused across `FlowAnalyzer` instances within a single file check.
@@ -601,6 +621,7 @@ impl FlowSharedCaches {
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_switch_case_literal_cache: RefCell::new(FxHashMap::default()),
+            flow_switch_all_distinct_literals_cache: RefCell::new(FxHashMap::default()),
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_flow_memo: SymbolFlowMemoCaches::default(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
