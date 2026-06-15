@@ -1,126 +1,42 @@
-//! Heritage and interface merge phase of class instance type construction.
+//! Heritage and interface merging plus final-type construction for class
+//! instance type resolution.
 //!
-//! Extracted from `core.rs` to keep that file under the 2000-line cap. This
-//! owns the trailing base-class property merge, the local/cross-arena interface
-//! declaration merge, and the lib-interface fallback. It is a pure code move
-//! from `get_class_instance_type_inner`; behavior is unchanged.
+//! These phases run after the member-collection phases in
+//! [`super::instance`]: they merge base-class members and class/interface
+//! declarations into the shared [`ClassInstanceBuilder`], then build and
+//! register the final instance type. Pure code motion out of the original
+//! `get_class_instance_type_inner`; the early-return/cleanup semantics of the
+//! base-member merge are preserved exactly.
 
 use super::helpers::{can_skip_base_instantiation, declaration_is_module_augmentation};
+use super::instance::ClassInstanceBuilder;
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
-use crate::query_boundaries::common::{
-    TypeSubstitution, instantiate_type, instantiate_type_preserving_meta,
-};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
-use tsz_common::interner::Atom;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{IndexSignature, PropertyInfo, TypeId};
-
-/// In-progress instance members threaded through the heritage/interface merge.
-///
-/// Bundles the mutable accumulators so the merge entry point stays within the
-/// clippy `too_many_arguments` threshold without a per-site suppression.
-pub(super) struct ClassInstanceMembers<'m> {
-    pub properties: &'m mut FxHashMap<Atom, PropertyInfo>,
-    pub string_index: &'m mut Option<IndexSignature>,
-    pub number_index: &'m mut Option<IndexSignature>,
-    pub merged_interface_type_for_class: &'m mut Option<TypeId>,
-}
-
-/// Read-only cycle-guard sets for the active class-instance resolution path.
-pub(super) struct HeritageCycleGuard<'g> {
-    pub visited: &'g FxHashSet<SymbolId>,
-    pub visited_nodes: &'g FxHashSet<NodeIndex>,
-}
-
-/// The property/index accumulators shared by both merge phases.
-///
-/// Bundling these keeps the per-phase helpers within the clippy
-/// `too_many_arguments` threshold without a per-site suppression, and lets the
-/// orchestrator reborrow the same accumulators across both phases.
-struct InstanceMemberAcc<'m> {
-    properties: &'m mut FxHashMap<Atom, PropertyInfo>,
-    string_index: &'m mut Option<IndexSignature>,
-    number_index: &'m mut Option<IndexSignature>,
-}
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 impl CheckerState<'_> {
-    /// Merge base-class instance members and any merged interface declarations
-    /// into the in-progress class instance `properties`/index signatures.
+    /// Merge base class instance properties (derived members take precedence).
     ///
-    /// Returns `Some(type)` when a cycle or forward-reference cycle was detected
-    /// and the caller must early-return that value (after the global-set cleanup
-    /// performed here); `None` to continue building the instance type normally.
-    pub(super) fn merge_class_heritage_and_interfaces(
+    /// Returns `Some(type)` when a cycle/forward-reference is detected and the
+    /// whole `get_class_instance_type_inner` call must early-return that type
+    /// (the `did_insert_into_global_set` cleanup is performed inline before
+    /// returning, exactly as in the original function).
+    pub(super) fn class_instance_merge_base_members<'b>(
         &mut self,
-        class: &tsz_parser::parser::node::ClassData,
+        class: &'b tsz_parser::parser::node::ClassData,
         class_idx: NodeIndex,
-        current_sym: Option<SymbolId>,
-        guard: HeritageCycleGuard<'_>,
-        did_insert_into_global_set: bool,
-        apply_module_augmentations: bool,
-        members: ClassInstanceMembers<'_>,
+        visited: &mut FxHashSet<SymbolId>,
+        visited_nodes: &mut FxHashSet<NodeIndex>,
+        b: &mut ClassInstanceBuilder<'b>,
     ) -> Option<TypeId> {
-        let ClassInstanceMembers {
-            properties,
-            string_index,
-            number_index,
-            merged_interface_type_for_class,
-        } = members;
-        let mut acc = InstanceMemberAcc {
-            properties,
-            string_index,
-            number_index,
-        };
-        // Phase 1: merge base-class instance members. This can detect a cycle
-        // and request an early return from the caller.
-        if let Some(early_return) = self.merge_base_class_heritage(
-            class,
-            class_idx,
-            current_sym,
-            guard,
-            did_insert_into_global_set,
-            &mut acc,
-        ) {
-            return Some(early_return);
-        }
-
-        // Phase 2: merge interface declarations (class members take precedence).
-        self.merge_class_interface_declarations(
-            current_sym,
-            apply_module_augmentations,
-            &mut acc,
-            merged_interface_type_for_class,
-        );
-
-        None
-    }
-
-    /// Phase 1 of [`Self::merge_class_heritage_and_interfaces`]: merge base-class
-    /// instance members into the in-progress `properties`/index signatures.
-    ///
-    /// Returns `Some(type)` when a cycle or forward-reference cycle was detected
-    /// and the caller must early-return that value (after the global-set cleanup
-    /// performed here); `None` to continue building the instance type normally.
-    fn merge_base_class_heritage(
-        &mut self,
-        class: &tsz_parser::parser::node::ClassData,
-        class_idx: NodeIndex,
-        current_sym: Option<SymbolId>,
-        guard: HeritageCycleGuard<'_>,
-        did_insert_into_global_set: bool,
-        acc: &mut InstanceMemberAcc<'_>,
-    ) -> Option<TypeId> {
-        let HeritageCycleGuard {
-            visited,
-            visited_nodes,
-        } = guard;
-        let properties = &mut *acc.properties;
-        let string_index = &mut *acc.string_index;
-        let number_index = &mut *acc.number_index;
+        let current_sym = b.current_sym;
+        let did_insert_into_global_set = b.did_insert_into_global_set();
         // Merge base class instance properties (derived members take precedence).
         // In JS files, an empty @augments/@extends tag overrides the structural
         // extends clause — tsc does not merge base-class properties in that case.
@@ -169,9 +85,9 @@ impl CheckerState<'_> {
                             );
                             self.merge_base_instance_properties(
                                 base_instance_type,
-                                properties,
-                                string_index,
-                                number_index,
+                                &mut b.properties,
+                                &mut b.string_index,
+                                &mut b.number_index,
                             );
                         } else {
                             tracing::debug!(
@@ -224,9 +140,9 @@ impl CheckerState<'_> {
                             {
                                 self.merge_base_instance_properties(
                                     cached_partial,
-                                    properties,
-                                    string_index,
-                                    number_index,
+                                    &mut b.properties,
+                                    &mut b.string_index,
+                                    &mut b.number_index,
                                 );
                             } else if let Some(base_node) = self.ctx.arena.get(base_class_idx)
                                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -239,9 +155,9 @@ impl CheckerState<'_> {
                                 if partial != TypeId::ERROR {
                                     self.merge_base_instance_properties(
                                         partial,
-                                        properties,
-                                        string_index,
-                                        number_index,
+                                        &mut b.properties,
+                                        &mut b.string_index,
+                                        &mut b.number_index,
                                     );
                                 }
                             }
@@ -269,9 +185,9 @@ impl CheckerState<'_> {
                         self.record_heritage_extends(current_sym, expr_idx, base_instance_type);
                         self.merge_base_instance_properties(
                             base_instance_type,
-                            properties,
-                            string_index,
-                            number_index,
+                            &mut b.properties,
+                            &mut b.string_index,
+                            &mut b.number_index,
                         );
                     }
                     break;
@@ -366,11 +282,13 @@ impl CheckerState<'_> {
                                 &base_type_params[..param_index],
                                 &type_args,
                             );
-                            type_args.push(instantiate_type_preserving_meta(
-                                self.ctx.types,
-                                fallback,
-                                &substitution,
-                            ));
+                            type_args.push(
+                                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                    self.ctx.types,
+                                    fallback,
+                                    &substitution,
+                                ),
+                            );
                         }
                     }
                     if type_args.len() > base_type_params.len() {
@@ -409,15 +327,15 @@ impl CheckerState<'_> {
                         object_shape_for_type(self.ctx.types, base_instance_type)
                     {
                         for base_prop in &base_shape.properties {
-                            properties
+                            b.properties
                                 .entry(base_prop.name)
                                 .or_insert_with(|| base_prop.clone());
                         }
                         if let Some(ref idx) = base_shape.string_index {
-                            Self::merge_index_signature(string_index, *idx);
+                            Self::merge_index_signature(&mut b.string_index, *idx);
                         }
                         if let Some(ref idx) = base_shape.number_index {
-                            Self::merge_index_signature(number_index, *idx);
+                            Self::merge_index_signature(&mut b.number_index, *idx);
                         }
                     }
                     break;
@@ -426,41 +344,32 @@ impl CheckerState<'_> {
                 if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
                     for base_prop in &base_shape.properties {
-                        properties
+                        b.properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
                     }
                     if let Some(ref idx) = base_shape.string_index {
-                        Self::merge_index_signature(string_index, *idx);
+                        Self::merge_index_signature(&mut b.string_index, *idx);
                     }
                     if let Some(ref idx) = base_shape.number_index {
-                        Self::merge_index_signature(number_index, *idx);
+                        Self::merge_index_signature(&mut b.number_index, *idx);
                     }
                 }
 
                 break;
             }
         }
-
         None
     }
 
-    /// Phase 2 of [`Self::merge_class_heritage_and_interfaces`]: merge interface
-    /// declarations for class/interface merging (class members take precedence).
-    ///
-    /// Covers the local/cross-arena interface declaration merge plus the
-    /// lib-interface fallback for symbols whose interface declarations live in a
-    /// lib arena.
-    fn merge_class_interface_declarations(
+    /// Merge interface declarations for class/interface merging (class members
+    /// take precedence), including cross-arena/lib interface declarations.
+    pub(super) fn class_instance_merge_interface_decls(
         &mut self,
-        current_sym: Option<SymbolId>,
         apply_module_augmentations: bool,
-        acc: &mut InstanceMemberAcc<'_>,
-        merged_interface_type_for_class: &mut Option<TypeId>,
+        b: &mut ClassInstanceBuilder<'_>,
     ) {
-        let properties = &mut *acc.properties;
-        let string_index = &mut *acc.string_index;
-        let number_index = &mut *acc.number_index;
+        let current_sym = b.current_sym;
         // Merge interface declarations for class/interface merging (class members take precedence)
         if let Some(sym_id) = current_sym
             && let Some((symbol_flags, symbol_declarations, symbol_name)) =
@@ -530,22 +439,26 @@ impl CheckerState<'_> {
                 let interface_type = lowering.lower_interface_declarations(&interface_decls);
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
-                *merged_interface_type_for_class = Some(interface_type);
+                b.merged_interface_type_for_class = Some(interface_type);
 
                 if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                     for prop in &shape.properties {
-                        properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        b.properties
+                            .entry(prop.name)
+                            .or_insert_with(|| prop.clone());
                     }
                     if let Some(ref idx) = shape.string_index {
-                        Self::merge_index_signature(string_index, *idx);
+                        Self::merge_index_signature(&mut b.string_index, *idx);
                     }
                     if let Some(ref idx) = shape.number_index {
-                        Self::merge_index_signature(number_index, *idx);
+                        Self::merge_index_signature(&mut b.number_index, *idx);
                     }
                 } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
                     for prop in &shape.properties {
-                        properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        b.properties
+                            .entry(prop.name)
+                            .or_insert_with(|| prop.clone());
                     }
                 }
             }
@@ -601,27 +514,130 @@ impl CheckerState<'_> {
                         sym_id,
                         interface_type,
                     );
-                    *merged_interface_type_for_class = Some(interface_type);
+                    b.merged_interface_type_for_class = Some(interface_type);
 
                     if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                         for prop in &shape.properties {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                            b.properties
+                                .entry(prop.name)
+                                .or_insert_with(|| prop.clone());
                         }
                         if let Some(ref idx) = shape.string_index {
-                            Self::merge_index_signature(string_index, *idx);
+                            Self::merge_index_signature(&mut b.string_index, *idx);
                         }
                         if let Some(ref idx) = shape.number_index {
-                            Self::merge_index_signature(number_index, *idx);
+                            Self::merge_index_signature(&mut b.number_index, *idx);
                         }
                     } else if let Some(shape) =
                         callable_shape_for_type(self.ctx.types, interface_type)
                     {
                         for prop in &shape.properties {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                            b.properties
+                                .entry(prop.name)
+                                .or_insert_with(|| prop.clone());
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Build the final instance type from the accumulated members, run the
+    /// final interface-merge / module-augmentation pass, perform the
+    /// resolution-set cleanup, and register the result.
+    pub(super) fn class_instance_build_final_type(
+        &mut self,
+        class_idx: NodeIndex,
+        apply_module_augmentations: bool,
+        visited: &mut FxHashSet<SymbolId>,
+        visited_nodes: &mut FxHashSet<NodeIndex>,
+        b: ClassInstanceBuilder<'_>,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        let current_sym = b.current_sym;
+        let did_insert_into_global_set = b.did_insert_into_global_set();
+        // Capture before `b.properties` is moved out via `into_values()` below.
+        let has_late_bound_members = b.has_late_bound_members();
+
+        // NOTE: Object prototype members (toString, hasOwnProperty, etc.) are NOT
+        // merged into the class instance type. The solver handles these via its own
+        // Object prototype fallback (resolve_object_member) during property access.
+        // Including them as explicit properties would cause false TS2322 errors when
+        // assigning plain objects to class-typed variables, since the plain objects
+        // wouldn't have these as own properties.
+
+        // Build the final instance type. `properties` is an FxHashMap whose
+        // iteration order is non-deterministic, so sort by `declaration_order`
+        // so downstream diagnostics like TS2739 ("missing the following
+        // properties: a, b, c") see properties in source-declaration order.
+        // Synthesized members carry `declaration_order == 0` and stay first
+        // via stable sort.
+        let mut props: Vec<PropertyInfo> = b.properties.into_values().collect();
+        props.sort_by_key(|p| p.declaration_order);
+        let mut shape = ObjectShape {
+            properties: props,
+            string_index: b.string_index,
+            number_index: b.number_index,
+            symbol: current_sym,
+            ..ObjectShape::default()
+        };
+        if has_late_bound_members {
+            shape.mark_has_late_bound_members();
+        }
+        if !apply_module_augmentations {
+            shape.mark_no_module_augmentation_lookup();
+        }
+        let mut instance_type = factory.object_with_index(shape);
+
+        // Final interface merging pass
+        if let Some(sym_id) = current_sym {
+            if let Some(interface_type) = b.merged_interface_type_for_class {
+                instance_type =
+                    self.merge_class_instance_with_interface(instance_type, interface_type);
+            }
+
+            // Apply module augmentations targeting this class's interface name.
+            // When another file has `declare module './thisFile' { interface ClassName { ... } }`,
+            // those augmented members must be merged into the class instance type so that
+            // `ClassName.prototype` and value-position usage see the full merged type.
+            if apply_module_augmentations
+                && let Some(symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .or_else(|| self.get_cross_file_symbol(sym_id))
+            {
+                let class_name = symbol.escaped_name.clone();
+                if let Some(sf) = self.ctx.arena.source_files.first() {
+                    let file_name = sf.file_name.clone();
+                    instance_type =
+                        self.apply_module_augmentations(&file_name, &class_name, instance_type);
+                }
+            }
+
+            visited.remove(&sym_id);
+            visited_nodes.remove(&class_idx);
+            // Only remove from global set if we inserted it ourselves
+            if did_insert_into_global_set {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+        }
+        // Keep class lookup working for structurally unbranded derived instances.
+        self.ctx
+            .class_decl_miss_cache
+            .borrow_mut()
+            .remove(&instance_type);
+        self.ctx
+            .class_instance_type_to_decl
+            .insert(instance_type, class_idx);
+
+        if let Some(sym_id) = current_sym {
+            self.register_final_class_instance_type(sym_id, instance_type, &b.class_type_params);
+            self.refresh_constructor_instance_return_if_stale(class_idx, sym_id, instance_type);
+        }
+
+        self.pop_type_parameters(b.class_type_param_updates);
+
+        instance_type
     }
 }
