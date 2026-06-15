@@ -276,8 +276,45 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         let Some(inner) = inner else {
             return false;
         };
+        // Key-preserving wrappers (`Partial<O>`, `Readonly<O>`) evaluate to an
+        // object whose key set equals `O`'s, so `keyof O` is still the exact key
+        // space of the object being indexed even though the wrapper changed
+        // modifiers/values; the distribution is just as lossy, so `Partial<O>[K]`
+        // must defer like `O[K]`. Otherwise fall back to identical property-name
+        // sets (no applicable index signature on either side).
         self.evaluator
             .constraints_semantically_match(inner, self.object_type)
+            || self.constraint_inner_keys_match_object(inner)
+    }
+
+    /// True when `inner` evaluates to an object whose property-name set is exactly
+    /// `self.object_type`'s, with neither carrying an applicable index signature.
+    fn constraint_inner_keys_match_object(&mut self, inner: TypeId) -> bool {
+        use crate::visitors::visitor::object_shape_id;
+
+        let evaluated_inner = self.evaluator.evaluate(inner);
+        let interner = self.evaluator.interner();
+        let (Some(o_id), Some(i_id)) = (
+            object_shape_id(interner, self.object_type),
+            object_shape_id(interner, evaluated_inner),
+        ) else {
+            return false;
+        };
+        let (o_shape, i_shape) = (interner.object_shape(o_id), interner.object_shape(i_id));
+        if o_shape.string_index.is_some()
+            || o_shape.number_index.is_some()
+            || i_shape.string_index.is_some()
+            || i_shape.number_index.is_some()
+            || o_shape.properties.is_empty()
+            || o_shape.properties.len() != i_shape.properties.len()
+        {
+            return false;
+        }
+        let mut o_keys: Vec<_> = o_shape.properties.iter().map(|p| p.name).collect();
+        let mut i_keys: Vec<_> = i_shape.properties.iter().map(|p| p.name).collect();
+        o_keys.sort_unstable();
+        i_keys.sort_unstable();
+        o_keys == i_keys
     }
 
     /// Check if the index type is an intersection that contains the mapped type's constraint.
