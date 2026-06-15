@@ -1201,12 +1201,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3]
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
-      TSZ_CI_CONFORMANCE_SHARDS: 6
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CONFORMANCE_SHARD_STRATEGY: weighted
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
@@ -1245,8 +1245,8 @@ jobs:
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
-      TSZ_CI_CONFORMANCE_SHARDS: 6
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -1258,7 +1258,7 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          EXPECTED=6
+          EXPECTED=4
           MAX_WAIT=180
           INTERVAL=10
           elapsed=0

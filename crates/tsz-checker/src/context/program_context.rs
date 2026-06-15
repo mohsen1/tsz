@@ -113,6 +113,13 @@ pub struct ProgramContext {
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
     /// Pre-computed filename reverse index; see `CheckerContext::global_file_name_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
+    /// Pre-computed `file_idx -> module specifier (basename stem)` map shared by
+    /// every per-file checker; see `CheckerContext::module_specifiers`. Built
+    /// once here so `set_all_arenas` does not rebuild it per file.
+    pub module_specifiers: Option<Arc<FxHashMap<u32, String>>>,
+    /// Pre-computed `file_idx -> project-relative stripped path` map shared by
+    /// every per-file checker; see `CheckerContext::module_path_specifiers`.
+    pub module_path_specifiers: Option<Arc<FxHashMap<u32, String>>>,
     /// Program-wide re-export index shared across cross-file lookup binders;
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
@@ -182,6 +189,8 @@ impl Default for ProgramContext {
             global_module_binder_index: None,
             global_arena_index: None,
             global_file_name_index: None,
+            module_specifiers: None,
+            module_path_specifiers: None,
             program_reexports: None,
             program_wildcard_reexports: None,
             program_module_exports: None,
@@ -225,6 +234,16 @@ impl ProgramContext {
         // those methods can skip re-computing indices already provided here.
         if let Some(ref idx) = self.global_file_name_index {
             ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
+        // Install the shared module-specifier display maps before `set_all_arenas`
+        // so it skips the per-file O(files) rebuild. Both must be present to set
+        // the prebuilt flag; otherwise fall through to the per-checker build.
+        if let (Some(specifiers), Some(path_specifiers)) =
+            (&self.module_specifiers, &self.module_path_specifiers)
+        {
+            ctx.module_specifiers = Arc::clone(specifiers);
+            ctx.module_path_specifiers = Arc::clone(path_specifiers);
+            ctx.module_specifiers_prebuilt = true;
         }
         ctx.set_all_arenas(Arc::clone(&self.all_arenas));
         if let Some(ref dm) = self.skeleton_declared_modules {
@@ -585,5 +604,14 @@ impl ProgramContext {
         // Filename reverse index: one O(N) build replaces the O(N²) fallback rebuild.
         let file_name_idx = crate::module_resolution::build_file_name_index(&self.all_arenas);
         self.global_file_name_index = Some(Arc::new(file_name_idx));
+
+        // Module-specifier display maps are file-independent: one O(files) build
+        // here replaces the O(files^2) per-checker rebuild in `set_all_arenas`.
+        self.module_specifiers = Some(Arc::new(CheckerContext::build_module_specifiers(
+            &self.all_arenas,
+        )));
+        self.module_path_specifiers = Some(Arc::new(CheckerContext::build_module_path_specifiers(
+            &self.all_arenas,
+        )));
     }
 }
