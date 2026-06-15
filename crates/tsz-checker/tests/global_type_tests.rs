@@ -6,11 +6,11 @@
 //!
 //! Note: These tests simulate missing lib.d.ts by not loading lib files.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
@@ -19,15 +19,15 @@ use tsz_solver::construction::TypeInterner;
 /// `lib_contexts` on the checker). Routes through the shared
 /// `test_utils::check_with_options` — that helper also leaves
 /// `lib_contexts` empty by default, matching the original local helper.
-fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
 
 fn check_without_lib_with_options(
     source: &str,
     options: CheckerOptions,
-) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    crate::checker::test_utils::check_with_options(source, options)
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    tsz_checker::test_utils::check_with_options(source, options)
 }
 
 const MINIMAL_CORE_GLOBAL_DECLS: &[(&str, &str)] = &[
@@ -45,14 +45,14 @@ const MINIMAL_CORE_GLOBAL_DECLS: &[(&str, &str)] = &[
 
 fn check_without_lib_with_minimal_core_globals(
     source: &str,
-) -> Vec<crate::checker::diagnostics::Diagnostic> {
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     check_without_lib_with_minimal_core_globals_except(&[], source)
 }
 
 fn check_without_lib_with_minimal_core_globals_except(
     omitted: &[&str],
     source: &str,
-) -> Vec<crate::checker::diagnostics::Diagnostic> {
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let mut full_source = String::new();
     for &(name, decl) in MINIMAL_CORE_GLOBAL_DECLS {
         if omitted.iter().any(|omitted_name| omitted_name == &name) {
@@ -395,9 +395,9 @@ fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
 }
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.
-fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let lib_files = load_lib_files_for_global_type_tests();
-    crate::checker::test_utils::check_source_with_libs(
+    tsz_checker::test_utils::check_source_with_libs(
         source,
         "test.ts",
         CheckerOptions::default(),
@@ -513,8 +513,8 @@ class C {
 fn test_decorator_ts2318_with_lib_contexts() {
     // Simulate the multi-file test: a.ts has core interfaces, b.ts has decorated class
     // This tests that lib_contexts don't wrongly suppress the TS2318 error
-    use crate::checker::context::LibContext;
     use std::sync::Arc;
+    use tsz_checker::context::LibContext;
 
     let options = CheckerOptions {
         experimental_decorators: true,
