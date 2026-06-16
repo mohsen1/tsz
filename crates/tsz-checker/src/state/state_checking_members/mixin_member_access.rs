@@ -10,6 +10,34 @@ impl<'a> CheckerState<'a> {
         name: &str,
         is_static: bool,
     ) -> Option<MemberAccessInfo> {
+        // Per-file memo: classifying a member's access level walks the class's
+        // declared members (and base-class chain) by name, which is `O(members)`
+        // per access. Without memoization, one access per method on an
+        // `N`-member class makes this `O(N^2)`. The classification is a pure
+        // function of the immutable AST for the current file, keyed by
+        // `(class node, member-name Atom, is_static)`. Interning the name to its
+        // canonical `Atom` (`O(1)` amortized) gives an identity key that compares
+        // in `O(1)`; the cached value reproduces the linear scan's result.
+        let name_atom = self.ctx.types.intern_string(name);
+        let cache_key = (class_idx, name_atom, is_static);
+        if let Some(cached) = self.ctx.member_access_info_cache.borrow().get(&cache_key) {
+            return cached.clone();
+        }
+
+        let computed = self.compute_member_access_info(class_idx, name, is_static);
+        self.ctx
+            .member_access_info_cache
+            .borrow_mut()
+            .insert(cache_key, computed.clone());
+        computed
+    }
+
+    fn compute_member_access_info(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+        is_static: bool,
+    ) -> Option<MemberAccessInfo> {
         let mut current = class_idx;
         let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
 
