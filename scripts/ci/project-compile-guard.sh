@@ -90,6 +90,36 @@ fi
 # shellcheck source=scripts/ci/lib/project-compile-fingerprint.sh
 source "$ROOT_DIR/scripts/ci/lib/project-compile-fingerprint.sh"
 
+# Per-row tsc oracle helpers (tsz_only_delta_lines, tsz_count_diagnostic_lines,
+# tsz_project_oracle_tsc_command, tsz_tsc_oracle_fingerprint). The gate counts a
+# tsz diagnostic as a false positive only when tsc does not flag the same
+# (basename, line, column, code). Sourced so the delta logic has one tested home.
+# shellcheck source=scripts/ci/lib/project-tsc-oracle.sh
+source "$ROOT_DIR/scripts/ci/lib/project-tsc-oracle.sh"
+
+# Whether to run the per-row tsc oracle to subtract genuine tsc errors from
+# tsz's diagnostics before deciding a row's pass/fail. On by default; disable
+# with TSZ_PROJECT_COMPILE_TSC_ORACLE=0 (e.g. when no tsc is available and every
+# fixture is known tsc-clean). The oracle only runs for rows where tsz exits
+# with diagnostics (a "nonzero exit"); crashes, timeouts, and OOMs are failures
+# regardless of what tsc does.
+TSC_ORACLE_ENABLED="${TSZ_PROJECT_COMPILE_TSC_ORACLE:-1}"
+TSC_ORACLE_RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE_DIR:-$FIXTURE_ROOT/.tsc-oracle-cache}"
+# Resolved once: the tsc oracle command words and a content hash of the command
+# for the oracle-cache key. Empty TSC_ORACLE_CMD means no oracle is available,
+# in which case the gate falls back to counting every tsz diagnostic (the
+# pre-oracle behavior) so a missing tsc never silently passes a real FP.
+TSC_ORACLE_CMD=()
+TSC_ORACLE_CMD_HASH=""
+if [[ "$TSC_ORACLE_ENABLED" == "1" ]]; then
+  while IFS= read -r _oracle_word; do
+    [[ -n "$_oracle_word" ]] && TSC_ORACLE_CMD+=("$_oracle_word")
+  done < <(tsz_project_oracle_tsc_command)
+  if [[ "${#TSC_ORACLE_CMD[@]}" -gt 0 ]]; then
+    TSC_ORACLE_CMD_HASH="$(printf '%s\n' "${TSC_ORACLE_CMD[@]}" | sha256_of_stdin)"
+  fi
+fi
+
 mkdir -p "$FIXTURE_ROOT"
 
 # Snapshot the tsz binary to an immutable content-addressed copy and run that
@@ -110,6 +140,7 @@ else
   _TSZ_BINARY_HASH="$(sha256_of_file "$TSZ_BIN")"
 fi
 mkdir -p "$RESULT_CACHE_DIR"
+[[ -n "$TSC_ORACLE_CMD_HASH" ]] && mkdir -p "$TSC_ORACLE_RESULT_CACHE_DIR"
 validate_project_compatibility_artifact_paths
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
@@ -524,6 +555,53 @@ write_compile_cache() {
     && mv "${_cf}.tmp" "$_cf" 2>/dev/null || true
 }
 
+# Run (or cache-hit) the per-row tsc oracle. tsc's stdout/stderr is captured to
+# the per-row $oracle_log; on return LAST_TSC_ORACLE_RC holds tsc's exit code.
+# The oracle is cached on (tsc command, tsconfig content, compiled-source
+# identity) — independent of the tsz binary — so the per-row tsc run is skipped
+# whenever the fixture and tsc are unchanged, keeping CI cost flat across tsz
+# rebuilds. Returns 0 when an oracle log was produced (fresh or cached), 1 when
+# no oracle is available so callers can fall back to counting all tsz lines.
+LAST_TSC_ORACLE_RC=""
+run_project_tsc_oracle() {
+  local name="$1" tsconfig="$2" src_dir="$3" oracle_log="$4"
+  LAST_TSC_ORACLE_RC=""
+  [[ "${#TSC_ORACLE_CMD[@]}" -gt 0 ]] || return 1
+
+  local _ofp="" _ocache=""
+  if [[ "${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE:-1}" == "1" && -n "$TSC_ORACLE_CMD_HASH" ]]; then
+    _ofp="$(tsz_tsc_oracle_fingerprint "$name" "$tsconfig" "$src_dir" "$TSC_ORACLE_CMD_HASH" 2>/dev/null || true)"
+    [[ -n "$_ofp" ]] && _ocache="$TSC_ORACLE_RESULT_CACHE_DIR/${name}"
+  fi
+
+  if [[ -n "$_ocache" && -f "$_ocache" && -f "${_ocache}.log" ]]; then
+    local _cached_ofp=""
+    IFS= read -r _cached_ofp < "$_ocache" 2>/dev/null || true
+    _cached_ofp="${_cached_ofp#FINGERPRINT=}"
+    if [[ "$_cached_ofp" == "$_ofp" ]]; then
+      local _cached_orc=""
+      _cached_orc="$(awk -F= '/^RC=/{print $2; exit}' "$_ocache" 2>/dev/null || true)"
+      cp "${_ocache}.log" "$oracle_log" 2>/dev/null || true
+      LAST_TSC_ORACLE_RC="${_cached_orc:-0}"
+      echo "(tsc oracle cache hit: ${_ofp:0:12})"
+      return 0
+    fi
+  fi
+
+  local orc=0
+  echo "Running tsc oracle: ${TSC_ORACLE_CMD[*]} --noEmit -p $tsconfig"
+  run_with_timeout "$PROJECT_TIMEOUT" \
+    "${TSC_ORACLE_CMD[@]}" --noEmit -p "$tsconfig" >"$oracle_log" 2>&1 || orc=$?
+  LAST_TSC_ORACLE_RC="$orc"
+
+  if [[ -n "$_ocache" ]]; then
+    { printf 'FINGERPRINT=%s\nRC=%s\n' "$_ofp" "$orc"; } > "${_ocache}.tmp" 2>/dev/null \
+      && mv "${_ocache}.tmp" "$_ocache" 2>/dev/null || true
+    cp "$oracle_log" "${_ocache}.log" 2>/dev/null || true
+  fi
+  return 0
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -601,7 +679,6 @@ check_project() {
       "$TSZ_RUN_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
 
   if [[ "$rc" -ne 0 ]]; then
-    FAILURES=$((FAILURES + 1))
     exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
     diagnostic_delta="$(diagnostic_lines_from_file "tsz" "$log")"
     local timeout_note=""
@@ -613,27 +690,73 @@ check_project() {
         timeout_unmeasured=1
       fi
     fi
-    record_project_compatibility \
-      "$name" \
-      "$exit_class" \
-      "check" \
-      "$(project_failure_status "$exit_class")" \
-      "$diagnostic_delta" \
-      "$file_count" \
-      "$LAST_PEAK_RSS_BYTES" \
-      "$rc" \
-      "$tsconfig" \
-      "$src_dir" \
-      "$tsc_exit_codes"
-    if [[ "$rc" -eq 124 ]]; then
-      echo "error: ${name} ${timeout_note}" >&2
-    else
-      echo "error: ${name} failed with exit code ${rc}" >&2
+
+    # tsc oracle: only a plain "nonzero exit" (tsz produced diagnostics, no
+    # crash/timeout/OOM) is a candidate for tsz<->tsc parity. Subtract tsc's own
+    # diagnostics; the row passes when the tsz-only delta is empty. Crashes,
+    # timeouts, and OOMs are failures regardless of what tsc reports.
+    #
+    # A caller that already passed static tsc exit codes (the type-challenges
+    # row, whose dedicated oracle runs and gates before check_project) is left
+    # untouched so that row keeps its bespoke oracle and we do not run tsc twice.
+    local oracle_consulted=0 tsz_only_count="" oracle_log=""
+    if [[ "$exit_class" == "nonzero exit" && -z "$tsc_exit_codes" && "${#TSC_ORACLE_CMD[@]}" -gt 0 ]]; then
+      oracle_log="$FIXTURE_ROOT/${name}.tsc.log"
+      if run_project_tsc_oracle "$name" "$tsconfig" "$src_dir" "$oracle_log"; then
+        oracle_consulted=1
+        tsc_exit_codes="$LAST_TSC_ORACLE_RC"
+        tsz_only_count="$(tsz_only_delta_lines "$log" "$oracle_log" | tsz_count_diagnostic_lines)"
+      fi
     fi
-    sed -n '1,160p' "$log" >&2 || true
-    echo "::endgroup::"
-    if [[ "$ALLOW_FAILURES" == "1" ]]; then
-      echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+
+    if [[ "$oracle_consulted" == "1" && "${tsz_only_count:-1}" -eq 0 ]]; then
+      # tsz matched tsc exactly: no tsz-only diagnostics. Record a green/pass
+      # row carrying both sides so the artifact shows the agreed-on tsc errors,
+      # and do NOT count a gate failure. rc is normalized to 0 so the cached
+      # decision replays as a pass and the row state derives to green.
+      rc=0
+      exit_class="exit success"
+      diagnostic_delta="$(tsc_and_tsz_oracle_delta "$log" "$oracle_log")"
+      record_project_compatibility "$name" "exit success" "check" "none" \
+        "$diagnostic_delta" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" \
+        "$tsconfig" "$src_dir" "$tsc_exit_codes"
+      if [[ -n "$LAST_TSC_ORACLE_RC" && "$LAST_TSC_ORACLE_RC" != "0" ]]; then
+        echo "${name} matches tsc (tsc also reports errors; 0 tsz-only diagnostics)."
+      else
+        echo "${name} compiled successfully (tsc oracle clean)."
+      fi
+      echo "::endgroup::"
+    else
+      FAILURES=$((FAILURES + 1))
+      if [[ "$oracle_consulted" == "1" ]]; then
+        # Report only the tsz-only diagnostics as the actionable delta, with the
+        # tsc context preserved for triage.
+        diagnostic_delta="$(tsz_only_and_tsc_context_delta "$log" "$oracle_log")"
+      fi
+      record_project_compatibility \
+        "$name" \
+        "$exit_class" \
+        "check" \
+        "$(project_failure_status "$exit_class")" \
+        "$diagnostic_delta" \
+        "$file_count" \
+        "$LAST_PEAK_RSS_BYTES" \
+        "$rc" \
+        "$tsconfig" \
+        "$src_dir" \
+        "$tsc_exit_codes"
+      if [[ "$rc" -eq 124 ]]; then
+        echo "error: ${name} ${timeout_note}" >&2
+      elif [[ "$oracle_consulted" == "1" ]]; then
+        echo "error: ${name} has ${tsz_only_count} tsz-only diagnostic(s) tsc does not report" >&2
+      else
+        echo "error: ${name} failed with exit code ${rc}" >&2
+      fi
+      sed -n '1,160p' "$log" >&2 || true
+      echo "::endgroup::"
+      if [[ "$ALLOW_FAILURES" == "1" ]]; then
+        echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+      fi
     fi
   else
     record_project_compatibility "$name" "exit success" "check" "none" "" \
