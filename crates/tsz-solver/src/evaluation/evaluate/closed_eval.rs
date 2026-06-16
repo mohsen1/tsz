@@ -13,20 +13,23 @@
 //!    active substitution environment — only on the project's single fixed
 //!    resolver (via any `Lazy`/`TypeQuery` refs). The mapping is stable per
 //!    `TypeId`.
-//!  - **Authoritative-write gate**: only the checker's authoritative,
-//!    context-free type-resolution pass (opted in via `with_closed_eval_writes`,
-//!    set by the `with_query_db` boundary) commits, and only at the top of its
-//!    own evaluation (`guard.depth() == 0`). The input gate keeps the *node*
-//!    substitution-independent, but a node's value is only resolver-stable once
-//!    the resolver can resolve every `Lazy`/`TypeQuery`/`Application` operand it
-//!    reaches; the resolver-backed evaluators that instantiation/relation spin up
-//!    run against a *partial* first-pass resolver (lib/utility bodies in the
-//!    `resolver_generation()==0` registration window are not yet materialized) and
-//!    can compute a definite-but-under-resolved head that diverges from the
-//!    resolved answer. The authoritative pass is the single context whose resolver
-//!    is complete, so it is the only writer. Reads stay open to every evaluator —
-//!    a stored value is always the fully-resolved answer — which is where the
-//!    deep-recursion win is realized.
+//!  - **Write gate** (kind-split): the meta-operation kinds
+//!    (`IndexAccess`/`KeyOf`/`Application`) commit only from the checker's
+//!    authoritative, context-free type-resolution pass (the
+//!    `with_closed_eval_writes` plus `with_query_db` boundary, a *complete*
+//!    resolver); a resolver-backed
+//!    mid-relation/inference/narrowing evaluator runs against a *partial*
+//!    resolver (lib/utility bodies in the `resolver_generation()==0` registration
+//!    window not yet materialized) and can compute a definite-but-under-resolved
+//!    meta-operation head that diverges from the resolved answer
+//!    (`partialOfLargeAPIIsAbleToBeWorkedWith`); a closed `Conditional` is exempt
+//!    and may commit from any top-level evaluation, because it has no operand
+//!    whose deferred/under-resolved expansion the meta-operation kinds key on
+//!    (its branch selection either resolves definitely or the run is already
+//!    excluded by the `unresolved_def_seen`/`tainted`/limit gates); caching the
+//!    closed conditionals the resolver-backed contexts compute and re-compute is
+//!    the deep-recursion win, and reads stay open to every evaluator since a
+//!    stored value is always a fully-resolved answer.
 //!  - **Limit gate**: a run that hit any recursion/complexity limit
 //!    (`deep_recursion_seen`, the `TS2589` depth machinery, or the `TS2590`
 //!    union-too-complex flag) caches nothing — a cached read must never
@@ -70,32 +73,14 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// top-level evaluation began; if the run newly tripped the flag, nothing is
     /// cached.
     pub(super) fn commit_closed_eval_writes(&self, union_too_complex_before: bool) {
-        // Only the checker's authoritative, context-free type-resolution pass
-        // (opted in via `with_closed_eval_writes`, which the `with_query_db`
-        // boundary sets) writes. A substitution-independent node's *final*
-        // result is a pure function of `(TypeId, no_unchecked, exact_optional)`
-        // and the project's single fixed resolver — but only once that resolver
-        // can resolve every `Lazy`/`TypeQuery`/`Application` operand the node
-        // reaches. The resolver-backed evaluators that instantiation and relation
-        // spin up run against a *partial* resolver (a first-pass `TypeEnvironment`
-        // whose lib/utility bodies — `Partial`/`Pick`/`Readonly`, the
-        // `resolver_generation()==0` registration window — are not yet
-        // materialized). They can compute a definite-but-under-resolved
-        // `IndexAccess`/`KeyOf`/`Application`/`Conditional` head whose value
-        // differs from the fully-resolved answer, and the `(TypeId, ...)` key
-        // captures neither the resolver generation nor the registration window.
-        // Persisting one would let a sibling read serve it in place of the
-        // resolved answer (`partialOfLargeAPIIsAbleToBeWorkedWith`: an
-        // under-resolved `Partial<MyAPI>[keyof MyAPI]` element type spuriously
-        // rejects a well-typed write, `TS2322`). The authoritative pass is the
-        // single context whose resolver is complete, so it is the only writer;
-        // every resolver-backed reader still benefits (a stored value is always
-        // the fully-resolved answer), which is where the deep-recursion win
-        // (`AutoPath`/`MetaPath`/`Join`, issue #13250) is realized.
-        let is_top_level = closed_eval_cache_enabled()
-            && self.closed_eval_writes_allowed
-            && self.query_db.is_some()
-            && self.guard.depth() == 0;
+        // A substitution-independent node's *final* result is a pure function of
+        // `(TypeId, no_unchecked, exact_optional)` and the project's single fixed
+        // resolver — but only once that resolver can resolve every
+        // `Lazy`/`TypeQuery`/`Application` operand the node reaches. The
+        // per-kind writer split below (see `authoritative` / `writable`) is what
+        // keeps a partial-resolver evaluator from persisting an under-resolved
+        // answer a sibling read would observe.
+        let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
             || self.recursion_limit_hit()
             || self.unresolved_def_seen()
@@ -103,6 +88,27 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         {
             return;
         }
+        // Whether this evaluator is the checker's authoritative, context-free
+        // type-resolution pass (a *complete* resolver). Only that pass may write
+        // the meta-operation kinds (`IndexAccess`/`KeyOf`/`Application`), because
+        // a resolver-backed mid-relation/inference/narrowing evaluator runs
+        // against a *partial* resolver (lib/utility bodies in the
+        // `resolver_generation()==0` registration window not yet materialized) and
+        // can compute a definite-but-under-resolved meta-operation head whose
+        // value diverges from the resolved answer — the
+        // `partialOfLargeAPIIsAbleToBeWorkedWith` `TS2322` regression (an
+        // under-resolved `Partial<MyAPI>[keyof MyAPI]` write type rejecting a
+        // well-typed assignment). A closed `Conditional` is exempt: it has no
+        // operand whose deferred/under-resolved expansion the meta-operation
+        // kinds key on — its branch selection either resolves to a definite,
+        // resolver-stable answer or the run is already excluded by the
+        // `unresolved_def_seen` / `tainted` / limit gates above (the
+        // `defer_resolver_less_application_check` and bare-`UnresolvedTypeName`
+        // deferrals both set `unresolved_def_seen`). Letting the resolver-backed
+        // contexts cache *only* the closed conditionals they compute and
+        // re-compute is the deep-recursion win (`AutoPath`/`MetaPath`/`Join`,
+        // issue #13250) without the under-resolved-meta-operation hazard.
+        let authoritative = self.closed_eval_writes_allowed && self.query_db.is_some();
         let no_unchecked = self.no_unchecked_indexed_access;
         // Collect first to avoid borrowing the per-evaluator cache while the
         // content query borrows the interner. A node whose own evaluation window
@@ -117,7 +123,26 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             .map(|(&node, &node_result)| (node, node_result))
             .collect();
         for (node, node_result) in entries {
-            if self.is_closed_cacheable_kind(node)
+            // A non-authoritative (resolver-backed) evaluator may write only a
+            // closed `Conditional` that *resolved* to a definite branch. If the
+            // result is itself a `Conditional`, branch selection was deferred —
+            // the `check`/`extends`-is-`Lazy`/`Application` deferral
+            // (`evaluate_conditional`) that does *not* set `unresolved_def_seen`,
+            // a resolver-state hazard the `(TypeId, …)` key does not capture — so
+            // it must not persist (a later complete-resolver pass resolves the
+            // same `TypeId` to a real branch). The authoritative pass has a
+            // complete resolver, so its conditional results are always resolved.
+            let writable = if authoritative {
+                true
+            } else {
+                matches!(self.interner.lookup(node), Some(TypeData::Conditional(_)))
+                    && !matches!(
+                        self.interner.lookup(node_result),
+                        Some(TypeData::Conditional(_))
+                    )
+            };
+            if writable
+                && self.is_closed_cacheable_kind(node)
                 && !crate::type_queries::is_substitution_dependent_type(self.interner, node)
                 && !self.has_unresolvable_type_query_operand(node)
             {
