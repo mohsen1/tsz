@@ -75,13 +75,18 @@ impl<'a> CheckerState<'a> {
         // (e.g., Array → ReadonlyArray → Iterable → ...), especially when child
         // CheckerStates are created for cross-arena type param resolution.
         //
-        // The same heritage-thin reasoning applies: the re-entrant call returns
-        // before merging heritage, so mark it incomplete so the thin body is not
-        // cached. The outer (non-re-entrant) resolution of this same name completes
-        // the merge and produces the cacheable body.
+        // Unlike the depth guard above, this bail must report `incomplete = false`:
+        // re-entry for the SAME name means an OUTER resolution of that exact name is
+        // already on the stack and WILL complete the heritage merge and cache the
+        // full body. The name guard is precisely the designed terminal that lets the
+        // outer call finish; its inner partial is meant to be discarded by the outer,
+        // not promoted to a global `Incomplete` mark — doing so removes the outer's
+        // in-progress cache entry and drops inherited members for self-referential
+        // lib interfaces (e.g. the DOM heritage graph; regresses the
+        // declarationFileForHtml* conformance rows).
         if !self.ctx.lib_heritage_in_progress.insert(name.to_string()) {
             self.ctx.leave_recursion();
-            return (derived_type, true);
+            return (derived_type, false);
         }
 
         let lib_contexts = self.ctx.lib_contexts.clone();
