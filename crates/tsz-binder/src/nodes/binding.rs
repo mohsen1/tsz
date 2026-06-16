@@ -68,6 +68,19 @@ impl BinderState {
             return None;
         }
 
+        // A module-local namespace (`namespace X { ... }`) is a file-scope
+        // type-and-namespace binding that shadows the same-named global lib
+        // symbol entirely in both meanings — re-attaching the lib's interface
+        // declaration would leak the global type into the shadow and (because
+        // the shadow keeps the lib symbol id off the export surface) is also
+        // never needed. Preserve nothing for namespaces, matching tsc's
+        // file-scope-before-global resolution. Note: uninstantiated namespaces
+        // carry only `NAMESPACE_MODULE`, which is not part of `VALUE`, so the
+        // `local_has_value` check below does not cover them.
+        if (local_flags & symbol_flags::MODULE) != 0 {
+            return None;
+        }
+
         let local_has_value = (local_flags & symbol_flags::VALUE) != 0;
         let local_has_type = (local_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
 
@@ -1471,6 +1484,11 @@ impl BinderState {
                     // ALIAS (import declarations) must shadow to prevent cross-file contamination:
                     // without this, `import self = require(...)` in two separate modules would
                     // both merge into the global lib `self` symbol, causing false TS2300 duplicates.
+                    // MODULE (namespace) declarations likewise shadow: a module-local
+                    // `namespace Iterator { ... }` is a file-scope type-namespace, not an
+                    // augmentation of the global lib `Iterator` interface, so it must be
+                    // exported under that name (otherwise `populate_module_exports_from_file_symbols`
+                    // drops the lib-id-merged symbol and named imports surface a false TS2305).
                     //
                     // EXCEPTION: When inside `declare global { ... }`, interfaces and other
                     // declarations should MERGE with lib symbols, not shadow. The `declare global`
@@ -1481,6 +1499,7 @@ impl BinderState {
                             | symbol_flags::INTERFACE
                             | symbol_flags::TYPE_ALIAS
                             | symbol_flags::ALIAS
+                            | symbol_flags::MODULE
                             | symbol_flags::BLOCK_SCOPED_VARIABLE))
                         != 0
                 } else {
