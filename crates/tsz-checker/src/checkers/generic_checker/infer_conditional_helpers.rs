@@ -21,10 +21,28 @@ impl<'a> CheckerState<'a> {
         for (param, &arg) in type_params.iter().zip(type_args.iter()) {
             subst.insert(param.name, arg);
         }
+        self.instantiate_constraint_with_subst(constraint, &subst)
+    }
+
+    /// Instantiate a parameter `constraint` with a pre-built
+    /// `{type-param-name -> type-arg}` substitution.
+    ///
+    /// This is the substitution-reuse form of
+    /// [`Self::instantiate_constraint_with_type_args`]: the caller builds the
+    /// name/arg map once per type-reference occurrence and reuses it across the
+    /// per-parameter constraint-validation loop, instead of rebuilding the full
+    /// O(D) map on every parameter (which is O(D^2) per occurrence for a
+    /// depth-D bounded-parameter chain). The mapping and instantiation are
+    /// identical to the per-call form, so the result is unchanged.
+    pub(super) fn instantiate_constraint_with_subst(
+        &mut self,
+        constraint: TypeId,
+        subst: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> TypeId {
         if subst.is_empty() {
             constraint
         } else {
-            crate::query_boundaries::common::instantiate_type(self.ctx.types, constraint, &subst)
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, constraint, subst)
         }
     }
 
