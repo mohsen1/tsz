@@ -203,32 +203,15 @@ impl<'a> TypeFormatter<'a> {
                     return Cow::Borrowed("error");
                 }
 
-                if let Some(evaluated) =
-                    self.scalar_mapped_alias_application_display(type_id, app.base, &app.args)
-                {
-                    return self.format(evaluated);
-                }
-
-                if let Some(distributed) =
-                    self.distributed_conditional_application_display(app.base, &app.args)
-                {
-                    return self.format(distributed);
-                }
-
-                // A non-distributive conditional-bodied alias application that
-                // resolves renders its resolved type structurally, not
-                // `Name<Args>` (issue #10914).
-                if let Some(evaluated) = self.reducing_conditional_application_display(type_id) {
-                    return self.format(evaluated);
-                }
-
-                // A variadic (spread) tuple alias instantiated with concrete
-                // arguments loses its alias symbol in tsc (spreading produces a
-                // fresh tuple), so render the flattened tuple form.
-                if let Some(flattened) =
-                    self.variadic_tuple_alias_application_display(app.base, &app.args)
-                {
-                    return self.format(flattened);
+                // A generic `Application` may lose its alias symbol and render
+                // structurally through one of four reduction strategies. Each
+                // strategy runs `instantiate_generic` + `evaluate_type` over the
+                // alias body, and the formatter re-reaches the same shared
+                // `Application` node across the receiver-type DAG, so the cascade
+                // is memoized per `Application` `TypeId` to avoid super-linear
+                // re-evaluation on deeply nested generics (#13480).
+                if let Some(reduced) = self.application_display_reduction(type_id, &app) {
+                    return self.format(reduced);
                 }
 
                 // Special handling for Application(Lazy(def_id), args)
