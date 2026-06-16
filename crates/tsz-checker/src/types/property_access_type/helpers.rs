@@ -966,7 +966,9 @@ impl<'a> CheckerState<'a> {
             self.resolve_property_access_with_env(resolved_read, property_name),
             PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
         );
-        if read_has_property {
+        if read_has_property
+            && self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx)
+        {
             // The receiver sub-expression of a write target is not itself the
             // write target, so it narrows exactly like a read: tsc reads the
             // flow-narrowed receiver type and only the final write target keeps
@@ -978,7 +980,20 @@ impl<'a> CheckerState<'a> {
             // dotted/element receivers (`o.c`, `this._c`, `arr[0]`) that
             // otherwise kept their nullable declared type and reported a
             // spurious possibly-null error inside `if (o.c) { o.c.next = ... }`.
+            //
+            // Gate on `write_receiver_can_flow_narrow`: only references that can
+            // flow-narrow (Identifier / property / element access) should adopt
+            // the read-narrowed receiver. A `this` receiver in a JS
+            // `this`-property class does NOT flow-narrow as a write base — its
+            // write-context type keeps the union of every `this.x = ...` site,
+            // whereas its read/flow type collapses to the most recent assignment.
+            // Using that collapsed read type for a later `this.x = <other type>`
+            // write resolves `x` to the narrowed member and spuriously rejects
+            // the assignment (TS2322 on `thisPropertyAssignmentCircular`), so
+            // non-narrowable receivers keep the unnarrowed `object_type_no_flow`.
             (read_object_type, false)
+        } else if read_has_property {
+            (object_type_no_flow, false)
         } else if self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
             (read_object_type, true)
         } else {
