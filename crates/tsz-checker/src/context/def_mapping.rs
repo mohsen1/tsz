@@ -16,6 +16,24 @@ use crate::context::CheckerContext;
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
 use crate::query_boundaries::common::TypeEnvironment;
 
+/// Whether to eagerly bulk-copy every cross-file symbol of the whole program
+/// into each per-file checker's local `symbol_to_def` / `def_to_symbol` maps.
+///
+/// Default is `false`: local caches populate lazily on demand (every reader has
+/// an authoritative O(1) fallback into the shared `DefinitionStore`), so the
+/// per-file cost stays independent of total program size. Setting
+/// `TSZ_EAGER_WARM_LOCAL_CACHES=1` restores the legacy eager copy as a rollback
+/// escape hatch. The value is read once and cached.
+fn eager_warm_local_caches() -> bool {
+    use std::sync::OnceLock;
+    static EAGER: OnceLock<bool> = OnceLock::new();
+    *EAGER.get_or_init(|| {
+        std::env::var("TSZ_EAGER_WARM_LOCAL_CACHES")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerContext<'a> {
     /// Get or create a `DefId` for a symbol.
     ///
@@ -1779,6 +1797,30 @@ impl<'a> CheckerContext<'a> {
         }
 
         if self.definition_store.is_empty() {
+            return 0;
+        }
+
+        // Lazy-warm (default): the eager bulk copy below installs every
+        // *cross-file* symbol of the whole program into this single file's
+        // local `symbol_to_def` / `def_to_symbol` maps. The snapshot it reads
+        // (`all_symbol_mappings_snapshot`) holds one entry per program symbol,
+        // so the loop is O(program-symbols) per file and copies
+        // O(program-symbols) entries into every per-file checker — an
+        // O(files × program-symbols) time-and-memory term that rises with
+        // total program size (the scale cliff).
+        //
+        // Every consumer of these local maps already has an authoritative
+        // O(1) fallback into the shared store on a cache miss: cross-file
+        // `SymbolId → DefId` resolves through `get_or_create_def_id` /
+        // `symbol_to_def_id` (`DefinitionStore::lookup_by_symbol`), and the
+        // reverse `DefId → SymbolId` resolves through `def_to_symbol_id`
+        // (`DefinitionStore::get_symbol_id`). Skipping the eager copy makes
+        // each file populate only the cross-file symbols it actually
+        // references, on demand, restoring per-file cost that is independent
+        // of total program size. Set `TSZ_EAGER_WARM_LOCAL_CACHES=1` to
+        // restore the legacy eager bulk copy (rollback escape hatch).
+        if !eager_warm_local_caches() {
+            self.local_caches_warmed.set(true);
             return 0;
         }
 
