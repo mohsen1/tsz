@@ -551,22 +551,14 @@ jobs:
     if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CARGO_SHEAR_VERSION: "1.12.0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Install cargo-shear
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v cargo-shear >/dev/null 2>&1 \
-             && cargo install --list | grep -q "^cargo-shear v${CARGO_SHEAR_VERSION}:"; then
-            echo "cargo-shear ${CARGO_SHEAR_VERSION} already installed"
-            exit 0
-          fi
-          cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
+        uses: taiki-e/install-action@v2 # TODO(#13752): SHA-pin this action
+        with:
+          tool: cargo-shear@1.12.0
       - name: Run cargo shear
         shell: bash
         run: |
@@ -592,22 +584,14 @@ jobs:
     if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CARGO_DENY_VERSION: "0.19.6"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Install cargo-deny
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v cargo-deny >/dev/null 2>&1 \
-             && cargo install --list | grep -q "^cargo-deny v${CARGO_DENY_VERSION}:"; then
-            echo "cargo-deny ${CARGO_DENY_VERSION} already installed"
-            exit 0
-          fi
-          cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked
+        uses: taiki-e/install-action@v2 # TODO(#13752): SHA-pin this action
+        with:
+          tool: cargo-deny@0.19.6
       - name: Run cargo deny
         run: cargo deny check
 
