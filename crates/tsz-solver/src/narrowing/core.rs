@@ -1271,6 +1271,26 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// Narrow a type to its nullish facet for the true branch of a loose
+    /// `x == null` / `x != null` comparison, which matches both `null` and
+    /// `undefined`.
+    ///
+    /// This is the exact dual of [`Self::narrow_excluding_type`] used in the
+    /// inequality (false) branch: where exclusion drops the `null`/`undefined`
+    /// members, this keeps only them. As with that branch, `any` is preserved
+    /// unchanged — tsc's `narrowTypeByEquality` returns the type as-is when it
+    /// is `any`, so the nullish branch must not collapse `any` to
+    /// `null | undefined`. Every other source keeps only its `null`/`undefined`
+    /// members, so a non-nullable source narrows to `never` (the true branch is
+    /// unreachable) while e.g. `string | null` narrows to `null`.
+    pub(crate) fn narrow_to_nullish(&self, source_type: TypeId) -> TypeId {
+        if self.resolve_type(source_type) == TypeId::ANY {
+            return source_type;
+        }
+        let nullish = self.db.union2(TypeId::NULL, TypeId::UNDEFINED);
+        self.narrow_to_type(source_type, nullish)
+    }
+
     /// Check if a literal type is assignable to a target for narrowing purposes.
     ///
     /// Handles union decomposition: if the target is a union, checks each member.
@@ -1730,8 +1750,10 @@ impl<'a> NarrowingContext<'a> {
 
             TypeGuard::NullishEquality => {
                 if sense {
-                    // Equality with null: narrow to null | undefined
-                    self.db.union2(TypeId::NULL, TypeId::UNDEFINED)
+                    // Equality `x == null` (true branch): keep only the nullish
+                    // facet of the source. `any` is preserved (not collapsed to
+                    // `null | undefined`); see `narrow_to_nullish`.
+                    self.narrow_to_nullish(source_type)
                 } else {
                     // Inequality: exclude null and undefined — resolve Lazy types first
                     let resolved = self.resolve_for_exclusion_narrowing(source_type);

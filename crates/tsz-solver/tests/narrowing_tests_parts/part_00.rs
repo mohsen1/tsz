@@ -1391,7 +1391,47 @@ fn test_type_guard_nullish_equality() {
     let guard = TypeGuard::NullishEquality;
     let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
-    // Should narrow to null | undefined
+    // Keeps only the nullish facet. The source carries `null` but not
+    // `undefined`, so the true branch narrows to `null` (matching tsc's
+    // `getTypeWithFacts(string | null, EQUndefinedOrNull)`), not the wider
+    // `null | undefined`.
+    assert_eq!(narrowed, TypeId::NULL);
+}
+
+#[test]
+fn test_type_guard_nullish_equality_preserves_any() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // x == null where x: any — tsc's narrowTypeByEquality returns the type
+    // unchanged for `any`, so the true branch must stay `any` rather than
+    // collapsing to `null | undefined`.
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(TypeId::ANY, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, TypeId::ANY);
+}
+
+#[test]
+fn test_type_guard_nullish_equality_non_nullable_is_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // x == null where x: string — the value can never be nullish, so the true
+    // branch is unreachable and narrows to `never`.
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(TypeId::STRING, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_type_guard_nullish_equality_keeps_both_nullish_members() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null | undefined — both nullish members survive.
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     let nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
     assert_eq!(narrowed, nullish);
 }
