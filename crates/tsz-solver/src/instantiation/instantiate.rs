@@ -642,7 +642,11 @@ impl<'a> TypeInstantiator<'a> {
                 }
             }
 
-            // Intrinsics don't change
+            // Intrinsics don't change. `type_id` is the canonical id for each
+            // of these keys (none are `intern_fresh`), so re-interning `*key`
+            // would recompute the same id; reuse it directly. These kinds are
+            // also instantiation leaves, so this arm is normally reached only on
+            // a direct `instantiate_key` call.
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::UnresolvedTypeName(_)
@@ -653,7 +657,7 @@ impl<'a> TypeInstantiator<'a> {
             | TypeData::BoundParameter(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => self.interner.intern(*key),
+            | TypeData::ModuleNamespace(_) => type_id,
 
             // Enum types: instantiate the member type (structural part)
             // The DefId (nominal identity) stays the same
@@ -668,7 +672,7 @@ impl<'a> TypeInstantiator<'a> {
                 let base = self.instantiate(app.base);
                 let args = self.instantiate_type_list_if_changed(&app.args);
                 if base == app.base && args.is_none() {
-                    self.interner.intern(*key)
+                    type_id
                 } else {
                     self.interner
                         .application(base, args.unwrap_or_else(|| app.args.clone()))
@@ -680,7 +684,7 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(this_type) = self.this_type {
                     this_type
                 } else {
-                    self.interner.intern(*key)
+                    type_id
                 }
             }
 
@@ -696,7 +700,7 @@ impl<'a> TypeInstantiator<'a> {
                     self.interner.store_union_origin(result, instantiated);
                     result
                 } else {
-                    self.interner.intern(*key)
+                    type_id
                 }
             }
 
@@ -710,14 +714,19 @@ impl<'a> TypeInstantiator<'a> {
                     self.propagate_display_properties_for_intersection(members.as_ref(), result);
                     result
                 } else {
-                    self.interner.intern(*key)
+                    type_id
                 }
             }
 
-            // Array: instantiate element type
+            // Array: instantiate element type. When the element is unchanged the
+            // re-interned array is the same canonical id we already hold.
             TypeData::Array(elem) => {
                 let instantiated_elem = self.instantiate(*elem);
-                self.interner.array(instantiated_elem)
+                if instantiated_elem == *elem {
+                    type_id
+                } else {
+                    self.interner.array(instantiated_elem)
+                }
             }
 
             TypeData::Tuple(elements) => {
@@ -796,7 +805,7 @@ impl<'a> TypeInstantiator<'a> {
                     }
                 }
                 if !changed {
-                    return self.interner.intern(*key);
+                    return type_id;
                 }
                 crate::intern::tuple_normalized(self.interner, instantiated)
             }
@@ -811,7 +820,11 @@ impl<'a> TypeInstantiator<'a> {
                 // of an intersection. Anonymous Object literals (no symbol)
                 // share the outer `this` scope.
                 if self.shallow_this_only && shape.symbol.is_some() {
-                    return self.interner.intern(*key);
+                    // `type_id` is the canonical id for this Object key (Object
+                    // shapes are never `intern_fresh`), so re-interning `*key`
+                    // would recompute the same id. Reuse it directly to avoid a
+                    // redundant hash + intern-cache probe on the hot path.
+                    return type_id;
                 }
                 if let Some(instantiated) =
                     self.instantiate_properties_if_changed(&shape.properties)
@@ -821,12 +834,14 @@ impl<'a> TypeInstantiator<'a> {
                         shape.flags,
                         shape.symbol,
                     );
-                    let original = self.interner.intern(*key);
-                    self.propagate_instantiated_display_properties(original, result);
-                    self.propagate_instantiated_application_origin(original, result);
+                    // `type_id` already names the original (pre-substitution)
+                    // Object; no need to re-intern `*key` to recover it before
+                    // propagating display/application provenance.
+                    self.propagate_instantiated_display_properties(type_id, result);
+                    self.propagate_instantiated_application_origin(type_id, result);
                     result
                 } else {
-                    self.interner.intern(*key)
+                    type_id
                 }
             }
 
@@ -834,7 +849,7 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 if self.shallow_this_only && shape.symbol.is_some() {
-                    return self.interner.intern(*key);
+                    return type_id;
                 }
                 let instantiated_props =
                     self.instantiate_properties_if_changed(&shape.properties);
@@ -857,21 +872,20 @@ impl<'a> TypeInstantiator<'a> {
                         number_index: instantiated_number_idx.or(shape.number_index),
                         symbol: shape.symbol,
                     });
-                    let original = self.interner.intern(*key);
-                    self.propagate_instantiated_display_properties(original, result);
-                    self.propagate_instantiated_application_origin(original, result);
+                    self.propagate_instantiated_display_properties(type_id, result);
+                    self.propagate_instantiated_application_origin(type_id, result);
                     result
                 } else {
-                    self.interner.intern(*key)
+                    type_id
                 }
             }
 
             // Function: instantiate params and return type
             // Note: Type params in the function create a new scope - don't substitute those
-            TypeData::Function(shape_id) => self.instantiate_function(shape_id, key),
+            TypeData::Function(shape_id) => self.instantiate_function(shape_id, type_id),
 
             // Callable: instantiate all signatures and properties
-            TypeData::Callable(shape_id) => self.instantiate_callable(shape_id, key),
+            TypeData::Callable(shape_id) => self.instantiate_callable(shape_id, type_id),
 
             // Conditional: instantiate all parts
             TypeData::Conditional(cond_id) => self.instantiate_conditional(type_id, cond_id),
@@ -891,7 +905,7 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::ReadonlyType(operand) => {
                 let inst_operand = self.instantiate(*operand);
                 if inst_operand == *operand {
-                    self.interner.intern(*key)
+                    type_id
                 } else {
                     self.interner.readonly_type(inst_operand)
                 }
@@ -901,7 +915,7 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::NoInfer(inner) => {
                 let inst_inner = self.instantiate(*inner);
                 if inst_inner == *inner {
-                    self.interner.intern(*key)
+                    type_id
                 } else {
                     self.interner.no_infer(inst_inner)
                 }
@@ -939,7 +953,7 @@ impl<'a> TypeInstantiator<'a> {
                         });
                     }
                 }
-                self.interner.intern(*key)
+                type_id
             }
         }
     }
