@@ -127,14 +127,16 @@ fn unguarded_read_in_call_dense_scope_still_reports_possibly_undefined() {
 fn flow_traversal_threads_call_divert_memo() {
     // Structural guard: the chase and defer classifier share a per-walk memo so
     // the CALL narrow/divert classification is extracted at most once per node.
-    let core = include_str!("../src/flow/control_flow/core.rs");
+    // The memo type and its cached classifier live in the dedicated
+    // `defer_classification` submodule of `control_flow::core`.
+    let defer = include_str!("../src/flow/control_flow/core/defer_classification.rs");
     assert!(
-        core.contains("fn call_node_may_narrow_or_divert_cached("),
-        "core should expose a memoized CALL narrow/divert classifier",
+        defer.contains("fn call_node_may_narrow_or_divert_cached("),
+        "defer_classification should expose a memoized CALL narrow/divert classifier",
     );
     assert!(
-        core.contains("struct FlowDeferMemos"),
-        "core should bundle the per-walk defer / call-divert classification memos",
+        defer.contains("struct FlowDeferMemos"),
+        "defer_classification should bundle the per-walk defer / call-divert classification memos",
     );
     let traversal = include_str!("../src/flow/control_flow/core/flow_traversal.rs");
     assert!(
