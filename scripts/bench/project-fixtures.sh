@@ -860,11 +860,16 @@ tsz_write_type_graphql_config() {
   # type-graphql uses `@/` path aliases (baseUrl-relative imports) and depends
   # on graphql, reflect-metadata, and other external packages. Provide path
   # mapping plus module stubs so tsc resolves without installing the full
-  # dependency graph.
+  # dependency graph. `useDefineForClassFields` is pinned false to match the
+  # upstream tsconfig's effective behavior (it targets es2021, where the flag
+  # defaults false); the shared baseline targets es2022 where it would default
+  # true, which would otherwise make the project's `override readonly
+  # extensions!` GraphQLError subclasses spuriously trip TS2612.
   tsz_write_type_graphql_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "baseUrl": ".",
     "ignoreDeprecations": "6.0",
+    "useDefineForClassFields": false,
     "paths": {
       "@/*": ["src/*"],
       "*": ["tsz-bench-external-module.d.ts"]

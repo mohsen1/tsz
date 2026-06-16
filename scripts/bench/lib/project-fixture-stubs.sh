@@ -840,6 +840,43 @@ TYPES
 }
 
 tsz_write_type_graphql_external_stubs() {
+  # type-graphql's `src/` imports a handful of third-party packages -- graphql
+  # (its core dependency), graphql-scalars, class-validator, type-fest,
+  # graphql-query-complexity, @graphql-yoga/subscription, semver -- plus node
+  # builtins (node:path/node:fs/node:fs/promises) and the `process`/`Buffer`
+  # globals and the `NodeJS` namespace. The fixture clone runs no npm install and
+  # the bench baseline pins `"types": []`, so without stubs tsc emits spurious
+  # TS2305/TS2724 ("module has no exported member") for every named import,
+  # TS2591/TS2580 for `process`, plus a large downstream cascade
+  # (TS7006/TS4113/TS2339/TS2347/TS7031) where the unresolved imports leave
+  # callbacks/aliases untyped. Once these external symbols resolve to `any`, the
+  # cascade collapses and type-graphql's OWN `@/`-aliased + relative `src/`
+  # source stays real-checked (those imports resolve through the filesystem /
+  # `paths "@/*": ["src/*"]`, never through these ambient stubs).
+  #
+  # An explicit `declare module 'graphql'` is required (not the catch-all
+  # `paths "*"` any-module) because graphql is imported with *named* members
+  # (`import { Kind, GraphQLError, ... } from "graphql"`); a catch-all
+  # `export = any` module cannot satisfy named imports, so each referenced
+  # member is enumerated below.
+  #
+  # Most members are `any`, but a few must carry the *shape* type-graphql's own
+  # source relies on so that real own-source checking is preserved (a bare `any`
+  # would leave the project's callbacks/aliases untyped and resurface the same
+  # cascade tsc never emits against the real graphql types):
+  #   * GraphQLError is a `class` (with a base `extensions` slot) so the
+  #     project's `class AuthorizationError extends GraphQLError { override ...
+  #     extensions ... }` subclasses type-check (else TS4113).
+  #   * GraphQL{Field,Type}Resolver / GraphQLIsTypeOfFn are callable function
+  #     types so arrow callbacks assigned to them (`(root, args, context, info)
+  #     => ...`, `instance => ...`) get contextual parameter types (else
+  #     TS7006/TS7019).
+  #   * GraphQL{Object,Interface,Input,Union,Enum,Scalar}Type are `class`es
+  #     whose constructor configs type `resolveType`/`isTypeOf` and whose
+  #     `getFields()`/`getValues()` return typed records, so `instanceof`
+  #     narrowing + `.reduce<T>(...)` over them stay typed (else TS2347/TS7031).
+  # Everything else stays `any`; the project's own resolver/decorator/metadata
+  # logic is still checked against itself.
   local output="$1"
   local fixture_dir
   fixture_dir="$(dirname "$output")"
@@ -851,121 +888,226 @@ TYPES
 
   cat > "$fixture_dir/tsz-bench-external-named-modules.d.ts" <<'TYPES'
 declare module 'graphql' {
-  export const GraphQLSchema: any;
-  export type GraphQLSchema = any;
-  export const GraphQLObjectType: any;
-  export type GraphQLObjectType = any;
-  export const GraphQLInputObjectType: any;
-  export type GraphQLInputObjectType = any;
-  export const GraphQLInterfaceType: any;
-  export type GraphQLInterfaceType = any;
-  export const GraphQLUnionType: any;
-  export type GraphQLUnionType = any;
-  export const GraphQLEnumType: any;
-  export type GraphQLEnumType = any;
-  export const GraphQLScalarType: any;
-  export type GraphQLScalarType = any;
-  export const GraphQLField: any;
-  export type GraphQLField<T = any, U = any, V = any> = any;
-  export const GraphQLFieldConfig: any;
-  export type GraphQLFieldConfig<T = any, U = any, V = any> = any;
-  export const GraphQLFieldConfigMap: any;
-  export type GraphQLFieldConfigMap<T = any, U = any> = any;
-  export const GraphQLInputFieldConfig: any;
-  export type GraphQLInputFieldConfig = any;
-  export const GraphQLInputFieldConfigMap: any;
-  export type GraphQLInputFieldConfigMap = any;
-  export const GraphQLArgument: any;
-  export type GraphQLArgument = any;
-  export const GraphQLArgumentConfig: any;
-  export type GraphQLArgumentConfig = any;
-  export const GraphQLEnumValueConfigMap: any;
-  export type GraphQLEnumValueConfigMap = any;
-  export const GraphQLIsTypeOfFn: any;
-  export type GraphQLIsTypeOfFn<T = any, U = any> = any;
-  export const GraphQLResolveInfo: any;
+  export const version: any;
+
+  // Resolver function types: callable so project arrow callbacks assigned to
+  // them receive contextual `(source, args, context, info)` / `(instance)`
+  // parameter types instead of tripping noImplicitAny.
+  export type GraphQLFieldResolver<TSource = any, TContext = any, TArgs = any, TResult = any> =
+    (source: TSource, args: TArgs, context: TContext, info: GraphQLResolveInfo) => TResult;
+  export type GraphQLTypeResolver<TSource = any, TContext = any> =
+    (value: TSource, context: TContext, info: GraphQLResolveInfo, abstractType: any) => any;
+  export type GraphQLIsTypeOfFn<TSource = any, TContext = any> =
+    (source: TSource, context: TContext, info: GraphQLResolveInfo) => any;
+
   export type GraphQLResolveInfo = any;
+  export type GraphQLFieldConfigArgumentMap = { [argName: string]: any };
+  export type GraphQLFieldConfigMap<TSource = any, TContext = any> = { [fieldName: string]: any };
+  export type GraphQLInputFieldConfigMap = { [fieldName: string]: any };
+  export type GraphQLEnumValueConfigMap = { [enumValue: string]: any };
+
+  // A graphql field carries a typed `args` array and a `type`; the project reads
+  // `superField.args.reduce<...>(...)` and `superField.type`, so the field map
+  // values must expose them as typed members rather than `any`.
+  interface GraphQLField {
+    type: any;
+    args: ReadonlyArray<{ name: string; [key: string]: any }>;
+    astNode?: any;
+    description?: any;
+    [key: string]: any;
+  }
+  interface GraphQLInputField {
+    type: any;
+    astNode?: any;
+    description?: any;
+    defaultValue?: any;
+    [key: string]: any;
+  }
+  export type GraphQLFieldMap<TSource = any, TContext = any> = { [fieldName: string]: GraphQLField };
+
+  // Constructor configs type the `resolveType`/`isTypeOf` callbacks so the
+  // project's inline arrows passed to `new GraphQLUnionType({ resolveType })`
+  // etc. are contextually typed.
+  interface GraphQLObjectTypeConfig {
+    name: string;
+    isTypeOf?: GraphQLIsTypeOfFn;
+    [key: string]: any;
+  }
+  interface GraphQLUnionTypeConfig {
+    name: string;
+    resolveType?: GraphQLTypeResolver;
+    [key: string]: any;
+  }
+  interface GraphQLInterfaceTypeConfig {
+    name: string;
+    resolveType?: GraphQLTypeResolver;
+    [key: string]: any;
+  }
+
+  // Named type classes: `class` so `instanceof`-narrowing yields a typed value
+  // whose `getFields()`/`getValues()`/`getInterfaces()` return typed records.
+  export class GraphQLObjectType {
+    constructor(config: GraphQLObjectTypeConfig);
+    getFields(): GraphQLFieldMap;
+    getInterfaces(): ReadonlyArray<GraphQLInterfaceType>;
+    [key: string]: any;
+  }
+  export class GraphQLInterfaceType {
+    constructor(config: GraphQLInterfaceTypeConfig);
+    getFields(): GraphQLFieldMap;
+    [key: string]: any;
+  }
+  export class GraphQLInputObjectType {
+    constructor(config: { name: string; [key: string]: any });
+    getFields(): { [fieldName: string]: GraphQLInputField };
+    [key: string]: any;
+  }
+  export class GraphQLUnionType {
+    constructor(config: GraphQLUnionTypeConfig);
+    getTypes(): ReadonlyArray<GraphQLObjectType>;
+    [key: string]: any;
+  }
+  export class GraphQLEnumType {
+    constructor(config: { name: string; [key: string]: any });
+    getValues(): ReadonlyArray<{ name: string; value: any; [key: string]: any }>;
+    [key: string]: any;
+  }
+  export class GraphQLScalarType {
+    constructor(config: { name: string; [key: string]: any });
+    [key: string]: any;
+  }
+  export class GraphQLSchema {
+    constructor(config: { [key: string]: any });
+    [key: string]: any;
+  }
+  export class GraphQLList<T = any> {
+    constructor(ofType: T);
+    [key: string]: any;
+  }
+  export class GraphQLNonNull<T = any> {
+    constructor(ofType: T);
+    [key: string]: any;
+  }
+
+  // GraphQLError is `extends`ed by the project's error classes, whose
+  // `override readonly extensions` must shadow a base member.
+  export class GraphQLError extends Error {
+    constructor(message?: string, options?: any);
+    readonly extensions: { [key: string]: any };
+    [key: string]: any;
+  }
+
+  export const GraphQLDirective: any;
+  export type GraphQLDirective = any;
+  export const GraphQLAbstractType: any;
+  export type GraphQLAbstractType = any;
   export const GraphQLOutputType: any;
   export type GraphQLOutputType = any;
   export const GraphQLInputType: any;
   export type GraphQLInputType = any;
   export const GraphQLNamedType: any;
   export type GraphQLNamedType = any;
-  export const GraphQLNonNull: any;
-  export type GraphQLNonNull<T = any> = any;
-  export const GraphQLList: any;
-  export type GraphQLList<T = any> = any;
-  export const GraphQLNullableType: any;
-  export type GraphQLNullableType = any;
   export const GraphQLType: any;
   export type GraphQLType = any;
-  export const GraphQLTypeResolver: any;
-  export type GraphQLTypeResolver<T = any, U = any> = any;
-  export const GraphQLFieldResolver: any;
-  export type GraphQLFieldResolver<T = any, U = any, V = any, W = any> = any;
   export const GraphQLString: any;
   export const GraphQLInt: any;
   export const GraphQLFloat: any;
   export const GraphQLBoolean: any;
   export const GraphQLID: any;
-  export const execute: any;
+  export const Kind: any;
+  export type Kind = any;
   export const parse: any;
-  export const buildSchema: any;
+  export const parseConstValue: any;
+  export const graphqlSync: any;
   export const printSchema: any;
+  export const lexicographicSortSchema: any;
   export const getIntrospectionQuery: any;
-  export const introspectionFromSchema: any;
-  export const IntrospectionQuery: any;
-  export type IntrospectionQuery = any;
-  export const Source: any;
-  export type Source = any;
   export const DocumentNode: any;
   export type DocumentNode = any;
-  export const GraphQLFormattedError: any;
-  export type GraphQLFormattedError = any;
-  export const GraphQLError: any;
-  export type GraphQLError = any;
+  export const ConstArgumentNode: any;
+  export type ConstArgumentNode = any;
+  export const ConstDirectiveNode: any;
+  export type ConstDirectiveNode = any;
+  export const FieldDefinitionNode: any;
+  export type FieldDefinitionNode = any;
+  export const InputValueDefinitionNode: any;
+  export type InputValueDefinitionNode = any;
+  export const ObjectTypeDefinitionNode: any;
+  export type ObjectTypeDefinitionNode = any;
+  export const InputObjectTypeDefinitionNode: any;
+  export type InputObjectTypeDefinitionNode = any;
+  export const InterfaceTypeDefinitionNode: any;
+  export type InterfaceTypeDefinitionNode = any;
 }
 
-declare module 'graphql/type' {
-  export const GraphQLObjectType: any;
-  export type GraphQLObjectType = any;
-  export const GraphQLInputObjectType: any;
-  export type GraphQLInputObjectType = any;
-  export const GraphQLInterfaceType: any;
-  export type GraphQLInterfaceType = any;
-  export const GraphQLUnionType: any;
-  export type GraphQLUnionType = any;
+declare module 'graphql-scalars' {
+  export const GraphQLTimestamp: any;
+  export const GraphQLDateTimeISO: any;
 }
 
-declare module 'graphql/language' {
-  export const DirectiveLocation: any;
-  export type DirectiveLocation = any;
+declare module 'graphql-query-complexity' {
+  export const ComplexityEstimator: any;
+  export type ComplexityEstimator<T = any, U = any, V = any, W = any> = any;
+}
+
+declare module '@graphql-yoga/subscription' {
+  // `Repeater` is used as a value (`Repeater.merge([...])`) and a type.
+  export const Repeater: { merge(...args: any[]): any; [key: string]: any };
+  export type Repeater<T = any, U = any, V = any, W = any> = any;
+  // `filter(payload => ...)` is a curried operator; the callback param must be
+  // typed so the project's inline predicate is not implicit-any.
+  export function filter<T = any>(filterFn: (value: T) => any): (source: any) => any;
+  export const pipe: (...args: any[]) => any;
+}
+
+declare module 'class-validator' {
+  // `validateOrReject` is pulled via `const { validateOrReject } = await
+  // import("class-validator")`, so it must be a named export here too.
+  export const validate: any;
+  export const validateOrReject: any;
+  export const ValidationError: any;
+  export type ValidationError = any;
+  export const ValidatorOptions: any;
+  export type ValidatorOptions = any;
+}
+
+declare module 'type-fest' {
+  export type Except<T = any, U = any, V = any, W = any> = any;
+  export type IsEqual<T = any, U = any, V = any, W = any> = any;
+  export type MergeExclusive<T = any, U = any, V = any, W = any> = any;
+  export type SetRequired<T = any, U = any, V = any, W = any> = any;
+  export type Simplify<T = any, U = any, V = any, W = any> = any;
+}
+
+declare module 'semver' {
+  // Default-imported (`import semVer from "semver"`) and used as `semVer.satisfies`.
+  const semVer: any;
+  export default semVer;
 }
 
 declare module 'reflect-metadata' {}
-
-declare module 'semver' {
-  export const gte: any;
-  export type gte = any;
-}
 
 declare module 'glob' {
   export const sync: any;
   export type sync = any;
 }
 
-declare module 'class-validator' {
-  export const ValidatorOptions: any;
-  export type ValidatorOptions = any;
-  export const validate: any;
-  export type validate = any;
-}
+// node builtins -- default-imported (`import path from "node:path"`, etc.) and
+// dotted (`path.dirname`, `fs.writeFileSync`, `asyncFs.mkdir`); a single `any`
+// default covers every member access.
+declare module 'node:path' { const path: any; export default path; }
+declare module 'node:fs' { const fs: any; export default fs; }
+declare module 'node:fs/promises' { const fsp: any; export default fsp; }
 
 declare namespace NodeJS {
   type ErrnoException = any;
   type Timeout = any;
   interface ProcessEnv { [k: string]: string | undefined }
 }
+// Global ambient values type-graphql reads: `process.cwd()` (TS2591),
+// `Buffer`, and the `global.TypeGraphQLMetadataStorage` slot it assigns.
+declare var process: any;
+declare var Buffer: any;
 declare var global: any;
 TYPES
 }
