@@ -143,18 +143,29 @@ pub(crate) enum PredicateCacheKind {
     /// recorded identity result is a permanent structural fixed point. Backs the
     /// evaluator's resolver-independent fixed-point fast path (#13250 / #8356).
     StructurallyEvalInert = 15,
+    /// `type_id` contains the `never` intrinsic anywhere on its
+    /// [`ChildPolicy::CONTENT_PREDICATE`] surface. Structural and immutable per
+    /// `TypeId` (matches the bare `Intrinsic(Never)` leaf), so the deep walk is
+    /// memoized like the sibling `Contains*` predicates. Asked once per property
+    /// access to gate the `never`-receiver TS2339 path, which is O(members) over
+    /// the receiver shape — O(N^2) over an N-member class with N `this.x`
+    /// accesses without this memo (#13097 slope, parent #13250).
+    ///
+    /// [`ChildPolicy::CONTENT_PREDICATE`]:
+    ///     crate::visitors::child_policy::ChildPolicy::CONTENT_PREDICATE
+    ContainsNever = 16,
 }
 
 impl PredicateCacheKind {
-    const fn bit(self) -> u16 {
-        1u16 << (self as u8)
+    const fn bit(self) -> u32 {
+        1u32 << (self as u8)
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PredicateCacheEntry {
-    known: u16,
-    truthy: u16,
+    known: u32,
+    truthy: u32,
 }
 
 impl PredicateCacheEntry {
