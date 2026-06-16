@@ -126,6 +126,14 @@ pub(crate) enum PredicateCacheKind {
     ContainsFileRelative = 11,
     IsGenericWithUnionConstraint = 12,
     IsGenericWithoutNullableConstraint = 13,
+    /// `TypeQuery` reachable over the full structural surface
+    /// ([`ChildPolicy::FULL`](crate::visitors::child_policy::ChildPolicy::FULL)).
+    ///
+    /// Distinct from [`Self::ContainsTypeQuery`], which uses the narrower
+    /// `CONTENT_PREDICATE` child set (notably skipping `Application` bases) for
+    /// eval-cache suppression. The reachability gate on `collect_type_queries`
+    /// must match that collector's full walk, so it uses this slot.
+    ContainsTypeQueryFull = 14,
 }
 
 impl PredicateCacheKind {

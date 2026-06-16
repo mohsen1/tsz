@@ -635,15 +635,23 @@ pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
 /// Most types reachable on the hot symbol-resolution and relation-closure
 /// paths contain no `typeof X` at all (lib-interface closures, instantiated
 /// object shapes), yet callers re-walk the full closure on every resolution.
-/// The memoized [`contains_type_query_db`](crate::type_queries::contains_type_query_db)
+/// The memoized [`contains_type_query_full_db`](crate::type_queries::contains_type_query_full_db)
 /// predicate answers "is there any `TypeQuery` under `root`?" in O(1) after
 /// the first walk (project-wide per-node cache), so gate the unmemoized full
 /// traversal on it: when no `TypeQuery` exists the returned set is necessarily
 /// empty and every caller's loop body is a no-op. This defers the eager
 /// closure walk to the rare types that actually carry `typeof` references,
 /// matching tsc's demand-driven `typeof` resolution.
+///
+/// The gate uses the *full*-reachability predicate, not the narrower
+/// `contains_type_query_db` (which uses `ChildPolicy::CONTENT_PREDICATE` for
+/// eval-cache suppression and skips e.g. `Application` bases). The gate must
+/// agree with this function's [`walk_referenced_types`] walk (`ChildPolicy::FULL`)
+/// or a `typeof X` reachable only through a skipped position — as in
+/// `InstanceType<typeof Anon<T>>`, where `typeof Anon` is an `Application`
+/// base — would be silently dropped, breaking `typeof` resolution downstream.
 pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<SymbolRef> {
-    if !crate::type_queries::contains_type_query_db(types, root) {
+    if !crate::type_queries::contains_type_query_full_db(types, root) {
         return Vec::new();
     }
 
