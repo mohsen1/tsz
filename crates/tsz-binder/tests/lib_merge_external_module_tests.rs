@@ -435,3 +435,253 @@ fn resolve_name_in_lib_module_locals_callback_can_substitute_sym_id() {
         });
     assert_eq!(result, Some(substitute_id));
 }
+
+/// Bind a user external module (`.ts`, with `export {}` so it is a module)
+/// against a lib that already declares `lib_decl`. Returns the bound binder
+/// and the module's file name for `module_exports` lookups.
+fn bind_module_with_lib(lib_decl: &str, module_source: &str) -> (BinderState, String) {
+    let lib = Arc::new(LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        lib_decl.to_string(),
+    ));
+    let file_name = "user-module.ts".to_string();
+    let mut parser = ParserState::new(file_name.clone(), module_source.to_string());
+    let root = parser.parse_source_file();
+    let arena = Arc::new(parser.get_arena().clone());
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&arena, root, &[lib]);
+    (binder, file_name)
+}
+
+/// A module-local `namespace X` whose name collides with a global lib type must
+/// still appear in the module's export surface. tsc resolves the file-scope
+/// namespace declaration before the global, so `import { X } from "./mod"`
+/// resolves to the namespace; without shadowing, the namespace symbol merges
+/// into the lib symbol id and is dropped from `module_exports`, surfacing a
+/// false TS2305 (the hotscript `Iterator` / `StringIterator` family). The exact
+/// names below are not special — see the renamed/control cases that follow.
+#[test]
+fn module_namespace_colliding_with_lib_type_stays_in_module_exports() {
+    let (binder, file_name) = bind_module_with_lib(
+        "interface Iterator<T, TReturn = any, TNext = any> { next(): T; }",
+        "export {};
+         export namespace Iterator {
+             export type Get<it extends readonly any[]> = it[\"length\"];
+         }",
+    );
+
+    let exports = binder
+        .module_exports
+        .get(&file_name)
+        .expect("module should have an export surface");
+    assert!(
+        exports.has("Iterator"),
+        "module-local `namespace Iterator` must be exported even though it \
+         collides with the global lib `interface Iterator`"
+    );
+    let sym_id = exports.get("Iterator").expect("Iterator export symbol");
+    assert!(
+        !binder.lib_symbol_ids.contains(&sym_id),
+        "the exported `Iterator` must be the module-local namespace symbol, \
+         not the merged lib symbol id"
+    );
+    let sym = binder.symbols.get(sym_id).expect("Iterator symbol exists");
+    assert!(
+        sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE),
+        "the exported symbol must carry namespace/module flags"
+    );
+}
+
+/// Renamed-binder variant: the same structural rule must hold for any global
+/// lib type name, not a hardcoded `Iterator`. `StringIterator` is also a lib
+/// type (es2015.iterable). Binder names must not drive the decision.
+#[test]
+fn module_namespace_colliding_with_lib_type_renamed_binder() {
+    for lib_name in ["StringIterator", "Iterator"] {
+        let (binder, file_name) = bind_module_with_lib(
+            &format!("interface {lib_name}<T> {{ next(): T; }}"),
+            &format!(
+                "export {{}};
+                 export namespace {lib_name} {{
+                     export type Value = number;
+                 }}"
+            ),
+        );
+        let exports = binder
+            .module_exports
+            .get(&file_name)
+            .unwrap_or_else(|| panic!("module should have exports for {lib_name}"));
+        assert!(
+            exports.has(lib_name),
+            "module-local `namespace {lib_name}` colliding with the lib type \
+             must remain exported"
+        );
+    }
+}
+
+/// Control: a namespace whose name does NOT collide with any lib type was
+/// already exported correctly — the fix must not change that path.
+#[test]
+fn module_namespace_without_lib_collision_still_exported() {
+    let (binder, file_name) = bind_module_with_lib(
+        "interface SomeUnrelatedLibType {}",
+        "export {};
+         export namespace Helpers {
+             export type Value = number;
+         }",
+    );
+    let exports = binder
+        .module_exports
+        .get(&file_name)
+        .expect("module should have exports");
+    assert!(
+        exports.has("Helpers"),
+        "a non-colliding module namespace must be exported"
+    );
+}
+
+/// `declare global { namespace X {} }` inside a module must still MERGE with the
+/// global lib type (true augmentation), not shadow it — the shadow path is
+/// gated on `!in_global_augmentation`.
+#[test]
+fn declare_global_namespace_still_augments_lib_type() {
+    let (binder, _file_name) = bind_module_with_lib(
+        "interface Iterator<T> { next(): T; }",
+        "export {};
+         declare global {
+             namespace Iterator {
+                 export type Augmented = number;
+             }
+         }",
+    );
+    // The global `Iterator` remains in file_locals (merged), carrying the lib
+    // INTERFACE meaning — augmentation did not shadow it away.
+    let sym_id = binder
+        .file_locals
+        .get("Iterator")
+        .expect("global Iterator should remain in file_locals after augmentation");
+    let sym = binder.symbols.get(sym_id).expect("Iterator symbol exists");
+    assert!(
+        sym.has_any_flags(symbol_flags::INTERFACE),
+        "declare-global namespace augmentation must preserve the lib INTERFACE meaning"
+    );
+}
+
+/// A module-local `namespace X` colliding with a global lib `interface X` +
+/// `var X` must shadow the *export surface* (so `X` is the module's export) yet
+/// keep BOTH the lib's TYPE and VALUE meanings visible through the shadow
+/// symbol. A namespace only occupies the NAMESPACE slot (and its own
+/// `X.Member` members); it supplies neither a bare-type meaning nor (when
+/// uninstantiated) a value, so dropping the lib interface/var would lose the
+/// global `Event` type and constructor that tsc keeps visible
+/// (the `isolatedModulesShadowGlobalTypeNotValue` family).
+#[test]
+fn module_namespace_preserves_colliding_lib_type_and_value() {
+    let (binder, file_name) = bind_module_with_lib(
+        "interface Event { readonly type: string; }
+         declare var Event: { new (type: string): Event };",
+        "export {};
+         export namespace Event {
+             export type T = any;
+         }",
+    );
+
+    let exports = binder
+        .module_exports
+        .get(&file_name)
+        .expect("module should have an export surface");
+    let sym_id = exports.get("Event").expect("Event export symbol");
+    assert!(
+        !binder.lib_symbol_ids.contains(&sym_id),
+        "the exported `Event` must be the module-local namespace symbol"
+    );
+    let sym = binder.symbols.get(sym_id).expect("Event symbol exists");
+    assert!(
+        sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE),
+        "the exported symbol must carry namespace/module flags"
+    );
+    // The lib's VALUE side (the `var Event` constructor) is re-attached so the
+    // name keeps resolving as a value — the namespace did not occupy VALUE.
+    assert!(
+        sym.has_any_flags(symbol_flags::VALUE),
+        "an uninstantiated namespace must preserve the colliding lib VALUE meaning"
+    );
+    // The lib's INTERFACE TYPE meaning is also re-attached — a namespace does
+    // not supply a bare-type meaning for `Event`, so bare `Event` must still
+    // resolve to the global interface.
+    assert!(
+        sym.has_any_flags(symbol_flags::INTERFACE),
+        "the lib INTERFACE meaning must remain visible through the namespace shadow"
+    );
+}
+
+/// Renamed-binder variant: the type+value preservation rule must hold for any
+/// lib name carrying both an interface and a global value, not a hardcoded one.
+#[test]
+fn module_namespace_preserves_colliding_lib_type_and_value_renamed_binder() {
+    for lib_name in ["Event", "Symbol", "Proxy"] {
+        let (binder, file_name) = bind_module_with_lib(
+            &format!(
+                "interface {lib_name} {{ readonly tag: string; }}
+                 declare var {lib_name}: {{ new (): {lib_name} }};"
+            ),
+            &format!(
+                "export {{}};
+                 export namespace {lib_name} {{
+                     export type T = any;
+                 }}"
+            ),
+        );
+        let exports = binder
+            .module_exports
+            .get(&file_name)
+            .unwrap_or_else(|| panic!("module should have exports for {lib_name}"));
+        let sym_id = exports
+            .get(lib_name)
+            .unwrap_or_else(|| panic!("{lib_name} export symbol"));
+        let sym = binder.symbols.get(sym_id).expect("symbol exists");
+        assert!(
+            sym.has_any_flags(symbol_flags::VALUE),
+            "uninstantiated namespace `{lib_name}` must preserve the lib VALUE meaning"
+        );
+        assert!(
+            sym.has_any_flags(symbol_flags::INTERFACE),
+            "the lib INTERFACE meaning for `{lib_name}` must remain visible through the shadow"
+        );
+    }
+}
+
+/// A module-local (empty, non-exported) `namespace X` colliding with a global
+/// lib *type alias* `type X<...>` must keep the alias's TYPE meaning so generic
+/// uses `X<A, B>` still resolve — the `utility-types` `namespace Pick {}` case.
+/// Without preserving the alias, the namespace shadow surfaces TS2315 ("not
+/// generic") / TS2709 ("Cannot use namespace as a type").
+#[test]
+fn module_namespace_preserves_colliding_lib_type_alias() {
+    for lib_name in ["Pick", "Record", "Omit"] {
+        let (binder, _file_name) = bind_module_with_lib(
+            &format!("type {lib_name}<T, K extends keyof T> = {{ [P in K]: T[P] }};"),
+            &format!(
+                "export {{}};
+                 namespace {lib_name} {{}}
+                 export type Use<T> = {lib_name}<T, keyof T>;"
+            ),
+        );
+        // The locally-bound `X` symbol must retain the lib TYPE_ALIAS meaning so
+        // the checker can resolve the generic `X<T, keyof T>` reference.
+        let sym_id = binder
+            .file_locals
+            .get(lib_name)
+            .unwrap_or_else(|| panic!("{lib_name} should be in file_locals"));
+        let sym = binder.symbols.get(sym_id).expect("symbol exists");
+        assert!(
+            sym.has_any_flags(symbol_flags::TYPE_ALIAS),
+            "module-local `namespace {lib_name} {{}}` must preserve the colliding lib \
+             TYPE_ALIAS meaning so `{lib_name}<...>` still resolves"
+        );
+        assert!(
+            sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE),
+            "the symbol must still carry the namespace meaning"
+        );
+    }
+}
