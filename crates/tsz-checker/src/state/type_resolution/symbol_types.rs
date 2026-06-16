@@ -1668,12 +1668,31 @@ impl<'a> CheckerState<'a> {
                     merged = self.merge_cross_file_heritage(&symbol.declarations, sym_id, merged);
                 }
                 self.pop_type_parameters(updates);
-                if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                    let canonical_params = self.get_type_params_for_symbol(sym_id);
-                    let reg_params = if canonical_params.is_empty() {
-                        params.clone()
+                // The returned params MUST share the body's identities. A cross-arena
+                // `NodeIndex` collision in `push_type_parameters` can mis-read a lib
+                // interface's params (`MapIterator<T>` as a user `<Args>`), leaking the
+                // body's free `T` into concrete `Map`/`Set` iteration (false
+                // TS2488/TS2345; jotai #13652). Prefer the arena-aware
+                // `get_type_params_for_symbol` set, but ONLY on a real collision
+                // (arity/name mismatch); else overriding breaks the body↔params identity
+                // invariant (a free `TReturn` leaks `never` into generator inference; gcye3 #13726).
+                let canonical_params = self.get_type_params_for_symbol(sym_id);
+                let prefer_canonical = !canonical_params.is_empty();
+                let pushed_disagrees = !params
+                    .iter()
+                    .map(|p| p.name)
+                    .eq(canonical_params.iter().map(|c| c.name));
+                let resolved_params =
+                    if needs_text_based_resolution && prefer_canonical && pushed_disagrees {
+                        canonical_params.clone()
                     } else {
+                        params
+                    };
+                if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                    let reg_params = if prefer_canonical {
                         canonical_params
+                    } else {
+                        resolved_params.clone()
                     };
                     self.ctx.insert_def_type_params(def_id, reg_params.clone());
                     // Publication/consumption of heritage-merged interface
@@ -1693,12 +1712,12 @@ impl<'a> CheckerState<'a> {
                         merged,
                         needs_text_based_resolution && merged == interface_type,
                         &decls_with_arenas,
-                        &params,
+                        &resolved_params,
                     ) {
                         return consumed;
                     }
                 }
-                return (merged, params);
+                return (merged, resolved_params);
             }
 
             if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
