@@ -1369,8 +1369,22 @@ impl<'a> FlowAnalyzer<'a> {
                 })
         };
 
+        // An `await`/`yield` suspension point is a pure value pass-through (it
+        // carries no narrowing of its own) but, exactly like a pass-through CALL,
+        // it must force a defer when its OWN antecedent carries narrowing — e.g.
+        // `if (x.isErr()) return; await p; const y = 1; x.value`, where the
+        // narrowing guard sits behind the suspension point. Without this the
+        // dependent reader's flow node finalizes before the suspension point's
+        // antecedent is resolved and the narrowing is dropped.
+        let ant_is_deferring_suspension =
+            (ant_flags & (flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT)) != 0
+                && ant_flow.antecedent.first().is_some_and(|&grandparent| {
+                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                });
+
         (ant_flags & flow_flags::CONDITION) != 0
             || ant_is_deferring_call
+            || ant_is_deferring_suspension
             || (ant_flags & flow_flags::LOOP_LABEL) != 0
             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
             || ant_is_targeting_assignment

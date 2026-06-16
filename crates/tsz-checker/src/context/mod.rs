@@ -34,6 +34,7 @@ mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
+mod def_mapping_formatters;
 mod deferred_flow_env_write;
 pub use deferred_flow_env_write::DeferredFlowEnvWrite;
 mod file_format_lookup;
@@ -273,6 +274,35 @@ impl PendingCircularReturnSites {
         self.sites.clear();
         self.lazy.clear();
     }
+}
+
+/// Identity key for the inferred-body-return-type memo (`resolvedReturnType`
+/// analog). Captures every ambient input that determines the result of pure
+/// return-type inference for a given function/arrow/method body, so a cache hit
+/// is byte-identical to recomputing the inference:
+///
+/// - `function_node`: the function/arrow/method/accessor node being inferred.
+/// - `return_context`: the unwrapped contextual return type fed to inference
+///   (`None` for context-free inference). Different contextual types can drive
+///   different inferred results (e.g. `const` type-parameter context), so they
+///   are distinct keys.
+/// - `in_const_assertion` / `preserve_literal_types`: literal-preservation modes
+///   that change widening of inferred literal returns.
+/// - `this_type`: the active contextual `this` type. A method/function body that
+///   returns or references `this` (e.g. `foo() { return this; }`, or a
+///   `this`-polymorphic predicate) infers a `this`-dependent return type, so the
+///   same node inferred under different `this` bindings must not collide.
+/// - `scope_fingerprint`: a stable hash of the active `type_parameter_scope`
+///   bindings, so a generic body inferred under one ambient type-parameter
+///   binding is never reused under a different binding.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InferredReturnTypeKey {
+    pub function_node: NodeIndex,
+    pub return_context: Option<TypeId>,
+    pub in_const_assertion: bool,
+    pub preserve_literal_types: bool,
+    pub this_type: Option<TypeId>,
+    pub scope_fingerprint: u64,
 }
 
 /// In-progress object literal initializer for a variable declaration.
@@ -758,6 +788,14 @@ pub struct CheckerContext<'a> {
     /// Keyed by the requesting file and module specifier because relative
     /// specifiers are resolved from the current file.
     pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
+
+    /// Per-checker memo for re-export chain resolution, keyed by
+    /// `(target file, export name)`. Populated only by root resolutions of
+    /// [`crate::state::CheckerState::resolve_export_in_file`] (entered with an
+    /// empty `visited` path), whose answer is the canonical, path-independent
+    /// result for that pair. Collapses the `O(names × export-edges)` re-walk of
+    /// barrel `export *` graphs to a single walk per distinct `(file, name)`.
+    pub reexport_resolution_cache: RefCell<ReexportResolutionCache>,
 
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
@@ -1250,6 +1288,17 @@ pub struct CheckerContext<'a> {
     /// construct consults those bodies immediately during type computation
     /// (currently the `for...of` iterator protocol path).
     pub non_closure_circular_return_tracking_depth: usize,
+    /// Per-function memo of inferred body return types (tsc's
+    /// `resolvedReturnType`). Keyed by the function/arrow/method node plus every
+    /// ambient input that determines pure return-type inference: the contextual
+    /// return type, the literal-preservation flags, and a fingerprint of the
+    /// active type-parameter scope. It records the inferred return `TypeId` only,
+    /// never any diagnostics — body checking with diagnostics runs separately and
+    /// is never short-circuited by this cache. The memo is consulted only when
+    /// the function is NOT participating in circular return resolution, so a
+    /// provisional (in-progress) inference is never published. Cleared per file
+    /// session like the other return-circularity caches.
+    pub inferred_return_type_memo: FxHashMap<InferredReturnTypeKey, TypeId>,
     /// Variables that have already had TS7034 emitted, keyed by the deferred
     /// implicit-any classification that triggered it.
     pub reported_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyKind>>,

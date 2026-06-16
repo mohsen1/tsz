@@ -253,6 +253,9 @@ path = "tests/object_literal_getter_widening_tests.rs"
 name = "object_union_assignability_fast_path_tests"
 path = "tests/object_union_assignability_fast_path_tests.rs"
 [[test]]
+name = "optional_chain_arg_and_write_receiver_flow_tests"
+path = "tests/optional_chain_arg_and_write_receiver_flow_tests.rs"
+[[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 [[test]]
@@ -613,6 +616,9 @@ path = "tests/conditional_extends_readonly_variance_tests.rs"
 [[test]]
 name = "deferred_conditional_identity_extends_tests"
 path = "tests/deferred_conditional_identity_extends_tests.rs"
+[[test]]
+name = "deferred_conditional_indexed_access_tests"
+path = "tests/deferred_conditional_indexed_access_tests.rs"
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
 path = "tests/ts2322_property_decl_annotation_tests.rs"

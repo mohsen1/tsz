@@ -83,6 +83,17 @@ pub trait TypePredicateCache {
     /// interner cache. Default impl is a no-op.
     fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached full-reachability `contains_type_query` result if
+    /// available. Distinct from [`Self::contains_type_query_cached`]: this slot
+    /// memoizes the `ChildPolicy::FULL` walk used to gate `collect_type_queries`.
+    fn contains_type_query_full_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of the full-reachability `contains_type_query` walk in
+    /// the shared interner cache. Default impl is a no-op.
+    fn set_contains_type_query_full_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_parameters_db(type_id)` result if
     /// available. Default impl returns `None` (no caching).
     fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
@@ -122,6 +133,17 @@ pub trait TypePredicateCache {
     /// Record the result of `is_resolver_dependent_type(type_id)` in the shared
     /// interner cache. Default impl is a no-op.
     fn set_contains_resolver_dependent_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `is_structurally_eval_inert(type_id)` result (whether the
+    /// type evaluates to itself under every evaluator and resolver). Default impl
+    /// returns `None` (no caching).
+    fn structurally_eval_inert_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `is_structurally_eval_inert(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_structurally_eval_inert_cache(&self, _type_id: TypeId, _result: bool) {}
 
     /// Look up a cached alias-opaque `contains Conditional` walk result, used by
     /// the `closed_eval_cache` eligibility gate. Default impl returns `None`.
@@ -720,6 +742,14 @@ impl TypePredicateCache for TypeInterner {
         self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeQuery, result);
     }
 
+    fn contains_type_query_full_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeQueryFull)
+    }
+
+    fn set_contains_type_query_full_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeQueryFull, result);
+    }
+
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeParams)
     }
@@ -758,6 +788,14 @@ impl TypePredicateCache for TypeInterner {
             PredicateCacheKind::ContainsResolverDependent,
             result,
         );
+    }
+
+    fn structurally_eval_inert_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::StructurallyEvalInert)
+    }
+
+    fn set_structurally_eval_inert_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::StructurallyEvalInert, result);
     }
 
     fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {

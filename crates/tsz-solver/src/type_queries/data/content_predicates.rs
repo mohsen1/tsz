@@ -78,6 +78,14 @@ pub(super) trait ContentPredicate {
     fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool>;
     /// Store a deep-walk result for `type_id`.
     fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool);
+    /// Child set the cached walk descends into. Defaults to
+    /// [`ChildPolicy::CONTENT_PREDICATE`], matching the historical content-walk
+    /// reachability shared by all `contains_*` predicates. Predicates whose
+    /// answer must agree with a wider traversal (e.g. the reachability gate on
+    /// `collect_type_queries`, which walks `ChildPolicy::FULL`) override this.
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy::CONTENT_PREDICATE
+    }
 }
 
 pub(super) struct TypeParamPredicate;
@@ -173,6 +181,30 @@ impl ContentPredicate for TypeQueryPredicate {
     }
 }
 
+/// Like [`TypeQueryPredicate`], but descends the full structural surface
+/// ([`ChildPolicy::FULL`]) so the answer matches the reachability of
+/// `visitor::collect_type_queries`'s `walk_referenced_types` walk. The narrower
+/// `CONTENT_PREDICATE` policy skips `Application` bases (among others), so a
+/// `typeof X` reachable only through e.g. an `Application` base — as in
+/// `InstanceType<typeof Anon<T>>` — would otherwise be missed. Cached in its
+/// own [`PredicateCacheKind::ContainsTypeQueryFull`] slot, separate from the
+/// `CONTENT_PREDICATE` cache used for eval-result suppression.
+pub(super) struct TypeQueryFullPredicate;
+impl ContentPredicate for TypeQueryFullPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::TypeQuery(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_type_query_full_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_type_query_full_cache(type_id, result);
+    }
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy::FULL
+    }
+}
+
 pub(super) struct LazyOrRecursivePredicate;
 impl ContentPredicate for LazyOrRecursivePredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
@@ -204,6 +236,157 @@ impl ContentPredicate for ThisTypePredicate {
 /// memoized in the shared `contains_this` cache rather than only the top level.
 pub fn contains_this_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_content_cached(db, type_id, &ThisTypePredicate)
+}
+
+/// Whether evaluating `type_id` is a no-op under *every* evaluator and resolver
+/// in a project run — i.e. the type contains no node whose evaluation depends on
+/// the resolver (alias/`typeof` resolution) or the substitution environment
+/// (type-parameter mapper, bound `this`).
+///
+/// A `true` answer means `evaluate(type_id)` returns `type_id` unchanged for any
+/// `TypeEvaluator`, because the type holds none of the kinds the evaluator's
+/// `visit_type_key` rewrites nor any substitution-dependent leaf:
+/// `Conditional`, `IndexAccess`, `Mapped`, `KeyOf`, `TypeQuery`, `Application`,
+/// `TemplateLiteral`, `Lazy`, `Recursive`, `StringIntrinsic`, `NoInfer`,
+/// `UnresolvedTypeName`, `TypeParameter`, `Infer`, `ThisType`, `BoundParameter`,
+/// `Union`, `Intersection`. The two compound kinds are disqualifying because
+/// `evaluate_union` / `evaluate_intersection` run a deep `SubtypeChecker`
+/// reduction that can rewrite even a fully concrete compound (see
+/// [`is_eval_affecting_node`]).
+///
+/// The walk descends the *entire* structural surface
+/// ([`ChildPolicy::EVERYTHING`], including `Application` bases, write types,
+/// index keys, and callable index-signature values) — narrower child policies
+/// could hide an unresolved `Lazy` in a skipped position and wrongly classify a
+/// deferral as inert. The per-node answer is immutable per `TypeId` (it asks a
+/// purely structural question), so it is memoized in the shared
+/// [`PredicateCacheKind::StructurallyEvalInert`] bit and amortized O(1) after the
+/// first walk.
+///
+/// [`PredicateCacheKind::StructurallyEvalInert`]:
+///     crate::intern::core::interner::PredicateCacheKind
+pub fn is_structurally_eval_inert(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return true;
+    }
+    if let Some(cached) = db.structurally_eval_inert_cached(type_id) {
+        return cached;
+    }
+    let mut walker = EvalInertWalker {
+        db,
+        visiting: FxHashSet::default(),
+    };
+    !walker.contains_eval_affecting(type_id).0
+}
+
+/// Whether `key` is itself an evaluation-affecting node (resolver- or
+/// substitution-dependent). Mirrors the kinds the evaluator's `visit_type_key`
+/// rewrites plus the substitution-dependent leaves.
+///
+/// `Union` and `Intersection` are eval-affecting even when every member is
+/// already inert: `visit_type_key` routes them to `evaluate_union` /
+/// `evaluate_intersection`, whose `simplify_*_members` pass runs *deep*
+/// (`SubtypeChecker`-backed) subtype reduction that can rewrite a fully
+/// concrete compound the interner's *shallow* construction-time normalization
+/// left untouched — e.g. `(string | undefined) & 'string'` reduces to
+/// `'string'`, and a deep object-subtype pair like
+/// `{ a: string } | { a: string; b: number }` collapses the redundant member.
+/// Classifying such a compound as inert from its children alone (without ever
+/// running `evaluate`) would short-circuit that reduction and, downstream,
+/// drop discriminated-union excess-property errors (TS2353) that depend on the
+/// reduced shape. Keeping them out of the inert fast path is required for
+/// parity; the local/closed-eval/persistent memos still cover the repeated
+/// work.
+const fn is_eval_affecting_node(key: &TypeData) -> bool {
+    matches!(
+        key,
+        TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Mapped(_)
+            | TypeData::KeyOf(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::Application(_)
+            | TypeData::TemplateLiteral(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::StringIntrinsic { .. }
+            | TypeData::NoInfer(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Union(_)
+            | TypeData::Intersection(_)
+    )
+}
+
+/// Cycle-tracking walker backing [`is_structurally_eval_inert`]. Descends the
+/// full structural surface and writes only fully-resolved (untainted) per-node
+/// answers to the shared cache.
+struct EvalInertWalker<'a> {
+    db: &'a dyn TypeDatabase,
+    visiting: FxHashSet<TypeId>,
+}
+
+impl EvalInertWalker<'_> {
+    /// Returns `(contains_eval_affecting, cycle_tainted)`.
+    fn contains_eval_affecting(&mut self, type_id: TypeId) -> (bool, bool) {
+        if type_id.is_intrinsic() {
+            return (false, false);
+        }
+        // The cache stores inertness (the negation), so a cached `true` means
+        // "no eval-affecting node".
+        if let Some(inert) = self.db.structurally_eval_inert_cached(type_id) {
+            return (!inert, false);
+        }
+        let Some(key) = self.db.lookup(type_id) else {
+            return (false, false);
+        };
+        if is_eval_affecting_node(&key) {
+            // A matching node is a definite fact: not inert, untainted.
+            self.db.set_structurally_eval_inert_cache(type_id, false);
+            return (true, false);
+        }
+        if !has_policy_children(&key, &ChildPolicy::EVERYTHING) {
+            // A childless inert leaf: definitely inert.
+            self.db.set_structurally_eval_inert_cache(type_id, true);
+            return (false, false);
+        }
+        if !self.visiting.insert(type_id) {
+            // Re-entering an in-progress node contributes nothing new; mark
+            // tainted so the ancestor does not persist a provisional answer.
+            return (false, true);
+        }
+        let mut tainted = false;
+        let found = try_for_each_child_with_policy::<(), _>(
+            self.db,
+            &key,
+            &ChildPolicy::EVERYTHING,
+            &mut |child| {
+                let (child_found, child_tainted) = self.contains_eval_affecting(child);
+                tainted |= child_tainted;
+                if child_found {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        )
+        .is_break();
+        self.visiting.remove(&type_id);
+        if found {
+            // A found eval-affecting node is a definite, untainted fact.
+            self.db.set_structurally_eval_inert_cache(type_id, false);
+            (true, false)
+        } else {
+            if !tainted {
+                // Only persist fully-resolved (untainted) inert answers.
+                self.db.set_structurally_eval_inert_cache(type_id, true);
+            }
+            (false, tainted)
+        }
+    }
 }
 
 pub(super) struct SubstitutionDependentPredicate;
@@ -418,6 +601,7 @@ fn contains_content_cached<P: ContentPredicate>(
     let mut walker = CachedContentWalker {
         db,
         predicate,
+        policy: predicate.child_policy(),
         visiting: FxHashSet::default(),
     };
     walker.check(type_id)
@@ -426,6 +610,7 @@ fn contains_content_cached<P: ContentPredicate>(
 struct CachedContentWalker<'a, P: ContentPredicate> {
     db: &'a dyn TypeDatabase,
     predicate: &'a P,
+    policy: ChildPolicy,
     visiting: FxHashSet<TypeId>,
 }
 
@@ -449,7 +634,7 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         }
         // Terminal fast path: a node with no children under the walker's
         // policy cannot match below itself; skip the visiting-set round-trip.
-        if !has_policy_children(&key, &ChildPolicy::CONTENT_PREDICATE) {
+        if !has_policy_children(&key, &self.policy) {
             self.predicate.set_cache(self.db, type_id, false);
             return (false, false);
         }
@@ -473,25 +658,20 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         self.check_tracked(type_id).0
     }
 
-    /// Walk the node's children under the same child set as the generic
-    /// uncached walker, by construction.
+    /// Walk the node's children under the predicate's child set.
     fn walk_children(&mut self, key: &TypeData) -> (bool, bool) {
         let db = self.db;
+        let policy = self.policy;
         let mut tainted = false;
-        let found = try_for_each_child_with_policy::<(), _>(
-            db,
-            key,
-            &ChildPolicy::CONTENT_PREDICATE,
-            &mut |child| {
-                let (child_found, child_tainted) = self.check_tracked(child);
-                tainted |= child_tainted;
-                if child_found {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            },
-        )
+        let found = try_for_each_child_with_policy::<(), _>(db, key, &policy, &mut |child| {
+            let (child_found, child_tainted) = self.check_tracked(child);
+            tainted |= child_tainted;
+            if child_found {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
         .is_break();
         if found {
             // A `true` answer is never tainted: a found match is a definite
@@ -849,6 +1029,18 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // The deep walk is memoized per node in the project-wide `contains_type_query`
     // cache, so repeated checks over the same shapes stay O(1).
     contains_content_cached(db, type_id, &TypeQueryPredicate)
+}
+
+/// Check whether a `TypeQuery` is reachable over the full structural surface.
+///
+/// Unlike [`contains_type_query_db`] (which uses the narrower `CONTENT_PREDICATE`
+/// child set for eval-cache suppression), this walks [`ChildPolicy::FULL`], so
+/// its answer agrees with `visitor::collect_type_queries`'s reachability. Use it
+/// to gate that collector's full walk: a `false` result is a sound guarantee
+/// that the collector would return the empty set. Memoized per node in its own
+/// project-wide cache, so repeats stay O(1).
+pub fn contains_type_query_full_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_content_cached(db, type_id, &TypeQueryFullPredicate)
 }
 
 /// Check if a type contains unresolved type parameters other than tsz's internal

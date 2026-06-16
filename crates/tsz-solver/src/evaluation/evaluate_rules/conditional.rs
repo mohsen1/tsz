@@ -983,6 +983,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 is_subtype = is_sub,
                 "conditional subtype check result"
             );
+
+            // A conditional whose evaluated CHECK type is an opaque, resolver-less
+            // `Application` must defer rather than vacuously take its true branch
+            // (#13609). See `defer_resolver_less_application_check`.
+            if let Some(deferred) =
+                self.defer_resolver_less_application_check(cond, check_type, extends_type, is_sub)
+            {
+                return deferred;
+            }
+
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type

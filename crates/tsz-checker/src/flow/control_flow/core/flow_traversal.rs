@@ -796,7 +796,9 @@ impl<'a> FlowAnalyzer<'a> {
                                             flow_flags::CONDITION
                                                 | flow_flags::CALL
                                                 | flow_flags::LOOP_LABEL
-                                                | flow_flags::ASSIGNMENT,
+                                                | flow_flags::ASSIGNMENT
+                                                | flow_flags::AWAIT_POINT
+                                                | flow_flags::YIELD_POINT,
                                         )
                                     });
                                 if ant_needs_defer {
@@ -843,7 +845,9 @@ impl<'a> FlowAnalyzer<'a> {
                                             | flow_flags::BRANCH_LABEL
                                             | flow_flags::LOOP_LABEL
                                             | flow_flags::ASSIGNMENT
-                                            | flow_flags::SWITCH_CLAUSE,
+                                            | flow_flags::SWITCH_CLAUSE
+                                            | flow_flags::AWAIT_POINT
+                                            | flow_flags::YIELD_POINT,
                                     )
                                 });
                             if ant_needs_defer {
@@ -997,6 +1001,24 @@ impl<'a> FlowAnalyzer<'a> {
                         // before its outer antecedent, so the result wouldn't propagate back.
                         self.check_flow(reference, initial_type, outer_flow, _visited, symbol_id)
                     }
+                } else {
+                    current_type
+                }
+            } else if flow.has_any_flags(flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT) {
+                // `await`/`yield` suspension points carry no narrowing of their own
+                // and tsc does not model them as flow nodes. They must resolve to
+                // their single antecedent's (possibly narrowed) type. The generic
+                // default handler below would finalize this node with the antecedent's
+                // result ONLY when it is already in `results`; on the common first
+                // visit (antecedent not yet processed) it falls back to the
+                // un-narrowed `current_type` and then marks this node finalized,
+                // permanently dropping any guard-applied narrowing that lives on the
+                // antecedent. Resolve the antecedent directly so the narrowed type is
+                // always carried through the suspension point. (The pass-through
+                // splice in `chase_linear_passthrough` handles the concrete, cacheable
+                // walks; this branch covers the generic / non-spliced walks.)
+                if let Some(&ant) = flow.antecedent.first() {
+                    self.get_flow_type(reference, current_type, ant)
                 } else {
                     current_type
                 }
@@ -1282,6 +1304,30 @@ impl<'a> FlowAnalyzer<'a> {
                     == 0
         };
 
+        // An `await`/`yield` suspension point carries no narrowing of its own and
+        // tsc does not model it as a flow node at all: it is a pure value
+        // pass-through whose flow type equals its single antecedent's. Without
+        // splicing it the worklist's "default" handler returns the antecedent's
+        // result only when that antecedent is already finalized, otherwise it falls
+        // back to the un-narrowed `current_type`, so an `await` (or `yield`) placed
+        // after a narrowing guard and before a later read of the narrowed variable
+        // silently drops the narrowing. Splice it just like a pure pass-through
+        // CALL. A suspension node is splice-eligible only when it carries no other
+        // flow-relevant flag.
+        let pure_passthrough_suspension = |flags: u32| -> bool {
+            flags & (flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT) != 0
+                && flags
+                    & (flow_flags::BRANCH_LABEL
+                        | flow_flags::LOOP_LABEL
+                        | flow_flags::SWITCH_CLAUSE
+                        | flow_flags::CONDITION
+                        | flow_flags::CALL
+                        | flow_flags::ASSIGNMENT
+                        | flow_flags::ARRAY_MUTATION
+                        | flow_flags::START)
+                    == 0
+        };
+
         let mut current = entry;
         loop {
             let Some(flow) = self.binder.flow_nodes.get(current) else {
@@ -1303,6 +1349,39 @@ impl<'a> FlowAnalyzer<'a> {
                 let ant = *ant;
                 if self.antecedent_requires_defer_cached(ant, reference, symbol_id, memos)
                     || visited.contains(&ant)
+                    || results.contains_key(&ant)
+                {
+                    return current;
+                }
+                if let Some(cache) = self.flow_cache()
+                    && cache
+                        .borrow()
+                        .contains_key(&(ant, cache_symbol, initial_type))
+                {
+                    return current;
+                }
+                if current == alias_flow_id {
+                    *run_contains_alias_flow_id = true;
+                }
+                current = ant;
+                continue;
+            }
+            // Splice a pure pass-through `await`/`yield` suspension point. Mirrors
+            // the pure-pass-through CALL handling above: a suspension point with a
+            // single antecedent that neither carries pending narrowing nor is
+            // already finalized/cached is transparent and can be skipped in O(1),
+            // so the chase lands directly on the narrowing-bearing antecedent.
+            if pure_passthrough_suspension(flow.flags) {
+                let [ant] = flow.antecedent.as_slice() else {
+                    return current;
+                };
+                let ant = *ant;
+                if self.antecedent_requires_defer_cached(
+                    ant,
+                    reference,
+                    symbol_id,
+                    antecedent_defer_memo,
+                ) || visited.contains(&ant)
                     || results.contains_key(&ant)
                 {
                     return current;

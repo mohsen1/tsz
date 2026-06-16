@@ -1532,7 +1532,21 @@ impl<'a> CheckerContext<'a> {
         let type_env = self.type_environment.into_inner();
         let boxed_types = type_env.snapshot_boxed_types();
         let boxed_def_ids = type_env.snapshot_boxed_def_ids();
-        let def_to_symbol = self.def_to_symbol.into_inner();
+        let mut def_to_symbol = self.def_to_symbol.into_inner();
+        // The emitter reads `def_to_symbol` with no shared-store fallback (it
+        // has no live `DefinitionStore`). When local caches populate lazily
+        // during check (rather than via the eager whole-program warm), this
+        // live map only holds the cross-file symbols this file happened to
+        // touch, so complete it from the store's authoritative reverse mapping
+        // before freezing. This keeps DTS/type-print symbol-name resolution
+        // independent of how the live map was populated, and runs
+        // O(program-symbols) once at extract time (emit/cache path only), never
+        // in the check hot loop.
+        for (raw_sym_id, def_id) in self.definition_store.all_symbol_mappings() {
+            def_to_symbol
+                .entry(def_id)
+                .or_insert(tsz_binder::SymbolId(raw_sym_id));
+        }
         // Build def_to_name from DefinitionStore so the emitter can print lib
         // symbol names (e.g., "Promise") without needing the lib binder arena.
         let mut def_to_name: FxHashMap<_, _> = def_to_symbol

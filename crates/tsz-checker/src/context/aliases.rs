@@ -69,6 +69,19 @@ pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
 /// Per-checker cache: (requesting file, module specifier) → resolved cross-file namespace exports.
 pub type NamespaceExportsCache = FxHashMap<(usize, String), Option<SymbolTable>>;
 
+/// Per-checker cache: (target file, export name) → fully-resolved re-export target.
+///
+/// Maps a `(file_idx, export_name)` pair to the `(SymbolId, owning_file_idx)`
+/// that the re-export walker resolves it to (or `None` when the name is not
+/// exported). Only **root** resolutions — entered with an empty `visited`
+/// path and no module-key override — populate this cache: at that boundary the
+/// answer is the canonical, path-independent result for `(file, name)` and can
+/// never be the cycle-break sentinel, so it is safe to reuse across the many
+/// import/usage sites that resolve the same barrel export. Barrel-heavy
+/// programs (e.g. `ts-morph`) otherwise re-walk the entire `export *` graph
+/// from scratch for every distinct name, costing `O(names × export-edges)`.
+pub type ReexportResolutionCache = FxHashMap<(usize, String), Option<(SymbolId, usize)>>;
+
 #[must_use]
 pub(crate) fn namespace_exports_cache_entries(cache: &NamespaceExportsCache) -> usize {
     cache.len()
