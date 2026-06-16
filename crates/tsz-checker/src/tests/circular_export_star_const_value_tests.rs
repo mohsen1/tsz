@@ -44,7 +44,7 @@ fn assert_no_code(diags: &[Diagnostic], code: u32) {
         "did not expect diagnostic {code}, got: {:?}",
         diags
             .iter()
-            .map(|d| (d.code, d.message_text.to_string()))
+            .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>(),
     );
 }
@@ -55,7 +55,7 @@ fn assert_has_code(diags: &[Diagnostic], code: u32) {
         "expected diagnostic {code}, got: {:?}",
         diags
             .iter()
-            .map(|d| (d.code, d.message_text.to_string()))
+            .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>(),
     );
 }
