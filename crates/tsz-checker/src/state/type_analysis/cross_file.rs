@@ -740,6 +740,14 @@ impl CheckerState<'_> {
             if let Some(def_id) = alias_cycle_def_id {
                 self.mark_cross_arena_alias_cycle(def_id);
             }
+            // A class/interface delegated here is a deferral boundary for the
+            // cross-arena alias cycle: an alias re-entered through this symbol's
+            // member signatures defers like tsc and is not a TS2456 cycle (see
+            // `mark_cross_arena_alias_cycle`).
+            let delegated_symbol_is_class_or_interface = alias_cycle_def_id.is_none()
+                && self.get_cross_file_symbol(sym_id).is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+                });
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
@@ -875,6 +883,8 @@ impl CheckerState<'_> {
             // inherits a stale entry.
             let result = {
                 let _alias_guard = alias_cycle_def_id.map(Self::enter_cross_arena_alias);
+                let _class_boundary = delegated_symbol_is_class_or_interface
+                    .then(Self::enter_cross_arena_class_boundary);
                 // Use get_type_of_symbol to ensure proper cycle detection.
                 checker.get_type_of_symbol(sym_id)
             };
@@ -1227,7 +1237,13 @@ impl CheckerState<'_> {
             self.clear_delegated_symbol_cache_collisions(&mut checker, delegate_binder, sym_id);
         }
 
-        let result = checker.class_instance_type_with_params_from_symbol(sym_id);
+        // Record a class instance-type boundary on the cross-arena alias stack:
+        // an alias re-entered through this class's members defers like tsc and is
+        // not a TS2456 cycle (see `mark_cross_arena_alias_cycle`).
+        let result = {
+            let _class_boundary = Self::enter_cross_arena_class_boundary();
+            checker.class_instance_type_with_params_from_symbol(sym_id)
+        };
         if self.ctx.share_owner_symbol_type_results
             && let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
             && *type_id != TypeId::UNKNOWN
