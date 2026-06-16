@@ -329,6 +329,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return InferPropertyResolution::Candidate(type_id);
         }
 
+        // Plain object/callable shapes carry each property's *declared* type
+        // directly, so resolve them through `property_candidate` before the
+        // `query_db` fallback. `resolve_property_access_atom` returns the
+        // property-ACCESS reading, which unions in the optionality `undefined`
+        // for an optional source property (`{ prop?: C }` → `C | undefined`).
+        // Conditional `infer` must capture the declared type (`C`), matching
+        // tsc's `inferFromProperties`/`getTypeOfSymbol`; routing optional
+        // properties through query_db corrupted `T['member']` and constrained
+        // `infer T extends ...` checks. The query_db path stays as the fallback
+        // for non-shape sources (lazy refs, instantiated/indexed forms).
+        match self.interner().lookup(source) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                if let Some(found) = self.property_candidate(&shape.properties, prop_name, optional)
+                {
+                    return found;
+                }
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner().callable_shape(callable_id);
+                if let Some(found) = self.property_candidate(&shape.properties, prop_name, optional)
+                {
+                    return found;
+                }
+            }
+            _ => {}
+        }
+
         if let Some(query_db) = self.query_db() {
             return match query_db.resolve_property_access_atom(source, prop_name) {
                 PropertyAccessResult::Success { type_id, .. } => {
@@ -478,18 +506,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         properties: &[PropertyInfo],
         prop_name: Atom,
-        optional: bool,
+        _optional: bool,
     ) -> Option<InferPropertyResolution> {
+        // When the pattern property is PRESENT in the source, the inference
+        // candidate is the source property's declared type. The optionality of
+        // the pattern position (`{ prop?: infer T }`) governs only the *absent*
+        // case (handled by `NoCandidate`/`NoMatch`); it must not inject
+        // `undefined` into a present property's candidate. tsc's
+        // `inferFromProperties` reads the source symbol's declared type
+        // (`getTypeOfSymbol`), which does not carry the optionality `undefined`
+        // — so `W extends { prop?: infer T } ? T : never` over `{ prop?: C }`
+        // infers `T = C`, not `C | undefined`. Adding `undefined` here corrupted
+        // `T['member']` (TS2339) and constrained-infer constraint checks (TS2344).
         properties
             .iter()
             .find(|prop| prop.name == prop_name)
-            .map(|prop| {
-                InferPropertyResolution::Candidate(if optional {
-                    self.optional_property_type(prop)
-                } else {
-                    prop.type_id
-                })
-            })
+            .map(|prop| InferPropertyResolution::Candidate(prop.type_id))
     }
 
     /// Handle nested object infer pattern

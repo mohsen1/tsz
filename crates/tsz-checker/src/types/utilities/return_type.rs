@@ -739,8 +739,10 @@ impl<'a> CheckerState<'a> {
     /// memoization. The inference becomes resolution-state-dependent, and unsafe
     /// to cache, only in these cases:
     ///
-    /// - the function node is already on the resolution stack: a genuine
-    ///   re-entrant request, whose result is a provisional placeholder;
+    /// - the function node is *genuinely* re-entrant on the resolution stack
+    ///   (appears more than once): its result is a provisional placeholder.
+    ///   A single occurrence is the node's OWN in-progress resolution frame and
+    ///   is NOT re-entrancy — see the inline note below;
     /// - the body returns a still-resolving variable through a call-like return,
     ///   which `tsc` resolves on demand with `any` and refines later;
     /// - the body is directly self-recursive (`all_returns_are_direct_self_calls`):
@@ -758,8 +760,26 @@ impl<'a> CheckerState<'a> {
         if return_context.is_none() {
             return false;
         }
-        if self.ctx.node_resolution_stack.contains(&function_idx) {
-            return false;
+        // A function node is pushed onto `node_resolution_stack` by its own
+        // resolution frame (`get_type_of_node_with_request`) *before* this body
+        // inference runs, so a single occurrence is the node's OWN in-progress
+        // frame — the normal, complete inference, which is safe to memoize. Only
+        // a *second* occurrence means a genuine re-entrant request whose result
+        // is a provisional placeholder; reject memoization just for that. A plain
+        // `contains` test (`>= 1`) would reject every contextual inference,
+        // because the own frame is always present, leaving the memo permanently
+        // inert. (In practice the circular guard in `get_type_of_node_with_request`
+        // returns `ERROR` before re-entering this body, so the count rarely
+        // exceeds one, but the `> 1` test keeps the guard correct if that path
+        // changes.)
+        let mut seen_own_frame = false;
+        for &node in &self.ctx.node_resolution_stack {
+            if node == function_idx {
+                if seen_own_frame {
+                    return false;
+                }
+                seen_own_frame = true;
+            }
         }
         if self.return_body_has_resolving_var_in_call_like(body_idx) {
             return false;
