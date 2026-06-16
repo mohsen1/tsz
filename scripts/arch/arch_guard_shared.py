@@ -1420,7 +1420,21 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `is_keyof_type`) — all existing request-shaped boundary helpers, no new
         # quarantine entry. Removal condition remains #8225 narrowing this
         # quarantine.
-        3070,
+        #
+        # Bumped 3070→3072 for the polymorphic-`this` generic-indexed-access
+        # TS2536 deferral fix (#13720): `is_deferred_indexed_access_object` in
+        # `indexed_access/indexed_access_helpers.rs` adds one
+        # `is_this_type(base)` reference so a `this["arg0"][number]` base is
+        # recognized as a deferred generic indexed-access object, and the
+        # `key_space_is_unresolved` gate in `indexed_access.rs` adds one
+        # `is_keyof_type(ty)` reference so a still-deferred `keyof` key space is
+        # treated as unusable. Both route through the existing
+        # `query_boundaries::common` gateway and join the sibling structural
+        # predicates (`is_type_parameter_like`, `is_conditional_type`,
+        # `is_generic_application`, `is_index_access_type`) already called from
+        # `common` in the very same expressions — no new quarantine entry.
+        # Removal condition remains #8225 narrowing this quarantine.
+        3072,
     ),
 ]
 

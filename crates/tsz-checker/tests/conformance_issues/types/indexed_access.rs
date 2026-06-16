@@ -14,6 +14,37 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
     );
 }
 
+// A generic indexed access rooted at the polymorphic `this` type
+// (`this["arg0"][number]`) is deferred to instantiation time, exactly like a
+// type-parameter-rooted access (`T["arg0"][number]`). `tsc` treats `this` as a
+// type parameter whose constraint is the enclosing class/interface, so it never
+// eagerly emits TS2536 here. Mirrors the hotscript `Tuples.ToUnionFn` shape.
+#[test]
+fn this_rooted_indexed_access_chain_no_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare const rawArgs: unique symbol;
+interface Fn {
+  [rawArgs]: unknown;
+  arg0: this[typeof rawArgs] extends [infer a, ...any] ? a : never;
+}
+interface ToUnionFn extends Fn {
+  return: this["arg0"][number];
+}
+// Renamed binders + alternate index kinds must defer identically.
+interface OtherFn extends Fn {
+  collapse: this["arg0"][0];
+  width: this["arg0"]["length"];
+}
+"#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for a deferred indexed access rooted at the polymorphic `this` type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn circular_interface_access_type_args_do_not_stack_overflow() {
     let diagnostics = compile_and_get_diagnostics(
