@@ -83,6 +83,17 @@ pub trait TypePredicateCache {
     /// interner cache. Default impl is a no-op.
     fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached full-reachability `contains_type_query` result if
+    /// available. Distinct from [`Self::contains_type_query_cached`]: this slot
+    /// memoizes the `ChildPolicy::FULL` walk used to gate `collect_type_queries`.
+    fn contains_type_query_full_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of the full-reachability `contains_type_query` walk in
+    /// the shared interner cache. Default impl is a no-op.
+    fn set_contains_type_query_full_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_parameters_db(type_id)` result if
     /// available. Default impl returns `None` (no caching).
     fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
@@ -729,6 +740,14 @@ impl TypePredicateCache for TypeInterner {
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeQuery, result);
+    }
+
+    fn contains_type_query_full_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeQueryFull)
+    }
+
+    fn set_contains_type_query_full_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeQueryFull, result);
     }
 
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
