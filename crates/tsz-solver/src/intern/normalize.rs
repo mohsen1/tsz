@@ -8,6 +8,7 @@
 //! - Intersection-over-union distribution
 //! - Literal absorption into primitives
 
+use super::shallow_subtype::ShallowReduceKind;
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     CallableShape, IntrinsicKind, LiteralValue, ObjectShape, PropertyInfo, TemplateLiteralId,
@@ -1107,6 +1108,19 @@ impl TypeInterner {
         if len <= 64 {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
+            // Precompute one coarse structural bucket per member (O(N)). A pair
+            // whose buckets cannot relate (e.g. object-vs-literal,
+            // primitive-vs-object) is skipped without the shallow subtype call:
+            // `is_subtype_shallow` would deterministically answer `false`. This
+            // collapses the dominant cross-kind term of the mixed
+            // object/primitive/literal large-row union shape from N(N-1) shallow
+            // calls toward the count of genuinely same-kind pairs, while
+            // object-vs-object / function-vs-function reductions are preserved
+            // exactly.
+            let kinds: Vec<ShallowReduceKind> = flat
+                .iter()
+                .map(|&id| self.shallow_reduce_kind(id))
+                .collect();
             let mut keep = vec![true; len];
             let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
                 &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
@@ -1117,6 +1131,20 @@ impl TypeInterner {
                 }
                 for j in 0..len {
                     if i == j || !keep[j] {
+                        continue;
+                    }
+                    if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
+                        // The bucket skip must never hide a real subtype
+                        // relation: validate the over-approximation against the
+                        // shallow engine in debug/test builds across the whole
+                        // corpus. Release builds pay only the `may_relate` match.
+                        debug_assert!(
+                            !self.is_subtype_shallow(flat[i], flat[j]),
+                            "shallow_reduce_kind skipped a relating pair: \
+                             {:?} <: {:?}",
+                            kinds[i],
+                            kinds[j],
+                        );
                         continue;
                     }
                     if let Some(counter) = shallow_checks {
@@ -1229,6 +1257,13 @@ impl TypeInterner {
         } else {
             (1u64 << len) - 1
         };
+        // One coarse structural bucket per member (stack-allocated for the
+        // <=64-member partition). Pairs whose buckets cannot relate skip the
+        // shallow subtype call; see `ShallowReduceKind::may_relate`.
+        let kinds: SmallVec<[ShallowReduceKind; 64]> = flat
+            .iter()
+            .map(|&id| self.shallow_reduce_kind(id))
+            .collect();
         let shallow_checks = tsz_common::perf_counters::enabled_fast()
             .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
         for i in 0..len {
@@ -1237,6 +1272,15 @@ impl TypeInterner {
             }
             for j in 0..len {
                 if i == j || keep & (1u64 << j) == 0 {
+                    continue;
+                }
+                if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
+                    debug_assert!(
+                        !self.is_subtype_shallow(flat[i], flat[j]),
+                        "shallow_reduce_kind skipped a relating pair: {:?} <: {:?}",
+                        kinds[i],
+                        kinds[j],
+                    );
                     continue;
                 }
                 if let Some(counter) = shallow_checks {
@@ -1547,6 +1591,105 @@ mod tests {
         assert!(
             !list.contains(&interner.literal_string("a")),
             "literal `\"a\"` must be absorbed by `string`"
+        );
+    }
+
+    fn obj_with_unique_prop(interner: &TypeInterner, i: usize) -> TypeId {
+        let name = interner.intern_string(&format!("p{i}"));
+        let val = interner.literal_number((1000 + i) as f64);
+        interner.object(vec![PropertyInfo::new(name, val)])
+    }
+
+    #[test]
+    fn structural_bucket_preserves_mixed_object_primitive_literal_union() {
+        // The large-row shape that reaches the O(N^2) pairwise sweep: a widened
+        // primitive (so the `all_non_reducible && !has_primitive` early return
+        // does not fire) beside distinct unique-prop objects and cross-domain
+        // literals. No member is a subtype of any other, so every member must
+        // survive — the structural-bucket skip must not drop any of them.
+        let interner = TypeInterner::new();
+        let mut members = vec![TypeId::BOOLEAN];
+        for i in 0..100 {
+            match i % 3 {
+                0 => members.push(obj_with_unique_prop(&interner, i)),
+                1 => members.push(interner.literal_number((7_000_000 + i) as f64)),
+                _ => members.push(interner.literal_string(&format!("s{i}"))),
+            }
+        }
+        let expected = members.len();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a wide mixed-kind union to survive normalization");
+        };
+        assert_eq!(
+            interner.type_list(list_id).len(),
+            expected,
+            "every disjoint mixed-kind member must survive the bucketed sweep"
+        );
+    }
+
+    #[test]
+    fn structural_bucket_still_reduces_object_subtype_in_wide_union() {
+        // A wide union (so it takes the >64 bucketed path) carrying a genuine
+        // object-vs-object reduction: `{ a: 1 }` <: `{}` (every property of the
+        // empty target is satisfied vacuously — but the shallow engine requires
+        // property overlap, so use a real width-subtype instead). `{ a: 1 }` is a
+        // subtype of `{ a: 1 | 2 }` via the property type check, so the narrower
+        // object must be absorbed even surrounded by disjoint padding members.
+        let interner = TypeInterner::new();
+        let a = interner.intern_string("a");
+        let narrow = interner.object(vec![PropertyInfo::new(a, interner.literal_number(1.0))]);
+        let wide_val = interner.union(vec![
+            interner.literal_number(1.0),
+            interner.literal_number(2.0),
+        ]);
+        let wide = interner.object(vec![PropertyInfo::new(a, wide_val)]);
+
+        let mut members = vec![TypeId::BOOLEAN, narrow, wide];
+        // Disjoint padding to push the union onto the >64 bucketed path.
+        for i in 0..80 {
+            members.push(interner.literal_string(&format!("pad{i}")));
+        }
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected the padded union to survive normalization");
+        };
+        let list = interner.type_list(list_id);
+        assert!(
+            list.contains(&wide),
+            "the wider object `{{ a: 1 | 2 }}` must survive"
+        );
+        assert!(
+            !list.contains(&narrow),
+            "the narrower object `{{ a: 1 }}` must be subtype-reduced away \
+             even on the bucketed >64 path"
+        );
+    }
+
+    #[test]
+    fn structural_bucket_skip_matches_unbucketed_reduction_small_partition() {
+        // Drive the <=64 quadratic partition path (via the `boolean` primitive
+        // keeping the early-return from firing) and assert the surviving set is
+        // exactly the disjoint members: the stack-allocated bucket precompute
+        // must not change reduction on the small path either.
+        let interner = TypeInterner::new();
+        let mut members = vec![TypeId::BOOLEAN];
+        for i in 0..40 {
+            if i % 2 == 0 {
+                members.push(obj_with_unique_prop(&interner, i));
+            } else {
+                members.push(interner.literal_number((9_000_000 + i) as f64));
+            }
+        }
+        let expected = members.len();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected the small mixed union to survive normalization");
+        };
+        assert_eq!(
+            interner.type_list(list_id).len(),
+            expected,
+            "disjoint members must all survive the small bucketed partition path"
         );
     }
 }

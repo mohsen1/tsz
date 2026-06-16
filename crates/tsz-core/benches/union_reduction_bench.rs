@@ -1,9 +1,20 @@
 //! Union reduction microbenchmarks.
 //! Tests performance of `reduce_union_subtypes` for large unions of tuples/arrays.
+//!
+//! The `union_mixed_kind_*` group targets the large-ts-repo / ts-toolbelt
+//! `reduce_union_subtypes` quadratic sweep over a wide concrete union whose
+//! members span several disjoint structural kinds (objects with unique
+//! discriminants, distinct numeric/string literals, a widened primitive). That
+//! shape misses discriminant partitioning (no property covers half the members)
+//! and lands on the raw O(N²) pairwise `is_subtype_shallow` loop, where most
+//! pairs are cross-kind (object-vs-literal, primitive-vs-object) and provably
+//! cannot relate. The structural-bucket skip should drop
+//! `union_subtype_reduction_shallow_checks` toward the count of same-kind pairs
+//! while leaving the union result byte-identical.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use tsz_solver::construction::TypeInterner;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::{PropertyInfo, TupleElement, TypeId};
 
 /// Create N distinct tuple types like [Lit0, Lit1], [Lit2, Lit3], etc.
 /// This simulates enumLiteralsSubtypeReduction.ts which has 512 return types.
@@ -108,6 +119,70 @@ fn bench_union_512_identical(c: &mut Criterion) {
     });
 }
 
+/// Build a wide mixed-kind union member set of size ~`count`: objects with a
+/// unique single property each (so no discriminant covers half the members and
+/// partitioning is skipped), interleaved with distinct number and string
+/// literals. No widened `string`/`number` primitive is included, so the
+/// cross-domain literals are NOT absorbed in the pre-sweep pass and all members
+/// survive into the O(N²) reduction loop. This is the large-row "mixed
+/// object/primitive/literal" shape where most pairs are cross-kind
+/// (object-vs-literal, number-literal-vs-string-literal) and provably disjoint.
+fn create_mixed_kind_members(interner: &TypeInterner, count: usize) -> Vec<TypeId> {
+    let mut members = Vec::with_capacity(count);
+    for i in 0..count {
+        match i % 4 {
+            // Object with a unique property name + literal value type. No single
+            // property name is shared across members, so the discriminant
+            // partition pass returns None and the union lands on the quadratic
+            // path. Objects only ever relate to other objects in the shallow
+            // engine.
+            0 => {
+                let prop_name = interner.intern_string(&format!("p{i}"));
+                let val = interner.literal_number((1000 + i) as f64);
+                let obj = interner.object(vec![PropertyInfo::new(prop_name, val)]);
+                members.push(obj);
+            }
+            1 => {
+                let prop_name = interner.intern_string(&format!("q{i}"));
+                let val = interner.literal_string(&format!("v{i}"));
+                let obj = interner.object(vec![PropertyInfo::new(prop_name, val)]);
+                members.push(obj);
+            }
+            // Distinct number literal: survives (no widened `number` peer), only
+            // relates to a same-domain primitive or template, neither present.
+            2 => members.push(interner.literal_number((7_000_000 + i) as f64)),
+            // Distinct string literal: survives (no widened `string` peer).
+            _ => members.push(interner.literal_string(&format!("s{i}"))),
+        }
+    }
+    members
+}
+
+fn bench_mixed_kind(c: &mut Criterion, count: usize) {
+    c.bench_function(&format!("union_mixed_kind_{count}"), |b| {
+        b.iter_with_setup(
+            || {
+                // Fresh interner per iteration so the union-normalize memo never
+                // hides the reduction work across iterations.
+                let interner = TypeInterner::new();
+                let members = create_mixed_kind_members(&interner, count);
+                (interner, members)
+            },
+            |(interner, members)| black_box(interner.union(black_box(members))),
+        )
+    });
+}
+
+fn bench_union_mixed_kind_80(c: &mut Criterion) {
+    bench_mixed_kind(c, 80);
+}
+fn bench_union_mixed_kind_200(c: &mut Criterion) {
+    bench_mixed_kind(c, 200);
+}
+fn bench_union_mixed_kind_400(c: &mut Criterion) {
+    bench_mixed_kind(c, 400);
+}
+
 criterion_group!(
     benches,
     bench_union_512_tuples,
@@ -115,5 +190,8 @@ criterion_group!(
     bench_incremental_union_512,
     bench_union_100_tuples,
     bench_union_512_identical,
+    bench_union_mixed_kind_80,
+    bench_union_mixed_kind_200,
+    bench_union_mixed_kind_400,
 );
 criterion_main!(benches);
