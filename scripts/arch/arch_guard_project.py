@@ -90,7 +90,7 @@ def extract_project_row_definitions(text: str) -> Optional[list[dict[str, Option
             continue
 
         row: dict[str, Optional[str]] = {"name": name_match.group(1)}
-        for field in ("benchmark_set", "guard_set"):
+        for field in ("benchmark_set", "guard_set", "category"):
             field_match = re.search(rf'\b{field}:\s*(?:"([^"]+)"|null)', body)
             if field_match is None:
                 row[field] = None
@@ -380,7 +380,17 @@ def scan_project_inclusion_policy(
     bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
     bench_rows = extract_project_benchmark_rows(bench_text)
     bench_set = set(bench_rows)
-    expected_bench_rows = sorted(manifest_set - COMPILE_GUARD_ONLY_PROJECT_ROWS)
+    # Application rows are compile-guard canaries that install deps and crash/time
+    # out under a real type-checker, so they are intentionally not perf-benchmarked
+    # in bench-vs-tsgo (mirrors the bench exclusion in test-project-rows.mjs).
+    application_rows = {
+        row["name"]
+        for row in (definitions or [])
+        if row.get("category") == "application" and row.get("name")
+    }
+    expected_bench_rows = sorted(
+        manifest_set - COMPILE_GUARD_ONLY_PROJECT_ROWS - application_rows
+    )
     expected_bench_set = set(expected_bench_rows)
     for name in expected_bench_rows:
         if name not in bench_set:
