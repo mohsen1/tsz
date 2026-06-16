@@ -1376,12 +1376,8 @@ impl<'a> FlowAnalyzer<'a> {
                     return current;
                 };
                 let ant = *ant;
-                if self.antecedent_requires_defer_cached(
-                    ant,
-                    reference,
-                    symbol_id,
-                    antecedent_defer_memo,
-                ) || visited.contains(&ant)
+                if self.antecedent_requires_defer_cached(ant, reference, symbol_id, memos)
+                    || visited.contains(&ant)
                     || results.contains_key(&ant)
                 {
                     return current;

@@ -22,6 +22,8 @@
 //! per-statement cost reduction itself is a constant-factor change validated by
 //! the project benchmark, not by an absolute-time assertion here.
 
+use std::fmt::Write as _;
+
 use tsz_checker::context::CheckerOptions;
 
 fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -55,16 +57,18 @@ fn call_dense_guarded_body(count: usize, obj: &str, sink: &str) -> String {
         .map(|i| format!("p{i}: number | undefined;"))
         .collect();
     let mut out = String::new();
-    out.push_str(&format!("interface Wide {{ {} }}\n", props.join(" ")));
-    out.push_str(&format!("declare function {sink}(x: unknown): void;\n"));
+    writeln!(out, "interface Wide {{ {} }}", props.join(" ")).unwrap();
+    writeln!(out, "declare function {sink}(x: unknown): void;").unwrap();
     out.push_str("declare function makeWide(): Wide;\n");
     out.push_str("function big() {\n");
-    out.push_str(&format!("  const {obj} = makeWide();\n"));
+    writeln!(out, "  const {obj} = makeWide();").unwrap();
     for i in 0..count {
         let p = i % CYCLED_PROPS;
-        out.push_str(&format!(
-            "  if ({obj}.p{p} !== undefined) {{ {sink}({obj}.p{p} + {i}); }}\n"
-        ));
+        writeln!(
+            out,
+            "  if ({obj}.p{p} !== undefined) {{ {sink}({obj}.p{p} + {i}); }}"
+        )
+        .unwrap();
     }
     out.push_str("}\n");
     out

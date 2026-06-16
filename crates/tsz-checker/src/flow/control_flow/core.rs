@@ -1379,7 +1379,12 @@ impl<'a> FlowAnalyzer<'a> {
         let ant_is_deferring_suspension =
             (ant_flags & (flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT)) != 0
                 && ant_flow.antecedent.first().is_some_and(|&grandparent| {
-                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                    // Recurse through the memoized wrapper, mirroring the CALL
+                    // pass-through chain above: a suspension point's defer result
+                    // is the same per-walk-pure function of its antecedent, so it
+                    // reuses the shared `FlowDeferMemos` rather than re-running the
+                    // uncached routine on every visit.
+                    self.antecedent_requires_defer_cached(grandparent, reference, symbol_id, memos)
                 });
 
         (ant_flags & flow_flags::CONDITION) != 0
