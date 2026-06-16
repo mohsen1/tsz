@@ -26,6 +26,7 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "type-fest-project"
   "vite-vanilla-ts-app"
   "nextjs-fresh-app"
+  "comlink-project"
 )
 
 TSZ_COMPILE_GUARD_CANARY_ROWS=(
@@ -35,7 +36,6 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "type-challenges-solutions-project"
   "valibot-project"
   "msw-project"
-  "comlink-project"
   "effect-project"
   "drizzle-orm-project"
   "ts-rest-project"

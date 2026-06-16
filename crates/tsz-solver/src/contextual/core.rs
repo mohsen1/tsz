@@ -232,6 +232,22 @@ impl<'a> ContextualTypeContext<'a> {
                     self.no_implicit_any,
                 );
                 match ctx.get_parameter_type(index) {
+                    // A member whose parameter type is one of that member's own
+                    // (un-instantiated) generic type parameters represents a generic
+                    // overload that tsc would instantiate before contextually typing
+                    // the callback. Its contextual contribution is the type parameter's
+                    // constraint, or `any` when unconstrained — not the bare type
+                    // parameter (which would otherwise read as a spurious "disagreement"
+                    // against a concrete sibling overload and block contextual typing,
+                    // e.g. `Array.reduce`'s `(prev: T, ...) => T | (prev: U, ...) => U`
+                    // contextual union for the `previousValue` slot when the
+                    // initializer is `any`).
+                    Some(ty) if self.is_signature_own_free_type_parameter(m, ty) => {
+                        param_types.push(
+                            crate::type_queries::get_type_parameter_constraint(self.interner, ty)
+                                .unwrap_or(TypeId::ANY),
+                        );
+                    }
                     Some(ty) => param_types.push(ty),
                     None => {
                         // Callable member returned None — either:
@@ -263,6 +279,16 @@ impl<'a> ContextualTypeContext<'a> {
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
                 return Some(first);
+            }
+            // If a member contributed `any` (from widening an un-instantiated generic
+            // overload's own type parameter above), the contextual parameter type is
+            // `any`: tsc selects and instantiates that generic overload, contextually
+            // typing the parameter as `any` rather than treating the mix of a concrete
+            // and a generic overload as an irreconcilable disagreement. This keeps the
+            // callback parameter contextually typed (no false TS7006) without affecting
+            // unions of purely-concrete callable members, which still return `None`.
+            if param_types.contains(&TypeId::ANY) {
+                return Some(TypeId::ANY);
             }
             return None;
         }
@@ -1582,6 +1608,38 @@ impl<'a> ContextualTypeContext<'a> {
 
     /// Check if a callable type has any call signature with a parameter at the given index.
     /// This distinguishes "no param at this index" (arity gap) from "params disagree."
+    /// Whether `param_type` is a bare type parameter declared by `member`'s own
+    /// (generic) signature — i.e. an un-instantiated overload type parameter
+    /// occupying a callback parameter slot. Such a parameter is not a concrete
+    /// contextual type; it is a placeholder tsc would instantiate from the
+    /// supplied argument. Used to widen it to its constraint (or `any`) instead of
+    /// treating it as a disagreement against a sibling overload's concrete slot.
+    fn is_signature_own_free_type_parameter(&self, member: TypeId, param_type: TypeId) -> bool {
+        use crate::types::TypeData;
+        let Some(TypeData::TypeParameter(param_info)) = self.interner.lookup(param_type) else {
+            return false;
+        };
+        let name = param_info.name;
+        if member.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(member) {
+            Some(TypeData::Function(func_id)) => self
+                .interner
+                .function_shape(func_id)
+                .type_params
+                .iter()
+                .any(|tp| tp.name == name),
+            Some(TypeData::Callable(callable_id)) => self
+                .interner
+                .callable_shape(callable_id)
+                .call_signatures
+                .iter()
+                .any(|sig| sig.type_params.iter().any(|tp| tp.name == name)),
+            _ => false,
+        }
+    }
+
     fn callable_has_param_at_index(&self, type_id: TypeId, index: usize) -> bool {
         use crate::types::TypeData;
         // Fast path: intrinsics are never `Function(_)` / `Callable(_)`.

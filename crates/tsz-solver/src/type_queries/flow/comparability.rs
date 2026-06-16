@@ -242,9 +242,90 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // A deferred conditional (or an indexed access whose object base is a
+    // deferred conditional) has no extractable properties, so it would fall
+    // through to the property-overlap check and report a false TS2352. tsc
+    // compares against `getBaseConstraintOfType` — the union of both branch
+    // results — so resolve that base constraint and retry the overlap check.
+    // This covers `Box<T>[keyof Box<T>] as string` (tanstack-router
+    // `Matches.ts`) and the casting-into sibling.
+    if let Some(source_constraint) = deferred_conditional_assertion_constraint(db, source)
+        && source_constraint != source
+        && types_are_comparable_for_assertion_inner(
+            db,
+            source_constraint,
+            target,
+            depth + 1,
+            nested,
+        )
+    {
+        return true;
+    }
+    if let Some(target_constraint) = deferred_conditional_assertion_constraint(db, target)
+        && target_constraint != target
+        && types_are_comparable_for_assertion_inner(
+            db,
+            source,
+            target_constraint,
+            depth + 1,
+            nested,
+        )
+    {
+        return true;
+    }
+
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
     super::super::assertion_overlap::types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+/// Base constraint of a deferred conditional (or an indexed access whose object
+/// is a deferred conditional), for assertion comparability.
+///
+/// For a `Conditional`, this is the union of its branch results (tsc's
+/// `getBaseConstraintOfType`). For `Obj[Key]` where `Obj` is a deferred
+/// conditional, it is `branchUnion[Key]` evaluated — e.g.
+/// `Box<T>[keyof Box<T>]` with `Box<T> = T extends string ? { a: T } : { a: string }`
+/// resolves to `({ a: T } | { a: string })[keyof …]` = `T | string`, a
+/// string-domain type comparable to `string`. Returns `None` when no deferred
+/// conditional base is involved (so non-conditional types skip the work).
+fn deferred_conditional_assertion_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    use crate::evaluation::evaluate::{evaluate_index_access, evaluate_type};
+    use crate::type_queries::conditional_branch_union_constraint;
+
+    // Resolve the conditional base constraint of `ty`, evaluating it first so an
+    // alias `Application` (e.g. `Box<T>`) collapses to its `Conditional` body.
+    let conditional_constraint = |db: &dyn TypeDatabase, ty: TypeId| -> Option<TypeId> {
+        conditional_branch_union_constraint(db, ty)
+            .or_else(|| conditional_branch_union_constraint(db, evaluate_type(db, ty)))
+    };
+
+    if let Some(constraint) = conditional_constraint(db, type_id) {
+        return Some(evaluate_type(db, constraint));
+    }
+    // `Obj[Key]` where `Obj` is a deferred conditional: substitute the object's
+    // branch-union base constraint and re-evaluate the indexed access. Evaluate
+    // `type_id` first so an alias application surfaces the underlying indexed
+    // access (`Member<T>` -> `Box<T>[keyof Box<T>]`).
+    let evaluated = evaluate_type(db, type_id);
+    let ia = match db.lookup(evaluated) {
+        Some(TypeData::IndexAccess(o, k)) => Some((o, k)),
+        _ => match db.lookup(type_id) {
+            Some(TypeData::IndexAccess(o, k)) => Some((o, k)),
+            _ => None,
+        },
+    };
+    if let Some((object_type, key_type)) = ia {
+        let object_constraint = conditional_constraint(db, object_type)?;
+        let resolved = evaluate_index_access(db, object_constraint, key_type);
+        if resolved != evaluated && resolved != type_id && resolved != TypeId::ERROR {
+            return Some(resolved);
+        }
+    }
+    None
 }
 
 fn type_param_primitive_comparable_with_constraint(

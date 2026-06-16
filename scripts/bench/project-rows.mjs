@@ -231,8 +231,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "COMLINK_REF",
     repo: "https://github.com/GoogleChromeLabs/comlink.git",
     ref: "114a4a6448a855a613f1cb9a7c89290606c003cf",
-    guard_set: "canary",
-    benchmark_set: "canary",
+    guard_set: "required",
+    benchmark_set: "required",
     category: "external",
   },
   {
