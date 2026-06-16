@@ -1326,6 +1326,34 @@ impl<'a> TypeFormatter<'a> {
         result
     }
 
+    /// Total-walk budget for the long-property-receiver display path. Once
+    /// exhausted, elide the remaining subtree exactly as the `max_depth`
+    /// limit does (objects as `{ ...; }`, everything else as `...`). This
+    /// bounds a shared-DAG receiver's combinatorial re-expansion to O(budget)
+    /// nodes regardless of depth or fan-out (#13480). The budget is refilled
+    /// at every top-level entry (`current_depth == 0`) so each independently
+    /// formatted type display — e.g. each diagnostic argument — gets the full
+    /// allowance and one large type cannot starve the next. Decrement before
+    /// descending; returns `None` (continue formatting) when no budget is set.
+    fn spend_format_node_budget(&self, type_key: Option<&TypeData>) -> Option<Cow<'static, str>> {
+        let budget = self.format_node_budget.as_ref()?;
+        if self.current_depth == 0 {
+            budget.set(LONG_RECEIVER_FORMAT_NODE_BUDGET);
+        }
+        let remaining = budget.get();
+        if remaining == 0 {
+            if matches!(
+                type_key,
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            ) {
+                return Some(Cow::Borrowed("{ ...; }"));
+            }
+            return Some(Cow::Borrowed("..."));
+        }
+        budget.set(remaining - 1);
+        None
+    }
+
     /// Format a type as a human-readable string.
     ///
     /// Returns `Cow::Borrowed` for static type names (e.g., `"never"`, `"any"`)
@@ -1335,30 +1363,8 @@ impl<'a> TypeFormatter<'a> {
             return Cow::Borrowed("...");
         }
         let type_key = self.interner.lookup(type_id);
-        // Total-walk budget for the long-property-receiver display path. Once
-        // exhausted, elide the remaining subtree exactly as the `max_depth`
-        // limit does (objects as `{ ...; }`, everything else as `...`). This
-        // bounds a shared-DAG receiver's combinatorial re-expansion to O(budget)
-        // nodes regardless of depth or fan-out (#13480). The budget is refilled
-        // at every top-level entry (`current_depth == 0`) so each independently
-        // formatted type display — e.g. each diagnostic argument — gets the full
-        // allowance and one large type cannot starve the next. Decrement before
-        // descending; the check is a no-op when no budget is set.
-        if let Some(budget) = &self.format_node_budget {
-            if self.current_depth == 0 {
-                budget.set(LONG_RECEIVER_FORMAT_NODE_BUDGET);
-            }
-            let remaining = budget.get();
-            if remaining == 0 {
-                if matches!(
-                    type_key,
-                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
-                ) {
-                    return Cow::Borrowed("{ ...; }");
-                }
-                return Cow::Borrowed("...");
-            }
-            budget.set(remaining - 1);
+        if let Some(elided) = self.spend_format_node_budget(type_key.as_ref()) {
+            return elided;
         }
         if self.long_property_receiver_display
             && (8..=self.long_property_receiver_object_elision_end_depth)
