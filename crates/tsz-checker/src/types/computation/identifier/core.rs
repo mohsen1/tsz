@@ -359,8 +359,8 @@ impl<'a> CheckerState<'a> {
     /// Off unless both `sound_mode` and `sound_declaration_projection` are set;
     /// a no-op for current-file/user-authored values. The polarity-aware type
     /// transform itself is owned by the solver
-    /// (`tsz_solver::declaration_projection`); the checker only supplies the
-    /// trust-boundary policy (issue #8533).
+    /// (`tsz_solver::operations::declaration_projection`); the checker only
+    /// supplies the trust-boundary policy (issue #8533).
     fn project_declaration_boundary_value(
         &self,
         sym_id: tsz_binder::SymbolId,
@@ -390,10 +390,10 @@ impl<'a> CheckerState<'a> {
         if !self.query_file_is_declaration_file(declaring_file) {
             return value_type;
         }
-        tsz_solver::declaration_projection::project_declaration_boundary(
+        tsz_solver::operations::declaration_projection::project_declaration_boundary(
             self.ctx.types,
             value_type,
-            tsz_solver::declaration_projection::Polarity::Covariant,
+            tsz_solver::operations::declaration_projection::Polarity::Covariant,
         )
     }
 
