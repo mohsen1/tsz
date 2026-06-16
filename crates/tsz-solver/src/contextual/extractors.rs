@@ -1449,8 +1449,12 @@ impl<'a> ParameterForCallExtractor<'a> {
     }
 
     fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
-        // Count required (non-optional) parameters
-        let required_count = params.iter().filter(|p| !p.optional).count();
+        // Count required parameters. A rest parameter (`...a: T[]`) requires zero
+        // arguments, so it must never count toward the minimum arity — otherwise a
+        // call that omits the rest (e.g. `g(5)` for `g(e: 5, ...a: any[])`) is
+        // wrongly rejected, dropping contextual typing for the fixed params and
+        // widening fresh literal arguments.
+        let required_count = params.iter().filter(|p| !p.optional && !p.rest).count();
 
         // Check if there's a rest parameter
         let has_rest = params.iter().any(|p| p.rest);
