@@ -4,6 +4,7 @@
 //! and emits the appropriate diagnostic for regular params, rest params, and
 //! destructuring patterns.
 
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -642,6 +643,54 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .implicit_any_contextual_closures
                 .contains(&node_idx)
+    }
+
+    /// The enclosing call expression for which `func_idx` is a direct argument,
+    /// or `None` when `func_idx` is not a call argument.
+    fn enclosing_call_for_argument(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        let call_idx = self.ctx.arena.get_extended(func_idx)?.parent;
+        let call_node = self.ctx.arena.get(call_idx)?;
+        if call_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+            && call_node.kind != tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION
+        {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(call_node)?;
+        let is_argument = call
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.nodes.contains(&func_idx));
+        is_argument.then_some(call_idx)
+    }
+
+    /// A deferred callback closure may be left without a recorded contextual type
+    /// when its enclosing call resolved to a cached result computed before the
+    /// call's contextual signature was available (e.g. a second `Array.reduce`
+    /// nested inside another function expression, whose call type is cached during
+    /// environment building and not re-resolved during statement checking). The
+    /// closure's parameters are nonetheless contextually typed by the resolved
+    /// signature, so tsc reports no TS7006. Re-resolve the enclosing call (with the
+    /// closure's stale cache invalidated) so the contextual-typing pass runs and
+    /// records the closure; diagnostics produced by the re-resolution are discarded
+    /// because they were already reported (or correctly suppressed) by the original
+    /// resolution. Returns whether the closure is now known to be contextually typed.
+    fn reresolve_enclosing_call_contextual_type(&mut self, func_idx: NodeIndex) -> bool {
+        let Some(call_idx) = self.enclosing_call_for_argument(func_idx) else {
+            return false;
+        };
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
+        self.invalidate_node_type_cache(call_idx);
+        self.invalidate_expression_for_contextual_retry(func_idx);
+        let _ = self.get_type_of_node(call_idx);
+        let contextual = self.closure_has_contextual_type(func_idx);
+        // Discard diagnostics/state mutations from the speculative re-resolution; it
+        // exists only to determine whether the closure is contextually typed. They
+        // were already reported (or correctly suppressed) by the original resolution.
+        snap.rollback(&mut self.ctx.speculation_state());
+        if contextual {
+            self.ctx.implicit_any_contextual_closures.insert(func_idx);
+        }
+        contextual
     }
 
     pub(crate) fn maybe_report_implicit_any_parameter(
@@ -1521,6 +1570,16 @@ impl<'a> CheckerState<'a> {
             if self.closure_has_contextual_type(func_idx) {
                 continue;
             }
+            // A deferred callback whose enclosing call resolved to a cached result
+            // (computed before the call's contextual signature was available) may not
+            // be recorded as contextually typed even though its parameters are. Give
+            // it one re-resolution so the contextual-typing pass can run before we
+            // commit to TS7006. This recovers parity for callbacks nested inside other
+            // function expressions (e.g. a second `Array.reduce` whose call type was
+            // cached during environment building).
+            if self.reresolve_enclosing_call_contextual_type(func_idx) {
+                continue;
+            }
             // Skip closures with JSDoc annotations — JSDoc @param, @type, @template
             // etc. can provide type information that suppresses TS7006. The normal
             // get_type_of_function path handles this; we conservatively skip here.
@@ -1567,13 +1626,28 @@ impl<'a> CheckerState<'a> {
         }
 
         // Re-check closures whose TS7006 was emitted during return-type inference
-        // speculation and then rolled back. These closures had genuinely untyped
-        // parameters at the time of first processing (inside infer_return_type_from_body).
-        // Even if a later call inference retry provided contextual types (adding the
-        // closure to implicit_any_contextual_closures), tsc would have kept the TS7006
-        // from the initial inference pass. So we unconditionally re-emit here.
+        // speculation and then rolled back. These closures had untyped parameters at
+        // the time of the speculative processing inside `infer_return_type_from_body`,
+        // because that speculative re-evaluation did not re-establish a contextual
+        // callback signature for them.
+        //
+        // A closure that received genuine contextual parameter types in its real
+        // (non-speculative) syntactic position must NOT be re-emitted — tsc reports no
+        // TS7006 for it. `closure_has_contextual_type` consults the checked/contextual
+        // closure sets recorded during real statement checking; those marks persist
+        // past the speculative rollback, and this pass runs after all statements are
+        // checked, so the mark is authoritative. This mirrors the guard already applied
+        // to the deferred-closure loop above. It fixes false TS7006 on a contextually
+        // typed callback (e.g. an `Array.prototype.reduce` callback typed by the
+        // resolved overload) whose result later flows into a deferred-inference chain
+        // such as `let r = arr.reduce(cb, init); Promise.resolve(r).then(...)`, which
+        // re-evaluates the reduce call speculatively without re-applying its overload
+        // context.
         let speculative = std::mem::take(&mut self.ctx.speculative_implicit_any_closures);
         for func_idx in speculative {
+            if self.closure_has_contextual_type(func_idx) {
+                continue;
+            }
             if self.find_jsdoc_for_function(func_idx).is_some() {
                 continue;
             }

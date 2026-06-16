@@ -139,6 +139,9 @@ mod async_imported_promise_tests;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "tests/circular_export_star_const_value_tests.rs"]
+mod circular_export_star_const_value_tests;
+#[cfg(test)]
 #[path = "tests/class_boundary_fallback_relation_routing_arch_tests.rs"]
 mod class_boundary_fallback_relation_routing_arch_tests;
 #[cfg(test)]
@@ -1269,6 +1272,9 @@ mod synthetic_unique_atom_union_display_tests;
 #[cfg(test)]
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
+#[cfg(test)]
+#[path = "tests/this_source_inference_tests.rs"]
+mod this_source_inference_tests;
 #[cfg(test)]
 #[path = "tests/this_void_method_call_tests.rs"]
 mod this_void_method_call_tests;

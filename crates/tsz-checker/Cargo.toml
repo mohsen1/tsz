@@ -48,6 +48,9 @@ path = "tests/freshness_stripping_tests.rs"
 name = "any_user_predicate_keeps_any_for_object_function_tests"
 path = "tests/any_user_predicate_keeps_any_for_object_function_tests.rs"
 [[test]]
+name = "concrete_tuple_generic_index_chain_ts2536_tests"
+path = "tests/concrete_tuple_generic_index_chain_ts2536_tests.rs"
+[[test]]
 name = "cross_file_delegation_lookup_consolidation_tests"
 path = "tests/cross_file_delegation_lookup_consolidation_tests.rs"
 [[test]]
@@ -610,6 +613,9 @@ path = "tests/conditional_extends_readonly_variance_tests.rs"
 [[test]]
 name = "deferred_conditional_identity_extends_tests"
 path = "tests/deferred_conditional_identity_extends_tests.rs"
+[[test]]
+name = "deferred_conditional_indexed_access_tests"
+path = "tests/deferred_conditional_indexed_access_tests.rs"
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
 path = "tests/ts2322_property_decl_annotation_tests.rs"
