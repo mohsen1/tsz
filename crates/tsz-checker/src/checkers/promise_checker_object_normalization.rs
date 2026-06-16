@@ -75,6 +75,67 @@ fn bump_awaited_eval_clamp_epoch() {
     AWAITED_EVAL_CLAMP_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
 }
 
+/// Dirty the `Awaited<…>` normalization thread-locals the way a mid-walk
+/// bail (stack-overflow breaker, fuel exhaustion, or a caught panic) would.
+#[cfg(test)]
+pub(crate) fn dirty_awaited_eval_thread_local_state_for_test() {
+    AWAITED_EVAL_VISITING.with(|visiting| {
+        visiting.borrow_mut().insert(TypeId(123));
+    });
+    bump_awaited_eval_clamp_epoch();
+}
+
+/// Whether the `Awaited<…>` normalization thread-locals are at their reset
+/// state (empty visiting set, zero clamp epoch).
+#[cfg(test)]
+pub(crate) fn awaited_eval_thread_local_state_clear_for_test() -> bool {
+    AWAITED_EVAL_VISITING.with(|visiting| visiting.borrow().is_empty())
+        && awaited_eval_clamp_epoch() == 0
+}
+
+#[cfg(test)]
+mod awaited_eval_guard_tests {
+    use super::*;
+
+    #[test]
+    fn visit_guard_blocks_reentry_and_restores_on_drop() {
+        reset_awaited_eval_thread_local_state();
+        let t = TypeId(7);
+        let outer = AwaitedEvalVisitGuard::enter(t).expect("first entry succeeds");
+        assert!(
+            AwaitedEvalVisitGuard::enter(t).is_none(),
+            "re-entry while in flight must be blocked"
+        );
+        // A different type is independent.
+        let other = AwaitedEvalVisitGuard::enter(TypeId(8)).expect("distinct type enters");
+        drop(other);
+        drop(outer);
+        assert!(
+            AwaitedEvalVisitGuard::enter(t).is_some(),
+            "membership must be cleared on drop"
+        );
+        reset_awaited_eval_thread_local_state();
+    }
+
+    #[test]
+    fn clamp_epoch_bumps_and_resets() {
+        reset_awaited_eval_thread_local_state();
+        let before = awaited_eval_clamp_epoch();
+        bump_awaited_eval_clamp_epoch();
+        assert_ne!(
+            awaited_eval_clamp_epoch(),
+            before,
+            "clamp epoch must advance so a subtree clamp is observable"
+        );
+        reset_awaited_eval_thread_local_state();
+        assert_eq!(
+            awaited_eval_clamp_epoch(),
+            0,
+            "reset zeroes the clamp epoch"
+        );
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn evaluate_awaited_object_properties_for_assignability(
         &mut self,
