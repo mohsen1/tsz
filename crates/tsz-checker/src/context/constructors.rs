@@ -258,6 +258,9 @@ impl<'a> CheckerContext<'a> {
             export_equals_named_cache: RefCell::new(crate::context::CowCache::default()),
             nested_namespace_candidates_cache: RefCell::new(crate::context::CowCache::default()),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
+            member_access_info_cache: RefCell::new(FxHashMap::default()),
+            enclosing_class_declares_member_cache: RefCell::new(FxHashMap::default()),
+            accessor_levels_cache: RefCell::new(FxHashMap::default()),
             jsdoc_global_typedef_lookup_cache: crate::context::JSDocGlobalTypedefLookupCache {
                 miss_cache: RefCell::new(FxHashSet::default()),
                 in_progress: RefCell::new(FxHashSet::default()),
