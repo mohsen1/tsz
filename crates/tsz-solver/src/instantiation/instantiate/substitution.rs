@@ -52,8 +52,22 @@ impl TypeSubstitution {
         let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
 
         // Phase 1: Insert explicitly-provided type arguments.
+        //
+        // A `TypeId::ERROR` argument is the internal cycle/fuel sentinel, never a
+        // real type. Binding a type parameter to it would collapse that parameter
+        // to `error` everywhere it appears in the instantiated body — the
+        // cross-arena base-class poison cycle (#13044/#13484): when a generic
+        // base class (`QueryCreator<DB>`) is resolved transitively while a derived
+        // subclass chain is mid-resolution, the in-progress base instance is the
+        // `ERROR` sentinel and substituting it as the `DB` argument bakes
+        // `SelectFrom<error, ...>` into the inherited members. Skip the binding so
+        // the parameter stays free (its `instantiate_key` returns the original
+        // parameter), matching tsc, which binds base->derived type parameters
+        // order-independently and never collapses a free parameter to an error
+        // sentinel. The parameter resolves correctly once the real argument is
+        // available.
         for (i, param) in type_params.iter().enumerate() {
-            if i < type_args.len() {
+            if i < type_args.len() && type_args[i] != TypeId::ERROR {
                 map.insert(param.name, type_args[i]);
             }
         }
@@ -61,6 +75,8 @@ impl TypeSubstitution {
         // Phase 2: Pre-fill unsupplied type parameters with `any` so that
         // circular and forward references in defaults become any-like instead
         // of leaking unresolved placeholders into the instantiated type.
+        // Parameters whose argument was the `ERROR` sentinel (skipped above) are
+        // intentionally left unbound so they stay free rather than `any`.
         for (i, param) in type_params.iter().enumerate() {
             if i >= type_args.len() {
                 map.insert(param.name, TypeId::ANY);
