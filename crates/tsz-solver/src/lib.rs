@@ -34,7 +34,11 @@ pub(crate) use caches::options;
 pub mod canonicalize;
 pub mod classes;
 mod contextual;
-pub mod declaration_projection;
+// Sound Mode declaration-boundary projection is a polarity-aware type transform
+// that lives under `operations` (the crate-root file budget is full); re-export
+// it as `crate::declaration_projection` so the checker keeps the
+// `tsz_solver::declaration_projection` path.
+pub use operations::declaration_projection;
 pub mod def;
 mod diagnostics;
 pub mod evaluation;
