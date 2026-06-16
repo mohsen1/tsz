@@ -725,11 +725,32 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         property_name: &str,
         is_static: bool,
-    ) -> Option<(
-        Option<MemberAccessLevel>,
-        Option<MemberAccessLevel>,
-        NodeIndex,
-    )> {
+    ) -> crate::context::AccessorLevelsCacheValue {
+        // Per-file memo: the getter/setter-pair scan is `O(members)` per access
+        // and runs once per property access, so on an `N`-member class it is
+        // `O(N^2)`. The accessor levels are a pure function of the immutable AST,
+        // keyed by `(class node, member-name Atom, is_static)`. Interning the
+        // name to its canonical `Atom` (`O(1)` amortized) gives an identity key.
+        let name_atom = self.ctx.types.intern_string(property_name);
+        let cache_key = (class_idx, name_atom, is_static);
+        if let Some(&cached) = self.ctx.accessor_levels_cache.borrow().get(&cache_key) {
+            return cached;
+        }
+        let computed =
+            self.compute_accessor_levels_in_hierarchy(class_idx, property_name, is_static);
+        self.ctx
+            .accessor_levels_cache
+            .borrow_mut()
+            .insert(cache_key, computed);
+        computed
+    }
+
+    fn compute_accessor_levels_in_hierarchy(
+        &mut self,
+        class_idx: NodeIndex,
+        property_name: &str,
+        is_static: bool,
+    ) -> crate::context::AccessorLevelsCacheValue {
         use rustc_hash::FxHashSet;
 
         let mut current = class_idx;

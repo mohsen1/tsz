@@ -244,11 +244,33 @@ impl<'a> CheckerState<'a> {
     }
 
     fn enclosing_class_declares_member(&self, property_name: &str) -> bool {
-        self.ctx.enclosing_class.as_ref().is_some_and(|class_info| {
-            class_info.member_nodes.iter().any(|&member_idx| {
-                self.get_member_name(member_idx).as_deref() == Some(property_name)
-            })
-        })
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+        // Per-file memo: the membership scan is `O(members)` per access and runs
+        // once per `this.x` property access, so on an `N`-member class it is
+        // `O(N^2)`. The answer is a pure function of the immutable AST, keyed by
+        // `(class node, member-name Atom)`. Interning the name to its canonical
+        // `Atom` (`O(1)` amortized) gives an identity key.
+        let name_atom = self.ctx.types.intern_string(property_name);
+        let cache_key = (class_info.class_idx, name_atom);
+        if let Some(&cached) = self
+            .ctx
+            .enclosing_class_declares_member_cache
+            .borrow()
+            .get(&cache_key)
+        {
+            return cached;
+        }
+        let declares = class_info
+            .member_nodes
+            .iter()
+            .any(|&member_idx| self.get_member_name(member_idx).as_deref() == Some(property_name));
+        self.ctx
+            .enclosing_class_declares_member_cache
+            .borrow_mut()
+            .insert(cache_key, declares);
+        declares
     }
 
     pub(super) fn substitute_direct_this_property_shape_type(
@@ -262,14 +284,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let shape = crate::query_boundaries::common::object_shape_for_type(
+        // Accelerated by-name member lookup: the canonical `find_property_in_object`
+        // query uses the shape's per-`ObjectShapeId` property index (O(1) for large
+        // shapes, sorted-`Atom` binary search otherwise). This is byte-identical to
+        // the previous linear `resolve_atom_ref` string scan because shape property
+        // names are interned, so matching the receiver's interned property `Atom`
+        // resolves the same property. Routing through it removes the O(N) per-access
+        // scan that made N `this.x` accesses on an N-property class O(N^2).
+        let name_atom = self.ctx.types.intern_string(property_name);
+        let raw_prop = crate::query_boundaries::common::find_property_in_object(
             self.ctx.types,
             object_type_for_access,
+            name_atom,
         )?;
-        let raw_prop = shape
-            .properties
-            .iter()
-            .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == property_name)?;
         crate::query_boundaries::common::contains_this_type(self.ctx.types, raw_prop.type_id).then(
             || {
                 crate::query_boundaries::common::substitute_this_type(

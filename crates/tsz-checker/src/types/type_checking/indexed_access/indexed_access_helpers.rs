@@ -162,7 +162,14 @@ impl<'a> CheckerState<'a> {
         if let Some((base, _index)) =
             crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
         {
-            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
+            // A generic indexed access (`Base[I]`) defers its index-validity
+            // check to instantiation time (tsc's `checkIndexedAccessIndexType`).
+            // The base is generic when it is a type parameter or the polymorphic
+            // `this` type: tsc models `this` as a type parameter whose constraint
+            // is the enclosing class/interface, so `this["arg0"][number]` is as
+            // deferred as `T["arg0"][number]` and must not eagerly emit TS2536.
+            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base)
+                || crate::query_boundaries::common::is_this_type(self.ctx.types, base);
         }
         false
     }
