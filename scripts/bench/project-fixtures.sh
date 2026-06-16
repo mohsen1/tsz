@@ -68,6 +68,7 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "neverthrow-project"
   "xstate-project"
   "mobx-project"
+  "umami-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
@@ -373,6 +374,9 @@ tsz_project_fixture_sources() {
       ;;
     mobx-project)
       printf 'mobx|%s|%s\n' "$MOBX_REPO" "$MOBX_REF"
+      ;;
+    umami-project)
+      printf 'umami|%s|%s\n' "$UMAMI_REPO" "$UMAMI_REF"
       ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"

@@ -635,6 +635,28 @@ export const PROJECT_ROW_DEFINITIONS = [
     benchmark_set: "canary",
     category: "external",
   },
+  // --- application/dashboard canary rows (category:"application") ---
+  // Real apps; the guard installs their deps (install_cmd in install_root) and
+  // compiles with the app's own tsconfig (app_tsconfig), then drops node_modules.
+  {
+    name: "umami-project",
+    label: "umami",
+    readme_candidates: ["README.md", "readme.md"],
+    owner: "Tracks 1, 2",
+    family: "real-world application: analytics dashboard (Next.js app, jsx + @/* path aliases)",
+    fixture_dir: "umami",
+    source_dir: "src",
+    app_tsconfig: "tsconfig.json",
+    install_cmd: "pnpm install --frozen-lockfile --ignore-scripts",
+    install_root: ".",
+    repo_env: "UMAMI_REPO",
+    ref_env: "UMAMI_REF",
+    repo: "https://github.com/umami-software/umami.git",
+    ref: "c0ea3aefbee7a3429ee2f824b06dc4a9dbe0b7e1",
+    guard_set: "canary",
+    benchmark_set: "canary",
+    category: "application",
+  },
 ];
 
 export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
