@@ -126,11 +126,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(parent_type) = self.ctx.symbol_types.get(&parent).copied() {
                 return Some(parent_type);
             }
+            // Resolve the parent enum's `DefId` from the shared store's
+            // `symbol_only_index` in O(1). Previously this scanned the local
+            // `def_to_symbol` map (whose completeness depended on the eager
+            // whole-program warm), which was O(program-symbols) per call.
             self.ctx
-                .def_to_symbol
-                .borrow()
-                .iter()
-                .find_map(|(&def_id, &sym_id)| (sym_id == parent).then_some(def_id))
+                .definition_store
+                .find_def_by_symbol(parent.0)
                 .map(|parent_def_id| self.ctx.types.factory().enum_type(parent_def_id, type_id))
         } else {
             None

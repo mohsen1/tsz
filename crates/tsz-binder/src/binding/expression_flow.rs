@@ -310,7 +310,7 @@ impl BinderState {
                         let after_base = if self.continues_optional_chain(arena, idx)
                             || Self::is_optional_chain_access(arena, access.expression)
                         {
-                            self.optional_chain_branch_base()
+                            self.optional_chain_branch_base(arena, idx)
                         } else {
                             self.current_flow
                         };
@@ -353,7 +353,7 @@ impl BinderState {
                         let after_callee = if self.continues_optional_chain(arena, idx)
                             || Self::is_optional_chain_access(arena, call.expression)
                         {
-                            self.optional_chain_branch_base()
+                            self.optional_chain_branch_base(arena, idx)
                         } else {
                             self.current_flow
                         };
