@@ -38,6 +38,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A genuine cross-file type alias (the local handle is the imported
+        // symbol itself, not a same-`SymbolId` local declaration) must be lowered
+        // in its declaring arena: its body can reference provider-private types
+        // (e.g. a non-exported `type Rec = object` used by
+        // `export type Pick2<T> = T extends Rec ? T : number`). Re-lowering that
+        // body in the consumer scope leaves such references as unresolved names,
+        // so the conditional's extends operand never binds and the alias degrades
+        // (the false branch / a `T | false-branch` union — the cross-arena
+        // `error`/`never`-in-type-argument family, #13618).
+        //
+        // `symbol_has_local_type_alias_declaration` returns `false` exactly when
+        // the alias is NOT declared in the current arena, which distinguishes a
+        // real import from a same-`SymbolId` local collision (where a different
+        // local declaration legitimately keeps resolution local — handled by the
+        // name/def heuristics below). `delegate_cross_arena_symbol_resolution`
+        // re-checks the same locality predicate, so requesting delegation here is
+        // safe.
+        if !self.symbol_has_local_type_alias_declaration(local_symbol, sym_id) {
+            return true;
+        }
+
         if let Some(local_def) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied()
             && let Some(local_def_name) = self.ctx.definition_store.get_name(local_def)
         {
