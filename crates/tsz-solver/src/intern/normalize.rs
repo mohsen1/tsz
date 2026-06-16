@@ -1490,7 +1490,7 @@ mod tests {
         // produced by distributing `Exclude`/`Extract` over a wide union before
         // the conditionals resolve.
         interner.conditional(crate::types::ConditionalType {
-            check_type: interner.literal_number(n as f64),
+            check_type: interner.literal_number(f64::from(n)),
             extends_type: TypeId::STRING,
             true_type: TypeId::NUMBER,
             false_type: TypeId::BOOLEAN,
