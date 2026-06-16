@@ -1359,14 +1359,39 @@ fn is_substitution_dependent_type_classifies_lazy_vs_type_param() {
 fn is_structurally_eval_inert_excludes_resolver_and_substitution_dependent_nodes() {
     let interner = TypeInterner::new();
 
-    // Intrinsics and concrete structural composites are inert.
+    // Intrinsics and concrete structural composites (with no compound member
+    // the deep reducer could touch) are inert.
     assert!(is_structurally_eval_inert(&interner, TypeId::STRING));
     let arr_concrete = interner.array(TypeId::NUMBER);
-    let union_concrete = interner.union2(TypeId::STRING, arr_concrete);
     assert!(is_structurally_eval_inert(&interner, arr_concrete));
-    assert!(is_structurally_eval_inert(&interner, union_concrete));
     // Cached re-read is stable.
-    assert!(is_structurally_eval_inert(&interner, union_concrete));
+    assert!(is_structurally_eval_inert(&interner, arr_concrete));
+
+    // `Union` / `Intersection` are NOT inert even when every member is itself
+    // inert: `evaluate_union` / `evaluate_intersection` run a deep
+    // `SubtypeChecker` reduction that can rewrite a fully concrete compound the
+    // interner's shallow construction-time normalization left untouched (e.g.
+    // `(string | undefined) & 'string'` reduces to `'string'`). Classifying
+    // such a compound as inert from its children alone would short-circuit
+    // that reduction and drop discriminated-union excess-property errors.
+    let union_concrete = interner.union2(TypeId::STRING, arr_concrete);
+    assert!(!is_structurally_eval_inert(&interner, union_concrete));
+    // Cached re-read is stable.
+    assert!(!is_structurally_eval_inert(&interner, union_concrete));
+    let str_or_undef = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+    let lit_string = interner.literal_string("string");
+    let reducible_intersection = interner.intersection(vec![str_or_undef, lit_string]);
+    // Only meaningful if construction did not already collapse the intersection
+    // to the literal; when it stays a compound it must not be cached inert.
+    if matches!(
+        interner.lookup(reducible_intersection),
+        Some(crate::types::TypeData::Intersection(_))
+    ) {
+        assert!(!is_structurally_eval_inert(
+            &interner,
+            reducible_intersection
+        ));
+    }
 
     // A bare Lazy ref is a deferral the resolver could expand: NOT inert, even
     // though it is not substitution-dependent.

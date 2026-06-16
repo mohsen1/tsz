@@ -216,7 +216,11 @@ pub fn contains_this_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `visit_type_key` rewrites nor any substitution-dependent leaf:
 /// `Conditional`, `IndexAccess`, `Mapped`, `KeyOf`, `TypeQuery`, `Application`,
 /// `TemplateLiteral`, `Lazy`, `Recursive`, `StringIntrinsic`, `NoInfer`,
-/// `UnresolvedTypeName`, `TypeParameter`, `Infer`, `ThisType`, `BoundParameter`.
+/// `UnresolvedTypeName`, `TypeParameter`, `Infer`, `ThisType`, `BoundParameter`,
+/// `Union`, `Intersection`. The two compound kinds are disqualifying because
+/// `evaluate_union` / `evaluate_intersection` run a deep `SubtypeChecker`
+/// reduction that can rewrite even a fully concrete compound (see
+/// [`is_eval_affecting_node`]).
 ///
 /// The walk descends the *entire* structural surface
 /// ([`ChildPolicy::EVERYTHING`], including `Application` bases, write types,
@@ -246,6 +250,21 @@ pub fn is_structurally_eval_inert(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 /// Whether `key` is itself an evaluation-affecting node (resolver- or
 /// substitution-dependent). Mirrors the kinds the evaluator's `visit_type_key`
 /// rewrites plus the substitution-dependent leaves.
+///
+/// `Union` and `Intersection` are eval-affecting even when every member is
+/// already inert: `visit_type_key` routes them to `evaluate_union` /
+/// `evaluate_intersection`, whose `simplify_*_members` pass runs *deep*
+/// (`SubtypeChecker`-backed) subtype reduction that can rewrite a fully
+/// concrete compound the interner's *shallow* construction-time normalization
+/// left untouched — e.g. `(string | undefined) & 'string'` reduces to
+/// `'string'`, and a deep object-subtype pair like
+/// `{ a: string } | { a: string; b: number }` collapses the redundant member.
+/// Classifying such a compound as inert from its children alone (without ever
+/// running `evaluate`) would short-circuit that reduction and, downstream,
+/// drop discriminated-union excess-property errors (TS2353) that depend on the
+/// reduced shape. Keeping them out of the inert fast path is required for
+/// parity; the local/closed-eval/persistent memos still cover the repeated
+/// work.
 const fn is_eval_affecting_node(key: &TypeData) -> bool {
     matches!(
         key,
@@ -265,6 +284,8 @@ const fn is_eval_affecting_node(key: &TypeData) -> bool {
             | TypeData::Infer(_)
             | TypeData::ThisType
             | TypeData::BoundParameter(_)
+            | TypeData::Union(_)
+            | TypeData::Intersection(_)
     )
 }
 
