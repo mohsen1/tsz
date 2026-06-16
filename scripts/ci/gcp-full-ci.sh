@@ -964,6 +964,100 @@ run_emit_shard() {
   return 0
 }
 
+# Recombine the per-shard emit results (uploaded by run_emit_shard as both a
+# GitHub Actions artifact and a GCS object) and re-run the full-corpus floor
+# over the summed counts. This is the required emit leaf for multi-shard runs;
+# single-shard runs validate inline in run_emit_shard above.
+run_emit_aggregate() {
+  ci_section "Emit aggregate"
+  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-1}"
+  expected_shards="$(num_or_zero "$expected_shards")"
+  [[ "$expected_shards" -lt 1 ]] && expected_shards=1
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local prefix=""
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    prefix="${bucket%/}/emit-runs/${run_key}"
+  fi
+
+  # Prefer GitHub Actions artifacts (downloaded by the workflow's
+  # download-artifact step) over GCS, which requires SA key permissions that may
+  # not be available. upload-artifact@v4 preserves the workspace-relative path,
+  # so the file lands at emit-shard-N/ci-metrics/emit-shard-N.json.
+  local artifacts_dir=".emit-shards"
+  local using_artifacts=0
+  if [[ -d "$artifacts_dir" ]]; then
+    local found=0
+    for shard_dir in "$artifacts_dir"/emit-shard-*/; do
+      [[ -d "$shard_dir" ]] || continue
+      local json
+      json="$(find "$shard_dir" -name "emit-shard-*.json" -maxdepth 4 2>/dev/null | head -1)"
+      [[ -f "$json" ]] || continue
+      local shard_name
+      shard_name="$(basename "$shard_dir")"
+      cp "$json" "$tmp_dir/shard-${shard_name#emit-shard-}.json"
+      found=$(( found + 1 ))
+    done
+    if [[ "$found" -gt 0 ]]; then
+      echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
+      using_artifacts=1
+    else
+      echo "warning: ${artifacts_dir}/ exists but no emit-shard-*.json files found; falling back to GCS" >&2
+      ls -la "$artifacts_dir"/ 2>/dev/null || true
+    fi
+  fi
+
+  if [[ "$using_artifacts" -eq 0 ]]; then
+    if [[ -z "$prefix" ]]; then
+      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
+      return 1
+    fi
+    echo "Downloading emit shard results from ${prefix}/shard-*.json ..."
+    local dl_attempt dl_rc=1
+    for dl_attempt in 1 2 3; do
+      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+        dl_rc=0
+        break
+      fi
+      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
+      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
+    done
+    if [[ "$dl_rc" -ne 0 ]]; then
+      echo "error: failed to download emit shard results from GCS after 3 attempts" >&2
+      return 1
+    fi
+  fi
+
+  local js_p=0 js_t=0 js_s=0 js_to=0 dts_p=0 dts_t=0 dts_s=0
+  local shard_count=0 failed_shards=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    js_p=$(( js_p   + $(num_or_zero "$(jq -r '.js_passed // 0'   "$f" 2>/dev/null)") ))
+    js_t=$(( js_t   + $(num_or_zero "$(jq -r '.js_total // 0'    "$f" 2>/dev/null)") ))
+    js_s=$(( js_s   + $(num_or_zero "$(jq -r '.js_skipped // 0'  "$f" 2>/dev/null)") ))
+    js_to=$(( js_to + $(num_or_zero "$(jq -r '.js_timeouts // 0' "$f" 2>/dev/null)") ))
+    dts_p=$(( dts_p + $(num_or_zero "$(jq -r '.dts_passed // 0'  "$f" 2>/dev/null)") ))
+    dts_t=$(( dts_t + $(num_or_zero "$(jq -r '.dts_total // 0'   "$f" 2>/dev/null)") ))
+    dts_s=$(( dts_s + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f" 2>/dev/null)") ))
+    if [[ "$(num_or_zero "$(jq -r '.rc // 0' "$f" 2>/dev/null)")" -ne 0 ]]; then
+      failed_shards=$(( failed_shards + 1 ))
+    fi
+    shard_count=$(( shard_count + 1 ))
+  done
+
+  if [[ "$failed_shards" -gt 0 ]]; then
+    echo "warning: ${failed_shards} emit shard(s) returned non-zero rc; aggregate still applies the full-corpus floor" >&2
+  fi
+
+  validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards"
+  write_emit_metric "$METRICS_DIR/emit.json" \
+    "$js_p" "$js_t" "$js_s" "$js_to" \
+    "$dts_p" "$dts_t" "$dts_s"
+  publish_latest_metric emit "$METRICS_DIR/emit.json"
+}
+
 run_fourslash_shard() {
   ci_section "Fourslash shard"
   local bucket run_key shard_index shard_count
@@ -1224,6 +1318,9 @@ main() {
       timed build_test_binaries build_test_binaries
       timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_emit_shard run_emit_shard
+      ;;
+    emit-aggregate)
+      timed run_emit_aggregate run_emit_aggregate
       ;;
     fourslash-shard)
       timed build_test_binaries build_test_binaries
