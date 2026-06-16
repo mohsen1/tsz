@@ -1290,8 +1290,84 @@ tsz_write_drizzle_orm_config() {
     ', "tsz-bench-external-named-modules.d.ts"'
 }
 
+tsz_write_ts_rest_external_stubs() {
+  # @ts-rest/core depends on `zod` (and `zod4/v4`) as a peer dependency. The
+  # fixture clone runs no npm install and the bench baseline pins `"types": []`,
+  # so without a stub tsc emits spurious TS2307 "Cannot find module 'zod'", which
+  # cascades into TS2536 where generic params constrained by `z.AnyZodObject` are
+  # indexed (`A['shape']`, `B['_def']['unknownKeys']`). Provide a permissive `z`
+  # namespace whose every value/type member resolves to `any` so the constraints
+  # and index accesses succeed, mirroring what tsc sees with zod's real types.
+  # @ts-rest/core's OWN `./` source imports remain real (resolved by the
+  # filesystem, not these ambient stubs).
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare module 'zod' {
+  export type ZodError<T = any> = any;
+  export const ZodError: any;
+  export type ZodIssue = any;
+  export const ZodIssue: any;
+  export type ZodObject<A = any, B = any, C = any, D = any, E = any> = any;
+  export const ZodObject: any;
+  export namespace z {
+    type infer<T = any> = any;
+    type input<T = any> = any;
+    type output<T = any> = any;
+    // ts-rest indexes generic params constrained by these shapes
+    // (`A['shape']`, `B['_def']['unknownKeys']`) and narrows them with
+    // `'innerType' in obj`/`obj.shape`, so they must be object types with the
+    // referenced members rather than bare `any` (which leaves a type-parameter
+    // index unresolved and trips TS2536/TS2339).
+    interface AnyZodObject {
+      shape: any;
+      _def: { unknownKeys: any; catchall: any; [key: string]: any };
+      [key: string]: any;
+    }
+    interface ZodEffects<A = any, B = any, C = any> {
+      innerType: any;
+      [key: string]: any;
+    }
+    type ZodObject<A = any, B = any, C = any, D = any, E = any> = any;
+    type ZodError<T = any> = any;
+    type ZodIssueCode = any;
+    type ZodNumber = any;
+    type ZodOptional<T = any> = any;
+    type ZodSchema<T = any> = any;
+    type ZodString = any;
+    type ZodTypeAny = any;
+    const any: any;
+    const array: any;
+    const boolean: any;
+    const coerce: any;
+    const literal: any;
+    const nativeEnum: any;
+    const number: any;
+    const object: any;
+    const string: any;
+    const union: any;
+    const ZodError: any;
+    const ZodIssueCode: any;
+    namespace objectUtil {
+      type MergeShapes<A = any, B = any> = any;
+    }
+  }
+  export const z: typeof z;
+}
+
+declare module 'zod4/v4' {
+  // `zod4/v4`'s `z` is only used in value position (`z4.string()`, `z4.union()`,
+  // `z4.null()`); a single `any` export covers all member accesses.
+  export const z: any;
+}
+TYPES
+}
+
 tsz_write_ts_rest_config() {
-  tsz_write_basic_external_project_config "$1" "libs/ts-rest/core/src"
+  tsz_write_ts_rest_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "libs/ts-rest/core/src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_ofetch_config() {
@@ -1342,19 +1418,171 @@ tsz_write_tanstack_query_config() {
 tsz_write_tanstack_router_config() {
   tsz_write_basic_external_project_config "$1" "packages/router-core/src"
 }
+tsz_write_zustand_external_stubs() {
+  # zustand's source imports third-party packages (react, immer, the
+  # @redux-devtools/extension Window augmentation, use-sync-external-store) and
+  # the fixture clone runs no npm install with the bench baseline pinning
+  # `"types": []`, so without stubs tsc emits spurious TS2307 plus a TS2339
+  # cascade where `window.__REDUX_DEVTOOLS_EXTENSION__` (which the real
+  # @redux-devtools/extension package adds to the `Window` interface) is read.
+  # Provide named ambient any-modules plus the Window augmentation so tsc matches
+  # its real-deps view; zustand's own `./` source stays real-checked.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare module 'react' {
+  // React's default export is dotted for hooks, some with explicit type args
+  // (`React.useRef<U>(...)`); a generic call signature avoids TS2347 while the
+  // index signature keeps every other member `any`.
+  const React: {
+    useRef: <T = any>(...args: any[]) => any;
+    useCallback: <T = any>(...args: any[]) => any;
+    useDebugValue: (...args: any[]) => any;
+    useSyncExternalStore: (...args: any[]) => any;
+    [key: string]: any;
+  };
+  export default React;
+}
+
+declare module 'immer' {
+  export const produce: any;
+  export type Draft<T = any> = any;
+}
+
+declare module 'use-sync-external-store/shim/with-selector' {
+  // Imported as a default and invoked with explicit type args; a generic call
+  // signature satisfies the type-arg call.
+  const _default: { <T = any, U = any>(...args: any[]): any; [key: string]: any };
+  export default _default;
+}
+
+declare module '@redux-devtools/extension';
+
+interface Window {
+  // `@redux-devtools/extension` augments `Window` with this connector; zustand
+  // derives `type Config = Parameters<...['connect']>[0]` and extends it as an
+  // interface, so the value must expose a `connect` method whose first argument
+  // is an object type rather than collapsing to `unknown`.
+  __REDUX_DEVTOOLS_EXTENSION__?: {
+    connect(options: { [key: string]: any }): any;
+    [key: string]: any;
+  };
+}
+TYPES
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+' \
+    ', "tsz-bench-globals.d.ts"'
+}
+
 tsz_write_zustand_config() {
   # zustand imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  tsz_write_zustand_external_stubs "$1"
+}
+tsz_write_jotai_external_stubs() {
+  # jotai's source imports react (hooks + JSX types) and the babel-plugin
+  # entrypoints @babel/core / @babel/template. The fixture clone runs no npm
+  # install and the bench baseline pins `"types": []`, so without stubs tsc emits
+  # spurious TS2307 plus cascades: babel visitor callbacks become implicit-any
+  # (TS7006), `babel`/`babel.Node` cannot resolve as a namespace (TS2503), and
+  # `Symbol.observable` (which rxjs-style deps add to `SymbolConstructor`) is
+  # missing (TS2339). Model react with generic-callable hooks, model @babel/core
+  # as an `export =` namespace whose `PluginObj.visitor` methods type their
+  # params, and augment `SymbolConstructor`. jotai's own `./` source stays real.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare module 'react' {
+  export type ReactNode = any;
+  export type ReactElement<P = any, T = any> = any;
+  export type FunctionComponent<P = any> = any;
+  export const createContext: <T = any>(...args: any[]) => any;
+  export const createElement: (...args: any[]) => any;
+  export const useContext: <T = any>(...args: any[]) => any;
+  export const useRef: <T = any>(...args: any[]) => any;
+  // The reducer first argument is a callback whose params must be typed `any`
+  // or jotai's inline `(prev) => ...` reducer trips TS7006.
+  export const useReducer: <A = any, B = any, C = any>(
+    reducer: (...args: any[]) => any,
+    ...rest: any[]
+  ) => any;
+  // `useMemo` must preserve the factory's return type so jotai's
+  // `useMemo(() => atom(...))` keeps the specific atom type that `useSetAtom`
+  // then matches against `SetAtom<Args, Result>` (a bare `any` return collapses
+  // it to `SetAtom<unknown[], unknown>` and trips TS2322).
+  export const useMemo: <T = any>(factory: () => T, deps?: any) => T;
+  export const useCallback: <T = any>(...args: any[]) => any;
+  export const useEffect: (...args: any[]) => any;
+  export const useDebugValue: (...args: any[]) => any;
+  export const use: <T = any>(...args: any[]) => any;
+  const React: {
+    use: <T = any>(...args: any[]) => any;
+    [key: string]: any;
+  };
+  export default React;
+}
+
+declare module '@babel/core' {
+  // `export =` a namespace so the default import can be dotted as a namespace
+  // (`babel.Node`, `babel.PluginItem`) while named imports (`{ PluginObj, types }`)
+  // resolve through esModuleInterop. `PluginObj.visitor`'s methods carry a
+  // `(...args: any[]) => any` signature so jotai's inline visitor callbacks get
+  // a contextual any instead of tripping TS7006.
+  namespace babel {
+    export type Node = any;
+    export type PluginItem = any;
+    export interface PluginObj {
+      // Visitor entries are either a method or an `{ enter?, exit? }` object;
+      // both forms type their path/state params as `any`. `pre`/`post` are
+      // top-level lifecycle hooks whose destructured args must also be `any`.
+      visitor?: {
+        [key: string]:
+          | ((...args: any[]) => any)
+          | { enter?: (...args: any[]) => any; exit?: (...args: any[]) => any };
+      };
+      pre?: (...args: any[]) => any;
+      post?: (...args: any[]) => any;
+      [key: string]: any;
+    }
+    export const types: any;
+  }
+  export = babel;
+}
+
+// `@babel/core`'s `babel` namespace is also referenced globally (without an
+// import) as `babel.types.Expression`; @types/babel__core exposes it ambiently.
+declare namespace babel {
+  namespace types {
+    type Expression = any;
+    type V8IntrinsicIdentifier = any;
+    type Node = any;
+  }
+  type Node = any;
+  type PluginItem = any;
+}
+
+declare module '@babel/template' {
+  const templateBuilder: any;
+  export default templateBuilder;
+}
+
+// jotai's atomWithObservable reads `Symbol.observable`, which rxjs-style deps
+// add to the global `SymbolConstructor`.
+interface SymbolConstructor { readonly observable: symbol; }
+TYPES
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
+
 tsz_write_jotai_config() {
   # jotai imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
-  tsz_write_basic_external_project_config "$1" "src" \
-    '    "allowImportingTsExtensions": true,
-'
+  tsz_write_jotai_external_stubs "$1"
 }
 tsz_write_fp_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1364,10 +1592,22 @@ tsz_write_io_ts_config() {
 }
 tsz_write_immer_config() {
   # immer imports sibling modules with explicit `.ts` extensions; its real
-  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit). It also
+  # reads `process.env.NODE_ENV` in several source files; immer's real build sees
+  # `process` via @types/node, but the fixture clone runs no npm install and the
+  # bench baseline pins `"types": []`, so without a stub tsc emits spurious
+  # TS2591 "Cannot find name 'process'". A single ambient `process` stub matches
+  # what tsc sees when @types/node is present, leaving immer's own source fully
+  # type-checked.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare const process: any;
+TYPES
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_remeda_config() {
   tsz_write_basic_external_project_config "$1" "packages/remeda/src"
@@ -1376,11 +1616,40 @@ tsz_write_ts_morph_config() {
   tsz_write_basic_external_project_config "$1" "packages/ts-morph/src"
 }
 tsz_write_arktype_config() {
+  # arktype is a pnpm workspace: ark/type imports its sibling workspace packages
+  # `@ark/util`, `@ark/schema` (+ `@ark/schema/config`), and `arkregex`. The
+  # fixture clone runs no `pnpm install`, so the `node_modules` symlinks that
+  # normally resolve those package names are absent and tsc emits spurious
+  # TS2307 that cascades into a large TS2339/TS2536/TS2344 wave. These are NOT
+  # external deps — they are arktype's OWN source under ark/util, ark/schema and
+  # ark/regex. Map the package names to that real source via `paths` (matching
+  # each package's `ark-ts` export condition) and add those directories to
+  # `include`, so arktype's own source binds to real types rather than `any`.
+  # arktype's real tsconfig sets `types: ["mocha", "node"]`, so `ark/util`'s
+  # `globalThis.process?.env` access resolves via @types/node. The fixture clone
+  # has no node typings, so add an ambient `process` global (mirroring
+  # @types/node) to avoid a spurious TS7017 on `globalThis.process`.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  # `var` (not `const`) so `process` is reflected onto `typeof globalThis`,
+  # matching how @types/node declares it (the source reads `globalThis.process`).
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare var process: any;
+TYPES
   # arktype imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
   tsz_write_basic_external_project_config "$1" "ark/type" \
-    '    "allowImportingTsExtensions": true,
-'
+    '    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@ark/util": ["ark/util/index.ts"],
+      "@ark/schema/config": ["ark/schema/config.ts"],
+      "@ark/schema": ["ark/schema/index.ts"],
+      "arkregex": ["ark/regex/index.ts"]
+    },
+    "allowImportingTsExtensions": true,
+' \
+    ', "ark/util/**/*.ts", "ark/schema/**/*.ts", "ark/regex/**/*.ts", "tsz-bench-globals.d.ts"'
 }
 tsz_write_superstruct_config() {
   tsz_write_basic_external_project_config "$1" "src"
