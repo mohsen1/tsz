@@ -32,62 +32,113 @@ use super::traversal::collect_property_name_atoms_for_diagnostics;
 /// schedule-independent under parallel fresh checking: an unresolved
 /// `keyof Lazy(D)` defers instead of feeding a definitive false branch.
 pub fn is_generic_conditional_check_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_generic_conditional_check_type_depth(db, type_id, 0)
-}
-
-fn is_generic_conditional_check_type_depth(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    depth: u32,
-) -> bool {
-    // Conservative cap: beyond this depth keep the current eager behavior
-    // (treat as non-generic) so pathological nesting cannot flip resolution.
-    if depth > 64 || type_id.is_intrinsic() {
+    // Worklist traversal over the same generic-marker child set the recursive
+    // form walked (see the per-`TypeData` arms below). A `visited` set collapses
+    // the type DAG — typebox's recursive conditional/template builders reach
+    // shared `Application`/`Union`/`TemplateLiteral` subtrees through many
+    // parents, so the old depth-recursive `.any()` form re-walked each shared
+    // node once per parent path (super-linear, and combined with the large
+    // partial types #13652's instantiation-depth bail now surfaces it became a
+    // non-terminating re-walk: typebox canary, ~300s CPU-bound timeout). The
+    // worklist visits each reachable node at most once, so the cost is
+    // O(distinct reachable nodes) per call and the deep recursion is gone.
+    //
+    // Behavior-preserving: the result is "is a generic-marker node reachable
+    // through the marker child set". The `visited` set only prevents re-deriving
+    // the same node's contribution — `any`-style reachability is monotone, so
+    // collapsing duplicates yields the identical boolean. The recursive form's
+    // `depth > 64` cap was a defensive bound against exactly this re-walk (added
+    // with the permissive-instantiation gate, #13205); the `visited` set bounds
+    // the walk structurally instead, so no reachable marker is ever truncated.
+    if type_id.is_intrinsic() {
         return false;
     }
-    match db.lookup(type_id) {
-        Some(
-            TypeData::TypeParameter(_)
-            | TypeData::Infer(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::ThisType
-            | TypeData::KeyOf(_)
-            | TypeData::IndexAccess(_, _)
-            | TypeData::StringIntrinsic { .. }
-            | TypeData::Conditional(_),
-        ) => true,
-        Some(TypeData::TemplateLiteral(spans)) => db.template_list(spans).iter().any(|span| {
-            matches!(
-                span,
-                crate::types::TemplateSpan::Type(t)
-                    if is_generic_conditional_check_type_depth(db, *t, depth + 1)
-            )
-        }),
-        Some(TypeData::Application(app_id)) => {
-            let app = db.type_application(app_id);
-            app.args
-                .iter()
-                .any(|&arg| is_generic_conditional_check_type_depth(db, arg, depth + 1))
+    // Pooled scratch buffers (per #4722/#4790 pattern) so the per-call worklist
+    // does not allocate; this predicate runs once per generic-conditional
+    // deferral decision (hot on typebox/kysely query builders).
+    with_generic_check_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+            match db.lookup(current) {
+                Some(
+                    TypeData::TypeParameter(_)
+                    | TypeData::Infer(_)
+                    | TypeData::BoundParameter(_)
+                    | TypeData::ThisType
+                    | TypeData::KeyOf(_)
+                    | TypeData::IndexAccess(_, _)
+                    | TypeData::StringIntrinsic { .. }
+                    | TypeData::Conditional(_),
+                ) => return true,
+                Some(TypeData::TemplateLiteral(spans)) => {
+                    for span in db.template_list(spans).iter() {
+                        if let crate::types::TemplateSpan::Type(t) = span {
+                            stack.push(*t);
+                        }
+                    }
+                }
+                Some(TypeData::Application(app_id)) => {
+                    let app = db.type_application(app_id);
+                    stack.extend(app.args.iter().copied());
+                }
+                Some(TypeData::Tuple(elements)) => {
+                    stack.extend(db.tuple_list(elements).iter().map(|el| el.type_id));
+                }
+                Some(
+                    TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::NoInfer(elem),
+                ) => {
+                    stack.push(elem);
+                }
+                Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
+                    stack.extend(db.type_list(list).iter().copied());
+                }
+                Some(TypeData::Mapped(mapped_id)) => {
+                    // Generic mapped type: tsc's `isGenericMappedType` keys off
+                    // a still-generic constraint (`[K in keyof T]`).
+                    let mapped = db.get_mapped(mapped_id);
+                    stack.push(mapped.constraint);
+                }
+                _ => {}
+            }
         }
-        Some(TypeData::Tuple(elements)) => db
-            .tuple_list(elements)
-            .iter()
-            .any(|el| is_generic_conditional_check_type_depth(db, el.type_id, depth + 1)),
-        Some(TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::NoInfer(elem)) => {
-            is_generic_conditional_check_type_depth(db, elem, depth + 1)
+        false
+    })
+}
+
+// Reusable scratch buffers for `is_generic_conditional_check_type`'s worklist
+// traversal, so the hot per-deferral-decision predicate does not allocate a
+// fresh `visited` set + `stack` on every call (#4722/#4790 pool pattern).
+type GenericCheckBuffers = (rustc_hash::FxHashSet<TypeId>, Vec<TypeId>);
+
+thread_local! {
+    static GENERIC_CHECK_BUFFERS: std::cell::RefCell<Option<GenericCheckBuffers>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn with_generic_check_buffers<R>(
+    f: impl FnOnce(&mut rustc_hash::FxHashSet<TypeId>, &mut Vec<TypeId>) -> R,
+) -> R {
+    let mut bufs = GENERIC_CHECK_BUFFERS
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    bufs.0.clear();
+    bufs.1.clear();
+    let r = f(&mut bufs.0, &mut bufs.1);
+    GENERIC_CHECK_BUFFERS.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some((existing, _)) => bufs.0.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(bufs);
         }
-        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
-            .type_list(list)
-            .iter()
-            .any(|&m| is_generic_conditional_check_type_depth(db, m, depth + 1)),
-        Some(TypeData::Mapped(mapped_id)) => {
-            // Generic mapped type: tsc's `isGenericMappedType` keys off a
-            // still-generic constraint (`[K in keyof T]`).
-            let mapped = db.get_mapped(mapped_id);
-            is_generic_conditional_check_type_depth(db, mapped.constraint, depth + 1)
-        }
-        _ => false,
-    }
+    });
+    r
 }
 
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
