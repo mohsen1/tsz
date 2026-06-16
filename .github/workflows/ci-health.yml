@@ -64,6 +64,27 @@ jobs:
           node scripts/ci/check-main-red.mjs --file-issue --max-runs 60 \
             | tee -a "${GITHUB_STEP_SUMMARY}"
 
+  ci-job-timing:
+    name: ci-job-timing
+    runs-on: ubuntu-latest
+    # Advisory baseline: records per-job queue_wait + run seconds over recent
+    # successful ci.yml runs so every other CI speed claim on this fleet can be
+    # checked against measured numbers (issue #13605 item 2). No wall-clock
+    # change; the runner-acquisition (queue_wait) column surfaces pool pressure.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Record per-job CI timing baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/check-ci-job-timing.mjs --workflow ci.yml --branch main --max-runs 15 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
   health:
     name: runner-health
     runs-on: ubuntu-latest

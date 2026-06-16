@@ -1390,9 +1390,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # remains #8225 narrowing this quarantine.
         #
         # Bumped 3051→3066 for the deferred-conditional indexed-access parity
-        # fix (#13654): keeping `O[K]` deferred over a deferred conditional base
-        # adds request-shaped `query_boundaries::common` reads in
-        # `indexed_access.rs`, `indexed_access/deferred_conditional_index.rs`,
+        # fix (#13654 / #13678, landed on main): keeping `O[K]` deferred over a
+        # deferred conditional base adds request-shaped `query_boundaries::common`
+        # reads in `indexed_access.rs`,
+        # `indexed_access/deferred_conditional_index.rs`,
         # `constrained_type_param_assertion.rs`, `signatures_and_advanced.rs`,
         # and `comparability.rs` (`contains_free_type_parameters`,
         # `types_are_comparable_for_assertion`,
@@ -1408,7 +1409,18 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # construction the instantiation-display sites previously carried. This is
         # the request-shaped formatter-construction route the refactor consolidates
         # onto; no new quarantine entry. Removal condition remains #8225.
-        3068,
+        #
+        # Bumped 3068→3070 for the #13677 deferred-conditional default-constraint
+        # indexed-access validation merged alongside #13678: the new
+        # `deferred_conditional_index_is_in_key_space` /
+        # `indexed_access_key_space_is_resolved` helpers in
+        # `indexed_access/indexed_access_helpers.rs` reach the conditional
+        # apparent-constraint and `KeyOf` predicates through the existing
+        # `query_boundaries::common` gateway (`conditional_default_constraint`,
+        # `is_keyof_type`) — all existing request-shaped boundary helpers, no new
+        # quarantine entry. Removal condition remains #8225 narrowing this
+        # quarantine.
+        3070,
     ),
 ]
 
