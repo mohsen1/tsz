@@ -972,6 +972,62 @@ impl TypeInterner {
         if len <= 1 {
             return;
         }
+
+        // Lift out *unevaluated deferred operations* (`Conditional` / `IndexAccess`)
+        // before the pairwise sweep. The shallow subtype engine has no rules for
+        // them: such a member never relates to any other member as source or
+        // target except by identity (already removed by the upstream dedup), so it
+        // can neither be removed by reduction nor cause another member's removal —
+        // it is fully inert. Running the O(N) pairwise scan over each one is pure
+        // waste; that is the eager-vs-deferred divergence #13242 targets, where
+        // distributing `Exclude`/`Extract` over a wide union yields a union of
+        // deferred conditionals tsc keeps lazy. Partition them aside, reduce only
+        // the reducible remainder through the *unchanged* engine below (so
+        // discriminant partitioning, literal absorption, and structural object
+        // reduction are all preserved exactly as for a deferred-free union), then
+        // splice the deferred members back. An all-deferred union short-circuits
+        // to zero pairwise checks; a mixed union (e.g. a JSX intrinsic-element
+        // props union carrying an `IndexAccess` arm) still reduces its concrete
+        // members. Reducing only the remainder — rather than skipping reduction
+        // for the whole union when any deferred member is present — is what keeps
+        // the concrete arms collapsing the way tsc does.
+        let deferred_count = flat
+            .iter()
+            .filter(|&&id| {
+                matches!(
+                    self.lookup(id),
+                    Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
+                )
+            })
+            .count();
+        if deferred_count > 0 {
+            if deferred_count == len {
+                // Every member is an inert deferred form: nothing to reduce.
+                return;
+            }
+            let mut deferred: TypeListBuffer = SmallVec::new();
+            let mut reducible: TypeListBuffer = SmallVec::new();
+            for &id in flat.iter() {
+                if matches!(
+                    self.lookup(id),
+                    Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
+                ) {
+                    deferred.push(id);
+                } else {
+                    reducible.push(id);
+                }
+            }
+            self.reduce_union_subtypes(&mut reducible);
+            reducible.extend(deferred);
+            // Reduction may have dropped reducible members; re-canonicalize the
+            // recombined list so union member identity (sort + dedup) stays stable.
+            self.sort_union_members(&mut reducible);
+            reducible.dedup();
+            *flat = reducible;
+            return;
+        }
+
+        let len = flat.len();
         let pairwise = (len as u64) * (len as u64 - 1);
         tsz_common::perf_counters::record_union_subtype_reduction(len as u64, pairwise);
         tracing::trace!(len, "reduce_union_subtypes: entry");
@@ -1426,5 +1482,71 @@ mod tests {
             panic!("expected union to survive normalization");
         };
         assert_eq!(interner.type_list(list_id).len(), 3);
+    }
+
+    fn distinct_conditional(interner: &TypeInterner, n: u32) -> TypeId {
+        // A deferred, distributive conditional whose check type is unique per `n`
+        // so each interns to a separate `TypeData::Conditional`. This is the shape
+        // produced by distributing `Exclude`/`Extract` over a wide union before
+        // the conditionals resolve.
+        interner.conditional(crate::types::ConditionalType {
+            check_type: interner.literal_number(f64::from(n)),
+            extends_type: TypeId::STRING,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::BOOLEAN,
+            is_distributive: true,
+        })
+    }
+
+    #[test]
+    fn union_of_deferred_conditionals_all_survive_reduction() {
+        let interner = TypeInterner::new();
+        // The shallow subtype engine cannot relate two deferred conditionals, so a
+        // union of distinct unevaluated conditionals is irreducible: every member
+        // must survive. (The pairwise sweep over them is also skipped, but the
+        // perf counter is only wired under `TSZ_PERF_COUNTERS`, so the observable
+        // unit-test invariant is the surviving member set.)
+        const N: u32 = 64;
+        let members: Vec<TypeId> = (0..N).map(|i| distinct_conditional(&interner, i)).collect();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a wide deferred-conditional union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), N as usize);
+    }
+
+    #[test]
+    fn deferred_conditional_does_not_block_concrete_subtype_reduction() {
+        let interner = TypeInterner::new();
+        // A union mixing an inert deferred conditional with concrete members where
+        // one is a subtype of another (`"a"` <: `string`). The deferred member is
+        // inert and must be preserved, but it must NOT suppress the concrete
+        // reduction: `"a"` is absorbed into `string`, leaving `string` + the
+        // conditional. This is the JSX-props regression in miniature — folding the
+        // deferred member into a whole-union skip wrongly kept `"a"`.
+        let cond = distinct_conditional(&interner, 0);
+        let members = vec![interner.literal_string("a"), TypeId::STRING, cond];
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a mixed deferred/concrete union to survive normalization");
+        };
+        let list = interner.type_list(list_id);
+        assert_eq!(
+            list.len(),
+            2,
+            "concrete `\"a\" | string` must reduce to `string` beside the inert conditional"
+        );
+        assert!(
+            list.contains(&TypeId::STRING),
+            "widened `string` must survive"
+        );
+        assert!(
+            list.contains(&cond),
+            "inert deferred conditional must survive"
+        );
+        assert!(
+            !list.contains(&interner.literal_string("a")),
+            "literal `\"a\"` must be absorbed by `string`"
+        );
     }
 }
