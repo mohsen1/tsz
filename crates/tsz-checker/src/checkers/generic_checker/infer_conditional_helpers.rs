@@ -282,6 +282,117 @@ impl<'a> CheckerState<'a> {
                 self.collect_infer_constraints_from_extends_type(member_idx, name, constraints);
             }
         }
+        // Wrapper kinds at structural parity with the name collector
+        // (`collect_infer_type_parameters_inner`, infer_bindings.rs): an
+        // `infer X extends C` reachable through an object type-literal member,
+        // indexed access, array, `keyof`/operator, or mapped-type value/name
+        // position must still surface C. Without these the constraint set comes
+        // back empty and the provisional `X` is registered unconstrained, so a
+        // downstream `ConstructorParameters<X>`-style use trips a spurious TS2344
+        // (ts-rest `FetchOptions = ... extends { Request: infer X extends ... }`).
+        // Each child `NodeIndex` is copied out before the recursive `&mut self`
+        // call so the immutable arena borrow does not overlap it.
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let members = self
+                .ctx
+                .arena
+                .get_type_literal(node)
+                .map(|lit| lit.members.nodes.clone());
+            if let Some(members) = members {
+                for member_idx in members {
+                    self.collect_infer_constraints_from_extends_type(member_idx, name, constraints);
+                }
+            }
+        }
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            let pair = self
+                .ctx
+                .arena
+                .get_indexed_access_type(node)
+                .map(|ix| (ix.object_type, ix.index_type));
+            if let Some((object_type, index_type)) = pair {
+                self.collect_infer_constraints_from_extends_type(object_type, name, constraints);
+                self.collect_infer_constraints_from_extends_type(index_type, name, constraints);
+            }
+        }
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            let element = self
+                .ctx
+                .arena
+                .get_array_type(node)
+                .map(|arr| arr.element_type);
+            if let Some(element) = element {
+                self.collect_infer_constraints_from_extends_type(element, name, constraints);
+            }
+        }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+            let operand = self
+                .ctx
+                .arena
+                .get_type_operator(node)
+                .map(|op| op.type_node);
+            if let Some(operand) = operand {
+                self.collect_infer_constraints_from_extends_type(operand, name, constraints);
+            }
+        }
+        // NB: MAPPED_TYPE is intentionally NOT descended. A mapped type's
+        // `name_type`/`type_node` are scoped under its own iteration variable
+        // (`[P in …]`); an `as infer U extends P` key remap there would collect
+        // `P` — a name unbound in the conditional's infer-constraint context —
+        // producing a spurious TS2304 (`inferTypesWithExtends1.ts` X17). tsc
+        // resolves infer constraints inside a mapped key through the mapped-type
+        // machinery, not this conditional walker, so the object-member /
+        // indexed-access / array / operator descents above are sufficient.
+        // Object/interface members reached through `TYPE_LITERAL` above: a
+        // property/method/index signature or parameter carries the nested type in
+        // its annotation. Mirrors the `_` arm of the name collector.
+        {
+            let sig_parts = self.ctx.arena.get_signature(node).map(|sig| {
+                (
+                    sig.parameters
+                        .as_ref()
+                        .map(|p| p.nodes.clone())
+                        .unwrap_or_default(),
+                    sig.type_annotation,
+                )
+            });
+            if let Some((params, type_annotation)) = sig_parts {
+                for param_idx in params {
+                    self.collect_infer_constraints_from_extends_type(param_idx, name, constraints);
+                }
+                if type_annotation.is_some() {
+                    self.collect_infer_constraints_from_extends_type(
+                        type_annotation,
+                        name,
+                        constraints,
+                    );
+                }
+            } else if let Some((params, type_annotation)) = self
+                .ctx
+                .arena
+                .get_index_signature(node)
+                .map(|ix| (ix.parameters.nodes.clone(), ix.type_annotation))
+            {
+                for param_idx in params {
+                    self.collect_infer_constraints_from_extends_type(param_idx, name, constraints);
+                }
+                if type_annotation.is_some() {
+                    self.collect_infer_constraints_from_extends_type(
+                        type_annotation,
+                        name,
+                        constraints,
+                    );
+                }
+            } else if let Some(annotation) = self
+                .ctx
+                .arena
+                .get_parameter(node)
+                .map(|p| p.type_annotation)
+                .filter(|a| *a != NodeIndex::NONE)
+            {
+                self.collect_infer_constraints_from_extends_type(annotation, name, constraints);
+            }
+        }
         // Recurse into function/constructor types: parameters and return type.
         // Collect NodeIndexes first (before any &mut self calls) to avoid borrow
         // conflicts between the arena reference and the recursive mutable calls.
