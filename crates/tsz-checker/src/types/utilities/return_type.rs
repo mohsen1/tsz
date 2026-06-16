@@ -715,6 +715,7 @@ impl<'a> CheckerState<'a> {
             return_context,
             in_const_assertion: self.ctx.in_const_assertion,
             preserve_literal_types: self.ctx.preserve_literal_types,
+            this_type: self.current_this_type(),
             scope_fingerprint: self.inferred_return_type_scope_fingerprint(),
         })
     }
@@ -722,11 +723,21 @@ impl<'a> CheckerState<'a> {
     /// True when the pure return-type inference of `function_idx`'s body is a
     /// stable function of its ambient inputs (so it may be memoized).
     ///
-    /// Note that a function's OWN symbol is always in `symbol_resolution_set`
-    /// while its type (and therefore its return type) is being computed — that
-    /// is normal, not circular, so it must NOT disqualify memoization. The
-    /// inference becomes resolution-state-dependent, and therefore unsafe to
-    /// cache, only in these cases:
+    /// Only **contextual** inference (`return_context.is_some()`) is memoized.
+    /// The non-contextual inference of a declaration runs exactly once, in the
+    /// declaration's own check pass, and that pass relies on the body evaluation
+    /// to warm shared solver caches (e.g. indexed-access / large-union
+    /// evaluations) that the immediately-following body diagnostic check then
+    /// reuses — short-circuiting it changes downstream complexity accounting
+    /// (witnessed by a spurious TS2590 on `intersectionsOfLargeUnions.ts`). The
+    /// combinatorial blow-up this memo targets is the **contextual** return
+    /// requests that re-enter a shared generic-builder DAG through many parents;
+    /// those are exactly the `return_context.is_some()` calls.
+    ///
+    /// A function's OWN symbol is always in `symbol_resolution_set` while its
+    /// type is computed — that is normal, not circular, and does NOT disqualify
+    /// memoization. The inference becomes resolution-state-dependent, and unsafe
+    /// to cache, only in these cases:
     ///
     /// - the function node is already on the resolution stack: a genuine
     ///   re-entrant request, whose result is a provisional placeholder;
@@ -739,9 +750,12 @@ impl<'a> CheckerState<'a> {
         &mut self,
         function_idx: NodeIndex,
         body_idx: NodeIndex,
-        _return_context: Option<TypeId>,
+        return_context: Option<TypeId>,
     ) -> bool {
         if function_idx.is_none() || body_idx.is_none() {
+            return false;
+        }
+        if return_context.is_none() {
             return false;
         }
         if self.ctx.node_resolution_stack.contains(&function_idx) {

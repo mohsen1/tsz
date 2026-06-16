@@ -287,6 +287,10 @@ impl PendingCircularReturnSites {
 ///   are distinct keys.
 /// - `in_const_assertion` / `preserve_literal_types`: literal-preservation modes
 ///   that change widening of inferred literal returns.
+/// - `this_type`: the active contextual `this` type. A method/function body that
+///   returns or references `this` (e.g. `foo() { return this; }`, or a
+///   `this`-polymorphic predicate) infers a `this`-dependent return type, so the
+///   same node inferred under different `this` bindings must not collide.
 /// - `scope_fingerprint`: a stable hash of the active `type_parameter_scope`
 ///   bindings, so a generic body inferred under one ambient type-parameter
 ///   binding is never reused under a different binding.
@@ -296,6 +300,7 @@ pub struct InferredReturnTypeKey {
     pub return_context: Option<TypeId>,
     pub in_const_assertion: bool,
     pub preserve_literal_types: bool,
+    pub this_type: Option<TypeId>,
     pub scope_fingerprint: u64,
 }
 
