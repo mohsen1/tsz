@@ -142,7 +142,7 @@ export function computeCoverage(surfaces) {
     const isRequired = requiredSet.has(name);
     const requiresFixtureSource = rowRequiresFixtureSource(def);
 
-    if (isTracked && !BENCH_RUNNER_EXCLUDED_ROWS.has(name) && !benchRunnerSet.has(name)) {
+    if (isTracked && !BENCH_RUNNER_EXCLUDED_ROWS.has(name) && def.category !== "application" && !benchRunnerSet.has(name)) {
       drift.push(`${name}: present in project-rows.mjs but missing from scripts/bench/bench-vs-tsgo.sh`);
     }
     if (isTracked && !COMPILE_GUARD_EXCLUDED_ROWS.has(name) && !compileGuardSet.has(name)) {

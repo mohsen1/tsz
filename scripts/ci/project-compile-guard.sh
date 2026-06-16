@@ -367,6 +367,41 @@ ensure_git_fixture() {
   tsz_ensure_git_fixture "$@" 0
 }
 
+# Install a real application's dependencies so the type-checker resolves its
+# framework imports (react/next/...) instead of emitting a TS2307 wall. The
+# compile still runs with skipLibCheck, so node_modules only needs to RESOLVE,
+# not deep-check. Best-effort: a failed install is non-fatal (the compile then
+# surfaces the unresolved modules) and bounded by the job timeout.
+install_application_deps() {
+  local dir="$1" cmd="$2"
+  [ -z "$cmd" ] && return 0
+  if [ ! -d "$dir" ]; then
+    echo "warn: application install dir missing: $dir" >&2
+    return 0
+  fi
+  echo "Installing application deps: (cd $dir && $cmd)"
+  command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
+  if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
+    echo "warn: application dep install failed (continuing; compile will surface unresolved modules): $dir" >&2
+  fi
+}
+
+# Generic handler for category:"application" canary rows: clone the pinned
+# fixture, install its deps, compile with the app's OWN tsconfig (which carries
+# the right jsx/paths), then reclaim node_modules disk so a shard can run
+# several apps sequentially. Args:
+#   name fixture_dir repo ref install_cmd install_root app_tsconfig src_dir
+run_application_row() {
+  local name="$1" fdir="$2" repo="$3" ref="$4" install_cmd="$5" install_root="$6" app_tsconfig="$7" src_rel="$8"
+  local root="$FIXTURE_ROOT/$fdir"
+  ensure_git_fixture "$fdir" "$repo" "$ref" "$root"
+  install_application_deps "$root/$install_root" "$install_cmd"
+  check_project "$name" "$root/$app_tsconfig" "$root/$src_rel"
+  if [[ "${TSZ_APP_KEEP_NODE_MODULES:-0}" != "1" ]]; then
+    find "$root" -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
+  fi
+}
+
 ensure_generated_app_tools() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     echo "error: node and npm are required for generated app project compile guards" >&2
@@ -844,6 +879,88 @@ run_project_row() {
       ensure_git_fixture "mobx" "$MOBX_REPO" "$MOBX_REF" "$FIXTURE_ROOT/mobx"
       tsz_write_mobx_config "$FIXTURE_ROOT/mobx/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/mobx/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mobx/packages/mobx/src"
+      ;;
+    # --- application canary rows (category:"application"): install deps, compile
+    #     with the app's own tsconfig, drop node_modules. See run_application_row. ---
+    umami-project)
+      run_application_row "umami-project" "umami" "$UMAMI_REPO" "$UMAMI_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+      ;;
+    excalidraw-project)
+      run_application_row "excalidraw-project" "excalidraw" "$EXCALIDRAW_REPO" "$EXCALIDRAW_REF" \
+        "yarn install --frozen-lockfile --ignore-scripts" "." "packages/excalidraw/tsconfig.json" "packages/excalidraw"
+      ;;
+    dub-project)
+      run_application_row "dub-project" "dub" "$DUB_REPO" "$DUB_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    formbricks-project)
+      run_application_row "formbricks-project" "formbricks" "$FORMBRICKS_REPO" "$FORMBRICKS_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    typebot-project)
+      run_application_row "typebot-project" "typebot" "$TYPEBOT_REPO" "$TYPEBOT_REF" \
+        "bun install --frozen-lockfile" "." "apps/builder/tsconfig.json" "apps/builder"
+      ;;
+    lobe-chat-project)
+      run_application_row "lobe-chat-project" "lobe-chat" "$LOBE_CHAT_REPO" "$LOBE_CHAT_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+      ;;
+    supabase-studio-project)
+      run_application_row "supabase-studio-project" "supabase-studio" "$SUPABASE_STUDIO_REPO" "$SUPABASE_STUDIO_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/studio/tsconfig.json" "apps/studio"
+      ;;
+    infisical-project)
+      run_application_row "infisical-project" "infisical" "$INFISICAL_REPO" "$INFISICAL_REF" \
+        "npm ci --ignore-scripts" "." "frontend/tsconfig.json" "frontend"
+      ;;
+    payload-project)
+      run_application_row "payload-project" "payload" "$PAYLOAD_REPO" "$PAYLOAD_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/payload/tsconfig.json" "packages/payload/src"
+      ;;
+    medusa-project)
+      run_application_row "medusa-project" "medusa" "$MEDUSA_REPO" "$MEDUSA_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/medusa/tsconfig.json" "packages/medusa/src"
+      ;;
+    outline-project)
+      run_application_row "outline-project" "outline" "$OUTLINE_REPO" "$OUTLINE_REF" \
+        "yarn install --immutable --mode=skip-build" "." "tsconfig.json" "app"
+      ;;
+    trigger-dev-project)
+      run_application_row "trigger-dev-project" "trigger-dev" "$TRIGGER_DEV_REPO" "$TRIGGER_DEV_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/webapp/tsconfig.json" "apps/webapp/app"
+      ;;
+    joplin-project)
+      run_application_row "joplin-project" "joplin" "$JOPLIN_REPO" "$JOPLIN_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/app-desktop/tsconfig.json" "packages/app-desktop"
+      ;;
+    directus-project)
+      run_application_row "directus-project" "directus" "$DIRECTUS_REPO" "$DIRECTUS_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "api/tsconfig.json" "api/src"
+      ;;
+    n8n-project)
+      run_application_row "n8n-project" "n8n" "$N8N_REPO" "$N8N_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/cli/tsconfig.json" "packages/cli/src"
+      ;;
+    cal-com-project)
+      run_application_row "cal-com-project" "cal-com" "$CAL_COM_REPO" "$CAL_COM_REF" \
+        "yarn install --immutable --mode=skip-build" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    documenso-project)
+      run_application_row "documenso-project" "documenso" "$DOCUMENSO_REPO" "$DOCUMENSO_REF" \
+        "npm ci --ignore-scripts" "." "apps/remix/tsconfig.json" "apps/remix"
+      ;;
+    affine-project)
+      run_application_row "affine-project" "affine" "$AFFINE_REPO" "$AFFINE_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/frontend/core/tsconfig.json" "packages/frontend/core/src"
+      ;;
+    immich-server-project)
+      run_application_row "immich-server-project" "immich-server" "$IMMICH_SERVER_REPO" "$IMMICH_SERVER_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "server/tsconfig.json" "server/src"
+      ;;
+    rocketchat-project)
+      run_application_row "rocketchat-project" "rocketchat" "$ROCKETCHAT_REPO" "$ROCKETCHAT_REF" \
+        "yarn install --immutable --mode=skip-build" "." "apps/meteor/tsconfig.json" "apps/meteor/client"
       ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then

@@ -19,7 +19,7 @@ export const REQUIRED_METADATA_FIELDS = [
 
 const allowedGuardSets = new Set(["required", "canary", null]);
 const allowedBenchmarkSets = new Set(["required", "canary"]);
-const allowedCategories = new Set(["external", "generated"]);
+const allowedCategories = new Set(["external", "generated", "application"]);
 const repoRootUrl = new URL("../../", import.meta.url);
 
 const pinCouplings = [
@@ -176,11 +176,21 @@ export function validateProjectMetadata({
     }
 
     const missingExternalPinFields = new Set();
-    if (row.category === "external") {
+    if (row.category === "external" || row.category === "application") {
       for (const field of ["repo", "ref", "repo_env", "ref_env"]) {
         if (!(field in row) || row[field] === undefined) {
           missingExternalPinFields.add(field);
-          failures.push(`${row.name}: external row is missing required pin field ${field}`);
+          failures.push(`${row.name}: ${row.category} row is missing required pin field ${field}`);
+        }
+      }
+    }
+
+    // Application rows install their deps and compile with the app's own tsconfig,
+    // so they must declare how (install_cmd in install_root) and what (app_tsconfig).
+    if (row.category === "application") {
+      for (const field of ["install_cmd", "install_root", "app_tsconfig", "source_dir"]) {
+        if (!isNonEmptyString(row[field])) {
+          failures.push(`${row.name}: application row must set a non-empty ${field}`);
         }
       }
     }

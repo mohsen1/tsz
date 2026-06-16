@@ -194,6 +194,9 @@ printf '%s\\n' "\${_TSZ_PACKED_COMPAT_ROWS}"
 
 function sharedConfigWriterName(row) {
   if (row.generated_by !== undefined) return null;
+  // Application rows compile with the app's OWN tsconfig (jsx + paths), not a
+  // generated shared config, so they have no tsz_write_<stem>_config writer.
+  if (row.category === "application") return null;
   if (row.guard_set === null || row.guard_set === undefined) return null;
   if (typeof row.fixture_dir !== "string") return null;
 
@@ -322,9 +325,15 @@ const compileCanaryGatedBenchmarkRows = sortedUnique(
     .filter((match) => match[1].includes("should_run_compile_canary_project"))
     .flatMap((match) => extractAll(match[1], /run_project_benchmark\s+"([^"]+)"/g)),
 );
+// Application rows are compile-guard canaries only; they crash/time out under a
+// real type-checker, so they are not perf-benchmarked in bench-vs-tsgo.
+const applicationRowNames = new Set(
+  PROJECT_ROW_DEFINITIONS.filter((row) => row.category === "application").map((row) => row.name),
+);
+const benchExcludedRows = new Set([...BENCH_RUNNER_EXCLUDED_ROWS, ...applicationRowNames]);
 assert.deepEqual(
   benchRows,
-  sortedUnique(without(allTrackedRows, BENCH_RUNNER_EXCLUDED_ROWS)),
+  sortedUnique(without(allTrackedRows, benchExcludedRows)),
   "bench-vs-tsgo project rows drifted from scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(

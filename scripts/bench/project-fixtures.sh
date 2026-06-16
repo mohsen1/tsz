@@ -68,6 +68,26 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "neverthrow-project"
   "xstate-project"
   "mobx-project"
+  "umami-project"
+  "excalidraw-project"
+  "dub-project"
+  "formbricks-project"
+  "typebot-project"
+  "lobe-chat-project"
+  "supabase-studio-project"
+  "infisical-project"
+  "payload-project"
+  "medusa-project"
+  "outline-project"
+  "trigger-dev-project"
+  "joplin-project"
+  "directus-project"
+  "n8n-project"
+  "cal-com-project"
+  "documenso-project"
+  "affine-project"
+  "immich-server-project"
+  "rocketchat-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
@@ -373,6 +393,66 @@ tsz_project_fixture_sources() {
       ;;
     mobx-project)
       printf 'mobx|%s|%s\n' "$MOBX_REPO" "$MOBX_REF"
+      ;;
+    umami-project)
+      printf 'umami|%s|%s\n' "$UMAMI_REPO" "$UMAMI_REF"
+      ;;
+    excalidraw-project)
+      printf 'excalidraw|%s|%s\n' "$EXCALIDRAW_REPO" "$EXCALIDRAW_REF"
+      ;;
+    dub-project)
+      printf 'dub|%s|%s\n' "$DUB_REPO" "$DUB_REF"
+      ;;
+    formbricks-project)
+      printf 'formbricks|%s|%s\n' "$FORMBRICKS_REPO" "$FORMBRICKS_REF"
+      ;;
+    typebot-project)
+      printf 'typebot|%s|%s\n' "$TYPEBOT_REPO" "$TYPEBOT_REF"
+      ;;
+    lobe-chat-project)
+      printf 'lobe-chat|%s|%s\n' "$LOBE_CHAT_REPO" "$LOBE_CHAT_REF"
+      ;;
+    supabase-studio-project)
+      printf 'supabase-studio|%s|%s\n' "$SUPABASE_STUDIO_REPO" "$SUPABASE_STUDIO_REF"
+      ;;
+    infisical-project)
+      printf 'infisical|%s|%s\n' "$INFISICAL_REPO" "$INFISICAL_REF"
+      ;;
+    payload-project)
+      printf 'payload|%s|%s\n' "$PAYLOAD_REPO" "$PAYLOAD_REF"
+      ;;
+    medusa-project)
+      printf 'medusa|%s|%s\n' "$MEDUSA_REPO" "$MEDUSA_REF"
+      ;;
+    outline-project)
+      printf 'outline|%s|%s\n' "$OUTLINE_REPO" "$OUTLINE_REF"
+      ;;
+    trigger-dev-project)
+      printf 'trigger-dev|%s|%s\n' "$TRIGGER_DEV_REPO" "$TRIGGER_DEV_REF"
+      ;;
+    joplin-project)
+      printf 'joplin|%s|%s\n' "$JOPLIN_REPO" "$JOPLIN_REF"
+      ;;
+    directus-project)
+      printf 'directus|%s|%s\n' "$DIRECTUS_REPO" "$DIRECTUS_REF"
+      ;;
+    n8n-project)
+      printf 'n8n|%s|%s\n' "$N8N_REPO" "$N8N_REF"
+      ;;
+    cal-com-project)
+      printf 'cal-com|%s|%s\n' "$CAL_COM_REPO" "$CAL_COM_REF"
+      ;;
+    documenso-project)
+      printf 'documenso|%s|%s\n' "$DOCUMENSO_REPO" "$DOCUMENSO_REF"
+      ;;
+    affine-project)
+      printf 'affine|%s|%s\n' "$AFFINE_REPO" "$AFFINE_REF"
+      ;;
+    immich-server-project)
+      printf 'immich-server|%s|%s\n' "$IMMICH_SERVER_REPO" "$IMMICH_SERVER_REF"
+      ;;
+    rocketchat-project)
+      printf 'rocketchat|%s|%s\n' "$ROCKETCHAT_REPO" "$ROCKETCHAT_REF"
       ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
