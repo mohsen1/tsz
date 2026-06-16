@@ -134,6 +134,15 @@ pub(crate) enum PredicateCacheKind {
     /// eval-cache suppression. The reachability gate on `collect_type_queries`
     /// must match that collector's full walk, so it uses this slot.
     ContainsTypeQueryFull = 14,
+    /// `type_id` contains no node whose evaluation depends on the resolver or
+    /// substitution environment (no `Conditional`/`IndexAccess`/`Mapped`/
+    /// `KeyOf`/`TypeQuery`/`Application`/`TemplateLiteral`/`Lazy`/`Recursive`/
+    /// `StringIntrinsic`/`NoInfer`/`UnresolvedTypeName`/`TypeParameter`/`Infer`/
+    /// `ThisType`/`BoundParameter`/`Union`/`Intersection`). Such a type evaluates
+    /// to itself under every evaluator and resolver in a project run, so a
+    /// recorded identity result is a permanent structural fixed point. Backs the
+    /// evaluator's resolver-independent fixed-point fast path (#13250 / #8356).
+    StructurallyEvalInert = 15,
 }
 
 impl PredicateCacheKind {

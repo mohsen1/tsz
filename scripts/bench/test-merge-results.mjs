@@ -349,9 +349,18 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
-  const requiredCanaryRow = "ts-toolbelt-project";
-  assert.ok(COMPILE_CANARY_PROJECT_ROWS.includes(requiredCanaryRow));
-  assert.ok(REQUIRED_PROJECT_ROWS.includes(requiredCanaryRow));
+  // Pick any row that is benchmark-required yet still a compile canary, rather
+  // than hardcoding one: a row graduates out of COMPILE_CANARY_PROJECT_ROWS the
+  // moment its guard_set flips to "required", so a literal name breaks on every
+  // promotion. The merge behavior under test depends only on the required-canary
+  // category, not on which row fills it.
+  const requiredCanaryRow = REQUIRED_PROJECT_ROWS.find((name) =>
+    COMPILE_CANARY_PROJECT_ROWS.includes(name),
+  );
+  assert.ok(
+    requiredCanaryRow,
+    "expected at least one benchmark-required compile-canary row",
+  );
   const slowdownCompatibility = {
     ...SAMPLE_COMPATIBILITY,
     state: "red",
