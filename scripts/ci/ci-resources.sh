@@ -192,6 +192,33 @@ ci_available_memory_mb() {
   fi
 }
 
+# Preflight memory gate for the best-effort CI cache save.
+#
+# The cache-save path tars a multi-GB target dir at post-build memory peak
+# (gcp-cache.sh save). On a memory-starved runner the kernel OOM-killer can
+# SIGKILL the build container mid-tar, failing an otherwise-green job and
+# wedging the merge queue (#13733). No after-the-fact `|| echo warning` can
+# catch a SIGKILL, so the only real lever is to refuse the tar before it runs.
+#
+# This mirrors bench-shard-prelude.sh's TSZ_BENCH_MIN_FREE_MB gate. The floor
+# is TSZ_CI_CACHE_SAVE_MIN_FREE_MB (default 2048 MiB). Setting it to 0 disables
+# the gate (always attempt the save).
+#
+# Returns 0 when there is enough headroom OR when MemAvailable is unknown
+# (fail open — never block a save on a host without /proc/meminfo). Returns 1
+# only when MemAvailable is a known positive value below the floor.
+ci_cache_save_memory_ok() {
+  local floor="${TSZ_CI_CACHE_SAVE_MIN_FREE_MB:-2048}"
+  local avail
+  avail="$(ci_available_memory_mb)"
+  if [[ "$floor" =~ ^[0-9]+$ && "$floor" -gt 0 \
+        && "$avail" =~ ^[0-9]+$ && "$avail" -gt 0 \
+        && "$avail" -lt "$floor" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 # Prints a one-line memory status summary for CI diagnostic logs.
 # Optional argument is a label tag prepended to the line.
 ci_report_memory() {
