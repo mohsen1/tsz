@@ -887,13 +887,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
 
                     if !checked_concrete_constraint {
-                        return self.interner().conditional(ConditionalType {
-                            check_type,
-                            extends_type,
-                            true_type: cond.true_type,
-                            false_type: cond.false_type,
-                            is_distributive: cond.is_distributive,
-                        });
+                        // No narrower constraint than the check type itself was
+                        // available, so the most permissive form of the check is
+                        // the wildcard instantiation (every free parameter ->
+                        // `any`). tsc's `getConditionalType` only defers a
+                        // failed-match generic check when that permissive form
+                        // could still satisfy the extends side; when even the
+                        // permissive form fails the relation, the false branch is
+                        // definitive (e.g. `OK<T> extends { then(...): any }` —
+                        // `OK<any>` has no `then`, so distributing `Awaited<…>`
+                        // over a union member like `OK<T>` must reduce to that
+                        // member rather than leaving a raw conditional). Fall
+                        // through to the false branch in that definitive case;
+                        // otherwise keep the conditional deferred.
+                        if self.is_depth_detection_pass()
+                            || !self.permissive_false_branch_is_definitive(check_type, extends_type)
+                        {
+                            return self.interner().conditional(ConditionalType {
+                                check_type,
+                                extends_type,
+                                true_type: cond.true_type,
+                                false_type: cond.false_type,
+                                is_distributive: cond.is_distributive,
+                            });
+                        }
                     }
                 }
 
