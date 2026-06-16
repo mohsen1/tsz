@@ -56,6 +56,16 @@ mod display_alias;
 mod query_budget;
 mod support;
 
+/// Debug kill-switch for the query-scoped nested eval memo (issue #13250).
+/// Set `TSZ_DISABLE_QUERY_EVAL_MEMO=1` to bypass both the nested read and the
+/// nested write-through, so an A/B measurement (or a regression bisect) can run
+/// from a single binary. Defaults to enabled.
+fn query_eval_memo_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_QUERY_EVAL_MEMO").is_err())
+}
+
 /// Type evaluator for meta-types.
 ///
 /// # Salsa Preparation
@@ -212,6 +222,27 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// evaluators must NOT opt in: their results can differ from the stored
     /// plain-context entries.
     persistent_memo_reads: bool,
+    /// When true, nested `evaluate` nodes read and write the thread-local
+    /// per-top-level-query memo (`cross_eval_guard::QUERY_MEMO`) after a local
+    /// cache miss, so the *resolver-backed* fresh evaluators spun up by the two
+    /// relation/inference boundaries reuse the nested subtrees a sibling fresh
+    /// evaluator already computed within the same query, instead of re-walking
+    /// them (issue #13250 recursion-pruning; ts-toolbelt `AutoPath`).
+    ///
+    /// Safe because `QUERY_MEMO` is reset at every fresh top-level query
+    /// (`reset_query_memo`, op-budget frame count 0→1) and the resolver/env is
+    /// constant within one top-level query — exactly the invariant the existing
+    /// *root-level* `QUERY_MEMO` already relies on. Only clean-window
+    /// (untainted, no limit event, no new `TS2590`) entries are written, the
+    /// same per-entry discrimination the persistent-eval-memo drain uses, so a
+    /// stack-context artifact is never stored or served.
+    ///
+    /// Distinct from `persistent_memo_reads`: that opt-in serves the *plain*
+    /// (`NoopResolver`) file-scoped memo and is revoked for resolver-backed
+    /// constructions. This opt-in serves the *query-scoped* memo whose entries
+    /// are produced by the same resolver-backed boundary, so the two never
+    /// share a backing store and never cross resolver contexts.
+    query_memo_reads: bool,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -291,6 +322,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
             union_complex_at_construction: interner.is_union_too_complex(),
             persistent_memo_reads: false,
+            query_memo_reads: false,
         }
     }
 
@@ -412,6 +444,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// Opt this resolver-backed evaluator in to reading and writing the
+    /// thread-local per-top-level-query memo at nested nodes (see
+    /// `query_memo_reads`). Set only at the two fresh-evaluator boundaries
+    /// (`SubtypeChecker::evaluate_type`, infer-pattern expansion) where the
+    /// memo's reset-per-query / constant-resolver invariant holds.
+    pub const fn with_query_eval_memo_reads(mut self) -> Self {
+        self.query_memo_reads = true;
+        self
+    }
+
     /// Suppress `this` type substitution during Lazy type evaluation.
     /// When set, `ThisType` references inside resolved Lazy types are preserved
     /// rather than being bound to the Lazy type's own identity. This is used
@@ -420,6 +462,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub const fn with_suppress_this_binding(mut self) -> Self {
         self.suppress_this_binding = true;
         self.persistent_memo_reads = false;
+        // `this`-suppression changes the evaluated result of `ThisType`-bearing
+        // subtrees, so a shared query-memo entry computed without suppression
+        // (or vice-versa) must not be served here.
+        self.query_memo_reads = false;
         self
     }
 
@@ -433,6 +479,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // TS2589 detection must re-walk the expansion; a memo hit would
         // short-circuit the depth it is trying to observe.
         self.persistent_memo_reads = false;
+        self.query_memo_reads = false;
         self
     }
 
@@ -452,6 +499,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Declaration-emit display aliasing is a side effect of the walk;
         // a memo hit would skip recording it.
         self.persistent_memo_reads = false;
+        self.query_memo_reads = false;
         self
     }
 
@@ -499,6 +547,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // A non-default expansion cap changes where evaluation bails; memo
         // entries computed under the default cap must not be served here.
         self.persistent_memo_reads = false;
+        self.query_memo_reads = false;
     }
 
     /// Reset per-evaluation state so this evaluator can be reused.
@@ -805,6 +854,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
+        // Query-scoped nested memo (issue #13250 recursion-pruning). The two
+        // resolver-backed fresh-evaluator boundaries (`SubtypeChecker::
+        // evaluate_type`, infer-pattern expansion) spin up a brand-new
+        // evaluator with an empty `cache` per top-level request, so the nested
+        // recursion subtree (ts-toolbelt `AutoPath` MetaPath/Join enumeration)
+        // is re-walked from scratch by each sibling. When opted in
+        // (`query_memo_reads`), serve a nested node a sibling already computed
+        // *within the same top-level query* from the thread-local query memo.
+        // It is reset per fresh top-level query and the resolver is constant
+        // within one — the same invariant the existing root-level memo relies
+        // on — and only clean-window entries are stored (see `memo_insert`), so
+        // a hit is exactly what this evaluator would recompute.
+        if self.query_memo_reads
+            && query_eval_memo_enabled()
+            && let Some(cached) = crate::evaluation::cross_eval_guard::query_memo_get(
+                type_id,
+                self.no_unchecked_indexed_access,
+            )
+        {
+            tsz_common::perf_counters::record_eval_memo_nested_hit();
+            self.cache.insert(type_id, cached);
+            return cached;
+        }
+
         // Check if depth was already exceeded in a previous call
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
@@ -899,6 +972,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 self.interner
                     .insert_eval_memo(type_id, self.no_unchecked_indexed_access, result);
+            }
+
+            // Query-scoped nested write-through (issue #13250 recursion-pruning).
+            // This clean-window branch is reached only when no limit event fired
+            // inside this node's evaluation (`limit_epoch == epoch_at_entry`), so
+            // the entry is a stable function of `(TypeId, options)` under this
+            // query's fixed resolver — the same per-entry discrimination the
+            // boundary drain uses (issue #13241). Publish it to the thread-local
+            // per-query memo so a sibling fresh evaluator within the same query
+            // serves the nested subtree instead of re-walking it. The same
+            // `TS2590` / limit-result-cache gates as the persistent write apply.
+            if self.query_memo_reads
+                && query_eval_memo_enabled()
+                && !type_id.is_intrinsic()
+                && (self.limit_epoch == 0 || crate::limits::limit_result_cache_enabled())
+                && (self.union_complex_at_construction || !self.interner.is_union_too_complex())
+            {
+                crate::evaluation::cross_eval_guard::query_memo_put(
+                    type_id,
+                    self.no_unchecked_indexed_access,
+                    result,
+                );
             }
             // Resolver-independent structural fixed point (issues #13250 /
             // #8356). When a clean-window evaluation returns the input unchanged

@@ -88,6 +88,10 @@ name = "recursive_conditional_infer_termination_tests"
 path = "tests/recursive_conditional_infer_termination_tests.rs"
 
 [[test]]
+name = "autopath_recursion_pruning_tests"
+path = "tests/autopath_recursion_pruning_tests.rs"
+
+[[test]]
 name = "parallel_sequential_agreement_tests"
 path = "tests/parallel_sequential_agreement_tests.rs"
 

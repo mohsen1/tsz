@@ -1526,7 +1526,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let Some(_guard) = InferMatchExpansionGuard::enter() else {
                 return (type_id, false);
             };
-            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver())
+                // Reuse nested subtrees a sibling fresh evaluator already
+                // computed within this top-level query (issue #13250
+                // recursion-pruning); same query-scoped memo the subtype-checker
+                // boundary opts in to.
+                .with_query_eval_memo_reads();
             evaluator.set_no_unchecked_indexed_access(nuia);
             if let Some(query_db) = self.query_db() {
                 evaluator = evaluator.with_query_db(query_db);

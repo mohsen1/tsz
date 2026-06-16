@@ -322,7 +322,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     /// resolver-less collection path cannot.
     fn spawn_evaluator(&self) -> crate::evaluation::evaluate::TypeEvaluator<'a, R> {
         let mut evaluator =
-            crate::evaluation::evaluate::TypeEvaluator::with_resolver(self.interner, self.resolver);
+            crate::evaluation::evaluate::TypeEvaluator::with_resolver(self.interner, self.resolver)
+                // Query-scoped nested memo (issue #13250 recursion-pruning):
+                // reuse subtrees a sibling fresh evaluator already computed
+                // within this top-level query.
+                .with_query_eval_memo_reads();
         if let Some(db) = self.query_db {
             evaluator = evaluator.with_query_db(db);
         }

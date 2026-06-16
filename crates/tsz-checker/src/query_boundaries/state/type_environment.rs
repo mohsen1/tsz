@@ -451,7 +451,14 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
     query_db: Option<&dyn QueryDatabase>,
     cache_entry_collection: CacheEntryCollection,
 ) -> EvalWithCacheResult {
-    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver)
+        // Query-scoped nested memo (issue #13250 recursion-pruning): publish
+        // this authoritative evaluator's clean nested subtree results to the
+        // thread-local per-top-level-query memo so the solver-internal
+        // relation/inference evaluators spun up under the same query reuse them
+        // instead of re-walking the ts-toolbelt `AutoPath` recursion. Reset per
+        // fresh top-level query; the resolver is constant within one.
+        .with_query_eval_memo_reads();
     if let Some(query_db) = query_db {
         evaluator = evaluator.with_query_db(query_db);
         // This is the checker's authoritative, context-free type-resolution

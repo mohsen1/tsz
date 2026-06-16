@@ -342,8 +342,15 @@ impl<'a> DefaultJudge<'a> {
             return cached;
         }
 
-        // Create evaluator and evaluate
-        let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
+        // Create evaluator and evaluate. Opt in to the query-scoped nested memo
+        // (issue #13250 recursion-pruning): the Judge spins up a fresh evaluator
+        // per top-level `evaluate` request with an empty internal cache, so the
+        // nested recursion subtree (ts-toolbelt `AutoPath`) is re-walked by each
+        // sibling. The memo is reset per fresh top-level query and the env is
+        // constant within one, so a hit is exactly what this evaluator would
+        // recompute.
+        let mut evaluator =
+            TypeEvaluator::with_resolver(self.db, self.env).with_query_eval_memo_reads();
         let result = evaluator.evaluate(type_id);
 
         // Cache the result

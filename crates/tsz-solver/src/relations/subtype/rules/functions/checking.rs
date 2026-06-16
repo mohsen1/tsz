@@ -1994,7 +1994,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_id,
             self.no_unchecked_indexed_access,
             || {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver)
+                    // Reuse nested subtrees a sibling fresh evaluator already
+                    // computed within this top-level query (issue #13250
+                    // recursion-pruning; ts-toolbelt `AutoPath`). The
+                    // `set_no_unchecked_indexed_access` call below clears the
+                    // local cache but not this opt-in; the query memo is keyed
+                    // on the same flag so a mode switch never serves a stale
+                    // result.
+                    .with_query_eval_memo_reads();
                 evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
                 // Pass query_db to share the application evaluation cache across
                 // evaluations, so the same generic type produces the same
