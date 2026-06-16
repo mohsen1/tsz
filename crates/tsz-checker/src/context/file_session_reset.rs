@@ -576,6 +576,7 @@ impl<'a> CheckerContext<'a> {
             .borrow_mut()
             .clear();
         self.namespace_exports_cache.borrow_mut().clear();
+        self.reexport_resolution_cache.borrow_mut().clear();
         // `def_type_params` and `def_no_type_params` are keyed by
         // globally-stable `DefId`. The values are program-stable
         // type-param info (interned `Atom` names, solver `TypeId`
@@ -709,6 +710,9 @@ mod tests {
             .borrow_mut()
             .insert("JSX".to_string(), vec![(0, tsz_binder::SymbolId(3))]);
         ctx.nested_namespace_candidates_cache_complete.set(true);
+        ctx.reexport_resolution_cache
+            .borrow_mut()
+            .insert((0, "Thing".to_string()), Some((tsz_binder::SymbolId(4), 1)));
         ctx.jsdoc_global_typedef_lookup_cache
             .miss_cache
             .borrow_mut()
@@ -737,6 +741,7 @@ mod tests {
         assert!(ctx.export_equals_named_cache.borrow().is_empty());
         assert!(ctx.nested_namespace_candidates_cache.borrow().is_empty());
         assert!(!ctx.nested_namespace_candidates_cache_complete.get());
+        assert!(ctx.reexport_resolution_cache.borrow().is_empty());
         assert!(
             ctx.jsdoc_global_typedef_lookup_cache
                 .miss_cache

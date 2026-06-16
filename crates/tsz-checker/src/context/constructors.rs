@@ -266,6 +266,7 @@ impl<'a> CheckerContext<'a> {
             nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(crate::context::CowCache::default()),
             namespace_exports_cache: RefCell::new(FxHashMap::default()),
+            reexport_resolution_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             shared_constraint_proofs: None,
             cross_file_type_params_cache: None,

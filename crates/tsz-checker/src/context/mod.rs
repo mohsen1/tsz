@@ -759,6 +759,14 @@ pub struct CheckerContext<'a> {
     /// specifiers are resolved from the current file.
     pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
 
+    /// Per-checker memo for re-export chain resolution, keyed by
+    /// `(target file, export name)`. Populated only by root resolutions of
+    /// [`crate::state::CheckerState::resolve_export_in_file`] (entered with an
+    /// empty `visited` path), whose answer is the canonical, path-independent
+    /// result for that pair. Collapses the `O(names × export-edges)` re-walk of
+    /// barrel `export *` graphs to a single walk per distinct `(file, name)`.
+    pub reexport_resolution_cache: RefCell<ReexportResolutionCache>,
+
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,

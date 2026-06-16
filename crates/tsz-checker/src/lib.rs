@@ -1201,6 +1201,9 @@ mod recursive_tuple_alias_diagnostic_display_tests;
 #[path = "tests/recursive_tuple_rest_cycle_tests.rs"]
 mod recursive_tuple_rest_cycle_tests;
 #[cfg(test)]
+#[path = "tests/reexport_resolution_cache_tests.rs"]
+mod reexport_resolution_cache_tests;
+#[cfg(test)]
 #[path = "tests/ref_type_params_cache_tests.rs"]
 mod ref_type_params_cache_tests;
 #[cfg(test)]
