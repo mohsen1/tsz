@@ -740,9 +740,17 @@ tsz_write_ofetch_config() {
   # the option tsc emits TS5097 on every such import and cascades into
   # TS2304/TS2339; tsz matches that tsc behavior, so the guard config must
   # carry the option the upstream project actually sets.
+  #
+  # ofetch also depends on the `undici` peer package and the node typings
+  # (`node:stream`, `NodeJS`, `Error.captureStackTrace`) that its real tsconfig
+  # pulls in via `"types": ["node"]`. The shared bench baseline pins
+  # `"types": []` and the clone installs nothing, so those resolve to spurious
+  # TS2307/TS2591/TS2503/TS2339 unless stubbed; the stub writer supplies them.
+  tsz_write_ofetch_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_ts_pattern_config() {
