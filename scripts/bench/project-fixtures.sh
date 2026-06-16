@@ -843,7 +843,21 @@ tsz_write_trpc_config() {
     ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_query_config() {
-  tsz_write_basic_external_project_config "$1" "packages/query-core/src"
+  # tanstack-query's real root tsconfig pins `"types": ["node"]`, so its build
+  # sees the `process` global via @types/node; several query-core sources read
+  # `process.env.NODE_ENV` (timeoutManager.ts, query.ts, utils.ts, etc.). The
+  # fixture clone runs no npm install and the bench baseline pins `"types": []`,
+  # so without a stub tsc emits spurious TS2591 "Cannot find name 'process'" and
+  # tsz matches that. A single ambient `process` stub reproduces what tsc sees
+  # when @types/node is present, leaving query-core's own source fully
+  # type-checked (matching the immer fixture's treatment of the same global).
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare const process: any;
+TYPES
+  tsz_write_basic_external_project_config "$1" "packages/query-core/src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_router_config() {
   tsz_write_basic_external_project_config "$1" "packages/router-core/src"
