@@ -886,6 +886,82 @@ run_project_row() {
       run_application_row "umami-project" "umami" "$UMAMI_REPO" "$UMAMI_REF" \
         "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
       ;;
+    excalidraw-project)
+      run_application_row "excalidraw-project" "excalidraw" "$EXCALIDRAW_REPO" "$EXCALIDRAW_REF" \
+        "yarn install --frozen-lockfile --ignore-scripts" "." "packages/excalidraw/tsconfig.json" "packages/excalidraw"
+      ;;
+    dub-project)
+      run_application_row "dub-project" "dub" "$DUB_REPO" "$DUB_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    formbricks-project)
+      run_application_row "formbricks-project" "formbricks" "$FORMBRICKS_REPO" "$FORMBRICKS_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    typebot-project)
+      run_application_row "typebot-project" "typebot" "$TYPEBOT_REPO" "$TYPEBOT_REF" \
+        "bun install --frozen-lockfile" "." "apps/builder/tsconfig.json" "apps/builder"
+      ;;
+    lobe-chat-project)
+      run_application_row "lobe-chat-project" "lobe-chat" "$LOBE_CHAT_REPO" "$LOBE_CHAT_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+      ;;
+    supabase-studio-project)
+      run_application_row "supabase-studio-project" "supabase-studio" "$SUPABASE_STUDIO_REPO" "$SUPABASE_STUDIO_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/studio/tsconfig.json" "apps/studio"
+      ;;
+    infisical-project)
+      run_application_row "infisical-project" "infisical" "$INFISICAL_REPO" "$INFISICAL_REF" \
+        "npm ci --ignore-scripts" "." "frontend/tsconfig.json" "frontend"
+      ;;
+    payload-project)
+      run_application_row "payload-project" "payload" "$PAYLOAD_REPO" "$PAYLOAD_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/payload/tsconfig.json" "packages/payload/src"
+      ;;
+    medusa-project)
+      run_application_row "medusa-project" "medusa" "$MEDUSA_REPO" "$MEDUSA_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/medusa/tsconfig.json" "packages/medusa/src"
+      ;;
+    outline-project)
+      run_application_row "outline-project" "outline" "$OUTLINE_REPO" "$OUTLINE_REF" \
+        "yarn install --immutable --mode=skip-build" "." "tsconfig.json" "app"
+      ;;
+    trigger-dev-project)
+      run_application_row "trigger-dev-project" "trigger-dev" "$TRIGGER_DEV_REPO" "$TRIGGER_DEV_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/webapp/tsconfig.json" "apps/webapp/app"
+      ;;
+    joplin-project)
+      run_application_row "joplin-project" "joplin" "$JOPLIN_REPO" "$JOPLIN_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/app-desktop/tsconfig.json" "packages/app-desktop"
+      ;;
+    directus-project)
+      run_application_row "directus-project" "directus" "$DIRECTUS_REPO" "$DIRECTUS_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "api/tsconfig.json" "api/src"
+      ;;
+    n8n-project)
+      run_application_row "n8n-project" "n8n" "$N8N_REPO" "$N8N_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/cli/tsconfig.json" "packages/cli/src"
+      ;;
+    cal-com-project)
+      run_application_row "cal-com-project" "cal-com" "$CAL_COM_REPO" "$CAL_COM_REF" \
+        "yarn install --immutable --mode=skip-build" "." "apps/web/tsconfig.json" "apps/web"
+      ;;
+    documenso-project)
+      run_application_row "documenso-project" "documenso" "$DOCUMENSO_REPO" "$DOCUMENSO_REF" \
+        "npm ci --ignore-scripts" "." "apps/remix/tsconfig.json" "apps/remix"
+      ;;
+    affine-project)
+      run_application_row "affine-project" "affine" "$AFFINE_REPO" "$AFFINE_REF" \
+        "yarn install --immutable --mode=skip-build" "." "packages/frontend/core/tsconfig.json" "packages/frontend/core/src"
+      ;;
+    immich-server-project)
+      run_application_row "immich-server-project" "immich-server" "$IMMICH_SERVER_REPO" "$IMMICH_SERVER_REF" \
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "server/tsconfig.json" "server/src"
+      ;;
+    rocketchat-project)
+      run_application_row "rocketchat-project" "rocketchat" "$ROCKETCHAT_REPO" "$ROCKETCHAT_REF" \
+        "yarn install --immutable --mode=skip-build" "." "apps/meteor/tsconfig.json" "apps/meteor/client"
+      ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
         return 0
