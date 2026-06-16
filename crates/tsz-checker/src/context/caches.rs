@@ -158,6 +158,10 @@ pub struct TypeReferenceValidationCaches {
     /// Stamp-guarded memo for reason-collecting assignability relation
     /// outcomes. See [`AssignabilityFailureMemo`].
     pub assignability_failure_memo: AssignabilityFailureMemo,
+    /// Stamp-guarded result memo for the recursive `Awaited<…>` assignability
+    /// normalization (`evaluate_awaited_application_for_assignability`).
+    /// See [`AwaitedAssignabilityEvalMemo`].
+    pub awaited_assignability_eval_memo: AwaitedAssignabilityEvalMemo,
 }
 
 /// Program-wide success tier for generic type-argument constraint proofs,
@@ -657,6 +661,60 @@ impl AssignabilityEvalMemo {
     /// Drop all entries and forget the stamp. Required between file sessions:
     /// a fresh file's environment can restart at a previously seen generation,
     /// which would otherwise collide with the prior file's stamp.
+    pub fn clear(&mut self) {
+        self.stamp = None;
+        self.entries.clear();
+    }
+}
+
+/// Result memo for `evaluate_awaited_application_for_assignability`.
+///
+/// `Awaited<T>` assignability normalization is a recursive walk over
+/// unions/tuples/arrays/object-shapes/applications that re-evaluates the same
+/// nested `Awaited<…>` sub-applications, guarded only by a `depth > 8` clamp
+/// and a per-thread cycle set (no result cache). On `Awaited`-heavy DAGs —
+/// where one nested chain is reachable through many union members, tuple
+/// elements, and object properties — the unmemoized walk is combinatorial
+/// (issue #13040, second effect-canary bottleneck after the flow-storm fix in
+/// PR #13686). The result is a pure function of the awaited `TypeId` for a
+/// fixed session stamp (every mutable input it consults bumps a stamp
+/// component, exactly as for [`AssignabilityEvalMemo`]), so memoizing collapses
+/// the DAG re-walks to one evaluation per distinct `TypeId`.
+///
+/// Entries follow the [`AssignabilityEvalMemo`] validity model: dropped
+/// wholesale when the session stamp moves, and **never written for
+/// depth-clamped (degraded) evaluations** — a clamped subtree returns its input
+/// unevaluated, which a fresher evaluation reached at a shallower depth must
+/// improve on, so caching it would suppress the normalized form a diagnostic
+/// depends on.
+#[derive(Debug, Default)]
+pub struct AwaitedAssignabilityEvalMemo {
+    stamp: Option<AssignabilityEvalStamp>,
+    entries: FxHashMap<TypeId, TypeId>,
+}
+
+impl AwaitedAssignabilityEvalMemo {
+    fn roll_to(&mut self, stamp: AssignabilityEvalStamp) {
+        if self.stamp != Some(stamp) {
+            self.entries.clear();
+            self.stamp = Some(stamp);
+        }
+    }
+
+    /// Look up a memoized normalization result valid for `stamp`.
+    pub fn get(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId) -> Option<TypeId> {
+        self.roll_to(stamp);
+        self.entries.get(&type_id).copied()
+    }
+
+    /// Record a normalization result computed under `stamp`.
+    pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
+        self.roll_to(stamp);
+        self.entries.insert(type_id, result);
+    }
+
+    /// Drop all entries and forget the stamp. Required between file sessions
+    /// for the same reason as [`AssignabilityEvalMemo::clear`].
     pub fn clear(&mut self) {
         self.stamp = None;
         self.entries.clear();

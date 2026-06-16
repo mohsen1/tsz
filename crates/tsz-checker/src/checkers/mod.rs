@@ -124,6 +124,12 @@ pub fn clear_all_thread_local_state() {
     // row boundaries keeps it from accumulating every project's specifiers on a
     // reused worker thread while preserving within-compilation cross-file reuse.
     crate::module_resolution::reset_module_specifier_candidates_memo();
+
+    // Reset the Awaited<…> assignability-normalization cycle guard and clamp
+    // epoch. The visiting set keys on arena-local `TypeId`s reused across
+    // compilations; a leaked entry from a mid-walk bail would suppress
+    // normalization for a colliding fresh `TypeId` on this worker thread.
+    self::promise_checker_object_normalization::reset_awaited_eval_thread_local_state();
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch
@@ -292,6 +298,8 @@ mod tests {
         state_domain::state::set_cross_arena_depth_for_test(3);
         state_domain::type_analysis::dirty_cross_file_recursion_guards_for_test();
         types_domain::dirty_type_resolution_guards_for_test();
+        super::promise_checker_object_normalization::dirty_awaited_eval_thread_local_state_for_test(
+        );
 
         assert_ne!(
             state_domain::state::cross_arena_depth_for_test(),
@@ -305,6 +313,10 @@ mod tests {
         assert!(
             !types_domain::type_resolution_guards_clear_for_test(),
             "precondition: type-resolution guards dirtied"
+        );
+        assert!(
+            !super::promise_checker_object_normalization::awaited_eval_thread_local_state_clear_for_test(),
+            "precondition: awaited-eval thread-locals dirtied"
         );
 
         clear_all_thread_local_state();
@@ -321,6 +333,10 @@ mod tests {
         assert!(
             types_domain::type_resolution_guards_clear_for_test(),
             "clear_all_thread_local_state must reset alias-resolution depth, stack, and scratch pool"
+        );
+        assert!(
+            super::promise_checker_object_normalization::awaited_eval_thread_local_state_clear_for_test(),
+            "clear_all_thread_local_state must reset the awaited-eval cycle guard and clamp epoch"
         );
     }
 }
