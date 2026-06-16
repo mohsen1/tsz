@@ -104,6 +104,10 @@ name = "union_reduction_bench"
 harness = false
 
 [[bench]]
+name = "union_literal_reduce_bench"
+harness = false
+
+[[bench]]
 name = "object_subtype_bench"
 harness = false
 

@@ -965,6 +965,29 @@ impl TypeInterner {
     /// `UNION_NORMALIZE_CACHE_MAX_LEN` keeps flag-setting inputs uncached.
     pub(crate) const UNION_SUBTYPE_PAIRWISE_LIMIT: u64 = 1_000_000;
 
+    /// A bare unit literal: `TypeData::Literal(_)` (string/number/boolean/bigint
+    /// literal). For two *distinct* bare unit literals `a != b`, the shallow
+    /// subtype engine is unconditionally `false` in **both** directions:
+    /// - As a source, a `Literal(_)` relates only to a widened primitive of its
+    ///   own domain, a matching template literal, or a union/builtin containing
+    ///   one of those — never to another `Literal(_)` (see
+    ///   `is_subtype_shallow_depth`'s literal-source branch).
+    /// - As a target, a `Literal(_)` is matched only by an identical literal
+    ///   (removed upstream by dedup) or `never` (removed upstream) — no other
+    ///   source is ever a subtype of a bare literal.
+    ///
+    /// So in the union-reduction pairwise sweep, a pair where **both** members
+    /// are bare unit literals can never reduce either way; the subtype call is
+    /// pure waste. Skipping such pairs collapses the dominant O(L²)
+    /// literal-vs-literal term of a `{ primitive, Literal:L }` union (the
+    /// residual ts-toolbelt #13250 signature) to O(L·K) useful checks against
+    /// the K non-literal members, with identical reduction output. Boolean
+    /// literals (`true`/`false`) are intrinsics, not `TypeData::Literal`, so
+    /// they are conservatively treated as non-literals and keep full checks.
+    fn is_bare_unit_literal(&self, id: TypeId) -> bool {
+        matches!(self.lookup(id), Some(TypeData::Literal(_)))
+    }
+
     /// Remove redundant types from a union using shallow subtype checks.
     /// If A <: B, then A | B = B (A is redundant).
     pub(crate) fn reduce_union_subtypes(&self, flat: &mut TypeListBuffer) {
@@ -1108,6 +1131,14 @@ impl TypeInterner {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
             let mut keep = vec![true; len];
+            // Bare-unit-literal mask (see `is_bare_unit_literal`): a pair whose
+            // endpoints are both literals never reduces either way, so the
+            // shallow subtype call is skipped for it. One O(N) classification
+            // pass replaces the O(L²) literal-vs-literal term of the sweep.
+            let literal: Vec<bool> = flat
+                .iter()
+                .map(|&id| self.is_bare_unit_literal(id))
+                .collect();
             let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
                 &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
             });
@@ -1117,6 +1148,10 @@ impl TypeInterner {
                 }
                 for j in 0..len {
                     if i == j || !keep[j] {
+                        continue;
+                    }
+                    // Both endpoints bare unit literals: provably non-subtype.
+                    if literal[i] && literal[j] {
                         continue;
                     }
                     if let Some(counter) = shallow_checks {
@@ -1229,14 +1264,29 @@ impl TypeInterner {
         } else {
             (1u64 << len) - 1
         };
+        // Bare-unit-literal mask: a pair where both endpoints are literals can
+        // never reduce either way (see `is_bare_unit_literal`), so skip the
+        // shallow subtype call for it. One O(N) classification pass replaces the
+        // O(L²) literal-vs-literal term of the sweep.
+        let mut literal_mask: u64 = 0;
+        for (idx, &id) in flat.iter().enumerate() {
+            if self.is_bare_unit_literal(id) {
+                literal_mask |= 1u64 << idx;
+            }
+        }
         let shallow_checks = tsz_common::perf_counters::enabled_fast()
             .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;
             }
+            let i_is_literal = literal_mask & (1u64 << i) != 0;
             for j in 0..len {
                 if i == j || keep & (1u64 << j) == 0 {
+                    continue;
+                }
+                // Both endpoints bare unit literals: provably non-subtype.
+                if i_is_literal && literal_mask & (1u64 << j) != 0 {
                     continue;
                 }
                 if let Some(counter) = shallow_checks {
@@ -1548,5 +1598,89 @@ mod tests {
             !list.contains(&interner.literal_string("a")),
             "literal `\"a\"` must be absorbed by `string`"
         );
+    }
+
+    #[test]
+    fn cross_domain_primitive_and_literals_all_survive_reduction() {
+        let interner = TypeInterner::new();
+        // `number | "m0" | "m1" | ... | "mN-1"`: the primitive (`number`) does
+        // not absorb the string literals (different domain), and distinct string
+        // literals are mutually non-subtypes. The literal-vs-literal pairs are
+        // skipped by the bare-unit-literal mask, but the surviving member set
+        // must be identical to a full pairwise sweep: every member survives.
+        const N: usize = 50;
+        let mut members = vec![TypeId::NUMBER];
+        for i in 0..N {
+            members.push(interner.literal_string(&format!("m{i}")));
+        }
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a `number | <string literals>` union to survive");
+        };
+        let list = interner.type_list(list_id);
+        assert_eq!(
+            list.len(),
+            N + 1,
+            "no member of a cross-domain primitive + distinct-literals union reduces"
+        );
+        assert!(list.contains(&TypeId::NUMBER), "`number` must survive");
+    }
+
+    #[test]
+    fn same_domain_primitive_absorbs_all_literals_with_mask() {
+        let interner = TypeInterner::new();
+        // `string | "s0" | ... | "sN-1"` must still collapse to just `string`.
+        // Absorption runs before the pairwise sweep, so the literal mask never
+        // changes this outcome — guards against the skip leaking into the
+        // absorb path.
+        const N: usize = 50;
+        let mut members = vec![TypeId::STRING];
+        for i in 0..N {
+            members.push(interner.literal_string(&format!("s{i}")));
+        }
+        assert_eq!(
+            interner.union(members),
+            TypeId::STRING,
+            "widened `string` absorbs every string literal regardless of the literal mask"
+        );
+    }
+
+    #[test]
+    fn literal_mask_preserves_object_vs_literal_reduction() {
+        let interner = TypeInterner::new();
+        // A union mixing distinct string literals with two structurally-related
+        // objects where one reduces into the other. Literal-vs-literal pairs are
+        // skipped, but the object-vs-object reduction (a non-literal pair) must
+        // still fire: `{ a: 1 }` is absorbed by the wider `{ a: 1; b: 2 }`? No —
+        // width subtyping makes the *narrower-keyed* object the supertype, so
+        // `{ a: 1; b: 2 } <: { a: 1 }` and the wider one is removed. The literals
+        // are irreducible and all survive.
+        let obj_narrow = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("a"),
+            interner.literal_number(1.0),
+        )]);
+        let obj_wide = interner.object(vec![
+            PropertyInfo::new(interner.intern_string("a"), interner.literal_number(1.0)),
+            PropertyInfo::new(interner.intern_string("b"), interner.literal_number(2.0)),
+        ]);
+        let members = vec![
+            interner.literal_string("x"),
+            interner.literal_string("y"),
+            obj_narrow,
+            obj_wide,
+        ];
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected the mixed literal/object union to survive as a union");
+        };
+        let list = interner.type_list(list_id);
+        // Two literals survive; the object pair reduces to a single member.
+        assert_eq!(
+            list.len(),
+            3,
+            "object-vs-object reduction must still fire beside skipped literal pairs"
+        );
+        assert!(list.contains(&interner.literal_string("x")));
+        assert!(list.contains(&interner.literal_string("y")));
     }
 }
