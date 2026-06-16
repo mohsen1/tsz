@@ -28,17 +28,33 @@ impl<'a> CheckerState<'a> {
             .map(|(param, &arg)| (param.name, arg))
             .collect::<Vec<_>>();
 
+        // Build the `{type-param-name -> type-arg}` substitution once for the
+        // whole call. Constraint instantiation re-asks for this same mapping at
+        // several points inside the per-parameter loop below; rebuilding it per
+        // iteration is O(D) map construction inside an O(D) loop, i.e. O(D^2)
+        // per textual type-reference occurrence for a depth-D bounded-parameter
+        // chain (`T0 extends Base, T1 extends T0, ...`). The mapping is
+        // invariant across iterations (it depends only on `type_params` /
+        // `type_args`), so hoisting it collapses the per-occurrence
+        // constraint-substitution cost back to O(D). It is built from the same
+        // zipped name/arg pairs the in-loop builders used, so the substitution —
+        // and therefore every diagnostic — is unchanged. (#13250)
+        let type_arg_subst = {
+            let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
+            for (param, &arg) in type_params.iter().zip(type_args.iter()) {
+                subst.insert(param.name, arg);
+            }
+            subst
+        };
+
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self.type_arg_is_unknown_keyword(arg_idx)
                 {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
-                    let inst_constraint = self.instantiate_constraint_with_type_args(
-                        constraint_resolved,
-                        type_params,
-                        &type_args,
-                    );
+                    let inst_constraint = self
+                        .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
                     if !matches!(inst_constraint, TypeId::ANY | TypeId::UNKNOWN) {
                         let constraint_str =
                             self.format_type_diagnostic_constraint(inst_constraint);
@@ -81,11 +97,8 @@ impl<'a> CheckerState<'a> {
                     if constraint_resolved == TypeId::ANY {
                         continue;
                     }
-                    let inst_constraint = self.instantiate_constraint_with_type_args(
-                        constraint,
-                        type_params,
-                        &type_args,
-                    );
+                    let inst_constraint =
+                        self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                     if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
                         type_arg,
                         inst_constraint,
@@ -278,21 +291,8 @@ impl<'a> CheckerState<'a> {
                 });
                 if concrete_application_args {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
-                    let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
-                    for (j, p) in type_params.iter().enumerate() {
-                        if let Some(&arg) = type_args.get(j) {
-                            subst.insert(p.name, arg);
-                        }
-                    }
-                    let inst_constraint = if subst.is_empty() {
-                        constraint_resolved
-                    } else {
-                        crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            constraint_resolved,
-                            &subst,
-                        )
-                    };
+                    let inst_constraint = self
+                        .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
                     if !query::contains_type_parameters(self.ctx.types, inst_constraint) {
                         self.ensure_relation_input_ready(type_arg);
                         self.ensure_relation_input_ready(inst_constraint);
@@ -335,11 +335,8 @@ impl<'a> CheckerState<'a> {
                     && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
                 {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
-                    let inst_constraint = self.instantiate_constraint_with_type_args(
-                        constraint_resolved,
-                        type_params,
-                        &type_args,
-                    );
+                    let inst_constraint = self
+                        .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
                     if self.generic_alias_application_satisfies_object_constraint(
                         type_arg,
                         inst_constraint,
@@ -495,11 +492,8 @@ impl<'a> CheckerState<'a> {
                 }
                 if type_arg_contains_type_parameters {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
-                    let inst_constraint = self.instantiate_constraint_with_type_args(
-                        constraint_resolved,
-                        type_params,
-                        &type_args,
-                    );
+                    let inst_constraint = self
+                        .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
                     if self
                         .conditional_result_branches_satisfy_constraint(type_arg, inst_constraint)
                     {
@@ -961,11 +955,8 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                             }
-                            let inst_constraint = self.instantiate_constraint_with_type_args(
-                                constraint,
-                                type_params,
-                                &type_args,
-                            );
+                            let inst_constraint =
+                                self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                             let inst_constraint = self.resolve_lazy_type(inst_constraint);
                             if query::contains_free_type_parameters(self.ctx.types, inst_constraint)
                             {
@@ -1344,10 +1335,9 @@ impl<'a> CheckerState<'a> {
                                 self.hidden_conditional_infer_constraint_type(arg_idx)
                         {
                             let constraint_resolved = self.resolve_lazy_type(constraint);
-                            let inst_constraint = self.instantiate_constraint_with_type_args(
+                            let inst_constraint = self.instantiate_constraint_with_subst(
                                 constraint_resolved,
-                                type_params,
-                                &type_args,
+                                &type_arg_subst,
                             );
                             if inst_constraint == TypeId::UNKNOWN
                                 || inst_constraint == TypeId::ANY
@@ -1407,12 +1397,10 @@ impl<'a> CheckerState<'a> {
                                         self.hidden_conditional_infer_constraint_type(arg_idx)
                                 {
                                     let constraint_resolved = self.resolve_lazy_type(constraint);
-                                    let inst_constraint = self
-                                        .instantiate_constraint_with_type_args(
-                                            constraint_resolved,
-                                            type_params,
-                                            &type_args,
-                                        );
+                                    let inst_constraint = self.instantiate_constraint_with_subst(
+                                        constraint_resolved,
+                                        &type_arg_subst,
+                                    );
                                     if inst_constraint != TypeId::UNKNOWN
                                         && inst_constraint != TypeId::ANY
                                         && !query::contains_type_parameters(
@@ -1537,11 +1525,8 @@ impl<'a> CheckerState<'a> {
                         {
                             continue;
                         }
-                        let inst_constraint = self.instantiate_constraint_with_type_args(
-                            constraint,
-                            type_params,
-                            &type_args,
-                        );
+                        let inst_constraint =
+                            self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                         let inst_constraint = self.resolve_lazy_type(inst_constraint);
                         if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                             continue;
@@ -1658,7 +1643,7 @@ impl<'a> CheckerState<'a> {
                 let written_keyof_constraint_display =
                     self.written_keyof_constraint_display(constraint, type_params, type_args_list);
                 let constraint =
-                    self.instantiate_constraint_with_type_args(constraint, type_params, &type_args);
+                    self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                 let constraint = self.resolve_lazy_type(constraint);
                 let constraint = self
                     .resolve_well_known_lib_constraint_type(constraint)
