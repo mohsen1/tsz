@@ -872,7 +872,6 @@ run_msw_project_benchmarks() {
 }
 
 run_comlink_project_benchmarks() {
-    should_run_compile_canary_project || return 0
     if ! is_benchmark_selected "comlink-project"; then
         return
     fi
@@ -1262,7 +1261,9 @@ run_mobx_project_benchmarks() {
 }
 
 run_nextjs_benchmarks() {
-    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
+    # nextjs fixture is gated off by default (kill-switch for an unstable sparse fixture),
+    # but an explicit --filter must still reach the row for local debugging.
+    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ] && [ -z "$FILTER" ]; then
         return
     fi
 

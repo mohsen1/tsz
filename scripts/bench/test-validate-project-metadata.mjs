@@ -196,6 +196,22 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({ name: "generated-without-provenance", category: "generated" });
+      delete row.repo;
+      delete row.ref;
+      delete row.repo_env;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "generated-without-provenance: generated row must declare generated_by or a repo/ref pin",
+  ],
+);
+
+assert.deepEqual(
   validate([validRow({ readme_candidates: [] })]),
   ["example-project: readme_candidates must be a non-empty array"],
 );

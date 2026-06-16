@@ -110,9 +110,13 @@ fn apply_augmented_def(
     if is_class || env.get_class_instance_type(def_id).is_some() {
         env.insert_class_instance_type(def_id, augmented);
     } else {
-        let params: Option<Vec<tsz_solver::TypeParamInfo>> =
-            env.get_def_params(def_id).map(<[_]>::to_vec);
-        if let Some(params) = params {
+        // Read params through the shared-store fallback (`get_def_params_owned`)
+        // rather than the local-only `get_def_params`: when a sibling fresh
+        // checker derived the def, its param list lives only in the shared
+        // `DefinitionStore`, and a local-only read would drop the arity here and
+        // re-insert the augmented body as if non-generic (#13255 shared-def
+        // observation family).
+        if let Some(params) = env.get_def_params_owned(def_id) {
             env.insert_def_with_params(def_id, augmented, params);
         } else {
             env.insert_def(def_id, augmented);
