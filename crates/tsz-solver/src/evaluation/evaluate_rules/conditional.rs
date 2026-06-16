@@ -396,7 +396,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             if extends_has_infer
-                && (self.type_is_generic_tuple(cond.check_type)
+                && (self.generic_tuple_infer_defer_required(cond.check_type, extends_unwrapped)
                     || crate::contains_this_type(self.interner(), cond.check_type))
             {
                 return self.interner().conditional(*cond);
