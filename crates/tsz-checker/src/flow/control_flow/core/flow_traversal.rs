@@ -1488,6 +1488,78 @@ impl<'a> FlowAnalyzer<'a> {
         result
     }
 
+    /// Whether `label` is the merge `BRANCH_LABEL` of a *conditional/short-circuit
+    /// expression* (`a ? b : c`, `a && b`, `a || b`, `a ?? b`) rather than a
+    /// statement-level control-flow merge (the join after an `if`, `switch`,
+    /// `try`/`catch`, or loop).
+    ///
+    /// Both kinds merge two CONDITION antecedents, so the flow flags alone do not
+    /// distinguish them. The discriminator is the AST parent of the condition
+    /// expression each arm records: a ternary's condition parents to a
+    /// `ConditionalExpression`, and a logical operator's left operand parents to a
+    /// logical `BinaryExpression`. A statement `if`/`while` condition parents to
+    /// the statement node instead.
+    ///
+    /// This matters for narrowing: a non-targeting `const t = <ternary>`
+    /// initializer produces an ASSIGNMENT whose antecedent is this merge, and that
+    /// merge carries the narrowing established before the conditional. A following
+    /// CONDITION node (the next `if`) must defer through the assignment to the
+    /// merge so it narrows from the merged type rather than the declared type.
+    /// Statement merges are deliberately excluded: deferring through them
+    /// re-routes resolution order for targeting-assignment chains inside
+    /// `try`/`catch` and over-narrows (e.g. `controlFlowForCatchAndFinally`).
+    fn is_conditional_expression_merge(&self, label: FlowNodeId) -> bool {
+        let Some(flow) = self.binder.flow_nodes.get(label) else {
+            return false;
+        };
+        if !flow.has_any_flags(flow_flags::BRANCH_LABEL) || flow.antecedent.is_empty() {
+            return false;
+        }
+        // Every antecedent must be a CONDITION arm whose recorded condition
+        // expression is a sub-expression of a conditional or logical-binary
+        // expression. A statement merge fails this because at least one arm is a
+        // non-condition block flow or its condition parents to a statement.
+        flow.antecedent.iter().all(|&ant| {
+            let Some(ant_flow) = self.binder.flow_nodes.get(ant) else {
+                return false;
+            };
+            if !ant_flow.has_any_flags(flow_flags::CONDITION) {
+                return false;
+            }
+            self.condition_node_is_expression_operand(ant_flow.node)
+        })
+    }
+
+    /// Whether `condition` (a CONDITION flow node's recorded AST node) is the
+    /// condition of a `ConditionalExpression` or an operand of a logical
+    /// `&&`/`||`/`??` `BinaryExpression`, as opposed to a statement condition.
+    fn condition_node_is_expression_operand(&self, condition: NodeIndex) -> bool {
+        if condition.is_none() {
+            return false;
+        }
+        let Some(ext) = self.arena.get_extended(condition) else {
+            return false;
+        };
+        if ext.parent.is_none() {
+            return false;
+        }
+        let Some(parent) = self.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            return true;
+        }
+        if parent.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(parent)
+        {
+            return binary.operator_token
+                == tsz_scanner::SyntaxKind::AmpersandAmpersandToken as u16
+                || binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16
+                || binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16;
+        }
+        false
+    }
+
     fn condition_antecedent_requires_defer_cached(
         &self,
         antecedent: FlowNodeId,
@@ -1524,6 +1596,15 @@ impl<'a> FlowAnalyzer<'a> {
         // where the non-targeting ASSIGNMENT (var b = x) passes
         // through to the targeting ASSIGNMENT (x = 10). Without
         // deferring, the CONDITION uses the stale initial_type.
+        //
+        // A conditional/short-circuit-expression initializer
+        // (`const t = a ? b : c`, `const t = a && b`) produces a non-targeting
+        // ASSIGNMENT whose antecedent is the BRANCH_LABEL merging the
+        // expression's arms. That merge carries the narrowing established before
+        // the conditional (e.g. inside `if (x.kind === "min")`), so the next
+        // CONDITION must defer through the assignment to the merge. Only
+        // conditional-EXPRESSION merges qualify — statement merges (`if`/`switch`/
+        // `try`) are excluded to avoid re-ordering targeting-assignment chains.
         let ant_is_passthrough_assignment = !ant_is_targeting_assignment
             && ant_is_assignment
             && ant_flow.antecedent.first().is_some_and(|&grandparent| {
@@ -1534,7 +1615,7 @@ impl<'a> FlowAnalyzer<'a> {
                             | flow_flags::ASSIGNMENT
                             | flow_flags::LOOP_LABEL,
                     )
-                })
+                }) || self.is_conditional_expression_merge(grandparent)
             });
         (ant_flags & flow_flags::CONDITION) != 0
             // Closure START nodes may carry the enclosing flow
