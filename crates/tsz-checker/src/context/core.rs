@@ -417,8 +417,18 @@ impl<'a> CheckerContext<'a> {
         // Build module specifiers map from arena file names.
         // Each file (other than the current file) gets its name stem as the module specifier.
         // This enables import-qualified type display like `import("a").F`.
-        self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
-        self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
+        //
+        // These two maps depend only on the arena set (not the current file), so
+        // they are identical for every per-file checker in a program. When
+        // `ProgramContext` pre-populated them once via `apply_to`, skip the
+        // per-file rebuild: recomputing them in every checker is an O(files)
+        // pass (each calls `strip_known_extension` per source file) repeated
+        // once per file, i.e. an O(files^2) scale-cliff term. The pre-populated
+        // path keeps it O(files) for the whole program.
+        if !self.module_specifiers_prebuilt {
+            self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
+            self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
+        }
         // Build the reverse file-name index lazily when not pre-populated by ProgramContext.
         if self.global_file_name_index.is_none() && !arenas.is_empty() {
             self.global_file_name_index = Some(Arc::new(build_file_name_index(&arenas)));
@@ -428,7 +438,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Build a mapping from `file_id` -> module specifier for import-qualified type display.
     /// Returns `file_idx -> stem` for each source file in the arenas.
-    fn build_module_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {
+    pub(crate) fn build_module_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {
         let mut map = FxHashMap::default();
         for (idx, arena) in arenas.iter().enumerate() {
             for sf in &arena.source_files {
@@ -454,7 +464,9 @@ impl<'a> CheckerContext<'a> {
     /// in two different modules. The common absolute-directory prefix shared
     /// by all source files is stripped so temp-dir paths (e.g.
     /// `/private/var/folders/.../T/tmpABC/`) don't leak into diagnostics.
-    fn build_module_path_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {
+    pub(crate) fn build_module_path_specifiers(
+        arenas: &[Arc<NodeArena>],
+    ) -> FxHashMap<u32, String> {
         let mut paths: Vec<(u32, String)> = Vec::new();
         for (idx, arena) in arenas.iter().enumerate() {
             for sf in &arena.source_files {

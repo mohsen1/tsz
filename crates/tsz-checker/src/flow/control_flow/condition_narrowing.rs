@@ -213,32 +213,48 @@ impl<'a> FlowAnalyzer<'a> {
             if !has_fallthrough
                 && let Some(current_lit_type) = self.cached_case_clause_literal_type(case_expr)
             {
-                let mut previous_cases_are_distinct_literals = true;
-                for &idx in &case_block_data.statements.nodes {
-                    if idx == clause_idx {
-                        break;
-                    }
-                    let Some(clause_node) = self.arena.get(idx) else {
-                        continue;
+                // When every clause in the switch is a pairwise-distinct literal
+                // label (the common discriminated-union dispatch), the
+                // "all earlier cases are distinct literals" predecessor check
+                // below is satisfied for *every* clause. Decide it once per
+                // switch (O(N) total, O(1) per clause via the memo) instead of
+                // re-scanning all predecessors on each clause (O(N^2) overall).
+                let previous_cases_are_distinct_literals =
+                    if self.switch_case_block_all_distinct_literals(case_block) {
+                        true
+                    } else {
+                        // Mixed/duplicate/non-literal switch: fall back to the
+                        // exact per-clause scan. This is identical to the
+                        // memoized result for the all-distinct case and only
+                        // runs for switches the memo declines.
+                        let mut distinct = true;
+                        for &idx in &case_block_data.statements.nodes {
+                            if idx == clause_idx {
+                                break;
+                            }
+                            let Some(clause_node) = self.arena.get(idx) else {
+                                continue;
+                            };
+                            let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                                continue;
+                            };
+                            if clause.expression.is_none() {
+                                distinct = false;
+                                break;
+                            }
+                            let Some(prev_lit_type) =
+                                self.cached_case_clause_literal_type(clause.expression)
+                            else {
+                                distinct = false;
+                                break;
+                            };
+                            if prev_lit_type == current_lit_type {
+                                distinct = false;
+                                break;
+                            }
+                        }
+                        distinct
                     };
-                    let Some(clause) = self.arena.get_case_clause(clause_node) else {
-                        continue;
-                    };
-                    if clause.expression.is_none() {
-                        previous_cases_are_distinct_literals = false;
-                        break;
-                    }
-                    let Some(prev_lit_type) =
-                        self.cached_case_clause_literal_type(clause.expression)
-                    else {
-                        previous_cases_are_distinct_literals = false;
-                        break;
-                    };
-                    if prev_lit_type == current_lit_type {
-                        previous_cases_are_distinct_literals = false;
-                        break;
-                    }
-                }
 
                 if previous_cases_are_distinct_literals {
                     return self.narrow_by_switch_clause(

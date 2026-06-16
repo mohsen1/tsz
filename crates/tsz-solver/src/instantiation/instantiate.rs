@@ -107,6 +107,15 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
+    /// Pre-trip the sticky depth-exceeded guard so the very next
+    /// `instantiate` call takes the bail path. Test-only helper used to
+    /// exercise `bail_value` deterministically without constructing a type
+    /// deeper than `MAX_INSTANTIATION_DEPTH`.
+    #[cfg(test)]
+    pub(crate) const fn force_depth_exceeded_for_test(&mut self) {
+        self.depth_exceeded = true;
+    }
+
     /// Restore the homomorphic modifier source of a self-indexed mapped type
     /// `{ [Q in P]: T[P] }` when its constraint parameter `P` is substituted by a
     /// single property key.
@@ -435,12 +444,12 @@ impl<'a> TypeInstantiator<'a> {
         }
 
         if self.depth_exceeded {
-            return TypeId::ERROR;
+            return self.bail_value(type_id);
         }
 
         if self.depth >= self.max_depth {
             self.depth_exceeded = true;
-            return TypeId::ERROR;
+            return self.bail_value(type_id);
         }
 
         // Shared cross-operation stack-frame breaker. The per-instance `depth`
@@ -458,8 +467,51 @@ impl<'a> TypeInstantiator<'a> {
         })
         .unwrap_or_else(|| {
             self.depth_exceeded = true;
-            TypeId::ERROR
+            self.bail_value(type_id)
         })
+    }
+
+    /// Relation-preserving value returned when the per-instance substitution
+    /// depth cap or the shared cross-operation stack-frame budget is exhausted.
+    ///
+    /// The historical sentinel was `TypeId::ERROR`. That dropped the active
+    /// substitution: a downstream consumer (e.g. iterator-element resolution on
+    /// a fully-concrete `Map<K, V>`) would then fall back to the *original*,
+    /// un-instantiated element type and surface a bare bound type parameter
+    /// (`T`) into a concrete context, producing false TS2488 / TS2345 (#13652).
+    ///
+    /// tsc returns the type un-instantiated/deferred at its instantiation-depth
+    /// cap; no free inner type parameter that the substitution binds escapes.
+    /// To match that — and to never leak a substitution-domain parameter — the
+    /// bail applies only the *head* substitution:
+    ///
+    /// - A bailing `TypeParameter` whose name is bound by the substitution
+    ///   resolves to its binding (so `T` with `{T: number}` becomes `number`,
+    ///   never a leaked `T`). A bound name resolved through a fresh local scope
+    ///   or constraint fallback is handled the same as the normal walk.
+    /// - A `TypeParameter` not bound by the substitution is genuinely free at
+    ///   this scope; returning it unchanged preserves true positives (an
+    ///   actually-generic iteration still reports the diagnostic).
+    /// - Any other shape is returned opaque (un-walked). This is
+    ///   relation-preserving: the outer wrapper sees the original closed type
+    ///   rather than a half-substituted shape that mixes `ERROR` and stale
+    ///   inner parameters.
+    ///
+    /// O(1) at the bail site; no throughput cost on the success path.
+    fn bail_value(&self, type_id: TypeId) -> TypeId {
+        let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id) else {
+            // Non-parameter shapes are returned opaque: the substitution can
+            // only introduce a free parameter by rewriting a `TypeParameter`
+            // node, and we are not walking into the structure here.
+            return type_id;
+        };
+        if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+            return local_type_param;
+        }
+        if self.is_shadowed(info.name) {
+            return type_id;
+        }
+        self.substitution.get(info.name).unwrap_or(type_id)
     }
 
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {

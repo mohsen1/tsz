@@ -1378,7 +1378,29 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # only sanctioned exposure of those solver structural queries to the
         # checker, matching the direct-call pattern already used throughout these
         # files. No new quarantine entry.
-        3045,
+        #
+        # Bumped 3045→3051 for the #13655 concrete-tuple generic-index-chain
+        # TS2536 parity fix: the new tuple-chain key-space derivation in
+        # `indexed_access/indexed_access_helpers.rs` adds 6 direct references
+        # (`union_members`, `tuple_elements`, `number_literal_value`,
+        # `type_parameter_constraint`, `is_type_parameter_like`) plus the
+        # current-main live slack the prior 3040→3045 ratchet anticipated. Every
+        # route is an existing request-shaped helper already used throughout the
+        # indexed-access checker — no new quarantine entry. Removal condition
+        # remains #8225 narrowing this quarantine.
+        #
+        # Bumped 3051→3066 for the deferred-conditional indexed-access parity
+        # fix (#13654): keeping `O[K]` deferred over a deferred conditional base
+        # adds request-shaped `query_boundaries::common` reads in
+        # `indexed_access.rs`, `indexed_access/deferred_conditional_index.rs`,
+        # `constrained_type_param_assertion.rs`, `signatures_and_advanced.rs`,
+        # and `comparability.rs` (`contains_free_type_parameters`,
+        # `types_are_comparable_for_assertion`,
+        # `conditional_branch_union_constraint`, `index_access_types`,
+        # `is_keyof_type`, `is_conditional_type`, `is_generic_application`,
+        # `is_index_access_type`). All are existing request-shaped boundary
+        # helpers already used throughout the checker — no new quarantine entry.
+        3066,
     ),
 ]
 

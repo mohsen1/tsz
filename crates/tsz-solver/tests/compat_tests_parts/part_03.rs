@@ -1519,3 +1519,110 @@ fn test_any_source_not_related_off_keeps_default_any_behavior() {
         "default relation: `any` source is assignable to everything but never"
     );
 }
+
+// ── issue #13243: single-pass weak classification parity ─────────────────────
+//
+// `analyze_weak_and_explain` must return exactly the same `(bool, reason)` pair
+// that the legacy two-call boundary produced: the boolean from
+// `is_weak_union_violation` and the reason from `explain_failure`. These tests
+// assert the pair is byte-identical across the failure matrix so the single-pass
+// dedup cannot drift the diagnostic or the routing flag.
+
+/// Weak object target with no common property: `NoCommonProperties` reason and
+/// a `true` violation flag, identical via either path.
+#[test]
+fn test_analyze_weak_and_explain_matches_weak_type() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let weak_target = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::new(b, TypeId::NUMBER)]);
+
+    let expected_flag = checker.is_weak_union_violation(source, weak_target);
+    let expected_reason = checker.explain_failure(source, weak_target);
+    let (flag, reason) = checker.analyze_weak_and_explain(source, weak_target);
+
+    assert!(expected_flag, "weak object target must flag a violation");
+    assert_eq!(flag, expected_flag, "flag must match is_weak_union_violation");
+    assert_eq!(
+        format!("{reason:?}"),
+        format!("{expected_reason:?}"),
+        "reason must match explain_failure"
+    );
+    assert!(matches!(
+        reason,
+        Some(SubtypeFailureReason::NoCommonProperties { .. })
+    ));
+}
+
+/// Weak union target with no common property: `TypeMismatch` reason and a `true`
+/// flag, identical via either path.
+#[test]
+fn test_analyze_weak_and_explain_matches_weak_union() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+    let weak_a = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let weak_b = interner.object(vec![PropertyInfo::opt(b, TypeId::NUMBER)]);
+    let target = interner.union(vec![weak_a, weak_b]);
+    let source = interner.object(vec![PropertyInfo::new(c, TypeId::NUMBER)]);
+
+    let expected_flag = checker.is_weak_union_violation(source, target);
+    let expected_reason = checker.explain_failure(source, target);
+    let (flag, reason) = checker.analyze_weak_and_explain(source, target);
+
+    assert!(expected_flag, "weak union target must flag a violation");
+    assert_eq!(flag, expected_flag);
+    assert_eq!(format!("{reason:?}"), format!("{expected_reason:?}"));
+    assert!(matches!(
+        reason,
+        Some(SubtypeFailureReason::TypeMismatch { .. })
+    ));
+}
+
+/// Non-weak structural failure (present-property type mismatch): the flag is
+/// `false` and the reason is the structural one, identical via either path.
+#[test]
+fn test_analyze_weak_and_explain_matches_structural_failure() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    // Both have a required `a`, so neither is weak; the values mismatch.
+    let target = interner.object(vec![PropertyInfo::new(a, TypeId::STRING)]);
+    let source = interner.object(vec![PropertyInfo::new(a, TypeId::NUMBER)]);
+
+    let expected_flag = checker.is_weak_union_violation(source, target);
+    let expected_reason = checker.explain_failure(source, target);
+    let (flag, reason) = checker.analyze_weak_and_explain(source, target);
+
+    assert!(!expected_flag, "non-weak failure must not flag a weak violation");
+    assert_eq!(flag, expected_flag);
+    assert_eq!(format!("{reason:?}"), format!("{expected_reason:?}"));
+    assert!(reason.is_some(), "structural mismatch must produce a reason");
+}
+
+/// Overlapping (assignable) pair: no failure, no flag — both paths agree the
+/// reason is `None`.
+#[test]
+fn test_analyze_weak_and_explain_matches_assignable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let weak_target = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::new(a, TypeId::NUMBER)]);
+
+    let expected_flag = checker.is_weak_union_violation(source, weak_target);
+    let expected_reason = checker.explain_failure(source, weak_target);
+    let (flag, reason) = checker.analyze_weak_and_explain(source, weak_target);
+
+    assert_eq!(flag, expected_flag);
+    assert_eq!(format!("{reason:?}"), format!("{expected_reason:?}"));
+    assert!(reason.is_none(), "assignable pair has no reason");
+}

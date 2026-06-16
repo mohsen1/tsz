@@ -316,21 +316,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // expanded arg and share the `application_eval_cache` entry,
                 // preventing alias fan-out from triggering repeated evaluations
                 // of the same logical type (#10826).
-                let mut current_def = def_id;
-                for _ in 0..MAX_LAZY_CHAIN_DEPTH {
-                    let Some(body) = self.resolver.resolve_lazy(current_def, self.interner) else {
-                        return arg;
-                    };
-                    match self.interner.lookup(body) {
-                        Some(TypeData::Lazy(next_def)) => current_def = next_def,
-                        _ => return body,
-                    }
+                self.expand_lazy_arg_chain(def_id, arg)
+            }
+            TypeData::UnresolvedTypeName(atom) => {
+                // A type-argument carried as `UnresolvedTypeName(name)` is the
+                // display-preserving residue of a cross-file reference lowered
+                // before the referenced declaration's name was resolvable in
+                // this checker. The application *base* already resolves this
+                // shape through `resolve_unresolved_type_name`
+                // (see `resolve_application_def_id`); the *argument* path must
+                // do the same. Without it, a generic whose body is a
+                // distributive conditional over the argument
+                // (`OptionalKeysOf<O> = O extends unknown ? ... : never`)
+                // substitutes the still-unresolved name, cannot reduce the
+                // key-space, and bails opaque — the well-typed default then
+                // false-fails its constraint (`TS2344` on type-fest's
+                // `ApplyDefaultOptions`/`RequiredKeysOf`, #13609). Resolve the
+                // name to its def and follow the same alias-chain expansion as
+                // the `Lazy` arm; keep the name opaque only when it genuinely
+                // does not resolve (registration-window artifact, preserved by
+                // the `else => arg` fallthrough below).
+                let name = self.interner.resolve_atom(atom);
+                if let Some(def_id) = self.resolver.resolve_unresolved_type_name(&name) {
+                    self.expand_lazy_arg_chain(def_id, arg)
+                } else {
+                    arg
                 }
-                // Circular or unusually deep alias chain.
-                arg
             }
             _ => arg,
         }
+    }
+
+    /// Resolve an alias `DefId` to its canonical structural body, following a
+    /// bounded chain of `Lazy` indirections (`A = B = T`). Returns `fallback`
+    /// (the original argument) when the def has no resolvable body yet or the
+    /// chain is circular/too deep, keeping the argument opaque so a later
+    /// resolver pass can expand it. Shared by the `Lazy` and
+    /// `UnresolvedTypeName` arms of [`Self::try_expand_type_arg`] so both
+    /// argument shapes expand identically (#10826, #13609).
+    fn expand_lazy_arg_chain(&mut self, def_id: DefId, fallback: TypeId) -> TypeId {
+        let mut current_def = def_id;
+        for _ in 0..MAX_LAZY_CHAIN_DEPTH {
+            let Some(body) = self.resolver.resolve_lazy(current_def, self.interner) else {
+                return fallback;
+            };
+            match self.interner.lookup(body) {
+                Some(TypeData::Lazy(next_def)) => current_def = next_def,
+                _ => return body,
+            }
+        }
+        // Circular or unusually deep alias chain.
+        fallback
     }
 
     /// Check if a type is "complex" and requires full evaluation for identity.

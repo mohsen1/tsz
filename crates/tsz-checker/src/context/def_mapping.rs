@@ -857,14 +857,39 @@ impl<'a> CheckerContext<'a> {
         self.deferred_flow_env_writes.borrow().len()
     }
 
+    /// Record that `def_id` has been published with body `body`, returning
+    /// whether that body was **already** in the def's published-body history.
+    ///
+    /// Used to detect the benign re-resolution oscillation where a generic
+    /// alias re-lowers to one of a small set of structurally-equivalent interned
+    /// bodies on every application. The history is tiny (bounded by the number
+    /// of distinct equivalent re-lowerings, typically 1-2), so the linear scan
+    /// over the `SmallVec` is effectively constant.
+    fn record_published_body(&self, def_id: DefId, body: TypeId) -> bool {
+        let mut map = self.def_published_bodies.borrow_mut();
+        let history = map.entry(def_id).or_default();
+        if history.contains(&body) {
+            true
+        } else {
+            history.push(body);
+            false
+        }
+    }
+
     /// Register a non-generic definition body in **both** type environments.
     #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         let prev_body = self.definition_store.get_body(def_id);
         let body_changed = prev_body != Some(body);
+        // Skip the expensive env-eval cache sweep when a def re-publishes a body
+        // it already held (a benign re-resolution oscillation). See
+        // `def_published_bodies` and `register_def_with_params_in_envs`.
+        let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.definition_store.set_body(def_id, body);
         if body_changed {
-            self.clear_type_evaluation_caches_for_def(def_id);
+            if !body_seen_before {
+                self.clear_type_evaluation_caches_for_def(def_id);
+            }
             self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
         }
         self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
@@ -912,9 +937,19 @@ impl<'a> CheckerContext<'a> {
             .definition_store
             .get_type_params(def_id)
             .is_none_or(|existing| existing != params);
+        // A generic alias re-resolves on every application; the re-lowering can
+        // emit one of a few structurally-equivalent interned bodies, so
+        // `body_changed` oscillates. Re-publishing a body the def already held
+        // introduces no new staleness beyond the first occurrence, so the
+        // expensive `O(env_eval_cache)` `clear_type_evaluation_caches_for_def`
+        // sweep can be skipped for that benign rewrite (see
+        // `def_published_bodies`). A genuinely new body, or any params change,
+        // still sweeps. The cheap, def-keyed application-eval invalidation still
+        // runs on every real body change.
+        let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.definition_store
             .set_body_with_params(def_id, body, Some(params.clone()));
-        if body_changed || params_changed {
+        if (body_changed && !body_seen_before) || params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
         if body_changed {
