@@ -12,6 +12,18 @@ fn check(source: &str) -> Vec<Diagnostic> {
     check_with(source, "test.ts", CheckerOptions::default())
 }
 
+/// Check under the default es2015+ lib set, so `Array.prototype.reduce`,
+/// `Promise`, etc. resolve. The bare [`check`] helper loads no libs.
+fn check_with_libs(source: &str) -> Vec<Diagnostic> {
+    let libs = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    )
+}
+
 fn check_with(source: &str, file_name: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     tsz_checker::test_utils::check_source(source, file_name, options)
 }
@@ -122,6 +134,54 @@ fn implicit_any_no_false_positive_with_contextual_type() {
     assert_eq!(
         ts7006_count, 0,
         "TS7006 should not be emitted when contextual type exists: {diags:?}"
+    );
+}
+
+/// A contextually-typed callback (here the `reduce` callback, typed by the
+/// resolved overload) whose result later flows through a deferred-inference
+/// chain (`let` → `Promise.resolve(...).then(cb)`) must not have its parameters
+/// re-flagged as implicit-any. The deferred `.then` inference re-evaluates the
+/// `reduce` call speculatively; the speculative pass leaves the callback without
+/// the overload contextual signature and queues a TS7006 that the recheck pass
+/// must drop because the callback was contextually typed in its real position.
+#[test]
+fn reduce_callback_deferred_inference_no_false_implicit_any() {
+    let diags = check_with_libs(
+        r#"
+        declare const init: any;
+        function run(path: string[]) {
+            let returnValue;
+            const rawValue = path.reduce((acc, key) => acc[key], init);
+            returnValue = rawValue;
+            Promise.resolve(returnValue).then((rv) => rv);
+            return returnValue;
+        }
+    "#,
+    );
+    let ts7006_count = diags.iter().filter(|d| d.code == 7006).count();
+    assert_eq!(
+        ts7006_count, 0,
+        "contextually-typed reduce callback must not be re-flagged TS7006 after a \
+         deferred-inference chain: {diags:?}"
+    );
+}
+
+/// Guard the true-positive direction: a callback argument to an `any`-typed
+/// function genuinely has no contextual parameter type, so TS7006 must still be
+/// emitted even though the speculative recheck guard now skips contextually
+/// typed closures.
+#[test]
+fn untyped_callback_argument_still_flags_implicit_any() {
+    let diags = check(
+        r#"
+        declare const f: any;
+        f(function (p) { return p; });
+    "#,
+    );
+    let ts7006_count = diags.iter().filter(|d| d.code == 7006).count();
+    assert!(
+        ts7006_count >= 1,
+        "genuinely untyped callback parameter must still emit TS7006: {diags:?}"
     );
 }
 

@@ -1252,6 +1252,9 @@ mod string_literal_union_display_order_tests;
 #[path = "tests/super_call_ts2376_ts17009_priority_tests.rs"]
 mod super_call_ts2376_ts17009_priority_tests;
 #[cfg(test)]
+#[path = "tests/switch_distinct_literal_memo_narrowing_tests.rs"]
+mod switch_distinct_literal_memo_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/symbol_for_identity_helper_tests.rs"]
 mod symbol_for_identity_helper_tests;
 #[cfg(test)]
@@ -1266,6 +1269,9 @@ mod synthetic_unique_atom_union_display_tests;
 #[cfg(test)]
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
+#[cfg(test)]
+#[path = "tests/this_source_inference_tests.rs"]
+mod this_source_inference_tests;
 #[cfg(test)]
 #[path = "tests/this_void_method_call_tests.rs"]
 mod this_void_method_call_tests;

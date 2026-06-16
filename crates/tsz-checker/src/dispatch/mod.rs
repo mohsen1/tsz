@@ -498,6 +498,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     );
                                 }
                                 if !have_overlap {
+                                    have_overlap =
+                                        self.checker.deferred_conditional_assertion_overlaps(
+                                            expr_type, jsdoc_type,
+                                        );
+                                }
+                                if !have_overlap {
                                     self.checker.error_type_assertion_no_overlap(
                                         expr_type, jsdoc_type, idx,
                                     );
@@ -1142,6 +1148,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             .assertion_source_fits_constrained_type_param(
                                                 expr_type,
                                                 asserted_type,
+                                            );
+                                    }
+                                    // Deferred-conditional base constraint overlap
+                                    // (#13654): `Box<T>[keyof Box<T>] as string`
+                                    // resolves the conditional's branch-union
+                                    // constraint with the resolver and retries.
+                                    if !have_overlap {
+                                        have_overlap =
+                                            self.checker.deferred_conditional_assertion_overlaps(
+                                                expr_type,
+                                                effective_asserted,
                                             );
                                     }
                                     if have_overlap

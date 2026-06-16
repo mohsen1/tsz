@@ -15,6 +15,53 @@ pub(super) struct ConditionalOperands {
     pub(super) extends_has_type_params: bool,
 }
 
+thread_local! {
+    /// Re-entrant conditional-subtype recursion depth on this thread.
+    ///
+    /// The counter is consulted by [`ConditionalSubtypeDepthGuard`] to cap the
+    /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chain at depth 50.
+    /// It MUST be zero between compilations: a leaked positive depth would make
+    /// later conditional-subtype checks on a reused batch/merge-group worker
+    /// conservatively take the false branch, so the same code would select
+    /// different conditional branches run-to-run (#13368). The guard restores
+    /// the depth on every exit including a panic-unwind a caller swallows, so
+    /// no manual post-call decrement (which the unwind skips) is needed.
+    static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII recursion-depth guard for [`check_conditional_subtype`].
+///
+/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns
+/// the depth observed *before* the increment plus the guard; `Drop` decrements
+/// it, so the counter is restored on the normal return path and when the
+/// guarded subtype walk unwinds via a caught panic. The counter is
+/// function-private state that the batch boundary reset cannot reach, so this
+/// self-cleaning guard is the only correct cross-compilation isolation for it.
+#[must_use]
+struct ConditionalSubtypeDepthGuard;
+
+impl ConditionalSubtypeDepthGuard {
+    /// Cap above which the conditional-subtype relation conservatively returns
+    /// `false`, matching tsc returning the deferred conditional once the
+    /// instantiation depth is exceeded.
+    const LIMIT: u32 = 50;
+
+    fn enter() -> (u32, Self) {
+        let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+            let c = d.get();
+            d.set(c + 1);
+            c
+        });
+        (prev_depth, Self)
+    }
+}
+
+impl Drop for ConditionalSubtypeDepthGuard {
+    fn drop(&mut self) {
+        CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 /// Result from tail-call dispatch in conditional evaluation.
 pub(super) enum TailCallStep {
     /// Continue the loop with this conditional (direct or via `Application`).
@@ -171,15 +218,86 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::UnresolvedTypeName(_))
         ) {
             self.mark_unresolved_def_seen();
-            return Some(self.interner().conditional(ConditionalType {
-                check_type,
-                extends_type,
-                true_type: cond.true_type,
-                false_type: cond.false_type,
-                is_distributive: cond.is_distributive,
-            }));
+            return Some(self.deferred_conditional(cond, check_type, extends_type));
         }
 
+        None
+    }
+
+    /// Re-intern `cond` as a deferred conditional carrying the *evaluated*
+    /// `check_type`/`extends_type` while preserving its original branches and
+    /// distributivity. Shared by the operand-deferral sites in this module so the
+    /// five-field reconstruction lives in one place.
+    fn deferred_conditional(
+        &self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> TypeId {
+        self.interner().conditional(ConditionalType {
+            check_type,
+            extends_type,
+            true_type: cond.true_type,
+            false_type: cond.false_type,
+            is_distributive: cond.is_distributive,
+        })
+    }
+
+    /// Defer a conditional whose evaluated CHECK type is an opaque, resolver-less
+    /// `Application`, instead of letting it vacuously take its true branch.
+    ///
+    /// A resolvable application evaluates to its structural form, so an
+    /// `Application` that *survives* evaluation in the check position is opaque:
+    /// the active resolver lacked the body needed to reduce it (e.g. a
+    /// distributive utility whose body could not expand because an inner
+    /// reference was still unresolved under this resolver — the
+    /// `resolver_generation()==0` / registration-window family). With no
+    /// structure to compare, the structural subtype walk degrades the opaque
+    /// application toward the bottom type, so `is_sub` is vacuously `true` and the
+    /// conditional collapses into its TRUE branch. That is the mechanism by which
+    /// the mapped key-remap `IsOptionalKeyOf<O, K> extends false ? never : K`
+    /// filters every key to `never`, leaving `RequiredKeysOf`/`OptionalKeysOf`
+    /// with the wrong key set and false-failing `TS2344` against a well-typed
+    /// default-options argument (#13609).
+    ///
+    /// The guard is gated on [`Self::unresolved_def_seen`] so it fires only in
+    /// that resolver-less window — a *generic* application whose base the resolver
+    /// can expand (deferred only pending instantiation) is left to the normal
+    /// branch logic, which is what keeps generic-call inference / higher-order
+    /// re-generalization unaffected. (The extends-side `Application` guard in
+    /// `conditional.rs` needs no such gate: it lives in the `is_sub == false`
+    /// branch where deferring is already the conservative choice, whereas this
+    /// check-side guard must override a vacuous `is_sub == true` and so requires
+    /// the resolver-less signal to tell that apart from a genuine match.) When it
+    /// does fire it mirrors that extends-side guard and the
+    /// bare-`UnresolvedTypeName` deferral: defer so a later resolver pass expands
+    /// the application and decides the branch, and
+    /// re-mark the unresolved-def event so neither this evaluator nor the
+    /// top-level evaluator that commits its results persists the resolver-less
+    /// branch into the substitution-independent / application caches (a cold pass
+    /// that left the application opaque must not shadow the answer a resolved pass
+    /// derives). The `TS2589` depth-detection pass is exempt: it intentionally
+    /// drives recursive alias bodies with their parameters left free.
+    ///
+    /// Returns `Some(deferred_conditional)` when the guard applies.
+    pub(super) fn defer_resolver_less_application_check(
+        &mut self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+        is_sub: bool,
+    ) -> Option<TypeId> {
+        if is_sub
+            && self.unresolved_def_seen()
+            && !self.is_depth_detection_pass()
+            && matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::Application(_))
+            )
+        {
+            self.mark_unresolved_def_seen();
+            return Some(self.deferred_conditional(cond, check_type, extends_type));
+        }
         None
     }
 
@@ -197,21 +315,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
-        // Thread-local depth guard: evaluating conditional types can trigger
-        // subtype checks that evaluate MORE conditional types, creating an
+        // Depth guard: evaluating conditional types can trigger subtype checks
+        // that evaluate MORE conditional types, creating an
         // Evaluator -> SubtypeChecker -> Evaluator -> ... chain where each
-        // instance has fresh cycle-detection state. Without this global
-        // depth limit, recursive generic types like `Vector<T> implements
-        // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
-        thread_local! {
-            static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-        }
-        let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
-            let c = d.get();
-            d.set(c + 1);
-            c
-        });
-        let result = if prev_depth >= 50 {
+        // instance has fresh cycle-detection state. Without this global depth
+        // limit, recursive generic types like `Vector<T> implements Seq<T>`
+        // with `Exclude<T, U>` in overloads cause stack overflow. The guard is
+        // RAII (see `ConditionalSubtypeDepthGuard`) so the depth is restored on
+        // every exit including a caught panic-unwind, keeping the relation
+        // schedule-independent across batch-worker reuse (#13368).
+        let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
+        let result = if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
             // At excessive depth, conservatively assume not a subtype
             // (takes the false/else branch of the conditional).
             // This matches tsc's behavior of returning the deferred
@@ -247,7 +361,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut strict_checker = self.conditional_subtype_checker();
             strict_checker.is_subtype_of(check_type, extends_type)
         };
-        CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        // Restore the depth before the cache write to preserve the original
+        // decrement ordering; `Drop` would otherwise run at end of scope, but
+        // either way the depth is restored on a panic-unwind exit.
+        drop(depth_guard);
         self.cache_conditional_subtype(check_type, extends_type, result);
         result
     }
@@ -336,5 +453,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => TailCallStep::NoTailCall,
         }
+    }
+}
+
+#[cfg(test)]
+mod conditional_subtype_depth_guard_tests {
+    use super::{CONDITIONAL_SUBTYPE_DEPTH, ConditionalSubtypeDepthGuard};
+
+    fn current_depth() -> u32 {
+        CONDITIONAL_SUBTYPE_DEPTH.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn enter_reports_prior_depth_and_drop_restores() {
+        assert_eq!(current_depth(), 0, "counter starts clean");
+        let (prev0, g0) = ConditionalSubtypeDepthGuard::enter();
+        assert_eq!(prev0, 0, "first entry observes depth 0");
+        assert_eq!(current_depth(), 1);
+        {
+            let (prev1, _g1) = ConditionalSubtypeDepthGuard::enter();
+            assert_eq!(prev1, 1, "nested entry observes the outer depth");
+            assert_eq!(current_depth(), 2);
+        }
+        assert_eq!(current_depth(), 1, "nested drop restores one level");
+        drop(g0);
+        assert_eq!(current_depth(), 0, "outer drop restores the clean slate");
+    }
+
+    /// #13368: the guard must restore the depth even when the guarded subtype
+    /// walk unwinds via a panic a caller (`try_tsz`, LSP) catches, so a stale
+    /// positive depth can never leak into the next compilation on a reused
+    /// batch/merge-group worker thread (which would force later
+    /// conditional-subtype checks onto the conservative false branch).
+    #[test]
+    fn depth_is_restored_on_unwind() {
+        assert_eq!(current_depth(), 0, "counter starts clean");
+        let result = std::panic::catch_unwind(|| {
+            let (_prev, _guard) = ConditionalSubtypeDepthGuard::enter();
+            assert_eq!(current_depth(), 1);
+            panic!("simulated mid-subtype-walk panic");
+        });
+        assert!(result.is_err(), "the closure panicked");
+        assert_eq!(
+            current_depth(),
+            0,
+            "guard Drop must restore the depth during unwind"
+        );
     }
 }

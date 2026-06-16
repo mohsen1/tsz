@@ -4,7 +4,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+mod deferred_conditional_index;
 mod indexed_access_helpers;
+mod infer_node_walk;
 mod mapped_key_check;
 mod object_format;
 
@@ -354,90 +356,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    /// Collect all `INFER_TYPE` node indices in a subtree, using parent-tracking.
-    /// Walks all nodes whose parent chain leads back to `root_idx`.
-    fn collect_infer_nodes_in_subtree(&self, root_idx: NodeIndex) -> Vec<NodeIndex> {
-        let mut result = Vec::new();
-        let mut stack = vec![root_idx];
-        while let Some(idx) = stack.pop() {
-            if idx == NodeIndex::NONE {
-                continue;
-            }
-            let Some(node) = self.ctx.arena.get(idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::INFER_TYPE {
-                result.push(idx);
-                // Nested `infer Y` inside the constraint is in the same scope.
-                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
-                    stack.push(infer_data.type_parameter);
-                }
-                continue;
-            }
-            // Push children based on node type
-            self.push_type_node_children(idx, node, &mut stack);
-        }
-        result
-    }
-
-    /// Push child indices of a type node onto the stack for traversal.
-    fn push_type_node_children(
-        &self,
-        _idx: NodeIndex,
-        node: &tsz_parser::parser::node::Node,
-        stack: &mut Vec<NodeIndex>,
-    ) {
-        // Tuple type: push elements
-        if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
-            stack.extend(tuple.elements.nodes.iter().copied());
-            return;
-        }
-        // Array type
-        if let Some(arr) = self.ctx.arena.get_array_type(node) {
-            stack.push(arr.element_type);
-            return;
-        }
-        // Union/intersection type (both use CompositeTypeData)
-        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-            stack.extend(composite.types.nodes.iter().copied());
-            return;
-        }
-        // Type reference with type arguments
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-            if let Some(ref args) = type_ref.type_arguments {
-                stack.extend(args.nodes.iter().copied());
-            }
-            return;
-        }
-        // Wrapped types: rest, optional, parenthesized (all share WrappedTypeData)
-        if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-            stack.push(wrapped.type_node);
-            return;
-        }
-        // Conditional type
-        if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-            stack.push(cond.check_type);
-            stack.push(cond.extends_type);
-            stack.push(cond.true_type);
-            stack.push(cond.false_type);
-            return;
-        }
-        // Indexed access type
-        if let Some(iat) = self.ctx.arena.get_indexed_access_type(node) {
-            stack.push(iat.object_type);
-            stack.push(iat.index_type);
-            return;
-        }
-        // Type operator (keyof, readonly, unique)
-        if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
-            stack.push(type_op.type_node);
-            return;
-        }
-        if let Some(tp) = self.ctx.arena.get_type_parameter(node) {
-            stack.extend_from_slice(&[tp.constraint, tp.default]);
-        }
     }
 
     /// Check if `node_a` is a descendant of `node_b` in the AST.
@@ -1376,6 +1294,23 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
+            // The gate above intentionally lets a concrete-literal (or
+            // literal-union) index defeat suppression for a deferred object
+            // (`!index_is_concrete_literal`). For a deferred *conditional* base
+            // that is wrong: tsc validates the literal key against the
+            // conditional's base constraint (the union of both branch results).
+            // Validate against that branch-union constraint here so a key that
+            // lies in every branch is accepted while a missing key still emits
+            // TS2536.
+            if !foreign_keyof_indexed_constraint
+                && self.deferred_conditional_index_key_is_valid(
+                    object_type,
+                    object_type_for_check,
+                    index_type_for_check,
+                )
+            {
+                return;
+            }
             if self.index_has_keyof_constraint_from_declaration(
                 data.index_type,
                 data.object_type,
@@ -1574,6 +1509,24 @@ impl<'a> CheckerState<'a> {
                     self.type_node_refers_to_type_parameter(data.object_type),
                 )
             {
+                return;
+            }
+
+            // Concrete-tuple base indexed by a generic type-param chain
+            // (`Table[D1][0]`, `AddDigitTable[Carry][T][U]`): `tsc` resolves the
+            // chain to the tuple's element-value union (`Base[number]`), whose
+            // key-space accepts the outer index. The generic recovery above keys
+            // off `Base[keyof Base]`, which pollutes the value union with
+            // `length`/array-method values for a tuple base and so spuriously
+            // rejects the element index. Derive the element-value key-space
+            // directly, validating each intermediate index against the tuple's
+            // numeric index domain so out-of-range / `keyof`-based inner
+            // constraints still emit the genuine `TS2536`.
+            if self.generic_tuple_chain_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            ) {
                 return;
             }
 

@@ -126,6 +126,20 @@ pub fn record_relation_failure_memo_hit() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one weak-type/weak-union probe executed while collecting a failure
+/// reason (issue #13243). `count` is the number of probes run by the call site
+/// (1 for the single-pass `analyze_weak_and_explain` path; the legacy
+/// double-probe paths recorded 2).
+#[inline]
+pub fn record_relation_weak_violation_probes(count: u64) {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_weak_violation_probes
+        .fetch_add(count, Ordering::Relaxed);
+}
+
 /// Record one concrete union-subtype reduction attempt.
 #[inline]
 pub fn record_union_subtype_reduction(member_count: u64, pairwise_budget: u64) {

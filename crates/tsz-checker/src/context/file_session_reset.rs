@@ -301,6 +301,10 @@ impl<'a> CheckerContext<'a> {
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
         self.clear_env_eval_cache();
+        // Body-publication history tracks oscillating re-resolutions only to
+        // suppress redundant env-eval cache sweeps; it shares that cache's
+        // per-file lifecycle, so reset it alongside.
+        self.def_published_bodies.borrow_mut().clear();
 
         // Depth counters: reset to their base depth and clear the
         // `exceeded` flag.

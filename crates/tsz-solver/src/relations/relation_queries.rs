@@ -352,9 +352,12 @@ where
 {
     let mut checker = CompatChecker::with_resolver(interner, resolver);
     configure(&mut checker);
+    // Single-pass weak classification: derive both the boolean and the reason
+    // from one set of weak probes instead of running them twice (issue #13243).
+    let (weak_union_violation, failure_reason) = checker.analyze_weak_and_explain(source, target);
     AssignabilityFailureAnalysis {
-        weak_union_violation: checker.is_weak_union_violation(source, target),
-        failure_reason: checker.explain_failure(source, target),
+        weak_union_violation,
+        failure_reason,
     }
 }
 
@@ -465,9 +468,14 @@ where
     // observes the identical outcomes the decision did and cannot contradict it.
     let analysis = (!related && collect_analysis).then(|| {
         tsz_common::perf_counters::record_relation_failure_reason_walk();
+        // Single-pass weak classification: the failure-reason walk and the
+        // `weak_union_violation` boolean share one set of weak probes instead of
+        // running `violates_weak_union`/`violates_weak_type` twice (issue #13243).
+        let (weak_union_violation, failure_reason) =
+            checker.analyze_weak_and_explain(source, target);
         AssignabilityFailureAnalysis {
-            weak_union_violation: checker.is_weak_union_violation(source, target),
-            failure_reason: checker.explain_failure(source, target),
+            weak_union_violation,
+            failure_reason,
         }
     });
 
