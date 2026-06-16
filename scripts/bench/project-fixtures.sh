@@ -22,6 +22,7 @@ TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/project-rows.mjs"
 TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "utility-types-project"
   "ts-essentials-project"
+  "ts-toolbelt-project"
   "rxjs-project"
   "type-fest-project"
   "vite-vanilla-ts-app"
@@ -30,7 +31,6 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
 )
 
 TSZ_COMPILE_GUARD_CANARY_ROWS=(
-  "ts-toolbelt-project"
   "zod-project"
   "kysely-project"
   "type-challenges-solutions-project"
