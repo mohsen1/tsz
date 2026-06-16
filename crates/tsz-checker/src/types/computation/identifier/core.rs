@@ -5,6 +5,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+// (AliasCycleTracker is also used by the declaration-boundary projection below.)
 use tracing::trace;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -344,10 +345,56 @@ impl<'a> CheckerState<'a> {
 
         // Resolve via binder persistent scopes for stateless lookup.
         if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
-            return self.type_of_resolved_value_symbol(idx, request, sym_id, name);
+            let value_type = self.type_of_resolved_value_symbol(idx, request, sym_id, name);
+            return self.project_declaration_boundary_value(sym_id, value_type);
         }
 
         self.resolve_unresolved_identifier(idx, name)
+    }
+
+    /// Project `any` to `unknown` across the declaration trust boundary when a
+    /// value declared in an external declaration file (`.d.ts`, a default lib,
+    /// or a `node_modules` package) is observed by sound user code.
+    ///
+    /// Off unless both `sound_mode` and `sound_declaration_projection` are set;
+    /// a no-op for current-file/user-authored values. The polarity-aware type
+    /// transform itself is owned by the solver
+    /// (`tsz_solver::operations::declaration_projection`); the checker only
+    /// supplies the trust-boundary policy (issue #8533).
+    fn project_declaration_boundary_value(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        value_type: TypeId,
+    ) -> TypeId {
+        if !self.ctx.compiler_options.sound_mode
+            || !self.ctx.compiler_options.sound_declaration_projection
+        {
+            return value_type;
+        }
+        // Only sound user code observes the boundary: a declaration file reading
+        // its own surfaces is not crossing into sound source.
+        if self.ctx.is_declaration_file() {
+            return value_type;
+        }
+        // Imported bindings are alias symbols declared in the importing file;
+        // follow the alias to the symbol that actually declares the surface so
+        // the boundary is judged by the *target* file, not the import site.
+        let mut visited = AliasCycleTracker::new();
+        let target_sym = self
+            .resolve_alias_symbol(sym_id, &mut visited)
+            .unwrap_or(sym_id);
+        // The boundary is "this value's type is declared in an external
+        // declaration file". Resolve from the order-independent declaring-file
+        // index so the projection is schedule-stable.
+        let declaring_file = self.ctx.resolve_symbol_declaring_file_index(target_sym);
+        if !self.query_file_is_declaration_file(declaring_file) {
+            return value_type;
+        }
+        tsz_solver::operations::declaration_projection::project_declaration_boundary(
+            self.ctx.types,
+            value_type,
+            tsz_solver::operations::declaration_projection::Polarity::Covariant,
+        )
     }
 
     /// TS1212: emit when a strict-mode reserved word is used in an expression.
