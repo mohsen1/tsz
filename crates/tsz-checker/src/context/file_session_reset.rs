@@ -263,6 +263,9 @@ impl<'a> CheckerContext<'a> {
         self.pending_circular_return_sites.clear();
         self.no_overload_call_nodes.clear();
         self.non_closure_circular_return_tracking_depth = 0;
+        // The inferred-return-type memo keys on file-local node indices and
+        // type-parameter `TypeId`s, so it shares the per-file lifecycle.
+        self.inferred_return_type_memo.clear();
 
         // Symbol/circularity state whose keys or values are file-local
         // `SymbolId`s, plus string-name guards that are meaningful only inside
