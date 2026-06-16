@@ -690,7 +690,22 @@ impl<'a> CheckerState<'a> {
             // First check if return types are compatible in EITHER direction,
             // then check parameter-only assignability (ignoring return types).
             // This matches tsc's isImplementationCompatibleWithOverload.
-            if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
+            //
+            // Method/method-signature/constructor declarations compare parameters
+            // bivariantly (tsc's `compareSignaturesRelated` gates `strictVariance`
+            // off for those declaration kinds); plain function overloads stay
+            // strict. The implementation and overload share a declaration kind, so
+            // the implementation node is authoritative.
+            let bivariant_params = self.ctx.arena.get(impl_node_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || node.kind == syntax_kind_ext::METHOD_SIGNATURE
+                    || node.kind == syntax_kind_ext::CONSTRUCTOR
+            });
+            if !self.is_implementation_compatible_with_overload_inner(
+                impl_type,
+                overload_type,
+                bivariant_params,
+            ) {
                 // TSC anchors the error at the function/method name, not the whole declaration.
                 if decl_in_current {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
@@ -857,6 +872,24 @@ impl<'a> CheckerState<'a> {
         impl_type: tsz_solver::TypeId,
         overload_type: tsz_solver::TypeId,
     ) -> bool {
+        self.is_implementation_compatible_with_overload_inner(impl_type, overload_type, false)
+    }
+
+    /// `bivariant_params`: when the overload/implementation are declared as
+    /// methods, method signatures, or constructors, tsc compares their
+    /// parameters bivariantly even under `strictFunctionTypes`
+    /// (`compareSignaturesRelated`'s `strictVariance` is gated off for those
+    /// declaration kinds). For plain function overloads it stays strict
+    /// (contravariant). Threading this through lets a static-method overload
+    /// like `fromSafePromise(p: PromiseLike<T>)` with implementation
+    /// `(p: Promise<T>)` be accepted — `Promise<T>` is assignable to
+    /// `PromiseLike<T>`, satisfying the bivariant direction — exactly as tsc.
+    pub(crate) fn is_implementation_compatible_with_overload_inner(
+        &mut self,
+        impl_type: tsz_solver::TypeId,
+        overload_type: tsz_solver::TypeId,
+        bivariant_params: bool,
+    ) -> bool {
         let constructors_only =
             crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, impl_type)
                 && crate::query_boundaries::common::is_constructor_like_type(
@@ -914,11 +947,22 @@ impl<'a> CheckerState<'a> {
                     self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
                     self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
-                self.overload_implementation_parameter_relation_outcome(
-                    impl_with_any_ret,
-                    overload_with_any_ret,
-                )
-                .related
+                // Methods/method-signatures/constructors compare parameters
+                // bivariantly (tsc gates `strictVariance` off for those kinds);
+                // plain function overloads keep the strict contravariant check.
+                if bivariant_params || constructors_only {
+                    self.bivariant_callbacks_relation_outcome(
+                        impl_with_any_ret,
+                        overload_with_any_ret,
+                    )
+                    .related
+                } else {
+                    self.overload_implementation_parameter_relation_outcome(
+                        impl_with_any_ret,
+                        overload_with_any_ret,
+                    )
+                    .related
+                }
             }
             _ => {
                 // If we can't get return types, fall back to bivariant assignability
