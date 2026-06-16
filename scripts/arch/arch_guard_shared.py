@@ -1400,7 +1400,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `is_keyof_type`, `is_conditional_type`, `is_generic_application`,
         # `is_index_access_type`). All are existing request-shaped boundary
         # helpers already used throughout the checker — no new quarantine entry.
-        3066,
+        #
+        # Bumped 3066→3068 for the #13081 TypeFormatter factory fold: the new
+        # `create_instantiation_display_formatter` factory in `context/def_mapping.rs`
+        # adds two `query_boundaries::common::TypeFormatter` references (the return
+        # type annotation and the in-body `use`), replacing the open-coded formatter
+        # construction the instantiation-display sites previously carried. This is
+        # the request-shaped formatter-construction route the refactor consolidates
+        # onto; no new quarantine entry. Removal condition remains #8225.
+        3068,
     ),
 ]
 

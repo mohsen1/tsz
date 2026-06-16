@@ -596,6 +596,8 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        // Unique builder chain: optional-parameter surface syntax without a def
+        // store (typeof-overload display), distinct from every shared factory.
         let mut formatter =
             tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
                 .with_diagnostic_mode()

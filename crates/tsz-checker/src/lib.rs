@@ -139,6 +139,9 @@ mod async_imported_promise_tests;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "tests/circular_export_star_const_value_tests.rs"]
+mod circular_export_star_const_value_tests;
+#[cfg(test)]
 #[path = "tests/class_boundary_fallback_relation_routing_arch_tests.rs"]
 mod class_boundary_fallback_relation_routing_arch_tests;
 #[cfg(test)]
