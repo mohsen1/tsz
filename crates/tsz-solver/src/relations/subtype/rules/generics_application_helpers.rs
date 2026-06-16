@@ -2,7 +2,7 @@ use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use super::args_contain_type_parameters;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::types::{TypeApplicationId, TypeData, TypeId, Variance};
+use crate::types::{TypeApplication, TypeApplicationId, TypeData, TypeId, Variance};
 use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
@@ -342,6 +342,94 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             !crate::contains_type_parameters(self.interner, arg)
                 && !crate::contains_this_type(self.interner, arg)
         })
+    }
+
+    /// Acceptance-only unification of a single-argument pass-through type alias
+    /// against the body generic it forwards to, restricted to the permissive
+    /// `any`-argument shortcut.
+    ///
+    /// Fires only when `try_variance_fast_path` is about to bail on a
+    /// different-base pair whose bases neither share a raw definition nor unify
+    /// through import-alias forwarding. It recognizes the
+    /// `Async<T> = Promise<T>` shape: a `DefKind::TypeAlias` whose resolved body
+    /// is a single-argument `Application` of the *other* side's base, where the
+    /// alias's sole argument is `any`. Because the alias is a pass-through, its
+    /// `any` argument flows unchanged into the body application, so the pair is
+    /// `Body<any>` vs `Body<X>` — true under any-propagation. `tsc` never relates
+    /// an alias nominally (it substitutes the body), so `Async<any>` and
+    /// `Promise<X>` are the same type and `Async<any>` relates to anything; tsz
+    /// must recover that here because the asymmetric evaluation of the two sides
+    /// (one keeps the alias `Application`, the other unwraps to the `Promise`
+    /// body) otherwise degrades to a structural `then`-callable comparison that
+    /// can spuriously fail for a deferred-conditional type argument. Returns
+    /// `None` for every other shape so the caller keeps its historical
+    /// structural path; never returns `False`.
+    pub(super) fn try_pass_through_alias_any_unification(
+        &mut self,
+        s_app: &TypeApplication,
+        t_app: &TypeApplication,
+        s_def: DefId,
+        t_def: DefId,
+    ) -> Option<SubtypeResult> {
+        let allow_any = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth())
+            && self
+                .any_propagation
+                .allows_any_target_at_depth(self.guard.depth());
+        if !allow_any {
+            return None;
+        }
+
+        // Source is the alias side: `Async<any>` vs `Promise<X>`.
+        if s_app.args.len() == 1
+            && s_app.args[0].is_any()
+            && t_app.args.len() == 1
+            && self.alias_body_forwards_to_single_arg_generic(s_def, t_def)
+        {
+            return Some(SubtypeResult::True);
+        }
+        // Target is the alias side: `Promise<X>` vs `Async<any>`.
+        if t_app.args.len() == 1
+            && t_app.args[0].is_any()
+            && s_app.args.len() == 1
+            && self.alias_body_forwards_to_single_arg_generic(t_def, s_def)
+        {
+            return Some(SubtypeResult::True);
+        }
+        None
+    }
+
+    /// Whether `alias_def`'s body is a single-argument `Application` whose base
+    /// canonically names `target_def`. "Pass-through" means the alias has one
+    /// type parameter forwarded as the body application's sole argument
+    /// (e.g. `Async<T> = Promise<T>`), so an `any` alias argument yields an
+    /// `any` body argument. An unresolvable alias body records the
+    /// undetermined-result event so the enclosing relation does not persist a
+    /// registration-window verdict.
+    fn alias_body_forwards_to_single_arg_generic(
+        &self,
+        alias_def: DefId,
+        target_def: DefId,
+    ) -> bool {
+        if self.resolver.get_def_kind(alias_def) != Some(crate::def::DefKind::TypeAlias) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(alias_def, self.interner) else {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+            return false;
+        };
+        let Some(body_app_id) = application_id(self.interner, body) else {
+            return false;
+        };
+        let body_app = self.interner.type_application(body_app_id);
+        if body_app.args.len() != 1 {
+            return false;
+        }
+        let Some(body_def) = self.application_base_def_id(body_app.base) else {
+            return false;
+        };
+        self.resolver.canonical_def_id(body_def) == self.resolver.canonical_def_id(target_def)
     }
 
     pub(super) fn recursive_mapped_alias_base_reaches_self(&self, base: TypeId) -> bool {
