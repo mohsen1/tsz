@@ -804,30 +804,52 @@ impl<'a> CheckerContext<'a> {
     // scattered across lib resolution, symbol-type resolution, and augmentation
     // merge paths.
     //
-    // **Borrow-conflict handling.** The two environments are owned through
-    // `RefCell`s, so a registration can race with another live borrow elsewhere
-    // in the checker (the flow-analyzer holds `type_environment` borrowed during
-    // narrowing; recursive resolution can hold either). The evaluator env
-    // (`type_env`) is authoritative and is written directly. The mirror-write
-    // into the flow-analyzer env (`type_environment`) is *deferred* into
-    // `deferred_flow_env_writes` when its borrow is unavailable and replayed the
-    // next time the env is borrowable, so no mirror-write is ever dropped. This
-    // replaces the previous "warn and silently skip + repair via per-file
-    // `clone()`" strategy (TODO #8269).
+    // **Borrow-conflict handling.** Both envs are owned through `RefCell`s, so a
+    // registration can race with another live borrow during recursive
+    // resolution (which can hold either, including `type_env` itself). Each env
+    // uses the *same* deferral discipline: on a successful borrow, replay any
+    // previously-deferred writes then apply `op`; on a borrow conflict, queue
+    // `op` and replay it the next time the env is borrowable, so it is never
+    // dropped. Dropping the authoritative `type_env` write (the previous "warn
+    // and skip" behaviour) also dropped the shared-`DefinitionStore`
+    // write-through that lives inside the env mutator, collapsing a
+    // class-instance / def body to `never` for every later consumer.
+    // The flow-env mirror was already deferred via `deferred_flow_env_writes`
+    // (TODO #8269); the evaluator env now uses `deferred_eval_env_writes`.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
     fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
-        // Evaluator env: authoritative, written directly.
+        self.apply_to_eval_env(op.clone());
+        self.mirror_to_flow_env(op);
+    }
+
+    /// Apply (or defer) a single registration to the authoritative evaluator
+    /// env (`type_env`).
+    ///
+    /// On a successful borrow, first replays any previously-deferred evaluator
+    /// writes (in order) so the env catches up, then applies `op`. On a borrow
+    /// conflict (recursive resolution already holds `type_env`), `op` is queued
+    /// for later replay so neither the local cache nor the shared
+    /// `DefinitionStore` write-through is ever lost.
+    fn apply_to_eval_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_env.try_borrow_mut() {
-            Ok(mut env) => op.apply(&mut env),
-            Err(e) => {
-                tracing::warn!(
-                    target_env = "type_env",
-                    error = ?e,
-                    "register-in-envs: type_env try_borrow_mut failed; registration skipped"
-                );
+            Ok(mut env) => {
+                self.drain_deferred_eval_env_writes_into(&mut env);
+                op.apply(&mut env);
+            }
+            Err(_) => {
+                self.deferred_eval_env_writes.borrow_mut().push(op);
             }
         }
-        self.mirror_to_flow_env(op);
+    }
+
+    /// Replay every queued deferred evaluator-env write into an already-borrowed
+    /// evaluator env, clearing the queue. A single borrow: `take` leaves an
+    /// empty queue, so the loop is a no-op when nothing was deferred.
+    fn drain_deferred_eval_env_writes_into(&self, env: &mut TypeEnvironment) {
+        let pending = std::mem::take(&mut *self.deferred_eval_env_writes.borrow_mut());
+        for op in pending {
+            op.apply(env);
+        }
     }
 
     /// Apply (or defer) a single registration to the flow-analyzer env.
@@ -869,10 +891,28 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
+    /// Replay any deferred evaluator-env (`type_env`) writes that lost the
+    /// borrow race during recursive resolution. Called at the file-preparation
+    /// boundary, before the flow-analyzer env is reconciled from `type_env`, so
+    /// the authoritative env holds every class-instance / def entry before any
+    /// consumer (method-body checking, `overlay_missing_from`) reads it. A no-op
+    /// when nothing was deferred or `type_env` is momentarily unborrowable.
+    pub fn flush_deferred_eval_env_writes(&self) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            self.drain_deferred_eval_env_writes_into(&mut env);
+        }
+    }
+
     /// Number of registrations still waiting to be mirrored into the
     /// flow-analyzer env. Used by reconciliation assertions and tests.
     pub fn deferred_flow_env_write_count(&self) -> usize {
         self.deferred_flow_env_writes.borrow().len()
+    }
+
+    /// Number of authoritative registrations still waiting to be replayed into
+    /// the evaluator env after losing the `type_env` borrow race. Used by tests.
+    pub fn deferred_eval_env_write_count(&self) -> usize {
+        self.deferred_eval_env_writes.borrow().len()
     }
 
     /// Record that `def_id` has been published with body `body`, returning

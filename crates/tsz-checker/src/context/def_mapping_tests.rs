@@ -230,3 +230,127 @@ fn flow_env_backlog_drains_on_next_successful_mirror() {
         "the draining write itself must be visible"
     );
 }
+
+/// A class-instance registration that loses the authoritative `type_env` borrow
+/// race (recursive resolution already holds it) must be deferred and replayed,
+/// never dropped. Dropping it previously also dropped the shared-store
+/// write-through, collapsing the instance type to `never` for later consumers.
+#[test]
+fn eval_env_class_instance_is_deferred_under_borrow_then_replayed() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    // Wire the shared store so the write-through path is exercised on replay.
+    ctx.ensure_both_envs_have_definition_store();
+
+    let class_def = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let instance_type = TypeId::STRING;
+
+    // Simulate recursive resolution holding `type_env` borrowed: the
+    // authoritative write cannot acquire the cell.
+    {
+        let held = ctx.type_env.borrow();
+        ctx.register_class_instance_in_envs(class_def, instance_type);
+
+        // The authoritative write was deferred, not dropped or applied.
+        assert_eq!(
+            held.get_class_instance_type(class_def),
+            None,
+            "evaluator env must not yet have the deferred class-instance write"
+        );
+        assert_eq!(
+            ctx.deferred_eval_env_write_count(),
+            1,
+            "the lost authoritative write must be queued for replay"
+        );
+    }
+
+    // Once the borrow is released the deferred write replays into `type_env`.
+    ctx.flush_deferred_eval_env_writes();
+    assert_eq!(
+        ctx.deferred_eval_env_write_count(),
+        0,
+        "deferred evaluator queue must drain on flush"
+    );
+    assert_eq!(
+        ctx.type_env.borrow().get_class_instance_type(class_def),
+        Some(instance_type),
+        "evaluator env must receive the replayed class-instance write"
+    );
+    // The replay went through the real env mutator, so the shared store's
+    // write-through must also be populated (no `never` collapse for cross-file
+    // consumers).
+    assert_eq!(
+        ctx.definition_store.get_class_instance_type(class_def),
+        Some(instance_type),
+        "shared store must receive the class-instance write-through on replay"
+    );
+}
+
+/// A subsequent successful authoritative write must drain the evaluator backlog
+/// before applying itself, so deferred writes become visible without an
+/// explicit flush during ongoing registration.
+#[test]
+fn eval_env_backlog_drains_on_next_successful_write() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let a = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let b = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+
+    {
+        let _held = ctx.type_env.borrow();
+        ctx.register_class_instance_in_envs(a, TypeId::STRING);
+        assert_eq!(ctx.deferred_eval_env_write_count(), 1);
+    }
+
+    // Next registration (no borrow held) drains the backlog, then applies.
+    ctx.register_class_instance_in_envs(b, TypeId::NUMBER);
+    assert_eq!(
+        ctx.deferred_eval_env_write_count(),
+        0,
+        "successful authoritative write must drain the backlog first"
+    );
+    let eval = ctx.type_env.borrow();
+    assert_eq!(
+        eval.get_class_instance_type(a),
+        Some(TypeId::STRING),
+        "previously-deferred class-instance write must be visible"
+    );
+    assert_eq!(
+        eval.get_class_instance_type(b),
+        Some(TypeId::NUMBER),
+        "the draining write itself must be visible"
+    );
+}

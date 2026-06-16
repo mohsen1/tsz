@@ -86,6 +86,15 @@ impl<'a> CheckerState<'a> {
         // back to it when the local def_kinds map is incomplete.
         self.ctx.ensure_both_envs_have_definition_store();
 
+        // Replay any authoritative evaluator-env (`type_env`) registrations that
+        // lost the `RefCell` borrow race during recursive resolution (e.g. a
+        // class-instance type registered while `type_env` was already borrowed
+        // by the recursive heritage resolution that triggered it). These were
+        // previously dropped, collapsing the instance/def body to `never` for
+        // every later consumer. Replay them before the flow-analyzer env is
+        // reconciled below so `overlay_missing_from` copies a complete env.
+        self.ctx.flush_deferred_eval_env_writes();
+
         // Reconcile the flow-analyzer environment (`type_environment`) with the
         // evaluator environment (`type_env`) before flow analysis reads it.
         //
