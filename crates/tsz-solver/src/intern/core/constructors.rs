@@ -898,25 +898,25 @@ impl TypeInterner {
         }
 
         // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
-        // Skip reduction if the union contains members the shallow subtype engine
-        // cannot relate: type parameters, lazy refs, and *unevaluated deferred
-        // operations* (distributive `Conditional` / `IndexAccess`). The shallow
-        // engine has no rules for the latter, so every pairwise check over them
-        // returns `false` after a full lookup — an O(N²) sweep that can never
-        // remove a member. This is the eager-vs-deferred divergence from tsc:
-        // distributing `Exclude`/`Extract` over a wide union yields a union of
-        // deferred conditionals that tsc keeps lazy; tsz must likewise not try to
-        // subtype-reduce them before they resolve. Concrete members reduce on the
-        // later normalization that runs once the conditionals evaluate.
+        // Skip reduction wholesale only when the union contains a `TypeParameter`
+        // or `Lazy` member: those interact with reduction non-locally (an
+        // unresolved type parameter can stand for a supertype/subtype of any
+        // concrete peer, and a `Lazy` ref names a symbol whose shape is not yet
+        // available), so reducing the surrounding concrete members against an
+        // arbitrary instantiation is unsound. Unevaluated *deferred operations*
+        // (`Conditional` / `IndexAccess`) are NOT skipped here: they are inert in
+        // the shallow engine (never relate as source or target except by
+        // identity), so `reduce_union_subtypes` short-circuits the pairwise work
+        // over them internally while still reducing the concrete members beside
+        // them — which is what tsc does when distributing `Exclude`/`Extract`
+        // over a wide union (the deferred arms stay lazy; the concrete arms still
+        // collapse). Folding them into a whole-union skip dropped legitimate
+        // concrete-vs-concrete reduction (e.g. JSX intrinsic-element props unions
+        // carrying an `IndexAccess` member), changing the union result.
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(
-                    TypeData::TypeParameter(_)
-                        | TypeData::Lazy(_)
-                        | TypeData::Conditional(_)
-                        | TypeData::IndexAccess(_, _)
-                )
+                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
         if !has_complex && !preserve_callable_order {
