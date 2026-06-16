@@ -212,4 +212,18 @@ options:
     name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
   logging: CLOUD_LOGGING_ONLY
 
-timeout: 7200s
+# Decoupled timeout budget (#13751): the bench-shard timeouts must satisfy
+# build-timeout < wait-deadline < github-job-timeout so a build that runs near
+# budget still reaches a terminal SUCCESS, gets observed by the poll loop, and
+# has its artifacts downloaded before any ceiling trips. This Cloud Build
+# timeout (105m) is the *earliest* ceiling: the build is guaranteed to reach a
+# terminal state by here, after which the bench.yml wait loop (115m deadline)
+# downloads artifacts well inside the 135m GitHub job timeout. Keep this value
+# strictly below the bench.yml wait-loop deadline.
+#
+# Follow-up (infra, out of scope for this file-only PR): a dedicated
+# tsz-ci-merge-pool so a bench burst cannot throttle the required
+# unit-checker-integration merge-queue submit, and a prebuilt image baking
+# hyperfine/jq/xz-utils/Node 22/pnpm to remove the per-shard apt/curl/npm
+# bootstrap network SPOF (see #13751 proposed fixes 1 and 3).
+timeout: 6300s
