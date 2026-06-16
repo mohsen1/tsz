@@ -62,6 +62,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_long_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+        // Unique builder chain: the long-property-receiver / skip-application-alias
+        // flags are exclusive to this surface, so it has no shared factory.
         tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
             .with_def_store(&self.ctx.definition_store)
             .with_diagnostic_mode()

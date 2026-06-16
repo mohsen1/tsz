@@ -324,19 +324,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let mut formatter =
-            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
-                .with_diagnostic_mode()
-                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
-                .with_exact_optional_property_types(
-                    self.ctx.compiler_options.exact_optional_property_types,
-                )
-                .with_display_properties()
-                .with_namespace_module_names(&self.ctx.namespace_module_names)
-                .with_module_specifiers(&self.ctx.module_specifiers)
-                .with_module_path_specifiers(&self.ctx.module_path_specifiers)
-                .with_current_file_id(self.ctx.current_file_idx as u32)
-                .with_def_store(&self.ctx.definition_store);
+        // Named-callable entry point: the structural instantiation-display base
+        // plus the module-name / current-file qualification context so lib
+        // interface names (`ArrayConstructor`) resolve in TS2635 messages.
+        let mut formatter = self
+            .ctx
+            .create_instantiation_display_formatter()
+            .with_namespace_module_names(&self.ctx.namespace_module_names)
+            .with_module_specifiers(&self.ctx.module_specifiers)
+            .with_module_path_specifiers(&self.ctx.module_path_specifiers)
+            .with_current_file_id(self.ctx.current_file_idx as u32)
+            .with_def_store(&self.ctx.definition_store);
         let display = formatter.format(type_id).into_owned();
         let direct_application =
             crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some();
@@ -388,16 +386,7 @@ impl<'a> CheckerState<'a> {
             {
                 let anonymous = self.evaluate_function_shape_for_instantiation_display(&shape);
                 let anonymous_type = self.ctx.types.factory().function(anonymous);
-                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
-                    self.ctx.types,
-                    &self.ctx.binder.symbols,
-                )
-                .with_diagnostic_mode()
-                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
-                .with_exact_optional_property_types(
-                    self.ctx.compiler_options.exact_optional_property_types,
-                )
-                .with_display_properties();
+                let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
             let shape_base = application_base
@@ -442,16 +431,7 @@ impl<'a> CheckerState<'a> {
             {
                 let anonymous = self.evaluate_callable_shape_for_instantiation_display(&shape);
                 let anonymous_type = self.ctx.types.factory().callable(anonymous);
-                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
-                    self.ctx.types,
-                    &self.ctx.binder.symbols,
-                )
-                .with_diagnostic_mode()
-                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
-                .with_exact_optional_property_types(
-                    self.ctx.compiler_options.exact_optional_property_types,
-                )
-                .with_display_properties();
+                let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
             if let Some(sigs) =
@@ -475,16 +455,7 @@ impl<'a> CheckerState<'a> {
                         symbol: None,
                         is_abstract: false,
                     });
-                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
-                    self.ctx.types,
-                    &self.ctx.binder.symbols,
-                )
-                .with_diagnostic_mode()
-                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
-                .with_exact_optional_property_types(
-                    self.ctx.compiler_options.exact_optional_property_types,
-                )
-                .with_display_properties();
+                let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
         }
