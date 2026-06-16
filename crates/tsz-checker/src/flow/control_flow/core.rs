@@ -80,8 +80,11 @@ pub(crate) const fn is_session_stable_flow_cache_symbol(symbol: SymbolId) -> boo
     symbol.0 & (FLOW_CACHE_SYNTHETIC_BIT | FLOW_CACHE_PER_NODE_BIT) != FLOW_CACHE_SYNTHETIC_BIT
 }
 
+mod defer_classification;
 mod flow_query;
 mod flow_traversal;
+
+pub(crate) use defer_classification::FlowDeferMemos;
 
 #[must_use]
 pub(crate) fn flow_cache_entries(cache: &FlowCache) -> usize {
@@ -1313,6 +1316,7 @@ impl<'a> FlowAnalyzer<'a> {
         antecedent: FlowNodeId,
         reference: NodeIndex,
         symbol_id: Option<SymbolId>,
+        memos: &mut FlowDeferMemos,
     ) -> bool {
         let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
             return false;
@@ -1340,9 +1344,17 @@ impl<'a> FlowAnalyzer<'a> {
         // is a POSITIVE predicate (defer only when narrowing provably flows
         // through); an unclassifiable call defaults to defer.
         let ant_is_deferring_call = (ant_flags & flow_flags::CALL) != 0 && {
-            self.call_node_may_narrow_or_divert(ant_flow)
+            self.call_node_may_narrow_or_divert_cached(antecedent, ant_flow, &mut memos.call_divert)
                 || ant_flow.antecedent.first().is_some_and(|&grandparent| {
-                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                    // Recurse through the memoized wrapper, not the raw routine: a
+                    // pass-through CALL chain (`f(); g(); h(); …`) would otherwise
+                    // re-classify every ancestor on each visit, and the chase
+                    // re-invokes this per worklist pop, so the uncached recursion was
+                    // O(chain length) per call node and O(N^2) over a large scope.
+                    // The defer result is a pure function of the node within one walk
+                    // (`reference`/`symbol_id` are fixed), so caching by node id is
+                    // identical in value.
+                    self.antecedent_requires_defer_cached(grandparent, reference, symbol_id, memos)
                 })
         };
 
@@ -1356,7 +1368,12 @@ impl<'a> FlowAnalyzer<'a> {
         let ant_is_deferring_suspension =
             (ant_flags & (flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT)) != 0
                 && ant_flow.antecedent.first().is_some_and(|&grandparent| {
-                    self.antecedent_requires_defer(grandparent, reference, symbol_id)
+                    // Recurse through the memoized wrapper, mirroring the CALL
+                    // pass-through chain above: a suspension point's defer result
+                    // is the same per-walk-pure function of its antecedent, so it
+                    // reuses the shared `FlowDeferMemos` rather than re-running the
+                    // uncached routine on every visit.
+                    self.antecedent_requires_defer_cached(grandparent, reference, symbol_id, memos)
                 });
 
         (ant_flags & flow_flags::CONDITION) != 0

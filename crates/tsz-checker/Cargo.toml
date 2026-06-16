@@ -1654,6 +1654,9 @@ path = "tests/operator_literal_annotation_widen_tests.rs"
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
 [[test]]
+name = "flow_call_divert_memoization_tests"
+path = "tests/flow_call_divert_memoization_tests.rs"
+[[test]]
 name = "flow_captured_let_memoization_tests"
 path = "tests/flow_captured_let_memoization_tests.rs"
 
