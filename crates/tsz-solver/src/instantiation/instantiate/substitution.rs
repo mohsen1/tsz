@@ -52,8 +52,26 @@ impl TypeSubstitution {
         let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
 
         // Phase 1: Insert explicitly-provided type arguments.
+        //
+        // A `TypeId::ERROR` argument is the internal cycle/fuel sentinel, never a
+        // real type. Binding a type parameter directly to it would collapse that
+        // parameter to `error` everywhere it appears in the instantiated body —
+        // the cross-arena base-class poison cycle (#13044/#13484): when a generic
+        // base class (`QueryCreator<DB>`) is resolved transitively while a derived
+        // subclass chain is mid-resolution, the in-progress base instance is the
+        // `ERROR` sentinel and substituting it as the `DB` argument bakes
+        // `SelectFrom<error, ...>` into the inherited members.
+        //
+        // Treat the sentinel exactly like an unsupplied argument: fall through to
+        // Phase 2, which binds the parameter to `any` (its no-candidate fallback).
+        // This neither bakes `error` into the body (fixing the cross-arena poison
+        // cycle) nor leaves the parameter free to leak into a contextual signature
+        // (e.g. a generic call where inference produced no real candidate for a
+        // type parameter), which would degrade contextual checking of the
+        // remaining arguments. `tsc` never collapses a type parameter to an error
+        // sentinel; an uninferred parameter resolves to its no-candidate fallback.
         for (i, param) in type_params.iter().enumerate() {
-            if i < type_args.len() {
+            if i < type_args.len() && type_args[i] != TypeId::ERROR {
                 map.insert(param.name, type_args[i]);
             }
         }
@@ -61,8 +79,11 @@ impl TypeSubstitution {
         // Phase 2: Pre-fill unsupplied type parameters with `any` so that
         // circular and forward references in defaults become any-like instead
         // of leaking unresolved placeholders into the instantiated type.
+        // Parameters whose supplied argument was the `ERROR` sentinel (skipped
+        // above) are treated as unsupplied here and likewise bound to `any`.
+        let supplied_real_arg = |i: usize| i < type_args.len() && type_args[i] != TypeId::ERROR;
         for (i, param) in type_params.iter().enumerate() {
-            if i >= type_args.len() {
+            if !supplied_real_arg(i) {
                 map.insert(param.name, TypeId::ANY);
             }
         }
@@ -234,6 +255,30 @@ mod tests {
         assert_eq!(subst.get(t), Some(TypeId::NUMBER));
         assert_eq!(subst.get(u), Some(TypeId::STRING));
         assert_eq!(subst.len(), 2);
+    }
+
+    /// A supplied argument that is the `TypeId::ERROR` cycle/fuel sentinel must
+    /// never be baked into the substitution as `error` (the cross-arena
+    /// base-class poison cycle #13044/#13484), nor left free (which leaks the
+    /// raw parameter into a contextual signature and degrades checking of the
+    /// remaining arguments, regressing `thislessFunctionsNotContextSensitive2`).
+    /// It is treated exactly like an unsupplied argument: bound to `any`, the
+    /// no-candidate fallback. Real arguments in other positions are unaffected.
+    #[test]
+    fn from_args_error_sentinel_arg_falls_back_to_any() {
+        let interner = TypeInterner::new();
+        let t = interner.intern_string("T");
+        let u = interner.intern_string("U");
+        let params = vec![param(t, None), param(u, None)];
+
+        let subst =
+            TypeSubstitution::from_args(&interner, &params, &[TypeId::ERROR, TypeId::STRING]);
+
+        // The ERROR-sentinel position resolves to `any`, never `error`.
+        assert_eq!(subst.get(t), Some(TypeId::ANY));
+        assert_ne!(subst.get(t), Some(TypeId::ERROR));
+        // A genuine argument in another position is bound normally.
+        assert_eq!(subst.get(u), Some(TypeId::STRING));
     }
 
     /// A parameter with neither an argument nor a default must be left
