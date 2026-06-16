@@ -45,6 +45,21 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
+        // An ambient `declare module "<specifier>"` takes priority over the
+        // same-directory bare-alias file-index fallback below. tsc resolves a
+        // bare specifier through `paths`/`baseUrl`/`node_modules`/ambient
+        // declarations — never to a relative sibling source file whose basename
+        // happens to equal the specifier (a `react.ts` importing `'react'`, an
+        // `immer.ts` importing `'immer'`). The real resolver has already missed
+        // by the time we reach the file-index fallback, so the only remaining
+        // candidates are the ambient module (correct) or an accidental sibling
+        // (wrong); preferring the ambient declaration matches tsc. Skipping the
+        // file-index probe leaves the import unresolved here, which the import
+        // checker then binds against the ambient module declaration.
+        if is_bare_specifier && self.bare_specifier_is_declared_ambient_module(specifier) {
+            return None;
+        }
+
         if let Some(idx) = self.global_file_name_index.as_ref() {
             // Absolute paths (both POSIX `/` and Windows `\`): empty src_dir
             // causes resolve_specifier_via_file_index to use the specifier verbatim.
@@ -100,6 +115,23 @@ impl<'a> CheckerContext<'a> {
         }
 
         None
+    }
+
+    /// Whether `specifier` names a project-wide ambient `declare module "..."`
+    /// (an exact name or a matching wildcard pattern). Used to keep the
+    /// same-directory bare-alias file-index fallback in
+    /// `resolve_import_target_from_file` from shadowing an ambient module
+    /// declaration with a coincidentally-named sibling source file.
+    ///
+    /// Routes through the pre-built `global_declared_modules` index when present
+    /// (the program path); the binder-backed `declared_modules` set is consulted
+    /// separately by the import checker for the no-index standalone case, so a
+    /// missing index here simply leaves the fallback enabled.
+    fn bare_specifier_is_declared_ambient_module(&self, specifier: &str) -> bool {
+        let Some(declared) = self.global_declared_modules.as_ref() else {
+            return false;
+        };
+        declared.exact.contains(specifier) || declared.matches_wildcard(specifier)
     }
 
     pub(super) fn types_versions_redirected_target_index(
