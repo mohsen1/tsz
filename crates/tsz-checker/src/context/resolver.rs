@@ -1515,40 +1515,21 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // Get the parent symbol (the enum itself)
         let parent_sym_id = symbol.parent;
 
-        // Convert parent SymbolId back to DefId.
+        // Convert parent SymbolId back to DefId via the authoritative O(1)
+        // symbol-only index in the shared `DefinitionStore`.
         //
-        // We cannot use `symbol_to_def_id` here because `symbol_to_def` is a per-file
-        // (local) map that is NOT merged across checker contexts (see cross_file.rs comment).
-        // The parent enum may live in a different file (e.g., `foo.ts`'s binder), so its
-        // SymbolId is absent from the current file's `symbol_to_def`.
+        // We cannot use `symbol_to_def_id` here because `symbol_to_def` is a
+        // per-file (local) map: the parent enum may live in a different file
+        // whose `SymbolId` is absent from the current file's local cache.
         //
-        // Instead, we use `def_to_symbol`, which IS merged from child checkers into the
-        // parent during cross-file type analysis (see cross_file.rs lines 326-330).
-        // By scanning it for the parent's SymbolId, we can find the parent's DefId
-        // regardless of which file it originates from.
-        //
-        // Prefer this merged map over scanning `definition_store` (which lacks direct
-        // reverse lookup and would be O(n) on the global store).
-        let parent_def_id = self
-            .def_to_symbol
-            .borrow()
-            .iter()
-            .find_map(|(&def_id, &sym_id)| {
-                if sym_id == parent_sym_id {
-                    Some(def_id)
-                } else {
-                    None
-                }
-            });
-
-        if let Some(parent_def_id) = parent_def_id {
-            return Some(parent_def_id);
-        }
-
-        // Final fallback: if the parent's DefId is not in the merged def_to_symbol map
-        // (which can happen when the parent was not yet processed), we can't provide
-        // the mapping. This shouldn't happen in well-formed code.
-        None
+        // `find_def_by_symbol` reads the store's `symbol_only_index` (the
+        // first-registered `DefId` for every symbol across the whole program,
+        // populated at pre-population/registration time) in O(1). Previously
+        // this scanned the local `def_to_symbol` map, whose completeness
+        // depended on an eager whole-program warm; that scan was
+        // O(program-symbols) per call and forced the warm to materialize the
+        // entire program into every per-file checker.
+        self.definition_store.find_def_by_symbol(parent_sym_id.0)
     }
 
     fn is_user_enum_def(&self, def_id: DefId) -> bool {

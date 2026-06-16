@@ -559,6 +559,21 @@ impl<'a> CheckerState<'a> {
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
+        // `resolvedReturnType` analog: a stable function body has exactly one
+        // pure return-type inference per (node, contextual type, literal-mode,
+        // type-parameter-scope) tuple. Generic-builder DAGs (effect/zod/kysely)
+        // re-enter the same body through many parents via contextual return
+        // requests; without this memo each re-entry re-runs full body flow
+        // analysis, which is combinatorial. The memo records ONLY the inferred
+        // `TypeId` (never diagnostics), so the separate body-check pass still
+        // runs once and emits its diagnostics unchanged.
+        let memo_key = self.inferred_return_type_memo_key(function_idx, body_idx, return_context);
+        if let Some(key) = memo_key
+            && let Some(&cached) = self.ctx.inferred_return_type_memo.get(&key)
+        {
+            return cached;
+        }
+
         // The inference pass evaluates return expressions WITHOUT narrowing
         // context, which can produce false errors (e.g. TS2339 for discriminated
         // union property accesses) and cache wrong types.  Snapshot diagnostic,
@@ -667,7 +682,116 @@ impl<'a> CheckerState<'a> {
         // remaining case here is when the caller explicitly requested literal
         // preservation (e.g. `preserve_literal_types`) and per-expression
         // widening already deferred to that flag.
+
+        // Publish the stable inference. `inferred_return_type_memo_key` returned
+        // `Some` only for stable (non-circular, non-provisional) calls, so this
+        // never caches an in-progress placeholder. The only early return between
+        // key computation and here is the direct-self-call `any`→`never` rewrite
+        // above, which both rolls back and returns before this point AND would
+        // already have forced `memo_key` to `None`, so the cached value is always
+        // the final stable inference.
+        if let Some(key) = memo_key {
+            self.ctx.inferred_return_type_memo.insert(key, result);
+        }
         result
+    }
+
+    /// Build the memo key for `infer_return_type_from_body`, or `None` when the
+    /// inference must not be cached because it is participating in circular
+    /// return resolution (and so may be provisional / dependent on the active
+    /// resolution stack). A `Some` key captures every ambient input to pure
+    /// return-type inference; see [`crate::context::InferredReturnTypeKey`].
+    fn inferred_return_type_memo_key(
+        &mut self,
+        function_idx: NodeIndex,
+        body_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> Option<crate::context::InferredReturnTypeKey> {
+        if !self.inferred_return_type_is_memoizable(function_idx, body_idx, return_context) {
+            return None;
+        }
+        Some(crate::context::InferredReturnTypeKey {
+            function_node: function_idx,
+            return_context,
+            in_const_assertion: self.ctx.in_const_assertion,
+            preserve_literal_types: self.ctx.preserve_literal_types,
+            this_type: self.current_this_type(),
+            scope_fingerprint: self.inferred_return_type_scope_fingerprint(),
+        })
+    }
+
+    /// True when the pure return-type inference of `function_idx`'s body is a
+    /// stable function of its ambient inputs (so it may be memoized).
+    ///
+    /// Only **contextual** inference (`return_context.is_some()`) is memoized.
+    /// The non-contextual inference of a declaration runs exactly once, in the
+    /// declaration's own check pass, and that pass relies on the body evaluation
+    /// to warm shared solver caches (e.g. indexed-access / large-union
+    /// evaluations) that the immediately-following body diagnostic check then
+    /// reuses — short-circuiting it changes downstream complexity accounting
+    /// (witnessed by a spurious TS2590 on `intersectionsOfLargeUnions.ts`). The
+    /// combinatorial blow-up this memo targets is the **contextual** return
+    /// requests that re-enter a shared generic-builder DAG through many parents;
+    /// those are exactly the `return_context.is_some()` calls.
+    ///
+    /// A function's OWN symbol is always in `symbol_resolution_set` while its
+    /// type is computed — that is normal, not circular, and does NOT disqualify
+    /// memoization. The inference becomes resolution-state-dependent, and unsafe
+    /// to cache, only in these cases:
+    ///
+    /// - the function node is already on the resolution stack: a genuine
+    ///   re-entrant request, whose result is a provisional placeholder;
+    /// - the body returns a still-resolving variable through a call-like return,
+    ///   which `tsc` resolves on demand with `any` and refines later;
+    /// - the body is directly self-recursive (`all_returns_are_direct_self_calls`):
+    ///   the `any`→`never` rewrite above keys off the live resolution set, so the
+    ///   inferred value depends on whether this is the resolving pass.
+    fn inferred_return_type_is_memoizable(
+        &mut self,
+        function_idx: NodeIndex,
+        body_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> bool {
+        if function_idx.is_none() || body_idx.is_none() {
+            return false;
+        }
+        if return_context.is_none() {
+            return false;
+        }
+        if self.ctx.node_resolution_stack.contains(&function_idx) {
+            return false;
+        }
+        if self.return_body_has_resolving_var_in_call_like(body_idx) {
+            return false;
+        }
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(function_idx)
+            && self.ctx.symbol_resolution_set.contains(&sym_id)
+            && self.all_returns_are_direct_self_calls(body_idx, sym_id)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Stable hash of the active type-parameter scope: the bindings a generic
+    /// body resolves its free type parameters through. Two scopes with identical
+    /// `(name, TypeId)` bindings produce identical inference, so this isolates
+    /// the same body inferred under different ambient type-parameter bindings.
+    fn inferred_return_type_scope_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        if self.ctx.type_parameter_scope.is_empty() {
+            return 0;
+        }
+        let mut entries: Vec<(&str, u32)> = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, type_id)| (name.as_str(), type_id.0))
+            .collect();
+        entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        let mut hasher = rustc_hash::FxHasher::default();
+        entries.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Inner implementation of return type inference (no diagnostic/cache cleanup).

@@ -925,6 +925,86 @@ fn conditional_alias_application_resolving_to_tuple_renders_structurally() {
     );
 }
 
+// The Application display-reduction cascade is memoized per `Application`
+// `TypeId` (#13480). Re-reaching the same reducible Application through a
+// composite must produce byte-identical output to formatting it alone — the
+// cache must not change the rendering, only avoid re-running the
+// `instantiate_generic` + `evaluate_type` cascade. The binder is named `Wrap`
+// (not `Foo`) so the assertion cannot accidentally depend on a specific alias
+// identifier, per the anti-hardcoding rule.
+#[test]
+fn repeated_conditional_alias_application_renders_identically_when_memoized() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let t = db.type_param(t_param);
+
+    // Wrap<T> = T extends boolean ? { kind: "b" } : { kind: "o" }
+    let true_branch = db.object(vec![PropertyInfo::new(
+        db.intern_string("kind"),
+        db.literal_string("b"),
+    )]);
+    let false_branch = db.object(vec![PropertyInfo::new(
+        db.intern_string("kind"),
+        db.literal_string("o"),
+    )]);
+    let cond = db.conditional(crate::types::ConditionalType {
+        check_type: t,
+        extends_type: TypeId::BOOLEAN,
+        true_type: true_branch,
+        false_type: false_branch,
+        is_distributive: true,
+    });
+    let wrap_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Wrap"),
+        vec![t_param],
+        cond,
+    ));
+
+    // Application(Wrap, [string]) resolves (non-distributively) to the false
+    // branch `{ kind: "o" }` and drops its alias symbol.
+    let app = db.application(db.lazy(wrap_def), vec![TypeId::STRING]);
+
+    // Baseline: format the application on its own.
+    let solo = {
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        fmt.format(app)
+    };
+    assert_eq!(solo, "{ kind: \"o\"; }");
+
+    // The same Application appears twice in a tuple: the second occurrence is a
+    // cache hit. The reduced branch must render identically at both positions.
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: app,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: app,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let composite = fmt.format(tuple);
+    assert_eq!(
+        composite,
+        format!("[{solo}, {solo}]"),
+        "Memoized reduction must render the shared Application identically at \
+         every occurrence; got: {composite}"
+    );
+}
+
 // =====================================================================
 // Union containing a Lazy alias — TS2859 / general union-display parity
 // =====================================================================

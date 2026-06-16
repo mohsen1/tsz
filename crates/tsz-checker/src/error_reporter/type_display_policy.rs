@@ -9,12 +9,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
 pub(crate) enum DiagnosticTypeDisplayRole {
     DefaultDiagnostic,
     WidenedDiagnostic,
     FlattenedDiagnostic,
-    Assignability,
     AssignmentSource {
         target: TypeId,
         anchor_idx: NodeIndex,
@@ -118,16 +116,14 @@ impl<'a> CheckerState<'a> {
         let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         // Only apply the indexed-access alias resolution for roles where the
         // alias would otherwise leak through unresolved (call parameters /
-        // arguments / direct assignability). For declaration-emit-adjacent
-        // roles, type-display roles, and property-receiver displays, keep the
-        // original alias name — pre-resolving there can trigger TS2589 on
-        // legitimately-deferred indexed-access aliases that the checker
-        // intentionally leaves opaque.
+        // arguments). For declaration-emit-adjacent roles, type-display roles,
+        // and property-receiver displays, keep the original alias name —
+        // pre-resolving there can trigger TS2589 on legitimately-deferred
+        // indexed-access aliases that the checker intentionally leaves opaque.
         let ty = match role {
             DiagnosticTypeDisplayRole::CallArgument { .. }
             | DiagnosticTypeDisplayRole::CallParameter { .. }
-            | DiagnosticTypeDisplayRole::WeakCallParameter { .. }
-            | DiagnosticTypeDisplayRole::Assignability => {
+            | DiagnosticTypeDisplayRole::WeakCallParameter { .. } => {
                 self.resolve_indexed_access_alias_for_display(ty)
             }
             _ => ty,
@@ -142,8 +138,7 @@ impl<'a> CheckerState<'a> {
         // where tsc displays the concrete value type instead of the alias.
         if matches!(
             role,
-            DiagnosticTypeDisplayRole::Assignability
-                | DiagnosticTypeDisplayRole::AssignmentSource { .. }
+            DiagnosticTypeDisplayRole::AssignmentSource { .. }
                 | DiagnosticTypeDisplayRole::AssignmentTarget { .. }
                 | DiagnosticTypeDisplayRole::CallArgument { .. }
                 | DiagnosticTypeDisplayRole::CallParameter { .. }
@@ -160,9 +155,6 @@ impl<'a> CheckerState<'a> {
             | DiagnosticTypeDisplayRole::WidenedDiagnostic
             | DiagnosticTypeDisplayRole::FlattenedDiagnostic => {
                 unreachable!("basic diagnostic roles are handled by the checker formatting factory")
-            }
-            DiagnosticTypeDisplayRole::Assignability => {
-                self.format_type_for_assignability_message(ty)
             }
             DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx } => {
                 self.format_assignment_source_type_for_diagnostic(ty, target, anchor_idx)
