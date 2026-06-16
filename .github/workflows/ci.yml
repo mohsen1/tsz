@@ -1065,27 +1065,15 @@ jobs:
           fetch-depth: 1
       - name: Run wasm suite (nodejs + web targets)
         run: scripts/ci/github-suite.sh wasm-all
+      - name: Verify web WASM artifact
+        run: test -s pkg/web/tsz_wasm_bg.wasm
       - name: Upload web WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-web
           path: pkg/web/
           retention-days: 30
-
-  wasm-web:
-    name: wasm-web
-    needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Download web WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-web
-          path: pkg/web/
-      - name: Verify web WASM artifact
-        run: test -s pkg/web/tsz_wasm_bg.wasm
+          if-no-files-found: error
 
   node-harness-prep:
     name: node-harness-prep
@@ -1162,31 +1150,6 @@ jobs:
             --config=scripts/cloudbuild/cloudbuild-checker-integration.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             .
-
-  unit-cloudbuild:
-    # Compatibility status for dashboards and branch-protection rules that may
-    # still look for the old experimental Cloud Build context. The required
-    # Cloud Build checker integration slice is enforced by the required
-    # `unit-checker-integration` job above.
-    name: unit-cloudbuild
-    needs: [gate, unit-checker-integration]
-    if: always() && needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Report promoted unit path
-        env:
-          UNIT_RESULT: ${{ needs.unit-checker-integration.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$UNIT_RESULT" != "success" ]]; then
-            echo "Required Cloud Build checker integration job did not pass: ${UNIT_RESULT}"
-            exit 1
-          fi
-          echo "Cloud Build checker integration suite is enforced by the required unit-checker-integration job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -1487,7 +1450,6 @@ jobs:
       - project-compile-guard
       - project-compile-canary-aggregate
       - wasm
-      - wasm-web
       - node-harness-prep
       - unit
       - unit-checker-integration
@@ -1653,7 +1615,6 @@ jobs:
               })
               required.update({
                   "wasm",
-                  "wasm-web",
                   "lsp-e2e",
                   "node-harness-prep",
                   "conformance-aggregate",
