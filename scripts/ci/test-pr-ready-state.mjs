@@ -232,3 +232,15 @@ assert.match(
   /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- unit\s*\n\s+- unit-checker-integration[\s\S]+?required\.update\(\{"dist-binaries", "unit", "unit-checker-integration"\}\)/,
   "CI Summary should require both the Cloud Run unit slice and checker integration heavy slice",
 );
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- emit-aggregate\s*\n\s+- fourslash-aggregate[\s\S]+?"emit-aggregate",\s*\n\s+"fourslash-aggregate",/,
+  "CI Summary must require the emit-aggregate recombiner (not a raw emit shard) as the required emit leaf before reporting required full-run success",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?required\.update\(\{[\s\S]*?"emit",/,
+  "CI Summary must not require a raw emit shard leaf; the sharded emit suite is gated through emit-aggregate",
+);

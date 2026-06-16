@@ -358,7 +358,7 @@ jobs:
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
                         "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
-                        --jq '[.jobs[] | select((.name == "conformance-snapshot-gate" or .name == "conformance-aggregate" or .name == "fourslash-aggregate" or .name == "emit") and .conclusion == "success")] | length' \
+                        --jq '[.jobs[] | select((.name == "conformance-snapshot-gate" or .name == "conformance-aggregate" or .name == "fourslash-aggregate" or .name == "emit-aggregate") and .conclusion == "success")] | length' \
                         2>/dev/null || echo "0")
                       if [[ "${heavy_checks_passed}" -ge 4 ]]; then
                         echo "Latest required PR CI summary and heavy compiler gates for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
@@ -1307,14 +1307,22 @@ jobs:
         run: echo "Conformance snapshot gate is enforced for pull_request events."
 
   emit:
-    name: emit
+    # Each matrix shard runs scripts/emit/run.sh over a chunk of the corpus
+    # (EMIT_CHUNK=4000). The corpus is jsTotal=13530, so ceil(13530/4000)=4
+    # shards give full coverage; fewer would silently drop tests and fail the
+    # emit-aggregate full-corpus floor. emit-aggregate recombines the shards.
+    name: emit-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     env:
-      _TSZ_CI_EMIT_SHARD_INDEX: 0
-      _TSZ_CI_EMIT_SHARD_COUNT: 1
+      _TSZ_CI_EMIT_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_EMIT_SHARD_COUNT: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
@@ -1343,17 +1351,97 @@ jobs:
           path: .
       - name: Unpack node harness
         run: tar -xf node-harness.tar
-      - name: Run emit suite
+      - name: Run emit shard
         run: scripts/ci/github-suite.sh emit-shard
-      - name: Upload emit details
+      - name: Upload emit shard result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emit-details
+          name: emit-shard-${{ matrix.shard }}
           path: |
-            ci-metrics/emit*.json
+            ci-metrics/emit-shard-${{ matrix.shard }}.json
+            ci-metrics/emit-detail-${{ matrix.shard }}.json
             .ci-logs/emit/*.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
+          retention-days: 1
+
+  emit-aggregate:
+    name: emit-aggregate
+    needs: [gate, emit]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_EMIT_SHARD_COUNT: 4
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Wait for emit shard artifacts to be indexed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          EXPECTED=4
+          MAX_WAIT=180
+          INTERVAL=10
+          elapsed=0
+          count=0
+          echo "Polling for all ${EXPECTED} emit-shard-* artifacts (max ${MAX_WAIT}s)..."
+          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+            api_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              2>/dev/null || echo '{}')
+            count=$(echo "$api_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('emit-shard-'))
+          print(c)
+          " 2>/dev/null || echo 0)
+            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
+            if [ "${count}" -ge "${EXPECTED}" ]; then
+              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
+              break
+            fi
+            jobs_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+              2>/dev/null || echo '{}')
+            shard_summary=$(echo "$jobs_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('emit-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+            echo "  shard jobs: ${shard_summary}"
+            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
+            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
+            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
+              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
+              break
+            fi
+            sleep "${INTERVAL}"
+            elapsed=$(( elapsed + INTERVAL ))
+          done
+          if [ "${count}" -lt "${EXPECTED}" ]; then
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
+          fi
+      - name: Download emit shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: emit-shard-*
+          path: .emit-shards
+          merge-multiple: false
+      - name: Aggregate emit results
+        run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
     # Each matrix shard runs on its own 8-vCPU cloud runner. Run 25058599510
@@ -1445,7 +1533,7 @@ jobs:
       - unit-checker-integration
       - conformance-aggregate
       - conformance-snapshot-gate
-      - emit
+      - emit-aggregate
       - fourslash-aggregate
     if: always()
     runs-on: ubuntu-latest
@@ -1608,7 +1696,7 @@ jobs:
                   "lsp-e2e",
                   "node-harness-prep",
                   "conformance-aggregate",
-                  "emit",
+                  "emit-aggregate",
                   "fourslash-aggregate",
               })
 
