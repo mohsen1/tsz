@@ -578,6 +578,13 @@ impl<'a> CheckerContext<'a> {
         // differed because `Leaf5` resolved through stale cached
         // SymbolIds to a different file's interface shape.
         self.symbol_name_candidates_cache.borrow_mut().clear();
+        // Keyed on file-local class `NodeIndex`; member-access classification for
+        // a prior file's nodes must not leak into the next file's checks.
+        self.member_access_info_cache.borrow_mut().clear();
+        self.enclosing_class_declares_member_cache
+            .borrow_mut()
+            .clear();
+        self.accessor_levels_cache.borrow_mut().clear();
         self.lowering_entity_name_resolution_cache
             .borrow_mut()
             .clear();

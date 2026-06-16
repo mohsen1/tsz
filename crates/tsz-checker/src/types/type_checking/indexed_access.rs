@@ -1260,6 +1260,11 @@ impl<'a> CheckerState<'a> {
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+                    // A still-deferred `keyof` (e.g. `keyof (this["arg0"])` or
+                    // `keyof T[K]`) is not a usable key space: it cannot reject an
+                    // index, so the check defers rather than emitting a spurious
+                    // TS2536.
+                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
             };
             let mut is_deferred_index_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR

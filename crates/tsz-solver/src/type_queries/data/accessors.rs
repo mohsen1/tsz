@@ -1153,13 +1153,47 @@ pub fn get_object_shape(
 /// or `None` if the type is not an object or the property is not found.
 /// This encapsulates the common checker pattern of getting an object shape
 /// and iterating its properties to find a match.
+///
+/// Member resolution is accelerated: when the shape's interned identity
+/// (`ObjectShapeId`) is available, the per-shape property-name index supplies an
+/// `O(1)` lookup (large shapes) and a sorted-`Atom` binary search backs every
+/// other case. This keeps repeated by-name member lookups on a single large
+/// shape (e.g. one access per method on an `N`-property class instance) at
+/// `O(log P)`/`O(1)` instead of the `O(P)` linear scan that turned `N` accesses
+/// over an `N`-property shape into `O(N^2)`. Results are byte-identical to the
+/// linear scan because shape properties are interned sorted by `Atom` and the
+/// index keys on that same canonical `Atom` identity.
 pub fn find_property_in_object(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     name: Atom,
 ) -> Option<crate::types::PropertyInfo> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    let shape_id = match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+        // Type parameters look through to a constraint object; that shape's id
+        // is not directly available here, so fall back to the shape scan below.
+        _ => None,
+    };
     let shape = get_object_shape(db, type_id)?;
-    PropertyInfo::find_in_slice(&shape.properties, name).cloned()
+    let idx = match shape_id {
+        Some(shape_id) => match db.object_property_index(shape_id, name) {
+            crate::types::PropertyLookup::Found(idx) => Some(idx),
+            crate::types::PropertyLookup::NotFound => return None,
+            // Properties are interned sorted by `Atom`; binary search is correct.
+            crate::types::PropertyLookup::Uncached => shape
+                .properties
+                .binary_search_by_key(&name, |p| p.name)
+                .ok(),
+        },
+        None => shape
+            .properties
+            .binary_search_by_key(&name, |p| p.name)
+            .ok(),
+    };
+    idx.map(|idx| shape.properties[idx].clone())
 }
 
 /// Find a named property in an object type by string name.

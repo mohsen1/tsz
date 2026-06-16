@@ -484,7 +484,29 @@ pub fn split_nullish_type(
 /// returns `T & {}` (`NonNullable`<T>) instead of `T`. This matches tsc's behavior where
 /// `x!` on a type parameter produces `T & {}`, ensuring proper assignability to the
 /// non-nullable part of the constraint.
+///
+/// Bounded by the shared cross-operation [`crate::recursion::with_solver_frame`]
+/// breaker: the `Application`/`Lazy`/`TypeQuery` arms instantiate or evaluate the
+/// operand and recurse on the *result*, which on a recursively-defined generic is
+/// a fresh `TypeId` at every level (xstate's typegen surface: a non-null
+/// assertion applied to a recursive state-machine config type). No operand-keyed
+/// visited set can see that productive-but-unbounded expansion, and the inner
+/// `evaluate`/`instantiate` guards reset across the fresh evaluators these arms
+/// spin up, so without this breaker the descent overflows the OS stack (it never
+/// reaches the evaluator's own depth guards). When the budget is exhausted we
+/// leave `type_id` un-narrowed — relation-preserving, since a non-null assertion
+/// that cannot strip nullish conservatively keeps the original type, exactly
+/// tsc's behavior at its instantiation-depth limit — instead of aborting.
 fn remove_nullish_inner(
+    types: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+) -> TypeId {
+    crate::recursion::with_solver_frame(|| remove_nullish_recur(types, query_db, type_id))
+        .unwrap_or(type_id)
+}
+
+fn remove_nullish_recur(
     types: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
     type_id: TypeId,
