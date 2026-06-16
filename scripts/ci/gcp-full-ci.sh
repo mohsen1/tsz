@@ -9,6 +9,12 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 export CARGO_HOME="${TSZ_CI_CARGO_HOME:-$ROOT_DIR/.ci-cache/cargo-home}"
 SCCACHE_VERSION="${SCCACHE_VERSION:-0.9.1}"
+# Pinned fallback versions for environments that are not running the baked
+# cloud-run-gh-runner image. Keep these in sync with SCCACHE_VER / NEXTEST_VER /
+# WASM_PACK_VER in scripts/infra/cloud-run-gh-runner/Dockerfile. The baked image
+# is the source of truth; these only fire behind the `command -v` guards below.
+NEXTEST_VERSION="${NEXTEST_VERSION:-0.9.137}"
+WASM_PACK_VERSION="${WASM_PACK_VERSION:-0.15.0}"
 export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
@@ -178,11 +184,12 @@ ensure_host_tools() {
   fi
 
   if suite_needs_group "$suite" unit && ! command -v cargo-nextest >/dev/null 2>&1; then
-    curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
+    curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /usr/local/bin
   fi
 
   if suite_needs_group "$suite" wasm && ! command -v wasm-pack >/dev/null 2>&1; then
-    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    curl -sL "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+      | tar xz --strip-components=1 -C /usr/local/bin "wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack"
   fi
 
   if suite_needs_group "$suite" rust_compile; then
