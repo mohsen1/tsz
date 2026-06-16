@@ -804,6 +804,12 @@ jobs:
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_PROJECT_COMPILE_SET: canary
       TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
+      # Expected canary shard count (mirrors the project-compile-canary matrix
+      # `shard: [0..5]` / `_TSZ_CI_CANARY_SHARD_COUNT: 6`). The aggregate script
+      # records shards_seen vs this expected count and emits a distinct
+      # CANARY_SHARDS_INCOMPLETE signal when a shard is missing, so a dead runner
+      # cannot produce a silently-green required check over a partial set.
+      TSZ_CANARY_SHARDS_EXPECTED: "6"
     steps:
       - uses: actions/checkout@v4
         with:

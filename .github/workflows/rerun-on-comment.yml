@@ -2,8 +2,12 @@ name: Re-run CI on PR comment
 
 # Lets PR contributors re-run failed CI without write access by commenting
 # `/retest` or `/ci` on their PR. The workflow itself runs from `main` (not
-# the PR head), reads the PR's most recent CI run, and calls
-# `gh run rerun --failed` on it. No contributor code is executed here.
+# the PR head), reads the PR's most recent CI run, and re-runs it. No
+# contributor code is executed here. If the run's short-lived wave-1 producer
+# artifacts (dist-fast-binaries, node-harness; retention-days:1) are missing or
+# expired it triggers a FULL `gh run rerun` (regenerates the producers) instead
+# of `gh run rerun --failed`, so a re-run >24h after the original run does not
+# fail on a missing-artifact download in the wave-2 shards.
 #
 # Permission gate: comment author must be the PR author OR a member with at
 # least `write` association (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR with
@@ -95,8 +99,60 @@ jobs:
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
           echo "run_url=${run_url}" >> "$GITHUB_OUTPUT"
 
-      - name: Re-run failed jobs
+      - name: Decide re-run mode (full vs failed-only)
+        id: mode
         if: steps.run.outputs.active_run_id == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+        run: |
+          # `gh run rerun --failed` reuses the succeeded wave-1 producer
+          # artifacts (dist-fast-binaries, node-harness) without regenerating
+          # them. Those upload with retention-days:1, so a re-run >24h after the
+          # original run hits a hard missing-artifact download failure in the
+          # wave-2 shards instead of actually re-running the flake. When a
+          # required producer artifact is missing or expired we must do a FULL
+          # re-run (regenerates every job, including the producers) rather than
+          # `--failed`.
+          PRODUCERS="dist-fast-binaries node-harness"
+          artifacts_json=$(gh api --paginate \
+            "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '[.artifacts[] | {name, expired}]' 2>/dev/null || echo '[]')
+
+          full=false
+          reason=""
+          for producer in ${PRODUCERS}; do
+            present=$(printf '%s' "${artifacts_json}" \
+              | jq -r --arg n "${producer}" 'map(select(.name == $n and .expired == false)) | length' 2>/dev/null || echo 0)
+            if [ "${present:-0}" -lt 1 ]; then
+              full=true
+              reason="${reason}${reason:+, }${producer} missing/expired"
+            fi
+          done
+
+          if [ "${full}" = "true" ]; then
+            echo "Wave-1 producer artifact(s) unavailable (${reason}); will full re-run." >&2
+          else
+            echo "All wave-1 producer artifacts present and unexpired; failed-only re-run is safe." >&2
+          fi
+          echo "full=${full}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-run all jobs (producers expired -> regenerate)
+        if: steps.run.outputs.active_run_id == '' && steps.mode.outputs.full == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+        run: |
+          # No `--failed`: a full re-run re-runs every job, so the short-lived
+          # wave-1 producers (dist-fast-binaries, node-harness) are regenerated
+          # and the wave-2 shards have fresh artifacts to download.
+          gh run rerun --repo "${REPO}" "${RUN_ID}"
+
+      - name: Re-run failed jobs (producers still available)
+        if: steps.run.outputs.active_run_id == '' && steps.mode.outputs.full != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -113,12 +169,19 @@ jobs:
           RUN_ID: ${{ steps.run.outputs.run_id }}
           RUN_URL: ${{ steps.run.outputs.run_url }}
           ACTIVE_RUN_URL: ${{ steps.run.outputs.active_run_url }}
+          RERUN_FULL: ${{ steps.mode.outputs.full }}
+          RERUN_REASON: ${{ steps.mode.outputs.reason }}
           JOB_STATUS: ${{ job.status }}
         run: |
+          run_link="${RUN_URL:-https://github.com/${REPO}/actions/runs/${RUN_ID}}"
           if [ -n "${ACTIVE_RUN_URL}" ]; then
             body="CI is already queued or running for the latest PR head; skipping a duplicate re-run: ${ACTIVE_RUN_URL}"
           elif [ "${JOB_STATUS}" = "success" ]; then
-            body="Re-running failed jobs on the latest CI run: ${RUN_URL:-https://github.com/${REPO}/actions/runs/${RUN_ID}}"
+            if [ "${RERUN_FULL}" = "true" ]; then
+              body="Re-running **all** jobs on the latest CI run (${RERUN_REASON:-wave-1 producer artifacts expired}, so failed-only would hit a missing-artifact download): ${run_link}"
+            else
+              body="Re-running failed jobs on the latest CI run: ${run_link}"
+            fi
           else
             body="Could not re-run CI. See workflow logs."
           fi
