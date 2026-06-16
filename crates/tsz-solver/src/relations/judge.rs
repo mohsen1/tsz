@@ -361,12 +361,21 @@ impl<'a> DefaultJudge<'a> {
             return TypeId::ERROR;
         };
 
-        // Try to get type params from Lazy - use DefId directly
+        // Try to get type params from Lazy - use DefId directly.
+        //
+        // Both the body and the parameter list must be read through the same
+        // local-then-shared-store fallback. `get_def` already falls back to the
+        // shared `DefinitionStore` for the body, so the param read must do the
+        // same (`get_def_params_owned`): a generic def derived by a sibling
+        // fresh checker publishes its (schedule-stable) param list only into the
+        // shared store, and the local-only `get_def_params` would miss it,
+        // collapsing the chain to the un-instantiated fallback and leaking raw
+        // type parameters in a schedule-dependent way (#13255).
         if let TypeData::Lazy(def_id) = &key
-            && let Some(params) = self.env.get_def_params(*def_id)
             && let Some(resolved) = self.env.get_def(*def_id)
+            && let Some(params) = self.env.get_def_params_owned(*def_id)
         {
-            return instantiate_generic(self.db, resolved, params, args);
+            return instantiate_generic(self.db, resolved, &params, args);
         }
 
         // Fallback: can't instantiate

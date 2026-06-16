@@ -218,15 +218,86 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::UnresolvedTypeName(_))
         ) {
             self.mark_unresolved_def_seen();
-            return Some(self.interner().conditional(ConditionalType {
-                check_type,
-                extends_type,
-                true_type: cond.true_type,
-                false_type: cond.false_type,
-                is_distributive: cond.is_distributive,
-            }));
+            return Some(self.deferred_conditional(cond, check_type, extends_type));
         }
 
+        None
+    }
+
+    /// Re-intern `cond` as a deferred conditional carrying the *evaluated*
+    /// `check_type`/`extends_type` while preserving its original branches and
+    /// distributivity. Shared by the operand-deferral sites in this module so the
+    /// five-field reconstruction lives in one place.
+    fn deferred_conditional(
+        &self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> TypeId {
+        self.interner().conditional(ConditionalType {
+            check_type,
+            extends_type,
+            true_type: cond.true_type,
+            false_type: cond.false_type,
+            is_distributive: cond.is_distributive,
+        })
+    }
+
+    /// Defer a conditional whose evaluated CHECK type is an opaque, resolver-less
+    /// `Application`, instead of letting it vacuously take its true branch.
+    ///
+    /// A resolvable application evaluates to its structural form, so an
+    /// `Application` that *survives* evaluation in the check position is opaque:
+    /// the active resolver lacked the body needed to reduce it (e.g. a
+    /// distributive utility whose body could not expand because an inner
+    /// reference was still unresolved under this resolver — the
+    /// `resolver_generation()==0` / registration-window family). With no
+    /// structure to compare, the structural subtype walk degrades the opaque
+    /// application toward the bottom type, so `is_sub` is vacuously `true` and the
+    /// conditional collapses into its TRUE branch. That is the mechanism by which
+    /// the mapped key-remap `IsOptionalKeyOf<O, K> extends false ? never : K`
+    /// filters every key to `never`, leaving `RequiredKeysOf`/`OptionalKeysOf`
+    /// with the wrong key set and false-failing `TS2344` against a well-typed
+    /// default-options argument (#13609).
+    ///
+    /// The guard is gated on [`Self::unresolved_def_seen`] so it fires only in
+    /// that resolver-less window — a *generic* application whose base the resolver
+    /// can expand (deferred only pending instantiation) is left to the normal
+    /// branch logic, which is what keeps generic-call inference / higher-order
+    /// re-generalization unaffected. (The extends-side `Application` guard in
+    /// `conditional.rs` needs no such gate: it lives in the `is_sub == false`
+    /// branch where deferring is already the conservative choice, whereas this
+    /// check-side guard must override a vacuous `is_sub == true` and so requires
+    /// the resolver-less signal to tell that apart from a genuine match.) When it
+    /// does fire it mirrors that extends-side guard and the
+    /// bare-`UnresolvedTypeName` deferral: defer so a later resolver pass expands
+    /// the application and decides the branch, and
+    /// re-mark the unresolved-def event so neither this evaluator nor the
+    /// top-level evaluator that commits its results persists the resolver-less
+    /// branch into the substitution-independent / application caches (a cold pass
+    /// that left the application opaque must not shadow the answer a resolved pass
+    /// derives). The `TS2589` depth-detection pass is exempt: it intentionally
+    /// drives recursive alias bodies with their parameters left free.
+    ///
+    /// Returns `Some(deferred_conditional)` when the guard applies.
+    pub(super) fn defer_resolver_less_application_check(
+        &mut self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+        is_sub: bool,
+    ) -> Option<TypeId> {
+        if is_sub
+            && self.unresolved_def_seen()
+            && !self.is_depth_detection_pass()
+            && matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::Application(_))
+            )
+        {
+            self.mark_unresolved_def_seen();
+            return Some(self.deferred_conditional(cond, check_type, extends_type));
+        }
         None
     }
 
