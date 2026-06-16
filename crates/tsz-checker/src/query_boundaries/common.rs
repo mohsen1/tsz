@@ -953,6 +953,17 @@ pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::is_conditional_type(db, type_id)
 }
 
+/// Base constraint of a deferred conditional, computed as the union of its two
+/// branch results (tsc's `getBaseConstraintOfType` of a conditional). Used to
+/// validate an index-access key / assertion source against a deferred
+/// conditional without forcing the conditional itself.
+pub(crate) fn conditional_branch_union_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::conditional_branch_union_constraint(db, type_id)
+}
+
 pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_conditional_type(db, type_id)
         || is_index_access_type(db, type_id)

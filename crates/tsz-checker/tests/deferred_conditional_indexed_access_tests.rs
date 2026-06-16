@@ -1,174 +1,147 @@
-//! Indexed access / assertion-comparability into a deferred conditional base.
+//! Regression coverage for #13654: indexed access / assertion comparability on a
+//! deferred conditional base.
 //!
-//! Structural rule: when the object of an indexed access (or the source of an
-//! `as` assertion / comparability check) is a deferred conditional type, tsc
-//! resolves it through `getApparentType` to its default constraint — the union
-//! of the (inferred) true-branch and false-branch result types — and validates
-//! the key / assertion against that key space. tsz must do the same instead of
-//! emitting a false TS2536 / TS2352.
+//! Structural rule: when the base of an indexed access (or the source of an `as`
+//! / comparability check) is a *deferred conditional* (or a generic application
+//! whose body is a conditional with an unresolved check type), `tsc` validates
+//! the index key / assertion against `getBaseConstraintOfType` — the union of
+//! both branch result constraints. The conditional stays deferred so a later
+//! concrete instantiation still resolves to the selected branch; only the
+//! key/overlap *validation* uses the branch union.
 //!
-//! Regression coverage for #13654 (trpc `inferAsyncIterable`, tanstack-router
-//! `ParsePathParams` / `Matches.ts` comparability cast).
+//! Before the fix, the checker let a concrete-literal (or literal-union) index
+//! key defeat the deferred-object `TS2536` suppression, and the solver had no
+//! branch-union base constraint for a deferred conditional, so:
+//! - `C<T>['x']` emitted a false `TS2536`,
+//! - `Box<T>[keyof Box<T>] as string` emitted a false `TS2352`.
+//!
+//! Verified against `tsc` 6.0.3 (all positive cases exit 0; the missing-key and
+//! key-in-only-one-branch cases still report `TS2536`).
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::test_utils::{check_source, diagnostic_codes};
 
-fn check_es5(source: &str) -> Vec<Diagnostic> {
-    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
-    assert!(!lib_files.is_empty(), "es5.d.ts lib file not loaded");
-    tsz_checker::test_utils::check_source_with_libs(
-        source,
-        "test.ts",
-        CheckerOptions {
-            strict: true,
-            strict_null_checks: true,
-            ..CheckerOptions::default()
-        },
-        &lib_files,
-    )
+fn codes(source: &str) -> Vec<u32> {
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    diagnostic_codes(&check_source(source, "test.ts", options))
 }
 
-fn ts2536(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| d.code == 2536).collect()
+fn count(source: &str, code: u32) -> usize {
+    codes(source).into_iter().filter(|&c| c == code).count()
 }
 
-fn ts2352(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| d.code == 2352).collect()
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Indexed access into a deferred conditional (both branches are objects)
-// ──────────────────────────────────────────────────────────────────────────
+// ── Indexed access into a deferred conditional ──
 
 #[test]
-fn concrete_literal_index_into_deferred_conditional_no_ts2536() {
-    let diags = check_es5(
-        "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
-         type X<T> = C<T>['x'];",
-    );
-    assert!(
-        ts2536(&diags).is_empty(),
-        "C<T>['x'] where 'x' is a key of both branch results must not emit TS2536: {diags:?}"
-    );
+fn concrete_literal_index_into_deferred_conditional_is_valid() {
+    // 'x' is a key of both branch results, so it is a key of the branch-union
+    // base constraint `{ x: 1; y: 2 } | { x: 3; y: 4 }`.
+    let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
+               type X<T> = C<T>['x'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
 #[test]
-fn literal_union_index_into_deferred_conditional_no_ts2536() {
-    let diags = check_es5(
-        "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
-         type X<T> = C<T>['x' | 'y'];",
-    );
-    assert!(
-        ts2536(&diags).is_empty(),
-        "C<T>['x' | 'y'] where both keys are common to both branches must not emit TS2536: {diags:?}"
-    );
+fn literal_union_index_into_deferred_conditional_is_valid() {
+    let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
+               type X<T> = C<T>['x' | 'y'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// Anti-hardcoding: the binders are renamed; behavior must be identical.
 #[test]
-fn renamed_binders_no_ts2536() {
-    let diags = check_es5(
-        "type Pick0<Probe> = Probe extends string ? { aa: 1; bb: 2 } : { aa: 3; bb: 4 };\n\
-         type Out<Probe> = Pick0<Probe>['aa'];",
-    );
-    assert!(
-        ts2536(&diags).is_empty(),
-        "renamed-binder conditional indexed access must not emit TS2536: {diags:?}"
-    );
+fn renamed_binders_index_into_deferred_conditional_is_valid() {
+    // Binder names vary; the structural rule must not depend on identifiers.
+    let src = "type Cond<Foo> = Foo extends number ? { p: 'a' } : { p: 'b' };\n\
+               type Pick1<Bar> = Cond<Bar>['p'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// never false branch (trpc `inferAsyncIterable` shape)
-// ──────────────────────────────────────────────────────────────────────────
-
 #[test]
-fn never_false_branch_index_no_ts2536() {
-    let diags = check_es5(
-        "interface AIter<Y, R, N> { __y: Y; __r: R; __n: N }\n\
-         type Infer<T, Y, R, N> = T extends AIter<Y, R, N> ? { yield: Y; return: R; next: N } : never;\n\
-         type Yld<T, Y, R, N> = Infer<T, Y, R, N>['yield'];\n\
-         type Ret<T, Y, R, N> = Infer<T, Y, R, N>['return'];\n\
-         type Nxt<T, Y, R, N> = Infer<T, Y, R, N>['next'];",
-    );
-    assert!(
-        ts2536(&diags).is_empty(),
-        "indexing a deferred conditional with a `never` false branch must not emit TS2536: {diags:?}"
-    );
+fn non_distributive_conditional_index_is_valid() {
+    // `[T] extends [string]` is non-distributive; the branch-union rule still
+    // applies.
+    let src = "type C<T> = [T] extends [string] ? { x: 1 } : { x: 3 };\n\
+               type X<T> = C<T>['x'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Negative control — an out-of-range key must STILL emit TS2536
-// ──────────────────────────────────────────────────────────────────────────
-
 #[test]
-fn out_of_range_key_still_ts2536() {
-    let diags = check_es5(
-        "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
-         type Bad<T> = C<T>['z'];",
-    );
-    assert!(
-        !ts2536(&diags).is_empty(),
-        "C<T>['z'] where 'z' is not a key of either branch must still emit TS2536: {diags:?}"
-    );
+fn never_false_branch_infer_value_index_is_valid() {
+    // trpc `inferAsyncIterable` shape: false branch is `never`, true branch has
+    // `infer` value types. The key set is still concrete.
+    let src = "interface AIter<Y, R = any, N = any> { __y: Y; __r: R; __n: N }\n\
+               type Infer<T> = T extends AIter<infer Y, infer R, infer N> ? { yield: Y; return: R; next: N } : never;\n\
+               type Yld<T> = Infer<T>['yield'];\n\
+               type Ret<T> = Infer<T>['return'];\n\
+               type Nxt<T> = Infer<T>['next'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// A key present in only one branch is NOT a key of the apparent type (union),
-// so it must still error — matching tsc.
 #[test]
-fn key_in_only_one_branch_still_ts2536() {
-    let diags = check_es5(
-        "type C<T> = T extends string ? { x: 1; only: 2 } : { x: 3 };\n\
-         type Bad<T> = C<T>['only'];",
-    );
-    assert!(
-        !ts2536(&diags).is_empty(),
-        "a key present in only one branch must still emit TS2536: {diags:?}"
-    );
+fn recursive_conditional_index_is_valid() {
+    // tanstack-router `ParsePathParams` shape: recursive template-literal split
+    // chained through nested conditional false branches. The branch-union must
+    // flatten nested conditionals (bounded by the fuel guard) so `'param'`
+    // validates.
+    let src = "type ParsePathParams<T extends string> =\n\
+               T extends `${string}/$${infer Param}/${infer Rest}`\n\
+               ? { param: Param; rest: ParsePathParams<Rest> }\n\
+               : T extends `${string}/$${infer Param}`\n\
+               ? { param: Param; rest: never }\n\
+               : { param: never; rest: never };\n\
+               type FirstParam<T extends string> = ParsePathParams<T>['param'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// keyof-index control — must keep passing (no regression)
-// ──────────────────────────────────────────────────────────────────────────
-
 #[test]
-fn keyof_index_control_no_ts2536() {
-    let diags = check_es5(
-        "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
-         type K<T> = keyof C<T>;\n\
-         type M<T> = C<T>[keyof C<T>];",
-    );
-    assert!(
-        ts2536(&diags).is_empty(),
-        "keyof C<T> and C<T>[keyof C<T>] must not emit TS2536: {diags:?}"
-    );
+fn keyof_index_into_deferred_conditional_still_passes() {
+    // Control: `keyof C<T>` and `C<T>[keyof C<T>]` already exit 0; the fix must
+    // not regress this path.
+    let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
+               type K<T> = keyof C<T>;\n\
+               type ByKeyof<T> = C<T>[keyof C<T>];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Comparability / assertion (tanstack-router `Matches.ts:96` shape)
-// ──────────────────────────────────────────────────────────────────────────
+// ── Negative cases: the key must still be rejected when missing ──
 
-// The comparability/TS2352 sibling needs the *precise* apparent type of the
-// assertion source: tsc's `getInferredTrueTypeFromConditionalType` substitutes
-// the check type (`T := T & string`) and recursively reduces base constraints,
-// collapsing `Box<T>[keyof Box<T>]` to `string`. tsz's conditional default
-// constraint deliberately does not perform that instantiation (see
-// `conditional_default_constraint_from_data`), so it yields `{a:T}|{a:string}`
-// and the indexed-access value stays `T | string`, which does not overlap
-// `string`. Matching tsc here requires an instantiation-based inferred-true
-// computation in the solver and is tracked as follow-up to #13654; the
-// indexed-access TS2536 family (trpc, tanstack-router `ParsePathParams`) is the
-// scope of this change.
-#[ignore = "TS2352 comparability sub-case needs instantiation-based inferred-true type; follow-up to #13654"]
 #[test]
-fn assertion_out_of_deferred_conditional_no_ts2352() {
-    let diags = check_es5(
-        "type Box<T> = T extends string ? { a: T } : { a: string };\n\
-         type Member<T> = Box<T>[keyof Box<T>];\n\
-         export const h = <T>(v: Member<T>) => (v as string);",
-    );
-    assert!(
-        ts2352(&diags).is_empty(),
-        "casting a deferred-conditional indexed-access result whose constraint is string-domain \
-         to string must not emit TS2352: {diags:?}"
-    );
+fn missing_key_into_deferred_conditional_still_reports_ts2536() {
+    // 'z' is a key of neither branch result.
+    let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3; y: 4 };\n\
+               type Bad<T> = C<T>['z'];";
+    assert_eq!(count(src, 2536), 1, "TS2536 expected: {:?}", codes(src));
+}
+
+#[test]
+fn key_in_only_one_branch_still_reports_ts2536() {
+    // 'y' is in the true branch only; the union's key space (intersection of
+    // member keys) excludes it, matching tsc.
+    let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3 };\n\
+               type Partial1<T> = C<T>['y'];";
+    assert_eq!(count(src, 2536), 1, "TS2536 expected: {:?}", codes(src));
+}
+
+// ── Assertion / comparability over a deferred conditional ──
+
+#[test]
+fn assertion_of_deferred_conditional_indexed_result_is_valid() {
+    // tanstack-router `Matches.ts:96` shape: the indexed-access result of a
+    // deferred conditional is string-domain, so `as string` overlaps.
+    let src = "type Box<T> = T extends string ? { a: T } : { a: string };\n\
+               type Member<T> = Box<T>[keyof Box<T>];\n\
+               export const h = <T,>(v: Member<T>) => (v as string);";
+    assert_eq!(count(src, 2352), 0, "no TS2352 expected: {:?}", codes(src));
+}
+
+#[test]
+fn assertion_into_deferred_conditional_is_valid() {
+    // Casting-into sibling: the source object overlaps the deferred conditional's
+    // branch-union base constraint.
+    let src = "type Box<T> = T extends string ? { a: T } : { a: string };\n\
+               export const g = <T,>(b: Box<T>) => (b as { a: string });";
+    assert_eq!(count(src, 2352), 0, "no TS2352 expected: {:?}", codes(src));
 }

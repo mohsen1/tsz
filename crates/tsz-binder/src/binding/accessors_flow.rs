@@ -421,17 +421,48 @@ impl BinderState {
         }
     }
 
-    pub(crate) fn optional_chain_branch_base(&self) -> FlowNodeId {
+    pub(crate) fn optional_chain_branch_base(
+        &self,
+        arena: &NodeArena,
+        chain_idx: NodeIndex,
+    ) -> FlowNodeId {
         let current = self.current_flow;
         let Some(flow) = self.flow_nodes.get(current) else {
             return current;
         };
+        // Only unwind a present-condition that belongs to THIS optional chain.
+        // Each optional-chain link installs its present condition referencing one
+        // of the chain's own sub-expressions, so that condition's `node` lies
+        // within the chain expression's source span. A `TRUE_CONDITION` whose
+        // node falls outside the chain — e.g. an enclosing
+        // `if (typeof prop === "string")` guard whose then-branch the chain
+        // begins in — is not a chain link, and unwinding it would strip that
+        // guard's narrowing from the arguments/indices evaluated inside the
+        // chain (the source of the optional-chain argument false positives).
         if (flow.flags & flow_flags::TRUE_CONDITION) != 0
             && let Some(&antecedent) = flow.antecedent.first()
             && antecedent.is_some()
+            && Self::flow_condition_within_chain_span(arena, flow.node, chain_idx)
         {
             return antecedent;
         }
         current
+    }
+
+    /// True when `cond_node` (the expression a present-condition flow node was
+    /// created for) lies within the source span of `chain_idx`, i.e. it is one
+    /// of the optional chain's own sub-expressions rather than an enclosing
+    /// condition.
+    fn flow_condition_within_chain_span(
+        arena: &NodeArena,
+        cond_node: NodeIndex,
+        chain_idx: NodeIndex,
+    ) -> bool {
+        // `arena.get` returns `None` for the `NodeIndex::NONE` sentinel, so an
+        // absent condition node falls through to `false` without a separate guard.
+        let (Some(cond), Some(chain)) = (arena.get(cond_node), arena.get(chain_idx)) else {
+            return false;
+        };
+        cond.pos >= chain.pos && cond.end <= chain.end
     }
 }

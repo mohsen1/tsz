@@ -1772,3 +1772,75 @@ fn test_correlated_union_index_access_assignable() {
     assert!(!checker.is_assignable(index_access, TypeId::NUMBER));
 }
 
+/// A function value is assignable to a callable-&-weak-object intersection
+/// (e.g. zustand's `StateCreator = ((...) => U) & { $$storeMutators?: Mos }`):
+/// the function satisfies the callable member and the all-optional ("weak")
+/// object member structurally. `tsc` accepts this; the standalone weak-object
+/// assignment must still be rejected (TS2559), and a *required* object member
+/// must still fail. Binder names are varied so the rule depends only on type
+/// structure, never on an identifier string. Regression for #13650 (Face 1).
+#[test]
+fn function_assignable_to_callable_and_weak_object_intersection() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let make_fn = |ret: TypeId| {
+        interner.function(FunctionShape {
+            params: vec![],
+            this_type: None,
+            return_type: ret,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+    let fn_void = make_fn(TypeId::VOID);
+
+    for prop_name in ["brand", "$$storeMutators", "tag"] {
+        let atom = interner.intern_string(prop_name);
+        let weak_obj = interner.object(vec![PropertyInfo::opt(atom, TypeId::NUMBER)]);
+        let callable_and_weak = interner.intersection(vec![fn_void, weak_obj]);
+
+        // Face 1: a function IS assignable to (callable & weak-object).
+        assert!(
+            checker.is_assignable(fn_void, callable_and_weak),
+            "function should be assignable to (() => void) & {{ {prop_name}? }}",
+        );
+
+        // Standalone weak object stays a TS2559 weak-type violation.
+        assert!(
+            !checker.is_assignable(fn_void, weak_obj),
+            "function must NOT be assignable to the standalone weak object {{ {prop_name}? }}",
+        );
+        assert!(
+            checker.is_weak_union_violation(fn_void, weak_obj),
+            "standalone weak object {{ {prop_name}? }} must report a weak-type violation",
+        );
+
+        // A *required* object member still fails (missing property).
+        let required_obj = interner.object(vec![PropertyInfo::new(atom, TypeId::NUMBER)]);
+        let callable_and_required = interner.intersection(vec![fn_void, required_obj]);
+        assert!(
+            !checker.is_assignable(fn_void, callable_and_required),
+            "function must NOT satisfy a required member {{ {prop_name}: number }}",
+        );
+
+        // A *union* whose only weak member is the all-optional object must NOT
+        // accept the function: `tsc` applies the weak-type rule per union member,
+        // so a function (which structurally exposes only `call`/`apply`) shares no
+        // property name with `{ prop? }` and is rejected. The standalone-weak
+        // suppression that lets the *intersection* member pass (Face 1) must not
+        // leak into the union-member path. Regression for #13650 follow-up
+        // (errorsWithInvokablesInUnions01).
+        let other_obj = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("required_marker"),
+            TypeId::STRING,
+        )]);
+        let union_with_weak = interner.union(vec![other_obj, weak_obj]);
+        assert!(
+            !checker.is_assignable(fn_void, union_with_weak),
+            "function must NOT be assignable to a union whose weak member is {{ {prop_name}? }}",
+        );
+    }
+}
