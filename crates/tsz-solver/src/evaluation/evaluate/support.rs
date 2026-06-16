@@ -833,6 +833,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Vec::new()
             };
 
+        // Union subtype reduction only removes a member that is structured or
+        // instantiable, or — when the union contains an empty object type — any
+        // member subsumed by that empty object. This mirrors tsc's
+        // `removeSubtypes`, which gates removal on
+        // `hasEmptyObject || source.flags & StructuredOrInstantiable`: a bare
+        // primitive keyword (`boolean`, `number`, `string`, …) vacuously
+        // satisfies a weak (all-optional) object member structurally, but tsc
+        // never drops it via that subsumption. Literal members are still removed
+        // here because tsz folds tsc's separate literal-absorption pass
+        // (`"a" | string` → `string`) into this loop; literals are recognized
+        // below and stay removable. `has_empty_object` is only consulted in the
+        // union direction; intersection simplification keeps its own rules.
+        let has_empty_object = matches!(direction, SubtypeDirection::SourceSubsumedByOther)
+            && members.iter().any(|&id| {
+                crate::visitors::visitor_predicates::is_empty_object_type(self.interner, id)
+            });
+
         // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
         // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
         let len = members.len();
@@ -841,6 +858,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if keep & (1u32 << i) == 0 {
                 continue;
             }
+            // Union subtype-removal eligibility depends only on `members[i]`
+            // (structured/instantiable, or any member when the union holds an
+            // empty object — a bare primitive keyword is kept even when it
+            // structurally satisfies a weak object sibling). Compute it once per
+            // `i` instead of per `(i, j)`. Intersection simplification does not
+            // consult it, so the `matches!` short-circuits the helper away.
+            let union_candidate_removable =
+                matches!(direction, SubtypeDirection::SourceSubsumedByOther)
+                    && Self::union_member_removable_as_subtype(
+                        self.interner,
+                        members[i],
+                        has_empty_object,
+                    );
             for j in 0..len {
                 if i == j || keep & (1u32 << j) == 0 {
                     continue;
@@ -851,7 +881,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
-                        checker.is_subtype_of(members[i], members[j])
+                        union_candidate_removable
+                            && checker.is_subtype_of(members[i], members[j])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             // Don't remove a member with an index signature when the
                             // subsuming member lacks one. The index signature carries
@@ -970,6 +1001,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true; // Candidate has properties but subsuming doesn't
         };
         candidate.iter().any(|name| !subsuming.contains(name))
+    }
+
+    /// Decide whether a union member may be dropped by subtype reduction when a
+    /// sibling member structurally subsumes it.
+    ///
+    /// Mirrors the eligibility gate in tsc's `removeSubtypes`
+    /// (`hasEmptyObject || source.flags & StructuredOrInstantiable`):
+    /// - Object / intersection / instantiable members (anything that is not a
+    ///   bare intrinsic keyword) are eligible — `{ a; b } | { a }` reduces to
+    ///   `{ a }`, `T | { a }` reduces when `T <: { a }`, etc.
+    /// - Literal members stay eligible because tsz folds tsc's separate literal
+    ///   absorption pass (`"a" | string` → `string`, `1 | number` → `number`)
+    ///   into this same loop.
+    /// - A bare primitive keyword (`boolean`, `number`, `string`, `symbol`,
+    ///   `bigint`, `void`, `null`, `undefined`, `object`, …) is NOT eligible:
+    ///   it vacuously satisfies a weak (all-optional) object member
+    ///   structurally, yet tsc keeps it in the union (`boolean | { x?: T }`
+    ///   stays a union). The sole exception is `has_empty_object`: when the
+    ///   union literally contains an empty object type, everything it subsumes
+    ///   is collapsed into it (`boolean | {}` → `{}`), matching tsc.
+    fn union_member_removable_as_subtype(
+        db: &dyn crate::caches::db::TypeDatabase,
+        member: TypeId,
+        has_empty_object: bool,
+    ) -> bool {
+        if has_empty_object {
+            return true;
+        }
+        if crate::visitors::visitor_predicates::is_literal_type(db, member) {
+            return true;
+        }
+        // Reserved intrinsic TypeIds (`boolean`, `number`, `string`, `object`,
+        // …) are bare keyword types and stay protected. They are checked
+        // explicitly because they do not always resolve through `lookup`.
+        if member.is_intrinsic() {
+            return false;
+        }
+        // Bare intrinsic keyword types (non-literal) are protected from
+        // object-subsumption removal; structured/instantiable members are not.
+        !crate::visitors::visitor_predicates::is_intrinsic_or_literal_type(db, member)
     }
 
     /// Check whether a (candidate, subsuming) pair forms the branded-primitive
