@@ -365,6 +365,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         ignore_union_origins: bool,
     ) -> String {
+        // Unique builder chain: pairs optional-parameter surface syntax with the
+        // conditional `with_ignore_union_origins()` policy below — no shared factory.
         let mut formatter =
             tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
                 .with_def_store(&self.ctx.definition_store)
