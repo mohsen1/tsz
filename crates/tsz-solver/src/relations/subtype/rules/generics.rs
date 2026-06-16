@@ -738,6 +738,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 family_via_forwarding = true;
                 canonical
             } else {
+                // Acceptance-only pass-through type-alias unification for the
+                // permissive `any`-argument shortcut (e.g. `Async<any>` vs
+                // `Promise<X>` where `Async<T> = Promise<T>`); see
+                // `try_pass_through_alias_any_unification`. Any other shape
+                // falls through to the historical structural path unchanged.
+                if let Some(result) =
+                    self.try_pass_through_alias_any_unification(&s_app, &t_app, s_def, t_def)
+                {
+                    return Some(result);
+                }
                 return None;
             }
         };
