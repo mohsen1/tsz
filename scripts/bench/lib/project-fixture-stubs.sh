@@ -969,3 +969,55 @@ declare namespace NodeJS {
 declare var global: any;
 TYPES
 }
+
+tsz_write_ofetch_external_stubs() {
+  # ofetch's real tsconfig sets `"types": ["node"]`, so its upstream build sees
+  # the node typings and the `undici` peer dependency. The shared bench baseline
+  # pins `"types": []` and the fixture clone runs no npm install, so without a
+  # stub tsc emits five spurious diagnostics, all from absent ambient typings
+  # rather than ofetch's own source:
+  #   * src/types.ts imports `undici` for `InstanceType<typeof
+  #     import("undici").Dispatcher>` -> TS2307 "Cannot find module 'undici'".
+  #   * src/fetch.ts imports `node:stream` for the `Readable` body cast ->
+  #     TS2591 "Cannot find name 'node:stream'".
+  #   * src/fetch.ts annotates `let abortTimeout: NodeJS.Timeout` -> TS2503
+  #     "Cannot find namespace 'NodeJS'".
+  #   * src/fetch.ts guards `Error.captureStackTrace` (a V8/@types/node global
+  #     augmentation) -> TS2339 "Property 'captureStackTrace' does not exist on
+  #     type 'ErrorConstructor'".
+  # Mirror the trpc/type-graphql stub convention: provide named ambient
+  # any-modules for the external deps plus the node global augmentations the
+  # @types/node-backed build would supply. `Dispatcher` is a class so the
+  # `typeof ... ` + `InstanceType<...>` resolves; `Readable` carries the `.pipe`
+  # member the source casts to. ofetch's own `./*.ts` source stays real-checked.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare module 'undici' {
+  // ofetch reads `InstanceType<typeof import("undici").Dispatcher>`, so the
+  // export must be a constructable value (a class) rather than bare `any`.
+  export class Dispatcher {
+    [key: string]: any;
+  }
+}
+
+declare module 'node:stream' {
+  // ofetch casts a request body to `Readable` and reads `.pipe`; an interface
+  // with the referenced member resolves the cast without unmasking unrelated
+  // assignability diffs.
+  export interface Readable {
+    pipe(...args: any[]): any;
+    [key: string]: any;
+  }
+}
+
+declare namespace NodeJS {
+  type Timeout = any;
+}
+
+interface ErrorConstructor {
+  captureStackTrace?(targetObject: object, constructorOpt?: Function): void;
+}
+TYPES
+}
