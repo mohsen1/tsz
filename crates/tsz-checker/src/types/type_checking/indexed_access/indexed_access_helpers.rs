@@ -152,6 +152,66 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    /// Only suppresses TS2536 when the base of the indexed access is a type parameter
+    /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
+    /// (e.g., `DataFetchFns[T]` where `DataFetchFns` is a known type).
+    pub(crate) fn is_deferred_indexed_access_object(&self, ty: TypeId) -> bool {
+        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
+            return false;
+        }
+        if let Some((base, _index)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
+        {
+            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
+        }
+        false
+    }
+
+    /// Whether a `keyof` result is a concrete key space rather than a still-deferred
+    /// `keyof`. Used to decide whether a deferred conditional's apparent constraint
+    /// has a usable key space for indexed-access validation. `evaluate_keyof` only
+    /// leaves a deferred operator (its `Conditional` arm re-wraps as `KeyOf`, never
+    /// a bare conditional/application), so guarding `ERROR`/`ANY`/`KeyOf` suffices.
+    fn indexed_access_key_space_is_resolved(&self, keyof_result: TypeId) -> bool {
+        !(keyof_result == TypeId::ERROR
+            || keyof_result == TypeId::ANY
+            || crate::query_boundaries::common::is_keyof_type(self.ctx.types, keyof_result))
+    }
+
+    /// Whether `object_type` is a deferred conditional whose apparent type (tsc's
+    /// `getDefaultConstraintOfConditionalType` — the union of branch results) has
+    /// a concrete key space that admits the index key. Mirrors tsc's
+    /// `getApparentType` resolution in `checkIndexedAccessIndexType`. Returns
+    /// `false` (so normal validation/error paths proceed) when the object is not
+    /// a deferred conditional, the constraint is unresolved, or the key is not in
+    /// the constraint's key space.
+    pub(crate) fn deferred_conditional_index_is_in_key_space(
+        &mut self,
+        object_type: TypeId,
+        index_type_for_check: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(constraint) = crate::query_boundaries::common::conditional_default_constraint(
+            self.ctx.types,
+            object_type,
+        ) else {
+            return false;
+        };
+        let evaluated_constraint = self.evaluate_type_with_env(constraint);
+        if evaluated_constraint == TypeId::ERROR || evaluated_constraint == TypeId::ANY {
+            return false;
+        }
+        let keyof = self.ctx.types.evaluate_keyof(evaluated_constraint);
+        if !self.indexed_access_key_space_is_resolved(keyof) {
+            return false;
+        }
+        self.indexed_access_key_space_relation_outcome(index_type_for_check, keyof)
+            .related
+            || self
+                .indexed_access_key_space_relation_outcome(index_type, keyof)
+                .related
+    }
+
     /// TS4105: Emit "Private or protected member '{name}' cannot be accessed on
     /// a type parameter." for each type-parameter portion of `object_type` whose
     /// constraint has a non-public property with the given `name`.

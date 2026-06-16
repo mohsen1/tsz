@@ -1199,17 +1199,46 @@ pub fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) 
     })
 }
 
+/// `Never`-only content predicate plus its dedicated project-wide cache slot.
+struct NeverPredicate;
+impl ContentPredicate for NeverPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::Intrinsic(IntrinsicKind::Never))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_never_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_never_cache(type_id, result);
+    }
+}
+
 /// Check if a type contains the `never` intrinsic.
 ///
-/// Delegates to `visitor_predicates::contains_type_matching` with a `Never`-only
-/// predicate, plus a fast path for the well-known `TypeId::NEVER`.
+/// `never` containment is a purely structural question over the immutable
+/// interned type (it matches the bare `Intrinsic(Never)` leaf), so the deep
+/// walk over the [`ChildPolicy::CONTENT_PREDICATE`] surface is memoized
+/// project-wide in the [`ContainsNever`] cache slot exactly like the sibling
+/// `Contains*` predicates. This collapses the per-property-access `never`-receiver
+/// gate from O(receiver-members) to amortized O(1) — the difference between an
+/// O(N^2) and O(N) sweep of an N-member class with N `this.x` accesses
+/// (#13097 slope, parent #13250). The cached walker uses the same child set as
+/// the prior `contains_type_matching` walk, so the answer is byte-identical;
+/// only provisional cycle-break results are withheld from the cache.
+///
+/// [`ChildPolicy::CONTENT_PREDICATE`]:
+///     crate::visitors::child_policy::ChildPolicy::CONTENT_PREDICATE
+/// [`ContainsNever`]: crate::intern::core::interner::PredicateCacheKind::ContainsNever
 pub fn contains_never_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER {
         return true;
     }
-    contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::Intrinsic(IntrinsicKind::Never))
-    })
+    if type_id.is_intrinsic() {
+        // No non-`never` intrinsic contains `never`; the `NEVER` fast path
+        // above already handled the one that does.
+        return false;
+    }
+    contains_content_cached(db, type_id, &NeverPredicate)
 }
 
 /// Check whether a type is "deeply any" — i.e. `any` itself, or a composite

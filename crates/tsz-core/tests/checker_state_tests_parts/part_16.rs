@@ -366,6 +366,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             sound_check_declarations: false,
             sound_report_only: false,
             sound_pedantic: false,
+            sound_declaration_projection: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,

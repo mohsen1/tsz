@@ -17,11 +17,35 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::DefId;
 
+/// An entry on the cross-arena alias-resolution stack: either a type-alias
+/// `DefId` actively being resolved, or a class/interface instance-type
+/// resolution boundary.
+///
+/// The boundary matters for cycle classification. A genuine TS2456 cross-file
+/// alias cycle (`type A = B` in one module, `type B = A` in another) re-enters
+/// an alias `DefId` directly through alias-body resolution. By contrast, a
+/// generic alias such as `type Result<T,E> = Ok<T,E> | Err<T,E>` whose union
+/// members are classes that (transitively, cross-arena) reference the alias in
+/// their method signatures is NOT circular per tsc: the class instance types
+/// defer, breaking the cycle. Those re-entries reach the alias `DefId` only
+/// *through* a class instance-type resolution. Recording the class boundary lets
+/// [`CheckerState::mark_cross_arena_alias_cycle`] distinguish the two: a re-entry
+/// whose path crosses a class boundary is structurally valid recursion, not an
+/// alias cycle, so it is not marked circular (which would otherwise collapse the
+/// alias to `ERROR` at cross-file references; see
+/// `type_reference_alias_collapsed_to_error`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CrossArenaAliasEntry {
+    Alias(DefId),
+    ClassBoundary,
+}
+
 thread_local! {
-    /// Stack of type-alias `DefId`s currently being resolved through cross-arena
-    /// delegation, in entry order. Thread-local because each file is checked on
-    /// a single worker thread and the delegation recursion stays on that thread.
-    static CROSS_ARENA_ALIAS_STACK: std::cell::RefCell<Vec<DefId>> =
+    /// Stack of cross-arena alias-resolution entries (aliases and class
+    /// boundaries) currently active through cross-arena delegation, in entry
+    /// order. Thread-local because each file is checked on a single worker
+    /// thread and the delegation recursion stays on that thread.
+    static CROSS_ARENA_ALIAS_STACK: std::cell::RefCell<Vec<CrossArenaAliasEntry>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -38,7 +62,8 @@ pub(crate) fn reset_cross_arena_alias_stack() {
 
 #[cfg(test)]
 pub(crate) fn push_cross_arena_alias_for_test(def_id: DefId) {
-    CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().push(def_id));
+    CROSS_ARENA_ALIAS_STACK
+        .with(|stack| stack.borrow_mut().push(CrossArenaAliasEntry::Alias(def_id)));
 }
 
 #[cfg(test)]
@@ -64,7 +89,19 @@ impl<'a> CheckerState<'a> {
     /// the duration of a cross-file delegation; the returned guard pops it on
     /// drop.
     pub(crate) fn enter_cross_arena_alias(def_id: DefId) -> CrossArenaAliasGuard {
-        CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().push(def_id));
+        CROSS_ARENA_ALIAS_STACK
+            .with(|stack| stack.borrow_mut().push(CrossArenaAliasEntry::Alias(def_id)));
+        CrossArenaAliasGuard
+    }
+
+    /// Push a class/interface instance-type resolution boundary onto the
+    /// cross-arena alias-resolution stack for the duration of a cross-file class
+    /// instance-type delegation; the returned guard pops it on drop. A re-entry
+    /// of an alias `DefId` reached through this boundary defers like tsc and is
+    /// not a TS2456 cycle (see [`CrossArenaAliasEntry`]).
+    pub(crate) fn enter_cross_arena_class_boundary() -> CrossArenaAliasGuard {
+        CROSS_ARENA_ALIAS_STACK
+            .with(|stack| stack.borrow_mut().push(CrossArenaAliasEntry::ClassBoundary));
         CrossArenaAliasGuard
     }
 
@@ -82,21 +119,39 @@ impl<'a> CheckerState<'a> {
             .filter(|def_id| *def_id != DefId::INVALID)
     }
 
-    /// If `def_id` is already on the active cross-arena alias stack, the alias
-    /// chain is circular: mark every member of the cycle (from that entry to the
-    /// top of the stack) circular in the shared `DefinitionStore`. A no-op when
-    /// there is no cycle. Marking only enables the per-file TS2456 post-pass; it
-    /// does not change type resolution, so a legitimately recursive (non-cyclic
-    /// per tsc) alias is unaffected — its own file never owns a circular member.
+    /// If `def_id` is already on the active cross-arena alias stack AND no class
+    /// instance-type boundary intervenes between that entry and the top of the
+    /// stack, the alias chain is a genuine TS2456 cycle: mark every alias member
+    /// of the cycle circular in the shared `DefinitionStore`. A no-op when there
+    /// is no cycle, or when the re-entry path crossed a class boundary (the class
+    /// instance type defers like tsc, so the recursion is structurally valid —
+    /// e.g. `type Result<T,E> = Ok<T,E> | Err<T,E>` whose members reference the
+    /// alias only through their class method signatures). Marking only enables
+    /// the per-file TS2456 post-pass; it does not change type resolution, so a
+    /// legitimately recursive (non-cyclic per tsc) alias is unaffected.
     pub(crate) fn mark_cross_arena_alias_cycle(&mut self, def_id: DefId) {
-        let cycle_members = CROSS_ARENA_ALIAS_STACK.with(|stack| {
+        let cycle_aliases = CROSS_ARENA_ALIAS_STACK.with(|stack| {
             let stack = stack.borrow();
-            stack
+            let start = stack
                 .iter()
-                .position(|&d| d == def_id)
-                .map(|idx| stack[idx..].to_vec())
+                .position(|&e| e == CrossArenaAliasEntry::Alias(def_id))?;
+            // A class instance-type resolution between the matched alias and the
+            // current re-entry breaks the alias cycle (tsc defers class types).
+            // Only an uninterrupted alias-to-alias chain is a TS2456 cycle.
+            if stack[start..].contains(&CrossArenaAliasEntry::ClassBoundary) {
+                return None;
+            }
+            Some(
+                stack[start..]
+                    .iter()
+                    .filter_map(|&e| match e {
+                        CrossArenaAliasEntry::Alias(d) => Some(d),
+                        CrossArenaAliasEntry::ClassBoundary => None,
+                    })
+                    .collect::<Vec<_>>(),
+            )
         });
-        if let Some(members) = cycle_members {
+        if let Some(members) = cycle_aliases {
             for member in members {
                 self.ctx.definition_store.mark_circular_def(member);
             }

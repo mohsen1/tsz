@@ -135,6 +135,9 @@ path = "tests/large_union_conditional_distribution_tests.rs"
 name = "union_protected_intersection_property_tests"
 path = "tests/union_protected_intersection_property_tests.rs"
 [[test]]
+name = "weak_object_union_member_subtype_reduction_tests"
+path = "tests/weak_object_union_member_subtype_reduction_tests.rs"
+[[test]]
 name = "tuple_element_mismatch_tests"
 path = "tests/tuple_element_mismatch_tests.rs"
 [[test]]
@@ -1650,6 +1653,9 @@ path = "tests/operator_literal_annotation_widen_tests.rs"
 [[test]]
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
+[[test]]
+name = "flow_call_divert_memoization_tests"
+path = "tests/flow_call_divert_memoization_tests.rs"
 [[test]]
 name = "flow_captured_let_memoization_tests"
 path = "tests/flow_captured_let_memoization_tests.rs"

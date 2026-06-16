@@ -451,154 +451,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Compute the default constraint of a conditional type.
+    /// Compute the default constraint of a deferred conditional type.
     ///
-    /// For `T extends U ? X : Y`, the default constraint is:
-    ///   `X[T := T & U] | Y`
-    ///
-    /// where `X[T := T & U]` means the true branch with the check type
-    /// replaced by the intersection of `check_type` and `extends_type`.
-    /// This is tsc's "inferred true type" computation.
-    ///
-    /// Currently handles these patterns:
-    /// - `T extends U ? T : Y` → `(T & U) | Y` (Extract pattern)
-    /// - Other patterns: returns the general `X | Y` union
+    /// Delegates to the shared [`crate::type_queries::conditional_default_constraint_from_data`]
+    /// query (tsc's `getDefaultConstraintOfConditionalType`): for
+    /// `T extends U ? X : Y` it yields `X[T := T & U] | Y`, handling the
+    /// Extract-style patterns (`T extends U ? T : Y` and nested Extract chains)
+    /// without full instantiation. Returns `None` when the conditional is not
+    /// deferred (neither operand contains type parameters).
     fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
-        // Compute the default constraint for deferred conditional types.
-        //
-        // Deferred conditionals arise when:
-        // - The check_type contains type parameters (T extends U ? X : Y)
-        // - The extends_type contains type parameters (X extends T ? X : Y)
-        // In either case the evaluator cannot pick a branch and the conditional
-        // remains deferred, so we need a constraint for assignability checks.
-        let is_check_type_param = matches!(
-            self.interner.lookup(cond.check_type),
-            Some(TypeData::TypeParameter(_))
-        );
-
-        let check_has_params = is_check_type_param
-            || crate::visitor::contains_type_parameters(self.interner, cond.check_type);
-        let extends_has_params =
-            crate::visitor::contains_type_parameters(self.interner, cond.extends_type);
-
-        // If neither check_type nor extends_type contains type parameters,
-        // the evaluator would have already picked a branch — no constraint needed.
-        if !check_has_params && !extends_has_params {
-            return None;
-        }
-
-        // Compute the "inferred true type": the true branch with the check type
-        // replaced by check_type & extends_type.
-        //
-        // tsc uses full instantiation (replaceTypes) to substitute check_type
-        // with check_type & extends_type throughout the true branch. We can't do
-        // full instantiation in the subtype checker, but we handle common patterns:
-        //
-        // 1. Extract-like: `T extends U ? T : Y` → inferred true = T & U
-        // 2. Nested Extract: `T extends U ? (T extends V ? T : never) : never`
-        //    → recursively compute inner constraint (T & V), then intersect with U
-        //    → result: T & U & V
-        let inferred_true = if cond.true_type == cond.check_type {
-            // Extract-like pattern: X extends U ? X : Y
-            // Inferred true = X & U
-            // This covers both:
-            // - Distributive: T extends U ? T : never (check_type is type param)
-            // - Non-distributive: string[] extends T ? string[] : never (extends_type is type param)
-            self.interner
-                .intersection2(cond.check_type, cond.extends_type)
-        } else if is_check_type_param {
-            // Check_type is a bare type parameter. The true branch might be:
-            // (a) A nested conditional with the same check_type (Extract2 pattern)
-            // (b) Some other type referencing check_type
-            if let Some(inner_constraint) =
-                self.get_nested_conditional_constraint(cond.true_type, cond.check_type)
-            {
-                // Nested conditional with same check_type.
-                // Inner constraint represents the constraint from inner conditionals
-                // (e.g., T & Bar for `T extends Bar ? T : never`).
-                // Intersect with outer extends_type to combine all constraints.
-                // For `T extends Foo ? (T extends Bar ? T : never) : never`:
-                //   inner_constraint = T & Bar, result = T & Foo & Bar
-                self.interner
-                    .intersection2(inner_constraint, cond.extends_type)
-            } else if self.type_references_check_type(cond.true_type, cond.check_type) {
-                // True branch references check_type but isn't identical to it
-                // and isn't a nested conditional we can handle.
-                // We can't do full instantiation in the subtype checker, so
-                // fall back to using the true type as-is (less precise but safe).
-                cond.true_type
-            } else {
-                cond.true_type
-            }
-        } else {
-            // True branch doesn't reference check_type at all, or check_type
-            // is a complex generic type (not a type parameter).
-            // Inferred true = X (unchanged).
-            cond.true_type
-        };
-
-        // Default constraint: matches tsc's getDefaultConstraintOfConditionalType.
-        // When either branch is `any`, tsc returns just the inferred true type
-        // to avoid collapsing the constraint to `any` (since `X | any = any`).
-        // This preserves the type information needed for proper assignability checks.
-        let constraint = if inferred_true == TypeId::ANY || cond.false_type == TypeId::ANY {
-            inferred_true
-        } else {
-            self.interner.union2(inferred_true, cond.false_type)
-        };
-        Some(constraint)
-    }
-
-    /// Check if a type references the given `check_type` (a type parameter).
-    /// Used to determine if the true branch needs substitution.
-    fn type_references_check_type(&self, ty: TypeId, check_type: TypeId) -> bool {
-        if ty == check_type {
-            return true;
-        }
-        if ty.is_intrinsic() {
-            return false;
-        }
-        // Check common wrapper types that might contain the check type
-        match self.interner.lookup(ty) {
-            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
-                let member_list = self.interner.type_list(members);
-                member_list.contains(&check_type)
-            }
-            _ => false,
-        }
-    }
-
-    /// Try to compute a constraint for a nested conditional with the same `check_type`.
-    ///
-    /// If `ty` is a `Conditional` whose `check_type` equals `outer_check_type`,
-    /// recursively compute its default constraint (which may itself recurse for
-    /// deeper nesting). Returns `None` if `ty` is not a matching conditional.
-    ///
-    /// This handles the Extract2 pattern and similar nested Extract chains:
-    /// ```text
-    /// type Extract2<T, U, V> = T extends U ? T extends V ? T : never : never;
-    /// // Outer: T extends U ? <inner> : never
-    /// // Inner: T extends V ? T : never
-    /// // Inner constraint: T & V
-    /// // Outer constraint: (T & V) & U = T & U & V
-    /// ```
-    fn get_nested_conditional_constraint(
-        &self,
-        ty: TypeId,
-        outer_check_type: TypeId,
-    ) -> Option<TypeId> {
-        if ty.is_intrinsic() {
-            return None;
-        }
-        if let Some(TypeData::Conditional(inner_cond_id)) = self.interner.lookup(ty) {
-            let inner = self.interner.conditional_type(inner_cond_id);
-            if inner.check_type == outer_check_type {
-                // Same check_type — compute the inner conditional's constraint.
-                // This recurses for arbitrary depth of nesting.
-                return self.get_conditional_constraint(&inner);
-            }
-        }
-        None
+        crate::type_queries::conditional_default_constraint_from_data(self.interner, cond)
     }
 
     /// Check if source is a subtype of a conditional type target.

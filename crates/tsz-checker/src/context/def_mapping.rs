@@ -905,7 +905,16 @@ impl<'a> CheckerContext<'a> {
         let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.definition_store.set_body(def_id, body);
         if body_changed {
-            if !body_seen_before {
+            // First publication (`None -> Some`) needs no env-eval/narrowing
+            // sweep, for the same reason `invalidate_application_evals_on_body_rewrite`
+            // skips it: no cached entry can reference `def_id` before it had a
+            // resolvable body (the solver refuses to persist results computed
+            // against an unresolved def, `mark_unresolved_def_seen`). Sweeping
+            // on every first registration is `O(env_eval_cache)` per def, which
+            // is `O(N^2)` across a file of `N` aliases whose closed-but-deferred
+            // bodies (e.g. `Uppercase<"..">`) each seed one new cache entry. Gate
+            // the sweep on a genuine rewrite (`Some(old) -> Some(new)`).
+            if !body_seen_before && prev_body.is_some() {
                 self.clear_type_evaluation_caches_for_def(def_id);
             }
             self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
@@ -967,7 +976,14 @@ impl<'a> CheckerContext<'a> {
         let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.definition_store
             .set_body_with_params(def_id, body, Some(params.clone()));
-        if (body_changed && !body_seen_before) || params_changed {
+        // First publication (`prev_body == None`) needs no sweep: no cached
+        // entry can reference `def_id` before it had a resolvable body (see
+        // `register_def_in_envs` and `invalidate_application_evals_on_body_rewrite`).
+        // A params-only change without a prior body cannot occur — params are
+        // published atomically with the body — so gating on `prev_body.is_some()`
+        // preserves every genuine-rewrite sweep while removing the per-first-
+        // registration `O(env_eval_cache)` scan that is `O(N^2)` across a file.
+        if prev_body.is_some() && ((body_changed && !body_seen_before) || params_changed) {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
         if body_changed {

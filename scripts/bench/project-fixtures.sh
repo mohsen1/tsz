@@ -17,6 +17,13 @@ fi
 
 TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/project-rows.mjs"
 
+# External-module stub writers (drizzle/ts-rest/trpc/zustand/jotai/type-graphql)
+# live in a sourced lib to keep this file under the 2000-line shard ceiling.
+# Source after TSZ_PROJECT_FIXTURES_ROOT is resolved and before the *_config
+# functions that call the stub writers are invoked.
+# shellcheck source=lib/project-fixture-stubs.sh
+source "$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/lib/project-fixture-stubs.sh"
+
 # Canonical project row groups for runners that share fixture handling.
 # Keep row names here aligned with the project-corpus workflows.
 TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
@@ -699,576 +706,6 @@ tsz_write_effect_config() {
   tsz_write_basic_external_project_config "$1" "packages/effect/src"
 }
 
-tsz_write_drizzle_orm_external_stubs() {
-  local output="$1"
-  local fixture_dir
-  fixture_dir="$(dirname "$output")"
-
-  mkdir -p \
-    "$fixture_dir/node_modules/@cloudflare/workers-types" \
-    "$fixture_dir/node_modules/bun-types"
-
-  cat > "$fixture_dir/tsz-bench-external-module.d.ts" <<'TYPES'
-declare const tszBenchExternalModule: any;
-export = tszBenchExternalModule;
-TYPES
-
-  cat > "$fixture_dir/tsz-bench-external-named-modules.d.ts" <<'TYPES'
-type Buffer = any;
-declare const Buffer: {
-  isBuffer(value: unknown): boolean;
-  compare(left: unknown, right: unknown): number;
-  from(value: unknown, encoding?: string): Buffer;
-};
-
-interface ErrorConstructor {
-  captureStackTrace?(targetObject: object, constructorOpt?: Function): void;
-}
-
-interface DurableObjectStorage {
-  [key: string]: any;
-}
-
-type SqlStorageCursor<T = Record<string, unknown>> = any;
-type SqlStorageValue = any;
-type D1Response = any;
-
-declare module '@aws-sdk/client-rds-data' {
-  export class BeginTransactionCommand {
-    constructor(input?: any);
-  }
-  export interface ColumnMetadata {
-    name?: any;
-    [key: string]: any;
-  }
-  export class CommitTransactionCommand {
-    constructor(input?: any);
-  }
-  export class ExecuteStatementCommand {
-    input: any;
-    constructor(input?: any);
-  }
-  export interface ExecuteStatementCommandOutput {
-    records?: Field[][];
-    columnMetadata?: ColumnMetadata[];
-    [key: string]: any;
-  }
-  export interface Field {
-    arrayValue?: {
-      stringValues?: any;
-      longValues?: any;
-      doubleValues?: any;
-      booleanValues?: any;
-      arrayValues?: any;
-      [key: string]: any;
-    };
-    blobValue?: any;
-    booleanValue?: any;
-    doubleValue?: any;
-    isNull?: any;
-    longValue?: any;
-    stringValue?: any;
-    [key: string]: any;
-  }
-  export class RDSDataClient {
-    constructor(config?: RDSDataClientConfig);
-    send(command: any): Promise<any>;
-    [key: string]: any;
-  }
-  export interface RDSDataClientConfig {
-    [key: string]: any;
-  }
-  export class RollbackTransactionCommand {
-    constructor(input?: any);
-  }
-  export const TypeHint: any;
-  export type TypeHint = any;
-}
-
-declare module '@electric-sql/pglite' {
-  export const PGlite: any;
-  export type PGlite<T = any, U = any, V = any, W = any> = any;
-  export const PGliteOptions: any;
-  export type PGliteOptions<T = any, U = any, V = any, W = any> = any;
-  export const QueryOptions: any;
-  export type QueryOptions<T = any, U = any, V = any, W = any> = any;
-  export const Results: any;
-  export type Results<T = any, U = any, V = any, W = any> = any;
-  export const Row: any;
-  export type Row<T = any, U = any, V = any, W = any> = any;
-  export const Transaction: any;
-  export type Transaction<T = any, U = any, V = any, W = any> = any;
-  export const types: any;
-  export type types<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const InArgs: any;
-  export type InArgs<T = any, U = any, V = any, W = any> = any;
-  export const InStatement: any;
-  export type InStatement<T = any, U = any, V = any, W = any> = any;
-  export const ResultSet: any;
-  export type ResultSet<T = any, U = any, V = any, W = any> = any;
-  export const Transaction: any;
-  export type Transaction<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client-wasm' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client/http' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client/node' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client/sqlite3' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client/web' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@libsql/client/ws' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@miniflare/d1' {
-  export const D1Database: any;
-  export type D1Database<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@neondatabase/serverless' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const FullQueryResults: any;
-  export type FullQueryResults<T = any, U = any, V = any, W = any> = any;
-  export const HTTPQueryOptions: any;
-  export type HTTPQueryOptions<T = any, U = any, V = any, W = any> = any;
-  export const HTTPTransactionOptions: any;
-  export type HTTPTransactionOptions<T = any, U = any, V = any, W = any> = any;
-  export const NeonQueryFunction: any;
-  export type NeonQueryFunction<T = any, U = any, V = any, W = any> = any;
-  export const NeonQueryPromise: any;
-  export type NeonQueryPromise<T = any, U = any, V = any, W = any> = any;
-  export const Pool: any;
-  export type Pool<T = any, U = any, V = any, W = any> = any;
-  export const PoolClient: any;
-  export type PoolClient<T = any, U = any, V = any, W = any> = any;
-  export const PoolConfig: any;
-  export type PoolConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryArrayConfig: any;
-  export type QueryArrayConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryConfig: any;
-  export type QueryConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryResult: any;
-  export type QueryResult<T = any, U = any, V = any, W = any> = any;
-  export const QueryResultRow: any;
-  export type QueryResultRow<T = any, U = any, V = any, W = any> = any;
-  export const neon: any;
-  export type neon<T = any, U = any, V = any, W = any> = any;
-  export const neonConfig: any;
-  export type neonConfig<T = any, U = any, V = any, W = any> = any;
-  export const types: any;
-  export type types<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@netlify/db' {
-  export const getDatabase: any;
-  export type getDatabase<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@op-engineering/op-sqlite' {
-  export const OPSQLiteConnection: any;
-  export type OPSQLiteConnection<T = any, U = any, V = any, W = any> = any;
-  export const QueryResult: any;
-  export type QueryResult<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@opentelemetry/api' {
-  export const Span: any;
-  export type Span<T = any, U = any, V = any, W = any> = any;
-  export const Tracer: any;
-  export type Tracer<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@planetscale/database' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const Connection: any;
-  export type Connection<T = any, U = any, V = any, W = any> = any;
-  export const ExecutedQuery: any;
-  export type ExecutedQuery<T = any, U = any, V = any, W = any> = any;
-  export const Transaction: any;
-  export type Transaction<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@prisma/client' {
-  export const Prisma: any;
-  export type Prisma<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@prisma/client/extension' {
-  export const PrismaClient: any;
-  export type PrismaClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@tidbcloud/serverless' {
-  export const Config: any;
-  export type Config<T = any, U = any, V = any, W = any> = any;
-  export const Connection: any;
-  export type Connection<T = any, U = any, V = any, W = any> = any;
-  export const ExecuteOptions: any;
-  export type ExecuteOptions<T = any, U = any, V = any, W = any> = any;
-  export const FullResult: any;
-  export type FullResult<T = any, U = any, V = any, W = any> = any;
-  export const Tx: any;
-  export type Tx<T = any, U = any, V = any, W = any> = any;
-  export const connect: any;
-  export type connect<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@upstash/redis' {
-  export const Redis: any;
-  export type Redis<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@vercel/postgres' {
-  export const QueryArrayConfig: any;
-  export type QueryArrayConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryConfig: any;
-  export type QueryConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryResult: any;
-  export type QueryResult<T = any, U = any, V = any, W = any> = any;
-  export const QueryResultRow: any;
-  export type QueryResultRow<T = any, U = any, V = any, W = any> = any;
-  export const VercelClient: any;
-  export type VercelClient<T = any, U = any, V = any, W = any> = any;
-  export const VercelPool: any;
-  export type VercelPool<T = any, U = any, V = any, W = any> = any;
-  export const VercelPoolClient: any;
-  export type VercelPoolClient<T = any, U = any, V = any, W = any> = any;
-  export const sql: any;
-  export type sql<T = any, U = any, V = any, W = any> = any;
-  export const types: any;
-  export type types<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module '@xata.io/client' {
-  export const SQLPluginResult: any;
-  export type SQLPluginResult<T = any, U = any, V = any, W = any> = any;
-  export const SQLQueryResult: any;
-  export type SQLQueryResult<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'better-sqlite3' {
-  export const Database: any;
-  export type Database<T = any, U = any, V = any, W = any> = any;
-  export const RunResult: any;
-  export type RunResult<T = any, U = any, V = any, W = any> = any;
-  export const Statement: any;
-  export type Statement<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'bun' {
-  export const SQL: any;
-  export type SQL<T = any, U = any, V = any, W = any> = any;
-  export const SQLOptions: any;
-  export type SQLOptions<T = any, U = any, V = any, W = any> = any;
-  export const SavepointSQL: any;
-  export type SavepointSQL<T = any, U = any, V = any, W = any> = any;
-  export const TransactionSQL: any;
-  export type TransactionSQL<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'bun:sqlite' {
-  export const Database: any;
-  export type Database<T = any, U = any, V = any, W = any> = any;
-  export const Statement: any;
-  export type Statement<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm' {
-  export const sql: any;
-  export type sql<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/Gel-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const exceptAll: any;
-  export type exceptAll<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const intersectAll: any;
-  export type intersectAll<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/gel-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const exceptAll: any;
-  export type exceptAll<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const intersectAll: any;
-  export type intersectAll<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/mysql-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const exceptAll: any;
-  export type exceptAll<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const intersectAll: any;
-  export type intersectAll<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/pg-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const exceptAll: any;
-  export type exceptAll<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const intersectAll: any;
-  export type intersectAll<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/singlestore-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const minus: any;
-  export type minus<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'drizzle-orm/sqlite-core' {
-  export const except: any;
-  export type except<T = any, U = any, V = any, W = any> = any;
-  export const intersect: any;
-  export type intersect<T = any, U = any, V = any, W = any> = any;
-  export const union: any;
-  export type union<T = any, U = any, V = any, W = any> = any;
-  export const unionAll: any;
-  export type unionAll<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'expo-sqlite' {
-  export const SQLiteDatabase: any;
-  export type SQLiteDatabase<T = any, U = any, V = any, W = any> = any;
-  export const SQLiteRunResult: any;
-  export type SQLiteRunResult<T = any, U = any, V = any, W = any> = any;
-  export const SQLiteStatement: any;
-  export type SQLiteStatement<T = any, U = any, V = any, W = any> = any;
-  export const addDatabaseChangeListener: any;
-  export type addDatabaseChangeListener<T = any, U = any, V = any, W = any> = any;
-  export const useEffect: any;
-  export type useEffect<T = any, U = any, V = any, W = any> = any;
-  export const useState: any;
-  export type useState<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'gel' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const ConnectOptions: any;
-  export type ConnectOptions<T = any, U = any, V = any, W = any> = any;
-  export const DateDuration: any;
-  export type DateDuration<T = any, U = any, V = any, W = any> = any;
-  export const Duration: any;
-  export type Duration<T = any, U = any, V = any, W = any> = any;
-  export const LocalDate: any;
-  export type LocalDate<T = any, U = any, V = any, W = any> = any;
-  export const LocalDateTime: any;
-  export type LocalDateTime<T = any, U = any, V = any, W = any> = any;
-  export const LocalTime: any;
-  export type LocalTime<T = any, U = any, V = any, W = any> = any;
-  export const RelativeDuration: any;
-  export type RelativeDuration<T = any, U = any, V = any, W = any> = any;
-  export const createClient: any;
-  export type createClient<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'gel/dist/transaction' {
-  export const Transaction: any;
-  export type Transaction<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'knex' {
-  export const Knex: any;
-  export type Knex<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'kysely' {
-  export const ColumnType: any;
-  export type ColumnType<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'mysql2' {
-  export const Connection: any;
-  export type Connection<T = any, U = any, V = any, W = any> = any;
-  export const Pool: any;
-  export type Pool<T = any, U = any, V = any, W = any> = any;
-  export const PoolOptions: any;
-  export type PoolOptions<T = any, U = any, V = any, W = any> = any;
-  export const createPool: any;
-  export type createPool<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'mysql2/promise' {
-  export const Connection: any;
-  export type Connection<T = any, U = any, V = any, W = any> = any;
-  export const FieldPacket: any;
-  export type FieldPacket<T = any, U = any, V = any, W = any> = any;
-  export const OkPacket: any;
-  export type OkPacket<T = any, U = any, V = any, W = any> = any;
-  export const Pool: any;
-  export type Pool<T = any, U = any, V = any, W = any> = any;
-  export const PoolConnection: any;
-  export type PoolConnection<T = any, U = any, V = any, W = any> = any;
-  export const QueryOptions: any;
-  export type QueryOptions<T = any, U = any, V = any, W = any> = any;
-  export const ResultSetHeader: any;
-  export type ResultSetHeader<T = any, U = any, V = any, W = any> = any;
-  export const RowDataPacket: any;
-  export type RowDataPacket<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'node:events' {
-  export const once: any;
-  export type once<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'pg' {
-  export const Client: any;
-  export type Client<T = any, U = any, V = any, W = any> = any;
-  export const PoolClient: any;
-  export type PoolClient<T = any, U = any, V = any, W = any> = any;
-  export const QueryArrayConfig: any;
-  export type QueryArrayConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryConfig: any;
-  export type QueryConfig<T = any, U = any, V = any, W = any> = any;
-  export const QueryResult: any;
-  export type QueryResult<T = any, U = any, V = any, W = any> = any;
-  export const QueryResultRow: any;
-  export type QueryResultRow<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'postgres' {
-  export const Row: any;
-  export type Row<T = any, U = any, V = any, W = any> = any;
-  export const RowList: any;
-  export type RowList<T = any, U = any, V = any, W = any> = any;
-  export const Sql: any;
-  export type Sql<T = any, U = any, V = any, W = any> = any;
-  export const TransactionSql: any;
-  export type TransactionSql<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'react' {
-  export const useEffect: any;
-  export type useEffect<T = any, U = any, V = any, W = any> = any;
-  export const useReducer: any;
-  export type useReducer<T = any, U = any, V = any, W = any> = any;
-  export const useState: any;
-  export type useState<T = any, U = any, V = any, W = any> = any;
-}
-
-declare module 'sql.js' {
-  export const BindParams: any;
-  export type BindParams<T = any, U = any, V = any, W = any> = any;
-  export const Database: any;
-  export type Database<T = any, U = any, V = any, W = any> = any;
-}
-TYPES
-
-  cat > "$fixture_dir/node_modules/bun-types/index.d.ts" <<'TYPES'
-// Package marker for `/// <reference types="bun-types" />`.
-TYPES
-
-  cat > "$fixture_dir/node_modules/@cloudflare/workers-types/index.d.ts" <<'TYPES'
-interface D1Database {
-  [key: string]: any;
-}
-
-interface D1PreparedStatement {
-  [key: string]: any;
-  bind(...values: any[]): D1PreparedStatement;
-}
-
-interface D1Result<T = unknown> {
-  [key: string]: any;
-  results: T[];
-}
-TYPES
-}
-
 tsz_write_drizzle_orm_config() {
   # drizzle-orm imports sibling modules with explicit `.ts` extensions and its
   # upstream tsconfig permits them with allowImportingTsExtensions plus noEmit.
@@ -1291,7 +728,9 @@ tsz_write_drizzle_orm_config() {
 }
 
 tsz_write_ts_rest_config() {
-  tsz_write_basic_external_project_config "$1" "libs/ts-rest/core/src"
+  tsz_write_ts_rest_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "libs/ts-rest/core/src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_ofetch_config() {
@@ -1301,34 +740,21 @@ tsz_write_ofetch_config() {
   # the option tsc emits TS5097 on every such import and cascades into
   # TS2304/TS2339; tsz matches that tsc behavior, so the guard config must
   # carry the option the upstream project actually sets.
+  #
+  # ofetch also depends on the `undici` peer package and the node typings
+  # (`node:stream`, `NodeJS`, `Error.captureStackTrace`) that its real tsconfig
+  # pulls in via `"types": ["node"]`. The shared bench baseline pins
+  # `"types": []` and the clone installs nothing, so those resolve to spurious
+  # TS2307/TS2591/TS2503/TS2339 unless stubbed; the stub writer supplies them.
+  tsz_write_ofetch_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_ts_pattern_config() {
   tsz_write_basic_external_project_config "$1" "src"
-}
-
-tsz_write_trpc_external_stubs() {
-  # trpc's real root tsconfig sets `"types": ["node", "vitest/globals"]`, so the
-  # upstream build resolves `NodeJS.Timeout` (used in packages/server/src/adapters/ws.ts)
-  # via @types/node. The shared bench baseline pins `"types": []` and the fixture
-  # clone has no node_modules, so without a stub tsz/tsc both emit spurious
-  # TS2833 "Cannot find namespace 'NodeJS'". Mirror the kysely/type-graphql stub
-  # pattern: alias the referenced members as `= any` so the global resolves
-  # without unmasking unrelated assignability diffs.
-  local output="$1"
-  local fixture_dir
-  fixture_dir="$(dirname "$output")"
-  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
-declare namespace NodeJS {
-  type Timeout = any;
-  type Timer = any;
-  type Immediate = any;
-  type ErrnoException = any;
-}
-TYPES
 }
 
 tsz_write_trpc_config() {
@@ -1345,16 +771,12 @@ tsz_write_tanstack_router_config() {
 tsz_write_zustand_config() {
   # zustand imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
-  tsz_write_basic_external_project_config "$1" "src" \
-    '    "allowImportingTsExtensions": true,
-'
+  tsz_write_zustand_external_stubs "$1"
 }
 tsz_write_jotai_config() {
   # jotai imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
-  tsz_write_basic_external_project_config "$1" "src" \
-    '    "allowImportingTsExtensions": true,
-'
+  tsz_write_jotai_external_stubs "$1"
 }
 tsz_write_fp_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1364,10 +786,22 @@ tsz_write_io_ts_config() {
 }
 tsz_write_immer_config() {
   # immer imports sibling modules with explicit `.ts` extensions; its real
-  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit). It also
+  # reads `process.env.NODE_ENV` in several source files; immer's real build sees
+  # `process` via @types/node, but the fixture clone runs no npm install and the
+  # bench baseline pins `"types": []`, so without a stub tsc emits spurious
+  # TS2591 "Cannot find name 'process'". A single ambient `process` stub matches
+  # what tsc sees when @types/node is present, leaving immer's own source fully
+  # type-checked.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare const process: any;
+TYPES
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_remeda_config() {
   tsz_write_basic_external_project_config "$1" "packages/remeda/src"
@@ -1376,11 +810,40 @@ tsz_write_ts_morph_config() {
   tsz_write_basic_external_project_config "$1" "packages/ts-morph/src"
 }
 tsz_write_arktype_config() {
+  # arktype is a pnpm workspace: ark/type imports its sibling workspace packages
+  # `@ark/util`, `@ark/schema` (+ `@ark/schema/config`), and `arkregex`. The
+  # fixture clone runs no `pnpm install`, so the `node_modules` symlinks that
+  # normally resolve those package names are absent and tsc emits spurious
+  # TS2307 that cascades into a large TS2339/TS2536/TS2344 wave. These are NOT
+  # external deps — they are arktype's OWN source under ark/util, ark/schema and
+  # ark/regex. Map the package names to that real source via `paths` (matching
+  # each package's `ark-ts` export condition) and add those directories to
+  # `include`, so arktype's own source binds to real types rather than `any`.
+  # arktype's real tsconfig sets `types: ["mocha", "node"]`, so `ark/util`'s
+  # `globalThis.process?.env` access resolves via @types/node. The fixture clone
+  # has no node typings, so add an ambient `process` global (mirroring
+  # @types/node) to avoid a spurious TS7017 on `globalThis.process`.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  # `var` (not `const`) so `process` is reflected onto `typeof globalThis`,
+  # matching how @types/node declares it (the source reads `globalThis.process`).
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare var process: any;
+TYPES
   # arktype imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
   tsz_write_basic_external_project_config "$1" "ark/type" \
-    '    "allowImportingTsExtensions": true,
-'
+    '    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@ark/util": ["ark/util/index.ts"],
+      "@ark/schema/config": ["ark/schema/config.ts"],
+      "@ark/schema": ["ark/schema/index.ts"],
+      "arkregex": ["ark/regex/index.ts"]
+    },
+    "allowImportingTsExtensions": true,
+' \
+    ', "ark/util/**/*.ts", "ark/schema/**/*.ts", "ark/regex/**/*.ts", "tsz-bench-globals.d.ts"'
 }
 tsz_write_superstruct_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1401,146 +864,20 @@ tsz_write_typebox_config() {
 tsz_write_class_transformer_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
-tsz_write_type_graphql_external_stubs() {
-  local output="$1"
-  local fixture_dir
-  fixture_dir="$(dirname "$output")"
-
-  cat > "$fixture_dir/tsz-bench-external-module.d.ts" <<'TYPES'
-declare const tszBenchExternalModule: any;
-export = tszBenchExternalModule;
-TYPES
-
-  cat > "$fixture_dir/tsz-bench-external-named-modules.d.ts" <<'TYPES'
-declare module 'graphql' {
-  export const GraphQLSchema: any;
-  export type GraphQLSchema = any;
-  export const GraphQLObjectType: any;
-  export type GraphQLObjectType = any;
-  export const GraphQLInputObjectType: any;
-  export type GraphQLInputObjectType = any;
-  export const GraphQLInterfaceType: any;
-  export type GraphQLInterfaceType = any;
-  export const GraphQLUnionType: any;
-  export type GraphQLUnionType = any;
-  export const GraphQLEnumType: any;
-  export type GraphQLEnumType = any;
-  export const GraphQLScalarType: any;
-  export type GraphQLScalarType = any;
-  export const GraphQLField: any;
-  export type GraphQLField<T = any, U = any, V = any> = any;
-  export const GraphQLFieldConfig: any;
-  export type GraphQLFieldConfig<T = any, U = any, V = any> = any;
-  export const GraphQLFieldConfigMap: any;
-  export type GraphQLFieldConfigMap<T = any, U = any> = any;
-  export const GraphQLInputFieldConfig: any;
-  export type GraphQLInputFieldConfig = any;
-  export const GraphQLInputFieldConfigMap: any;
-  export type GraphQLInputFieldConfigMap = any;
-  export const GraphQLArgument: any;
-  export type GraphQLArgument = any;
-  export const GraphQLArgumentConfig: any;
-  export type GraphQLArgumentConfig = any;
-  export const GraphQLEnumValueConfigMap: any;
-  export type GraphQLEnumValueConfigMap = any;
-  export const GraphQLIsTypeOfFn: any;
-  export type GraphQLIsTypeOfFn<T = any, U = any> = any;
-  export const GraphQLResolveInfo: any;
-  export type GraphQLResolveInfo = any;
-  export const GraphQLOutputType: any;
-  export type GraphQLOutputType = any;
-  export const GraphQLInputType: any;
-  export type GraphQLInputType = any;
-  export const GraphQLNamedType: any;
-  export type GraphQLNamedType = any;
-  export const GraphQLNonNull: any;
-  export type GraphQLNonNull<T = any> = any;
-  export const GraphQLList: any;
-  export type GraphQLList<T = any> = any;
-  export const GraphQLNullableType: any;
-  export type GraphQLNullableType = any;
-  export const GraphQLType: any;
-  export type GraphQLType = any;
-  export const GraphQLTypeResolver: any;
-  export type GraphQLTypeResolver<T = any, U = any> = any;
-  export const GraphQLFieldResolver: any;
-  export type GraphQLFieldResolver<T = any, U = any, V = any, W = any> = any;
-  export const GraphQLString: any;
-  export const GraphQLInt: any;
-  export const GraphQLFloat: any;
-  export const GraphQLBoolean: any;
-  export const GraphQLID: any;
-  export const execute: any;
-  export const parse: any;
-  export const buildSchema: any;
-  export const printSchema: any;
-  export const getIntrospectionQuery: any;
-  export const introspectionFromSchema: any;
-  export const IntrospectionQuery: any;
-  export type IntrospectionQuery = any;
-  export const Source: any;
-  export type Source = any;
-  export const DocumentNode: any;
-  export type DocumentNode = any;
-  export const GraphQLFormattedError: any;
-  export type GraphQLFormattedError = any;
-  export const GraphQLError: any;
-  export type GraphQLError = any;
-}
-
-declare module 'graphql/type' {
-  export const GraphQLObjectType: any;
-  export type GraphQLObjectType = any;
-  export const GraphQLInputObjectType: any;
-  export type GraphQLInputObjectType = any;
-  export const GraphQLInterfaceType: any;
-  export type GraphQLInterfaceType = any;
-  export const GraphQLUnionType: any;
-  export type GraphQLUnionType = any;
-}
-
-declare module 'graphql/language' {
-  export const DirectiveLocation: any;
-  export type DirectiveLocation = any;
-}
-
-declare module 'reflect-metadata' {}
-
-declare module 'semver' {
-  export const gte: any;
-  export type gte = any;
-}
-
-declare module 'glob' {
-  export const sync: any;
-  export type sync = any;
-}
-
-declare module 'class-validator' {
-  export const ValidatorOptions: any;
-  export type ValidatorOptions = any;
-  export const validate: any;
-  export type validate = any;
-}
-
-declare namespace NodeJS {
-  type ErrnoException = any;
-  type Timeout = any;
-  interface ProcessEnv { [k: string]: string | undefined }
-}
-declare var global: any;
-TYPES
-}
-
 tsz_write_type_graphql_config() {
   # type-graphql uses `@/` path aliases (baseUrl-relative imports) and depends
   # on graphql, reflect-metadata, and other external packages. Provide path
   # mapping plus module stubs so tsc resolves without installing the full
-  # dependency graph.
+  # dependency graph. `useDefineForClassFields` is pinned false to match the
+  # upstream tsconfig's effective behavior (it targets es2021, where the flag
+  # defaults false); the shared baseline targets es2022 where it would default
+  # true, which would otherwise make the project's `override readonly
+  # extensions!` GraphQLError subclasses spuriously trip TS2612.
   tsz_write_type_graphql_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "baseUrl": ".",
     "ignoreDeprecations": "6.0",
+    "useDefineForClassFields": false,
     "paths": {
       "@/*": ["src/*"],
       "*": ["tsz-bench-external-module.d.ts"]
