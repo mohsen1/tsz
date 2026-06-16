@@ -609,6 +609,16 @@ jobs:
       # when Cargo.lock/profile inputs changed and the gate intentionally ran
       # main CI to refresh the exact shared cache key.
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
+      # Opt-in, default-off broader-refresh for #13747 (constraint: #13733 OOM).
+      # When the `TSZ_CI_REFRESH_WORKSPACE_RLIBS` repo variable is set to '1',
+      # green main builds republish the workspace-rlib (dist-fast) blob on EVERY
+      # source-only push, not only on Cargo.lock/profile changes, so PR
+      # dist-binaries restores a fresher incremental base. Unset → '0' → no
+      # behavior change. gcp-cache.sh bounds this: dist-fast blob only, same
+      # cache key, gated by the MemAvailable cache-save preflight. Flip only
+      # after reading the `cargo-target-deps staleness` marker in dist-binaries
+      # logs and confirming main cache-save RSS headroom.
+      TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS: ${{ vars.TSZ_CI_REFRESH_WORKSPACE_RLIBS || '0' }}
       # Keep artifact production independent from sccache service hangs. The
       # dist-fast build is short enough without sccache, and all harness suites
       # are blocked until this artifact uploads.
