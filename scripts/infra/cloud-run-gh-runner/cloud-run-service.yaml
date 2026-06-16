@@ -1,0 +1,57 @@
+# Version-controlled scaling policy (IaC skeleton) for the self-hosted GitHub
+# Actions runner fleet backed by Cloud Run.
+#
+# STATUS: reviewable reference / template. This file is NOT applied
+# automatically by any workflow. Before adopting it as the source of truth,
+# a maintainer must reconcile it with the currently deployed service
+# (`gcloud run services describe <service> --region <region> --format export`)
+# so the committed spec matches live state, then wire secrets/env explicitly.
+#
+# Rationale for the values below (see issue #13750):
+#   * concurrency=1  - each runner process handles exactly one ephemeral job,
+#                      matching `--ephemeral` in start.sh.
+#   * minScale=0     - scale-to-zero by default. Treat any minScale>0 warm pool
+#                      as a measured cost decision using per-job queue_wait data
+#                      (#13715); minScale>0 defeats scale-to-zero.
+#   * maxScale=50    - upper bound on concurrent runners; tune to the fleet's
+#                      observed peak (health probe warns at online<20/online<5).
+#   * timeoutSeconds=3600 - a runner job may run up to 60 minutes before the
+#                      platform reclaims the instance.
+#
+# Replacing PLACEHOLDER_* values and applying with:
+#   gcloud run services replace cloud-run-service.yaml \
+#     --project <project> --region <region>
+# will overwrite the live service, so confirm env/secret blocks first.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: PLACEHOLDER_SERVICE_NAME
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "50"
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 3600
+      containers:
+        - image: PLACEHOLDER_IMAGE  # e.g. us-central1-docker.pkg.dev/<project>/<repo>/tsz-cloud-run-runner:latest
+          env:
+            - name: GITHUB_REPO
+              value: tsz-org/tsz
+            # GITHUB_TOKEN MUST be supplied as a Secret Manager reference, not a
+            # plaintext value. Configure the secret in GCP and reference it here:
+            # - name: GITHUB_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       key: latest
+            #       name: PLACEHOLDER_RUNNER_PAT_SECRET
+            - name: RUNNER_LABELS
+              value: tsz-cloud-run
+          resources:
+            limits:
+              cpu: "8"
+              memory: 32Gi
