@@ -13,15 +13,20 @@
 //!    active substitution environment — only on the project's single fixed
 //!    resolver (via any `Lazy`/`TypeQuery` refs). The mapping is stable per
 //!    `TypeId`.
-//!  - **Top-level-write gate**: any evaluator may commit at the top of its own
-//!    evaluation (`guard.depth() == 0`); the per-entry input gate above (no
-//!    `TypeParameter`/`Infer`/`ThisType`/`BoundParameter`) is what keeps the
-//!    write sound, because a substitution-independent result is identical across
-//!    every evaluator and resolver. The non-cache `TypeDatabase` backends keep
-//!    the insert a no-op, so only `QueryCache`-backed per-file scopes persist;
-//!    the limited first-pass `TypeEnvironment` resolver — which lacks a query
-//!    cache — therefore stores nothing a sibling read would observe. Reads are
-//!    safe for any resolver because the stored value is a definite answer.
+//!  - **Authoritative-write gate**: only the checker's authoritative,
+//!    context-free type-resolution pass (opted in via `with_closed_eval_writes`,
+//!    set by the `with_query_db` boundary) commits, and only at the top of its
+//!    own evaluation (`guard.depth() == 0`). The input gate keeps the *node*
+//!    substitution-independent, but a node's value is only resolver-stable once
+//!    the resolver can resolve every `Lazy`/`TypeQuery`/`Application` operand it
+//!    reaches; the resolver-backed evaluators that instantiation/relation spin up
+//!    run against a *partial* first-pass resolver (lib/utility bodies in the
+//!    `resolver_generation()==0` registration window are not yet materialized) and
+//!    can compute a definite-but-under-resolved head that diverges from the
+//!    resolved answer. The authoritative pass is the single context whose resolver
+//!    is complete, so it is the only writer. Reads stay open to every evaluator —
+//!    a stored value is always the fully-resolved answer — which is where the
+//!    deep-recursion win is realized.
 //!  - **Limit gate**: a run that hit any recursion/complexity limit
 //!    (`deep_recursion_seen`, the `TS2589` depth machinery, or the `TS2590`
 //!    union-too-complex flag) caches nothing — a cached read must never
@@ -65,23 +70,32 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// top-level evaluation began; if the run newly tripped the flag, nothing is
     /// cached.
     pub(super) fn commit_closed_eval_writes(&self, union_too_complex_before: bool) {
-        // Any top-level evaluation (`guard.depth() == 0`) may commit, not only
-        // the checker's authoritative `with_closed_eval_writes` pass. The
-        // per-entry filter below restricts what is written to *substitution-
-        // independent* nodes (`!is_substitution_dependent_type`), whose result
-        // is a pure function of `(TypeId, no_unchecked, exact_optional)` and the
-        // project's single fixed resolver — the same value any evaluator,
-        // resolver-backed or plain, would compute. Mid-relation / mid-inference /
-        // mid-narrowing context cannot change a substitution-independent result
-        // (no `TypeParameter`/`Infer`/`ThisType`/`BoundParameter` is present to
-        // bind against it). The non-cache `TypeDatabase` backends keep
-        // `insert_closed_eval_cache` a no-op, so only `QueryCache`-backed,
-        // per-file scopes actually persist. Opening the writer to the
-        // resolver-backed evaluators that instantiation and relation spin up is
-        // what lets the cache reach the closed conditionals those contexts
-        // compute (and re-compute) — the `AutoPath`/`MetaPath`/`Join`
-        // deep-recursion lever (issue #13250).
-        let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
+        // Only the checker's authoritative, context-free type-resolution pass
+        // (opted in via `with_closed_eval_writes`, which the `with_query_db`
+        // boundary sets) writes. A substitution-independent node's *final*
+        // result is a pure function of `(TypeId, no_unchecked, exact_optional)`
+        // and the project's single fixed resolver — but only once that resolver
+        // can resolve every `Lazy`/`TypeQuery`/`Application` operand the node
+        // reaches. The resolver-backed evaluators that instantiation and relation
+        // spin up run against a *partial* resolver (a first-pass `TypeEnvironment`
+        // whose lib/utility bodies — `Partial`/`Pick`/`Readonly`, the
+        // `resolver_generation()==0` registration window — are not yet
+        // materialized). They can compute a definite-but-under-resolved
+        // `IndexAccess`/`KeyOf`/`Application`/`Conditional` head whose value
+        // differs from the fully-resolved answer, and the `(TypeId, ...)` key
+        // captures neither the resolver generation nor the registration window.
+        // Persisting one would let a sibling read serve it in place of the
+        // resolved answer (`partialOfLargeAPIIsAbleToBeWorkedWith`: an
+        // under-resolved `Partial<MyAPI>[keyof MyAPI]` element type spuriously
+        // rejects a well-typed write, `TS2322`). The authoritative pass is the
+        // single context whose resolver is complete, so it is the only writer;
+        // every resolver-backed reader still benefits (a stored value is always
+        // the fully-resolved answer), which is where the deep-recursion win
+        // (`AutoPath`/`MetaPath`/`Join`, issue #13250) is realized.
+        let is_top_level = closed_eval_cache_enabled()
+            && self.closed_eval_writes_allowed
+            && self.query_db.is_some()
+            && self.guard.depth() == 0;
         if !is_top_level
             || self.recursion_limit_hit()
             || self.unresolved_def_seen()
