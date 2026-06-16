@@ -52,9 +52,21 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (TypeId, bool) {
         // Guard against infinite recursion in recursive generic hierarchies
-        // (e.g., interface B<T extends B<T,S>> extends A<B<T,S>, B<T,S>>)
+        // (e.g., interface B<T extends B<T,S>> extends A<B<T,S>, B<T,S>>).
+        //
+        // A bail here returns `derived_type` with its heritage loop NOT yet run,
+        // i.e. an own-members-only, heritage-THIN body. Report it as incomplete so
+        // the caller refuses to cache it (the #12299 taint contract): otherwise a
+        // body produced when the shared `CheckerRecursion` depth budget was already
+        // exhausted by unrelated deep recursion (e.g. jotai's mutually-recursive
+        // `Atom` graph) would be cached with inherited members un-substituted — a
+        // base interface's raw type parameter (`Iterator<T>.next(): IteratorResult<T>`)
+        // then leaks through a concrete `Map`/`Set` iteration into the checker as a
+        // bare `T` (false TS2488/TS2345, issue #13652). Recomputing once the budget
+        // has headroom yields the fully-merged body. O(1) at the bail site; no
+        // identifier/file-name predicate.
         if !self.ctx.enter_recursion() {
-            return (derived_type, false);
+            return (derived_type, true);
         }
 
         // Name-based cycle guard: prevent re-entrant heritage merging for the same
@@ -62,9 +74,14 @@ impl<'a> CheckerState<'a> {
         // mutual recursion that occurs through deep heritage chains
         // (e.g., Array → ReadonlyArray → Iterable → ...), especially when child
         // CheckerStates are created for cross-arena type param resolution.
+        //
+        // The same heritage-thin reasoning applies: the re-entrant call returns
+        // before merging heritage, so mark it incomplete so the thin body is not
+        // cached. The outer (non-re-entrant) resolution of this same name completes
+        // the merge and produces the cacheable body.
         if !self.ctx.lib_heritage_in_progress.insert(name.to_string()) {
             self.ctx.leave_recursion();
-            return (derived_type, false);
+            return (derived_type, true);
         }
 
         let lib_contexts = self.ctx.lib_contexts.clone();
