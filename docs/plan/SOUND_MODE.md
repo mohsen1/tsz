@@ -94,7 +94,10 @@ Today, even that narrow target is not fully implemented:
 1. Sound mode is currently a project-wide checker boolean from CLI (`--sound`) or the playground / WASM `soundMode` input. Normal tsconfig `compilerOptions.sound` is not accepted today.
 2. Method bivariance tightening is live.
 3. `any` handling is only partial: nested restrictions exist, but top-level `any` still behaves too permissively.
-4. Declaration-boundary quarantine is **not** implemented.
+4. Declaration-boundary quarantine is **not** part of the stable contract. An
+   opt-in *prototype* of declaration-boundary projection exists behind
+   `--soundDeclarationProjection` (off by default); see "Compiler-managed
+   declaration boundary projection" below and issue #8533.
 5. Dedicated TSZ sound diagnostics and auditable suppressions are **not** implemented.
 6. Sticky freshness is currently active under `--sound` even though the target design treats it as pedantic.
 
@@ -661,6 +664,40 @@ Why polarity matters:
 3. A blind deep `any -> unknown` rewrite loses this distinction and will either over-restrict APIs or fail to protect the dangerous cases.
 
 This is the strongest first general mechanism because it keeps the promise "use normal `.d.ts` files" while avoiding solver-wide provenance tracking.
+
+> **Prototype status (issue #8533): LIVE behind `--soundDeclarationProjection`,
+> off by default.** When that flag is set under sound mode, referencing a value
+> whose symbol is declared in an external declaration file (`.d.ts`, a default
+> lib, or a `node_modules` package — import aliases are followed to their target)
+> projects the observed type with covariant polarity: `any` becomes `unknown` in
+> read positions. The three examples above all hold, including the
+> library-supplied callback parameter (the polarity double-flip makes it a read
+> position). The transform is a semantic *view* owned by the solver
+> (`tsz_solver::declaration_projection`); no interned definition is mutated, and
+> the decision of *when* to project is a checker-side trust-boundary policy at
+> identifier resolution.
+>
+> Deliberately out of the prototype scope (left unchanged to avoid the hazards
+> in "What should not be the first mechanism"):
+> - type-level plumbing — `Lazy`/`Application`/conditional/mapped/`infer`/
+>   indexed-access/`keyof`/template nodes are not descended (avoids breaking
+>   DT-style metaprogramming);
+> - mutable element containers (`Array`/`Tuple`) and index signatures, whose
+>   single handle is both read and written, so a covariant-only rewrite would be
+>   unsound;
+> - `--sound` without the flag, and ordinary mode, are byte-identical to before.
+>
+> **Unresolved risks** to settle before this graduates from prototype:
+> - *DT-style metaprogramming*: declarations that re-expose `any` through
+>   conditional/mapped helpers are not projected today; widening the descent to
+>   cover them must not corrupt type-level computation.
+> - *Performance*: projection runs per declaration-owned value reference under
+>   the flag, building fresh interned views; it is unmemoized across references
+>   and not yet measured on large declaration surfaces (libs are external
+>   declaration files and are therefore in scope). A projected-type cache keyed
+>   by `(TypeId, polarity)` is the natural next step before default-on.
+> - *Scope/UX*: emitted diagnostics still reuse standard codes (e.g. TS2322 /
+>   TS18046) rather than a dedicated TSZ sound family.
 
 **2. Compiler-managed internal declaration overlays (recommended curated mechanism)**
 Some fixes are clearer as declaration rewrites than as on-demand projections:

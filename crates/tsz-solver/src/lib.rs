@@ -34,6 +34,7 @@ pub(crate) use caches::options;
 pub mod canonicalize;
 pub mod classes;
 mod contextual;
+pub mod declaration_projection;
 pub mod def;
 mod diagnostics;
 pub mod evaluation;

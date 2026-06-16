@@ -74,6 +74,15 @@ pub struct CheckerOptions {
     pub sound_report_only: bool,
     /// When true, enable pedantic sound heuristics beyond the core sound bundle.
     pub sound_pedantic: bool,
+    /// When true (and `sound_mode` is on), apply declaration-boundary projection:
+    /// values whose type is owned by an external declaration file (`.d.ts`, a
+    /// default lib, or a `node_modules` package) have `any` projected to
+    /// `unknown` in read/covariant positions (return types, readable
+    /// properties, library-supplied callback parameters). Write/contravariant
+    /// positions stay permissive. Opt-in and off by default — declaration
+    /// boundary quarantine is later work, not part of the first stable `--sound`
+    /// bundle. See `docs/plan/SOUND_MODE.md` and issue #8533.
+    pub sound_declaration_projection: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.
     /// When decorators are used, `TypedPropertyDescriptor` must be available.
@@ -227,6 +236,7 @@ impl Default for CheckerOptions {
             sound_check_declarations: false,
             sound_report_only: false,
             sound_pedantic: false,
+            sound_declaration_projection: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,

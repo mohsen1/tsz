@@ -216,11 +216,14 @@ pub(super) fn apply_cli_overrides_with_config_options(
     if let Some(val) = args.allow_unused_labels {
         options.checker.allow_unused_labels = Some(val);
     }
-    if args.sound || args.sound_report_only {
+    if args.sound || args.sound_report_only || args.sound_declaration_projection {
         options.checker.sound_mode = true;
     }
     if args.sound_report_only {
         options.checker.sound_report_only = true;
+    }
+    if args.sound_declaration_projection {
+        options.checker.sound_declaration_projection = true;
     }
     if args.experimental_decorators {
         options.checker.experimental_decorators = true;
@@ -588,6 +591,7 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
             "soundCheckDeclarations" => options.checker.sound_check_declarations = false,
             "soundReportOnly" => options.checker.sound_report_only = false,
             "soundPedantic" => options.checker.sound_pedantic = false,
+            "soundDeclarationProjection" => options.checker.sound_declaration_projection = false,
             "experimentalDecorators" => {
                 options.checker.experimental_decorators = false;
                 options.printer.legacy_decorators = false;
