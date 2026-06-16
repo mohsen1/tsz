@@ -147,6 +147,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// false branch this way (`keyof any` is not assignable to `never`
     /// regardless of `Params`), while genuinely indeterminate relations stay
     /// deferred. Returns `true` when the false branch is definitive.
+    ///
+    /// ## Wildcard fidelity guard
+    /// tsc's `wildcardType` is *not* plain `any`: it is preserved symbolically
+    /// inside instantiable index operators (`keyof`, indexed access,
+    /// string-mapping, conditional). Substituting concrete `any` for a free
+    /// parameter only reproduces the permissive judgment when the resulting
+    /// forms fully concretize. When the wildcard substitution leaves a permissive
+    /// form that is *still* a deferred generic-marker type — e.g.
+    /// `keyof <conditional>` whose operand did not reduce under `any` because it
+    /// is a circular/conditional constraint — the `any` form no longer relates
+    /// the way tsc's symbolic `wildcardType` would, so a relation failure is not
+    /// a sound definitive-false witness and the conditional must stay deferred.
+    /// This is exactly the react-redux-shaped circularly-constrained
+    /// `keyof DecorationTargetProps extends keyof Shared<…>` in `Matching` /
+    /// `Shared` mapped conditionals, which tsc keeps deferred. Concrete generic
+    /// *references* (`Wrapped<T>` → `Wrapped<any>`, a fully resolved object that
+    /// genuinely lacks `then`) and operators that collapse to a concrete key
+    /// union (`keyof Params` → `string | number | symbol`) concretize
+    /// faithfully, so their definitive false stands.
     fn permissive_false_branch_is_definitive(
         &mut self,
         check_type: TypeId,
@@ -175,6 +194,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             extends_type,
             &substitution,
         ));
+        // After substitution, a permissive form that is *still* a deferred
+        // index-like generic marker (e.g. `keyof <conditional>` that did not
+        // reduce under `any`) means the `any` substitution failed to concretize
+        // the relation. tsc's symbolic `wildcardType` would relate permissively
+        // there; our collapsed `any` form does not, so a failure here is not a
+        // sound definitive false — defer.
+        if crate::type_queries::is_generic_conditional_check_type(self.interner(), permissive_check)
+            || crate::type_queries::is_generic_conditional_check_type(
+                self.interner(),
+                permissive_extends,
+            )
+        {
+            return false;
+        }
         !self.check_conditional_subtype(permissive_check, permissive_extends)
     }
 
@@ -887,13 +920,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
 
                     if !checked_concrete_constraint {
-                        return self.interner().conditional(ConditionalType {
-                            check_type,
-                            extends_type,
-                            true_type: cond.true_type,
-                            false_type: cond.false_type,
-                            is_distributive: cond.is_distributive,
-                        });
+                        // No narrower constraint than the check type itself was
+                        // available, so the most permissive form of the check is
+                        // the wildcard instantiation (every free parameter ->
+                        // `any`). tsc's `getConditionalType` only defers a
+                        // failed-match generic check when that permissive form
+                        // could still satisfy the extends side; when even the
+                        // permissive form fails the relation, the false branch is
+                        // definitive (e.g. `OK<T> extends { then(...): any }` —
+                        // `OK<any>` has no `then`, so distributing `Awaited<…>`
+                        // over a union member like `OK<T>` must reduce to that
+                        // member rather than leaving a raw conditional). Fall
+                        // through to the false branch in that definitive case;
+                        // otherwise keep the conditional deferred.
+                        if self.is_depth_detection_pass()
+                            || !self.permissive_false_branch_is_definitive(check_type, extends_type)
+                        {
+                            return self.interner().conditional(ConditionalType {
+                                check_type,
+                                extends_type,
+                                true_type: cond.true_type,
+                                false_type: cond.false_type,
+                                is_distributive: cond.is_distributive,
+                            });
+                        }
                     }
                 }
 

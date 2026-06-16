@@ -109,3 +109,68 @@ const n: number = d.a.b.c;
 "#;
     assert_eq!(total_errors(src), 0);
 }
+
+/// An `Awaited`-shaped distributive conditional over a union whose members still
+/// carry a free type parameter must reduce each member, not leave a raw
+/// conditional. Modelling the zod `_parseAsync` witness (`Promise.resolve` over
+/// `SyncParseReturnType<Output> | AsyncParseReturnType<Output>`): the non-thenable
+/// member `Wrapped<Output>` has no `then` property, so the per-member relation
+/// `Wrapped<Output> extends Thenable<infer U>` fails even under the permissive
+/// (`Output := any`) instantiation. tsc reduces that member to itself; tsz must
+/// take the false branch too instead of deferring the whole conditional, so the
+/// distributed `Resolve<…>` is assignable back to `Wrapped<Output>`.
+///
+/// Before the permissive-false-branch fall-through, the generic check
+/// `Wrapped<Output>` (an `Application` with no narrower constraint than itself)
+/// short-circuited to a deferred conditional, leaving `Resolve<Wrapped<Output>>`
+/// raw and emitting a spurious `TS2322` on the positive assignment.
+#[test]
+fn awaited_shaped_distribution_reduces_free_param_union_member() {
+    let src = r#"
+interface Thenable<T> { then(onfulfilled: (value: T) => void): void; }
+type Resolve<T> = T extends Thenable<infer U> ? Resolve<U> : T;
+type Wrapped<P> = { tag: "wrapped"; payload: P };
+function f<Output>(): void {
+  type In = Wrapped<Output> | Thenable<Wrapped<Output>>;
+  const resolved = null as any as Resolve<In>;
+  // Resolve<In> distributes: Wrapped<Output> (no `then`) reduces to itself and
+  // Thenable<Wrapped<Output>> unwraps to Wrapped<Output>, so the whole thing is
+  // Wrapped<Output> and this assignment is fine.
+  const ok: Wrapped<Output> = resolved;
+  // An unrelated shape is still rejected (TS2322), proving the reduction did not
+  // collapse to `any`/`unknown`.
+  const bad: { unrelated_marker: 1 } = resolved;
+}
+"#;
+    // Only the deliberately-unrelated `bad` assignment errors; the positive
+    // `ok` assignment must NOT (no spurious raw-conditional TS2322).
+    assert_eq!(
+        error_count(src, 2322),
+        1,
+        "only the unrelated `bad` assignment errors; got: {:?}",
+        check_source_diagnostics(src)
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(total_errors(src), 1);
+}
+
+/// Renamed binders and a different non-thenable carrier exercise the same
+/// structural path (the reduction follows shape, not spelling).
+#[test]
+fn awaited_shaped_distribution_reduces_free_param_union_member_renamed() {
+    let src = r#"
+interface Awaitable<Value> { then(cb: (value: Value) => void): void; }
+type Settle<Input> = Input extends Awaitable<infer Held> ? Settle<Held> : Input;
+type Cell<Slot> = { kind: 0; slot: Slot };
+function g<Elem>(): void {
+  type Mixed = Cell<Elem> | Awaitable<Cell<Elem>>;
+  const settled = null as any as Settle<Mixed>;
+  const ok: Cell<Elem> = settled;
+  const bad: { mismatch: true } = settled;
+}
+"#;
+    assert_eq!(error_count(src, 2322), 1);
+    assert_eq!(total_errors(src), 1);
+}
