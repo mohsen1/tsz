@@ -205,6 +205,28 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // A parameter that is optional (`?`) or carries a default initializer
+            // implicitly accepts `undefined` at the call site, so an argument of
+            // `T | undefined` is valid. The solver's `check_argument_types_with`
+            // strips `undefined` from such arguments before checking, but the
+            // post-inference recheck here builds its `expected` from the bare
+            // (non-widened) instantiated parameter type. Mirror the solver: when
+            // the matched parameter slot is optional, drop `undefined` from the
+            // argument so `ErrorConfig | undefined` is checked as `ErrorConfig`
+            // against an optional `ErrorConfig` parameter.
+            let param_is_optional = instantiated_params
+                .get(index)
+                .or_else(|| {
+                    let last = instantiated_params.last()?;
+                    last.rest.then_some(last)
+                })
+                .is_some_and(|param| param.optional);
+            let actual = if param_is_optional {
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, actual)
+            } else {
+                actual
+            };
+
             let is_assignable = self
                 .call_arg_relation_outcome_with_env(actual, expected)
                 .related

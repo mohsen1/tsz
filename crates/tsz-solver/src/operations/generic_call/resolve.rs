@@ -1073,12 +1073,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 placeholder_visited.clear();
                 if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited)
                 {
-                    // No placeholder in target_type - check assignability directly
+                    // No placeholder in target_type - check assignability directly.
+                    //
+                    // An optional parameter (`?`) or one carrying a default
+                    // initializer implicitly accepts `undefined` at the call site, so
+                    // an argument of `T | undefined` is valid against a `T` parameter.
+                    // The non-generic `check_argument_types_with` path strips
+                    // `undefined` from such arguments before checking; mirror that here
+                    // so the eager concrete-parameter check in generic inference does
+                    // not falsely reject `ErrorConfig | undefined` against an optional
+                    // `ErrorConfig` parameter.
+                    let param_is_optional = instantiated_params
+                        .get(i)
+                        .or_else(|| {
+                            let last = instantiated_params.last()?;
+                            last.rest.then_some(last)
+                        })
+                        .is_some_and(|param| param.optional);
+                    let arg_for_check = if param_is_optional {
+                        crate::narrowing::utils::remove_undefined(
+                            self.interner,
+                            contextual_arg_type,
+                        )
+                    } else {
+                        contextual_arg_type
+                    };
                     if !self
                         .checker
-                        .is_assignable_to(contextual_arg_type, contextual_target_type)
-                        && !self
-                            .is_function_union_compat(contextual_arg_type, contextual_target_type)
+                        .is_assignable_to(arg_for_check, contextual_target_type)
+                        && !self.is_function_union_compat(arg_for_check, contextual_target_type)
                     {
                         return CallResult::ArgumentTypeMismatch {
                             index: i,

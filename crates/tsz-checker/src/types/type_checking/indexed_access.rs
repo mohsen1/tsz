@@ -4,6 +4,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+mod deferred_conditional_index;
 mod indexed_access_helpers;
 mod infer_node_walk;
 mod mapped_key_check;
@@ -1290,6 +1291,23 @@ impl<'a> CheckerState<'a> {
                     && !index_is_concrete_literal)
                 || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type_for_check)
                 || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type))
+            {
+                return;
+            }
+            // The gate above intentionally lets a concrete-literal (or
+            // literal-union) index defeat suppression for a deferred object
+            // (`!index_is_concrete_literal`). For a deferred *conditional* base
+            // that is wrong: tsc validates the literal key against the
+            // conditional's base constraint (the union of both branch results).
+            // Validate against that branch-union constraint here so a key that
+            // lies in every branch is accepted while a missing key still emits
+            // TS2536.
+            if !foreign_keyof_indexed_constraint
+                && self.deferred_conditional_index_key_is_valid(
+                    object_type,
+                    object_type_for_check,
+                    index_type_for_check,
+                )
             {
                 return;
             }
