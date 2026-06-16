@@ -797,11 +797,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
-        let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-        checker.bypass_evaluation = true;
-        checker.max_depth = MAX_SUBTYPE_DEPTH;
-        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+        use crate::relations::subtype::MAX_SUBTYPE_DEPTH;
+        // tsc reduces a union with the *strict* subtype relation, which honors
+        // the weak-type rule: a source that shares no property with a weak object
+        // target (all-optional, ≥1 property, no signatures) is NOT a strict
+        // subtype of it, even though it is one set-theoretically (the structural
+        // `Judge`). Without this, `boolean | { capture?: boolean }` would collapse
+        // to just `{ capture?: boolean }` (`boolean <: weak` holds structurally),
+        // and a later `boolean` argument would then fail against the surviving
+        // weak member with a false TS2345/TS2559. The union arm reuses the same
+        // weak-violation predicate that drives the diagnostic so reduction and
+        // assignability agree; intersection reduction keeps its own
+        // member-preservation guards below.
+        //
+        // `CompatChecker` embeds the `SubtypeChecker` both directions need, so
+        // drive the structural `is_subtype_of` through `compat.subtype` rather
+        // than allocating a second checker.
+        let mut compat =
+            crate::relations::compat::CompatChecker::with_resolver(self.interner, self.resolver);
+        compat.subtype.bypass_evaluation = true;
+        compat.subtype.max_depth = MAX_SUBTYPE_DEPTH;
+        compat.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         // Pre-compute property name sets for all members once, avoiding O(N²) FxHashSet
         // allocations in the inner loop. Each entry is None for non-object types.
@@ -851,7 +867,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
-                        checker.is_subtype_of(members[i], members[j])
+                        compat.subtype.is_subtype_of(members[i], members[j])
+                            // Weak-type guard (mirrors tsc's strictSubtypeRelation):
+                            // do not drop members[i] in favor of a weak object member
+                            // it shares no property with — tsc keeps both.
+                            && !compat.is_weak_union_violation(members[i], members[j])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             // Don't remove a member with an index signature when the
                             // subsuming member lacks one. The index signature carries
@@ -893,7 +913,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Skip the drop so `Application(stripPath<U>) & {path?: _}` keeps
                         // both members and downstream property collection sees the union.
                         !Self::is_opaque_under_bypass_eval(self.interner, members[i])
-                            && checker.is_subtype_of(members[j], members[i])
+                            && compat.subtype.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             // Modifier-preservation guard: in an intersection a shared
                             // property is readonly/optional only when ALL contributors

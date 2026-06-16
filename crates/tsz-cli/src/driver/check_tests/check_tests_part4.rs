@@ -521,3 +521,74 @@ export const r = x["a"];
         );
     }
 
+    /// Regression for #13650 (Face 2): a `primitive | <weak object>` parameter
+    /// of a *generic* signature must accept a primitive argument. tsc evaluates
+    /// `boolean | Opts` as a two-member union and `false`/`boolean` is assignable
+    /// to the `boolean` member. tsz used to re-normalize the union during the
+    /// generic-call instantiation pass and drop the primitive member, because
+    /// the structural `Judge` reports `boolean <: { capture?: boolean }` (true
+    /// set-theoretically). tsc's union reduction uses the *strict* subtype
+    /// relation, which honors the weak-type rule: a source sharing no property
+    /// with a weak object is NOT a strict subtype of it, so the member survives.
+    /// Binder names vary so the rule is structural, not name-driven.
+    #[test]
+    fn generic_signature_primitive_or_weak_union_keeps_primitive_member() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+interface Flags { lazy?: boolean; eager?: boolean }
+declare function reg<P extends string>(p: P, f?: boolean | Flags): void;
+reg("a", false);
+reg("a", true);
+const widened: boolean = false;
+reg("a", widened);
+
+declare function regNum<Q extends string>(q: Q, f?: number | Flags): void;
+regNum("a", 5);
+
+declare function regStr<S extends string>(s: S, f?: string | Flags): void;
+regStr("a", "x");
+"#,
+        )]);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2345 || d.code == 2769),
+            "primitive arg to a generic `primitive | weak` union param must be accepted \
+             (no false TS2345/TS2769): {diagnostics:?}"
+        );
+    }
+
+    /// Companion negative control for #13650 (Face 2): the weak-type rule must
+    /// still reject a primitive against a *weak-only* union member (no sibling
+    /// primitive) and against a bare weak object — keeping the union reduction
+    /// fix from silently disabling weak enforcement. tsc rejects both (TS2559);
+    /// tsz rejects both as well (the union-member case currently surfaces as
+    /// TS2345, the direct case as TS2559) — what matters is that they stay
+    /// errors, never accepted.
+    #[test]
+    fn weak_only_targets_stay_rejected_after_union_reduction_fix() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+interface Flags { lazy?: boolean; eager?: boolean }
+declare function regWeak<P extends string>(p: P, f?: Flags): void;
+regWeak("a", false);
+const direct: Flags = true;
+"#,
+        )]);
+        // The direct `const direct: Flags = true` assignment must stay TS2559.
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2559),
+            "primitive vs bare weak object must stay TS2559: {diagnostics:?}"
+        );
+        // Both the weak-only union-member call and the direct assignment must be
+        // rejected — never silently accepted by the union-reduction fix.
+        let weak_rejections = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2559 | 2345 | 2322))
+            .count();
+        assert!(
+            weak_rejections >= 2,
+            "both weak-only targets must stay rejected (>=2 weak diagnostics): {diagnostics:?}"
+        );
+    }
+
