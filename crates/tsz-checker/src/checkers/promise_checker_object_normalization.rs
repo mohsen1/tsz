@@ -93,49 +93,6 @@ pub(crate) fn awaited_eval_thread_local_state_clear_for_test() -> bool {
         && awaited_eval_clamp_epoch() == 0
 }
 
-#[cfg(test)]
-mod awaited_eval_guard_tests {
-    use super::*;
-
-    #[test]
-    fn visit_guard_blocks_reentry_and_restores_on_drop() {
-        reset_awaited_eval_thread_local_state();
-        let t = TypeId(7);
-        let outer = AwaitedEvalVisitGuard::enter(t).expect("first entry succeeds");
-        assert!(
-            AwaitedEvalVisitGuard::enter(t).is_none(),
-            "re-entry while in flight must be blocked"
-        );
-        // A different type is independent.
-        let other = AwaitedEvalVisitGuard::enter(TypeId(8)).expect("distinct type enters");
-        drop(other);
-        drop(outer);
-        assert!(
-            AwaitedEvalVisitGuard::enter(t).is_some(),
-            "membership must be cleared on drop"
-        );
-        reset_awaited_eval_thread_local_state();
-    }
-
-    #[test]
-    fn clamp_epoch_bumps_and_resets() {
-        reset_awaited_eval_thread_local_state();
-        let before = awaited_eval_clamp_epoch();
-        bump_awaited_eval_clamp_epoch();
-        assert_ne!(
-            awaited_eval_clamp_epoch(),
-            before,
-            "clamp epoch must advance so a subtree clamp is observable"
-        );
-        reset_awaited_eval_thread_local_state();
-        assert_eq!(
-            awaited_eval_clamp_epoch(),
-            0,
-            "reset zeroes the clamp epoch"
-        );
-    }
-}
-
 impl<'a> CheckerState<'a> {
     pub(super) fn evaluate_awaited_object_properties_for_assignability(
         &mut self,
@@ -490,5 +447,48 @@ impl<'a> CheckerState<'a> {
 
         let extends_type = self.evaluate_type_for_assignability(cond.extends_type);
         crate::query_boundaries::common::has_property_by_str(self.ctx.types, extends_type, "then")
+    }
+}
+
+#[cfg(test)]
+mod awaited_eval_guard_tests {
+    use super::*;
+
+    #[test]
+    fn visit_guard_blocks_reentry_and_restores_on_drop() {
+        reset_awaited_eval_thread_local_state();
+        let t = TypeId(7);
+        let outer = AwaitedEvalVisitGuard::enter(t).expect("first entry succeeds");
+        assert!(
+            AwaitedEvalVisitGuard::enter(t).is_none(),
+            "re-entry while in flight must be blocked"
+        );
+        // A different type is independent.
+        let other = AwaitedEvalVisitGuard::enter(TypeId(8)).expect("distinct type enters");
+        drop(other);
+        drop(outer);
+        assert!(
+            AwaitedEvalVisitGuard::enter(t).is_some(),
+            "membership must be cleared on drop"
+        );
+        reset_awaited_eval_thread_local_state();
+    }
+
+    #[test]
+    fn clamp_epoch_bumps_and_resets() {
+        reset_awaited_eval_thread_local_state();
+        let before = awaited_eval_clamp_epoch();
+        bump_awaited_eval_clamp_epoch();
+        assert_ne!(
+            awaited_eval_clamp_epoch(),
+            before,
+            "clamp epoch must advance so a subtree clamp is observable"
+        );
+        reset_awaited_eval_thread_local_state();
+        assert_eq!(
+            awaited_eval_clamp_epoch(),
+            0,
+            "reset zeroes the clamp epoch"
+        );
     }
 }
