@@ -498,6 +498,100 @@ fn test_generic_call_widening_applies_when_constraint_satisfied() {
     }
 }
 
+/// Adjacent negative control to the bare-primitive tuple case above: when a
+/// tuple constraint's element is a *type parameter with a primitive constraint*
+/// (`U extends [E, E]` with `E extends string`), tsc preserves the literal
+/// element types inferred for `U` (the zod `arrayToEnum` family, #13175). The
+/// solver-side literal-preservation gate (`constraint_is_primitive_type_inner`)
+/// must therefore still fire for this shape — unlike `[string, string]`, where
+/// the element is a bare concrete primitive and widening applies. Guards against
+/// the fix for the bare-primitive case (which excludes plain `string` elements)
+/// from also breaking the type-parameter-element case.
+#[test]
+fn test_generic_call_preserves_literals_for_primitive_constrained_tuple_param() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // E extends string
+    let e_name = interner.intern_string("E");
+    let e_tp = TypeParamInfo {
+        is_const: false,
+        name: e_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let e_id = interner.type_param(e_tp);
+
+    // U extends [E, E]
+    let constraint = interner.tuple(vec![
+        TupleElement {
+            type_id: e_id,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: e_id,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let u_name = interner.intern_string("U");
+    let u_tp = TypeParamInfo {
+        is_const: false,
+        name: u_name,
+        constraint: Some(constraint),
+        default: None,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let u_id = interner.type_param(u_tp);
+
+    // <E extends string, U extends [E, E]>(x: U): U
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(u_id)],
+        this_type: None,
+        return_type: u_id,
+        type_params: vec![e_tp, u_tp],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with ["hello", "world"] — literal tuple. The primitive-constrained
+    // type-parameter element preserves the literals (NOT widened to [string,
+    // string]).
+    let hello_lit = interner.literal_string("hello");
+    let world_lit = interner.literal_string("world");
+    let arg = interner.tuple(vec![
+        TupleElement {
+            type_id: hello_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: world_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    match result {
+        CallResult::Success(ret) => {
+            assert_eq!(
+                ret, arg,
+                "Expected literal tuple preserved for primitive-constrained type-parameter element"
+            );
+        }
+        other => panic!("Expected Success with preserved literal tuple, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_generic_call_widens_fresh_object_union_inferred_type() {
     let interner = TypeInterner::new();

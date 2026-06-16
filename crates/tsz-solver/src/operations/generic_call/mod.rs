@@ -206,13 +206,77 @@ fn constraint_is_primitive_type_inner(
                 .iter()
                 .any(|&m| constraint_is_primitive_type_inner(interner, resolver, m, depth + 1))
         }
-        // Variadic-tuple constraints `[T, ...T[]]` and array constraints carry
-        // the primitive-constrained parameter in their element/rest types.
+        // Variadic-tuple constraints `[T, ...T[]]` and array constraints preserve
+        // literal inferences only when an element carries a *primitive-constrained
+        // type parameter* (the `T` in `U extends [T, ...T[]]`, `T extends string`).
+        // A tuple/array of bare concrete primitives like `[string, string]` must
+        // NOT preserve literals: tsc widens `["hello", "world"]` to `[string,
+        // string]` against such a constraint. The top-level primitive
+        // short-circuit (`string`/`number`/...) is only correct for a constraint
+        // that IS the primitive (`T extends string`); reaching a bare primitive
+        // through a tuple/array wrapper is a concrete element, not a literal-
+        // preserving parameter, so use the container-only check here.
         Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).iter().any(|element| {
-            constraint_is_primitive_type_inner(interner, resolver, element.type_id, depth + 1)
+            tuple_or_array_element_preserves_literals(
+                interner,
+                resolver,
+                element.type_id,
+                depth + 1,
+            )
         }),
         Some(TypeData::Array(element) | TypeData::ReadonlyType(element)) => {
-            constraint_is_primitive_type_inner(interner, resolver, element, depth + 1)
+            tuple_or_array_element_preserves_literals(interner, resolver, element, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a tuple/array constraint *element* implies literal preservation for
+/// the inferred type parameter.
+///
+/// Mirrors [`constraint_is_primitive_type_inner`] but, unlike the top-level
+/// gate, does NOT treat a bare primitive (`string`, `number`, …) element as
+/// literal-preserving: an element that is concretely `string` is just a normal
+/// tuple/array slot, and tsc widens literal arguments against it (`["hello",
+/// "world"]` against `[string, string]` → `[string, string]`). Literal
+/// preservation through a tuple/array applies only when an element reaches a
+/// primitive-constrained type parameter (`U extends [T, ...T[]]`,
+/// `T extends string`) or a literal/`keyof` form that already preserves
+/// literals. This matches the inference-side sibling
+/// `InferenceContext::constraint_contains_type_param_with_primitive_constraint`.
+fn tuple_or_array_element_preserves_literals(
+    interner: &dyn crate::construction::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 8 || type_id.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(type_id) {
+        // Literal / `keyof T` elements already preserve fresh literal candidates.
+        Some(TypeData::Literal(_) | TypeData::KeyOf(_)) => true,
+        // A type parameter whose own constraint is primitive (the `T` in
+        // `U extends [T, ...T[]]`). Reuse the full gate for the constraint so a
+        // `T extends string` element correctly preserves literals.
+        Some(TypeData::TypeParameter(info)) => info.constraint.is_some_and(|constraint| {
+            constraint_is_primitive_type_inner(interner, resolver, constraint, depth + 1)
+        }),
+        // Nested containers may still wrap a primitive-constrained type parameter.
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => interner
+            .type_list(list_id)
+            .iter()
+            .any(|&m| tuple_or_array_element_preserves_literals(interner, resolver, m, depth + 1)),
+        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).iter().any(|element| {
+            tuple_or_array_element_preserves_literals(
+                interner,
+                resolver,
+                element.type_id,
+                depth + 1,
+            )
+        }),
+        Some(TypeData::Array(element) | TypeData::ReadonlyType(element)) => {
+            tuple_or_array_element_preserves_literals(interner, resolver, element, depth + 1)
         }
         _ => false,
     }
