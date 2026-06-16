@@ -68,19 +68,25 @@ impl BinderState {
             return None;
         }
 
-        // A module-local namespace (`namespace X { ... }`) is a file-scope
-        // type-and-namespace binding that shadows the same-named global lib
-        // symbol entirely in both meanings — re-attaching the lib's interface
-        // declaration would leak the global type into the shadow and (because
-        // the shadow keeps the lib symbol id off the export surface) is also
-        // never needed. Preserve nothing for namespaces, matching tsc's
-        // file-scope-before-global resolution. Note: uninstantiated namespaces
-        // carry only `NAMESPACE_MODULE`, which is not part of `VALUE`, so the
-        // `local_has_value` check below does not cover them.
-        if (local_flags & symbol_flags::MODULE) != 0 {
-            return None;
-        }
-
+        // A module-local namespace (`namespace X { ... }`) occupies only the
+        // NAMESPACE meaning of its name plus its own qualified members
+        // (`X.Member`). It does NOT supply a bare-type meaning for `X` itself
+        // (you cannot write `X<T>` unless `X` merges with a class/enum), and it
+        // only supplies a VALUE meaning when *instantiated* (`VALUE_MODULE`).
+        // So a module-local namespace colliding with a global lib `interface
+        // X`, `type X`, or `var X` must keep the lib's TYPE and/or VALUE
+        // meanings visible: `Pick<T, K>` must still resolve to the lib `type
+        // Pick` alias even when a module declares an (empty) `namespace
+        // Pick {}` (the `utility-types` row), and a global value like `var
+        // Event` must stay callable through the shadow. Treat the namespace as
+        // occupying neither the bare TYPE slot nor (when uninstantiated) the
+        // VALUE slot, so both lib meanings are preserved below. Note:
+        // `NAMESPACE_MODULE` is in neither `VALUE` nor `TYPE`, and
+        // `VALUE_MODULE` is in `VALUE`, so the bitmask checks already classify
+        // instantiated-vs-uninstantiated value occupancy correctly; the
+        // namespace never contributes a bare-type meaning, so it must not flip
+        // `local_has_type`.
+        let local_is_module = (local_flags & symbol_flags::MODULE) != 0;
         let local_has_value = (local_flags & symbol_flags::VALUE) != 0;
         let local_has_type = (local_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
 
@@ -133,9 +139,17 @@ impl BinderState {
 
             let (declares_type, declares_value) = match kind {
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => (true, false),
-                // Skip TYPE_ALIAS_DECLARATION: carrying a lib type alias onto
-                // a module-local shadow symbol pollutes its declarations vec
-                // for indexed-access traversal (see #4687).
+                // A lib type alias is normally skipped: carrying it onto a
+                // module-local shadow symbol pollutes its declarations vec for
+                // indexed-access traversal (see #4687). But when the shadow is
+                // a *namespace* (which never supplies a bare-type meaning), the
+                // lib alias must be preserved so `Pick<T, K>` still resolves to
+                // the global `type Pick` alias (the `utility-types` row). A
+                // namespace's own members live behind `X.Member`, so the alias
+                // does not collide with the namespace's indexed-access surface.
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION && local_is_module => {
+                    (true, false)
+                }
                 k if k == syntax_kind_ext::VARIABLE_DECLARATION => (false, true),
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => (false, true),
                 _ => continue,

@@ -566,3 +566,122 @@ fn declare_global_namespace_still_augments_lib_type() {
         "declare-global namespace augmentation must preserve the lib INTERFACE meaning"
     );
 }
+
+/// A module-local `namespace X` colliding with a global lib `interface X` +
+/// `var X` must shadow the *export surface* (so `X` is the module's export) yet
+/// keep BOTH the lib's TYPE and VALUE meanings visible through the shadow
+/// symbol. A namespace only occupies the NAMESPACE slot (and its own
+/// `X.Member` members); it supplies neither a bare-type meaning nor (when
+/// uninstantiated) a value, so dropping the lib interface/var would lose the
+/// global `Event` type and constructor that tsc keeps visible
+/// (the `isolatedModulesShadowGlobalTypeNotValue` family).
+#[test]
+fn module_namespace_preserves_colliding_lib_type_and_value() {
+    let (binder, file_name) = bind_module_with_lib(
+        "interface Event { readonly type: string; }
+         declare var Event: { new (type: string): Event };",
+        "export {};
+         export namespace Event {
+             export type T = any;
+         }",
+    );
+
+    let exports = binder
+        .module_exports
+        .get(&file_name)
+        .expect("module should have an export surface");
+    let sym_id = exports.get("Event").expect("Event export symbol");
+    assert!(
+        !binder.lib_symbol_ids.contains(&sym_id),
+        "the exported `Event` must be the module-local namespace symbol"
+    );
+    let sym = binder.symbols.get(sym_id).expect("Event symbol exists");
+    assert!(
+        sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE),
+        "the exported symbol must carry namespace/module flags"
+    );
+    // The lib's VALUE side (the `var Event` constructor) is re-attached so the
+    // name keeps resolving as a value — the namespace did not occupy VALUE.
+    assert!(
+        sym.has_any_flags(symbol_flags::VALUE),
+        "an uninstantiated namespace must preserve the colliding lib VALUE meaning"
+    );
+    // The lib's INTERFACE TYPE meaning is also re-attached — a namespace does
+    // not supply a bare-type meaning for `Event`, so bare `Event` must still
+    // resolve to the global interface.
+    assert!(
+        sym.has_any_flags(symbol_flags::INTERFACE),
+        "the lib INTERFACE meaning must remain visible through the namespace shadow"
+    );
+}
+
+/// Renamed-binder variant: the type+value preservation rule must hold for any
+/// lib name carrying both an interface and a global value, not a hardcoded one.
+#[test]
+fn module_namespace_preserves_colliding_lib_type_and_value_renamed_binder() {
+    for lib_name in ["Event", "Symbol", "Proxy"] {
+        let (binder, file_name) = bind_module_with_lib(
+            &format!(
+                "interface {lib_name} {{ readonly tag: string; }}
+                 declare var {lib_name}: {{ new (): {lib_name} }};"
+            ),
+            &format!(
+                "export {{}};
+                 export namespace {lib_name} {{
+                     export type T = any;
+                 }}"
+            ),
+        );
+        let exports = binder
+            .module_exports
+            .get(&file_name)
+            .unwrap_or_else(|| panic!("module should have exports for {lib_name}"));
+        let sym_id = exports
+            .get(lib_name)
+            .unwrap_or_else(|| panic!("{lib_name} export symbol"));
+        let sym = binder.symbols.get(sym_id).expect("symbol exists");
+        assert!(
+            sym.has_any_flags(symbol_flags::VALUE),
+            "uninstantiated namespace `{lib_name}` must preserve the lib VALUE meaning"
+        );
+        assert!(
+            sym.has_any_flags(symbol_flags::INTERFACE),
+            "the lib INTERFACE meaning for `{lib_name}` must remain visible through the shadow"
+        );
+    }
+}
+
+/// A module-local (empty, non-exported) `namespace X` colliding with a global
+/// lib *type alias* `type X<...>` must keep the alias's TYPE meaning so generic
+/// uses `X<A, B>` still resolve — the `utility-types` `namespace Pick {}` case.
+/// Without preserving the alias, the namespace shadow surfaces TS2315 ("not
+/// generic") / TS2709 ("Cannot use namespace as a type").
+#[test]
+fn module_namespace_preserves_colliding_lib_type_alias() {
+    for lib_name in ["Pick", "Record", "Omit"] {
+        let (binder, _file_name) = bind_module_with_lib(
+            &format!("type {lib_name}<T, K extends keyof T> = {{ [P in K]: T[P] }};"),
+            &format!(
+                "export {{}};
+                 namespace {lib_name} {{}}
+                 export type Use<T> = {lib_name}<T, keyof T>;"
+            ),
+        );
+        // The locally-bound `X` symbol must retain the lib TYPE_ALIAS meaning so
+        // the checker can resolve the generic `X<T, keyof T>` reference.
+        let sym_id = binder
+            .file_locals
+            .get(lib_name)
+            .unwrap_or_else(|| panic!("{lib_name} should be in file_locals"));
+        let sym = binder.symbols.get(sym_id).expect("symbol exists");
+        assert!(
+            sym.has_any_flags(symbol_flags::TYPE_ALIAS),
+            "module-local `namespace {lib_name} {{}}` must preserve the colliding lib \
+             TYPE_ALIAS meaning so `{lib_name}<...>` still resolves"
+        );
+        assert!(
+            sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE),
+            "the symbol must still carry the namespace meaning"
+        );
+    }
+}
