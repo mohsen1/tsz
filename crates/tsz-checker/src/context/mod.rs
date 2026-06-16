@@ -927,6 +927,18 @@ pub struct CheckerContext<'a> {
     /// is borrowable. This eliminates borrow-conflict misses at their source.
     pub deferred_flow_env_writes: RefCell<Vec<DeferredFlowEnvWrite>>,
 
+    /// Dual-env registrations whose authoritative write into `type_env` (the
+    /// evaluator env) lost the `RefCell` borrow race because `type_env` was
+    /// already borrowed during recursive resolution. Previously such a write was
+    /// silently dropped with only a `warn!`, which left the entry absent from
+    /// both the local cache and (since the shared-store write-through lives
+    /// inside the env mutator) the shared `DefinitionStore` — collapsing a
+    /// class-instance / def body to `never` for every later consumer (xstate
+    /// `Actor` `this` collapse). The missed operation is reified here and
+    /// replayed the next time `type_env` is borrowable, exactly as
+    /// `deferred_flow_env_writes` does for the flow-analyzer env.
+    pub deferred_eval_env_writes: RefCell<Vec<DeferredFlowEnvWrite>>,
+
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
 
