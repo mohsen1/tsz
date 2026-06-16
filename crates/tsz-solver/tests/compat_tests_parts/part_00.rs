@@ -1825,5 +1825,22 @@ fn function_assignable_to_callable_and_weak_object_intersection() {
             !checker.is_assignable(fn_void, callable_and_required),
             "function must NOT satisfy a required member {{ {prop_name}: number }}",
         );
+
+        // A *union* whose only weak member is the all-optional object must NOT
+        // accept the function: `tsc` applies the weak-type rule per union member,
+        // so a function (which structurally exposes only `call`/`apply`) shares no
+        // property name with `{ prop? }` and is rejected. The standalone-weak
+        // suppression that lets the *intersection* member pass (Face 1) must not
+        // leak into the union-member path. Regression for #13650 follow-up
+        // (errorsWithInvokablesInUnions01).
+        let other_obj = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("required_marker"),
+            TypeId::STRING,
+        )]);
+        let union_with_weak = interner.union(vec![other_obj, weak_obj]);
+        assert!(
+            !checker.is_assignable(fn_void, union_with_weak),
+            "function must NOT be assignable to a union whose weak member is {{ {prop_name}? }}",
+        );
     }
 }
