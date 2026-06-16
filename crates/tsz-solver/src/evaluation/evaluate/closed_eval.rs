@@ -13,11 +13,15 @@
 //!    active substitution environment — only on the project's single fixed
 //!    resolver (via any `Lazy`/`TypeQuery` refs). The mapping is stable per
 //!    `TypeId`.
-//!  - **Authoritative-write gate**: only evaluators with a `query_db` (the
-//!    second-pass `CheckerContext` and subtype-checker evaluators) write. The
-//!    limited first-pass `TypeEnvironment` resolver never stores an
-//!    under-resolved result a sibling read would observe. Reads are safe for any
-//!    resolver because the stored value is a definite, authoritative answer.
+//!  - **Top-level-write gate**: any evaluator may commit at the top of its own
+//!    evaluation (`guard.depth() == 0`); the per-entry input gate above (no
+//!    `TypeParameter`/`Infer`/`ThisType`/`BoundParameter`) is what keeps the
+//!    write sound, because a substitution-independent result is identical across
+//!    every evaluator and resolver. The non-cache `TypeDatabase` backends keep
+//!    the insert a no-op, so only `QueryCache`-backed per-file scopes persist;
+//!    the limited first-pass `TypeEnvironment` resolver — which lacks a query
+//!    cache — therefore stores nothing a sibling read would observe. Reads are
+//!    safe for any resolver because the stored value is a definite answer.
 //!  - **Limit gate**: a run that hit any recursion/complexity limit
 //!    (`deep_recursion_seen`, the `TS2589` depth machinery, or the `TS2590`
 //!    union-too-complex flag) caches nothing — a cached read must never
@@ -61,14 +65,23 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// top-level evaluation began; if the run newly tripped the flag, nothing is
     /// cached.
     pub(super) fn commit_closed_eval_writes(&self, union_too_complex_before: bool) {
-        // Only the checker's authoritative, context-free type-resolution pass
-        // (opted in via `with_closed_eval_writes`) writes. Evaluators running
-        // mid-relation / mid-inference / mid-narrowing must not, since their
-        // results can depend on context the cache key does not capture.
-        let is_top_level = closed_eval_cache_enabled()
-            && self.closed_eval_writes_allowed
-            && self.query_db.is_some()
-            && self.guard.depth() == 0;
+        // Any top-level evaluation (`guard.depth() == 0`) may commit, not only
+        // the checker's authoritative `with_closed_eval_writes` pass. The
+        // per-entry filter below restricts what is written to *substitution-
+        // independent* nodes (`!is_substitution_dependent_type`), whose result
+        // is a pure function of `(TypeId, no_unchecked, exact_optional)` and the
+        // project's single fixed resolver — the same value any evaluator,
+        // resolver-backed or plain, would compute. Mid-relation / mid-inference /
+        // mid-narrowing context cannot change a substitution-independent result
+        // (no `TypeParameter`/`Infer`/`ThisType`/`BoundParameter` is present to
+        // bind against it). The non-cache `TypeDatabase` backends keep
+        // `insert_closed_eval_cache` a no-op, so only `QueryCache`-backed,
+        // per-file scopes actually persist. Opening the writer to the
+        // resolver-backed evaluators that instantiation and relation spin up is
+        // what lets the cache reach the closed conditionals those contexts
+        // compute (and re-compute) — the `AutoPath`/`MetaPath`/`Join`
+        // deep-recursion lever (issue #13250).
+        let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
             || self.recursion_limit_hit()
             || self.unresolved_def_seen()
@@ -78,11 +91,15 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         }
         let no_unchecked = self.no_unchecked_indexed_access;
         // Collect first to avoid borrowing the per-evaluator cache while the
-        // content query borrows the interner.
+        // content query borrows the interner. A node whose own evaluation window
+        // saw a recursion/limit event is in `tainted`; such a bounded result
+        // must never enter the project-wide cache (it would permanently shadow
+        // the complete answer a deeper-budget run derives), so it is excluded
+        // here in addition to the whole-run `recursion_limit_hit` gate above.
         let entries: Vec<(TypeId, TypeId)> = self
             .cache
             .iter()
-            .filter(|(node, _)| !node.is_intrinsic())
+            .filter(|(node, _)| !node.is_intrinsic() && !self.tainted.contains(node))
             .map(|(&node, &node_result)| (node, node_result))
             .collect();
         for (node, node_result) in entries {
@@ -183,6 +200,33 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 self.is_index_object_cacheable(obj) && !self.body_has_conditional(type_id)
             }
             Some(TypeData::Application(_)) => self.is_application_body_cacheable(type_id),
+            // A `Conditional` reaches this gate only after the caller has already
+            // proven the node is *not* substitution-dependent (the read path's
+            // `try_closed_eval_read` and the write path's
+            // `commit_closed_eval_writes` both require
+            // `!is_substitution_dependent_type`, which is `true` for any node
+            // whose structure contains a `TypeParameter`/`Infer`/`ThisType`/
+            // `BoundParameter` — descending conditional `check`/`extends`/
+            // `true`/`false` branches via `ChildPolicy::CONTENT_PREDICATE`).
+            // The historic conditional exclusion (`body_has_conditional`) guarded
+            // against `infer` placeholders binding against use-site
+            // inference/narrowing/contextual state the `(TypeId, no_unchecked)`
+            // key does not capture. With no `infer` anywhere in the structure
+            // that hazard cannot arise: a closed conditional evaluates to a
+            // definite answer that is a pure function of its `TypeId`, the
+            // `no_unchecked` flag, and the project's single fixed resolver.
+            //
+            // This is the lever for the deferred deep-recursion families
+            // (`AutoPath`/`MetaPath`/`Flatten`/`Join` in ts-toolbelt): each path
+            // closes hundreds of distinct conditional `TypeId`s during
+            // instantiation, and every fresh resolver-backed evaluator that meets
+            // one re-walks it from scratch (the `closed_eval_cache` excluded the
+            // conditional kind, the persistent eval memo is opt-out for
+            // resolver-backed contexts, and the structural-inertness fixed point
+            // only retires `result == type_id` self-maps). Caching the closed
+            // conditional's result retires that recompute for every later
+            // evaluator regardless of resolver.
+            Some(TypeData::Conditional(_)) => true,
             _ => false,
         }
     }
