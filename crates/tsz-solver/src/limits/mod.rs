@@ -43,7 +43,7 @@
 //! | Per-file evaluation fuel, thread-local (this module) | [`MAX_EVALUATION_FUEL`] = 2M, sampled every [`EVAL_FUEL_CHECK_INTERVAL`] = 128 guard iterations | `instantiationCount` (5M; tsz lower because eager expansion is heavier) | `TS2589`-style `ERROR` bail | ts-toolbelt corpus, #13172/#13181 |
 //! | `TypeInstantiator.depth` per-instance (`instantiation/instantiate.rs`) | [`MAX_TYPE_SUBSTITUTION_DEPTH`] = 50 | `instantiateType` recursion (tsc `instantiationDepth` = 100; see note below) | sticky `depth_exceeded`, returns input type opaque | recursive generic instantiation tests |
 //! | `EvaluationSession` Rc-shared cross-context counters (`evaluation/session.rs`) | [`MAX_GLOBAL_INSTANTIATION_DEPTH`] = 50, [`MAX_GLOBAL_INSTANTIATION_FUEL`] = 2000 per file | `instantiationDepth`/`instantiationCount` at the checker boundary | checker leaves application un-expanded | react16.d.ts corpus |
-//! | Cross-operation stack-frame breaker, thread-local (this module, RAII in `recursion.rs`) | [`MAX_SOLVER_STACK_FRAMES`] = 2000 live frames | none (OS-stack protection, issue #7574) | relation-preserving default (assumed-related / opaque) | #7574 10k-file repo overflow |
+//! | Cross-operation stack-frame breaker, thread-local (this module, RAII in `recursion.rs`) | [`MAX_SOLVER_STACK_FRAMES`] = 2000 live frames | none (OS-stack protection, issue #7574) | relation-preserving default (assumed-related / opaque) | #7574 10k-file repo overflow; xstate canary |
 //!
 //! # Known double-fire / divergence findings (documented, NOT changed here)
 //!

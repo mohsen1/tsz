@@ -1338,3 +1338,45 @@ fn with_solver_frame_skips_body_and_returns_none_when_exhausted() {
     held.clear();
     assert_eq!(solver_stack_frame_depth(), 0);
 }
+
+#[test]
+fn remove_nullish_is_bounded_by_the_solver_frame_breaker() {
+    // Regression: `narrowing::utils::remove_nullish_inner` recurses on the
+    // *result* of instantiating/evaluating an `Application`/`Lazy`/`TypeQuery`
+    // operand. On a recursively-defined generic that result is a fresh `TypeId`
+    // at every level, so the recursion is productive-but-unbounded and overflows
+    // the OS stack (xstate canary, issue #7574 family). The fix routes the
+    // recursion through `with_solver_frame`, so when the cross-operation frame
+    // budget is exhausted the call must bail by returning the operand unchanged
+    // instead of recursing one frame deeper.
+    use crate::intern::TypeInterner;
+    use crate::narrowing::remove_nullish;
+    use crate::types::TypeId as Tid;
+
+    let interner = TypeInterner::new();
+    // A nullable union the non-null assertion would normally narrow to a
+    // non-nullish type. With the budget exhausted, the guard must bail and hand
+    // the input straight back (relation-preserving, never `ERROR`).
+    let nullable = interner.union(vec![Tid::STRING, Tid::UNDEFINED]);
+
+    reset_solver_stack_frames();
+    let mut held = Vec::new();
+    for _ in 0..MAX_SOLVER_STACK_FRAMES {
+        held.push(try_enter_solver_frame().expect("under cap"));
+    }
+
+    // The first `with_solver_frame` entry inside `remove_nullish_inner` is
+    // refused, so the function returns its input verbatim rather than recursing.
+    let out = remove_nullish(
+        &interner as &dyn crate::construction::TypeDatabase,
+        nullable,
+    );
+    assert_eq!(
+        out, nullable,
+        "with the solver frame budget exhausted, remove_nullish must bail and \
+         return the input type unchanged instead of recursing"
+    );
+
+    held.clear();
+    assert_eq!(solver_stack_frame_depth(), 0);
+}
