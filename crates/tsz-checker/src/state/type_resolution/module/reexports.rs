@@ -35,6 +35,46 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited: &mut rustc_hash::FxHashSet<usize>,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
+        // Memoize only *root* resolutions: those entered with an empty `visited`
+        // path and no module-key override. At that boundary the entry cycle
+        // guard cannot fire (the root file is inserted fresh), so the result is
+        // never the cycle-break sentinel `None`, and no inherited `visited`
+        // truncation can perturb the traversal — the answer is the canonical,
+        // path-independent target for `(file_idx, export_name)`. Inner recursive
+        // calls (non-empty `visited`, or a `Some` module key) are path-sensitive
+        // and bypass the cache entirely. This collapses the `O(names ×
+        // export-edges)` re-walk barrel `export *` graphs otherwise pay when the
+        // same export name is resolved from many import/usage sites.
+        if !(visited.is_empty() && module_key.is_none()) {
+            return self.resolve_export_in_file_uncached(
+                file_idx,
+                module_key,
+                export_name,
+                visited,
+            );
+        }
+
+        let cache_key = (file_idx, export_name.to_owned());
+        if let Some(cached) = self.ctx.reexport_resolution_cache.borrow().get(&cache_key) {
+            return *cached;
+        }
+
+        let result =
+            self.resolve_export_in_file_uncached(file_idx, module_key, export_name, visited);
+        self.ctx
+            .reexport_resolution_cache
+            .borrow_mut()
+            .insert(cache_key, result);
+        result
+    }
+
+    fn resolve_export_in_file_uncached(
+        &self,
+        file_idx: usize,
+        module_key: Option<&str>,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<usize>,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
         if !visited.insert(file_idx) {
             return None;
         }

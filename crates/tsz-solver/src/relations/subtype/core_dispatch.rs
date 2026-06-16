@@ -1518,8 +1518,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         Some(target),
                     );
                 }
-                // FunctionShape has no properties - not assignable to non-empty object
-                return SubtypeResult::False;
+                // A bare `FunctionShape` has no user-declared properties, so model
+                // it as an object whose only members are the function's stable
+                // apparent properties (`call`/`apply` for a callable, `prototype`
+                // for a constructor), mirroring `CompatChecker`'s
+                // `function_like_weak_type_properties`. Running the normal
+                // `check_object_subtype` then lets the function satisfy an object
+                // target whose required properties it covers — in particular an
+                // all-optional ("weak") object that shares one of those apparent
+                // names, or any optional-only target reached as a non-weak
+                // *intersection member* (where `in_intersection_member_check`
+                // suppresses the weak rule, e.g. the `{ brand?: number }` member of
+                // `(() => void) & { brand?: number }`, which `tsc` accepts).
+                //
+                // Crucially, because these apparent properties are *required* (not
+                // optional), the source is not itself a weak shape, so the weak-type
+                // rejection in `check_object_subtype` still fires for a standalone or
+                // union-member all-optional target with no common property name —
+                // matching `tsc`'s per-member weak rule (e.g. a function is NOT a
+                // member of `Fn | Ctor | { pre?; post? }`). A target with a missing
+                // *required* property likewise still fails inside
+                // `check_object_subtype`.
+                let apparent_source = self.function_apparent_object_shape(source);
+                return self.check_object_subtype(
+                    &apparent_source,
+                    None,
+                    Some(source),
+                    &t_shape,
+                    Some(target),
+                );
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -1713,5 +1740,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         result
+    }
+
+    /// Build the apparent `ObjectShape` of a bare function/constructor source for
+    /// structural object comparison. A function value has no user-declared
+    /// members, but it exposes stable apparent properties: `call`/`apply` for a
+    /// callable, `prototype` for a constructor. Modeling these as *required*
+    /// properties keeps the source from being mistaken for a weak shape, so the
+    /// weak-type rejection in `check_object_subtype` fires for a standalone or
+    /// union-member all-optional target the function shares no name with — while
+    /// an intersection-member target (weak rule suppressed) and an optional target
+    /// that shares one of these names still succeed. Mirrors
+    /// `CompatChecker::function_like_weak_type_properties`.
+    fn function_apparent_object_shape(&self, source: TypeId) -> ObjectShape {
+        let is_constructor = function_shape_id(self.interner, source)
+            .map(|id| self.interner.function_shape(id).is_constructor)
+            .unwrap_or(false);
+        let mut properties = Vec::new();
+        let mut push = |name: &str| {
+            let atom = self.interner.intern_string(name);
+            properties.push(PropertyInfo::new(atom, TypeId::ANY));
+        };
+        if is_constructor {
+            push("prototype");
+        } else {
+            push("call");
+            push("apply");
+        }
+        // `check_object_subtype`'s merge scan expects source properties sorted by
+        // name (`Atom`), matching the callable-shape path above.
+        properties.sort_by_key(|p| p.name);
+        ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        }
     }
 }

@@ -444,6 +444,20 @@ pub struct CliArgs {
     #[arg(long = "soundReportOnly", alias = "sound-report-only", hide = true)]
     pub sound_report_only: bool,
 
+    /// Apply declaration-boundary projection under Sound Mode (experimental).
+    ///
+    /// Implies `--sound`. Values whose type is owned by an external declaration
+    /// file (`.d.ts`, a default lib, or a `node_modules` package) have `any`
+    /// projected to `unknown` in read positions (return types, readable
+    /// properties, library-supplied callback parameters) when observed by sound
+    /// user code; write positions stay permissive. Off by default.
+    #[arg(
+        long = "soundDeclarationProjection",
+        alias = "sound-declaration-projection",
+        hide = true
+    )]
+    pub sound_declaration_projection: bool,
+
     /// Add 'undefined' to a type when accessed using an index.
     #[arg(
         long = "noUncheckedIndexedAccess",

@@ -87,7 +87,7 @@ impl<'a> TypeInstantiator<'a> {
     pub(super) fn instantiate_function(
         &mut self,
         shape_id: &FunctionShapeId,
-        key: &TypeData,
+        type_id: TypeId,
     ) -> TypeId {
         let shape = self.interner.function_shape(*shape_id);
         // Shallow-this mode: substitute `this:` parameter slot,
@@ -144,7 +144,9 @@ impl<'a> TypeInstantiator<'a> {
                     is_method: shape.is_method,
                 });
             }
-            return self.interner.intern(*key);
+            // Function shapes are canonically interned, so `type_id` already
+            // names this key; skip the redundant re-intern.
+            return type_id;
         }
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
@@ -188,7 +190,7 @@ impl<'a> TypeInstantiator<'a> {
                 is_method: shape.is_method,
             })
         } else {
-            self.interner.intern(*key)
+            type_id
         }
     }
 
@@ -196,7 +198,7 @@ impl<'a> TypeInstantiator<'a> {
     pub(super) fn instantiate_callable(
         &mut self,
         shape_id: &CallableShapeId,
-        key: &TypeData,
+        type_id: TypeId,
     ) -> TypeId {
         let shape = self.interner.callable_shape(*shape_id);
         // Shallow-this mode: substitute the `this:` slot and
@@ -268,7 +270,9 @@ impl<'a> TypeInstantiator<'a> {
                     is_abstract: shape.is_abstract,
                 });
             }
-            return self.interner.intern(*key);
+            // Callable shapes are canonically interned, so `type_id` already
+            // names this key; skip the redundant re-intern.
+            return type_id;
         }
         let instantiated_call = self.instantiate_call_signatures_if_changed(&shape.call_signatures);
         let instantiated_construct =
@@ -300,7 +304,7 @@ impl<'a> TypeInstantiator<'a> {
                 is_abstract: shape.is_abstract,
             })
         } else {
-            self.interner.intern(*key)
+            type_id
         }
     }
 }

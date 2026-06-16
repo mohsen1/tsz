@@ -44,6 +44,7 @@ pub mod compound_assignment;
 mod constraints;
 mod constructors;
 mod core;
+pub mod declaration_projection;
 pub mod expression_ops;
 pub(crate) mod generic_call;
 pub mod generics;

@@ -763,6 +763,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
+        // Resolver-independent structural fixed point (issues #13250 / #8356).
+        // A type containing none of the kinds `visit_type_key` rewrites and no
+        // substitution-dependent leaf evaluates to itself under *every*
+        // evaluator and resolver. Once any evaluator has observed and recorded
+        // that fact (in `memo_insert`), every later evaluator — including the
+        // resolver-backed ones that neither read nor write the persistent eval
+        // memo — short-circuits the entire recursive walk here. This is the
+        // single O(1) shared bit lookup that retires the ~56k identity
+        // recomputes the ts-toolbelt recursive-conditional hot path performed
+        // per run (the `with_resolver` evaluators dropped their local cache on
+        // every relation/inference call). Mirrors the local-cache hit above:
+        // no guard, budget, or epoch interaction, because the result is a
+        // definite, context-free identity.
+        if self.interner.structurally_eval_inert_cached(type_id) == Some(true) {
+            self.cache.insert(type_id, type_id);
+            return type_id;
+        }
+
         // Substitution-independent persistent cache. See `closed_eval` module.
         if let Some(cached) = self.try_closed_eval_read(type_id) {
             self.cache.insert(type_id, cached);
@@ -881,6 +899,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 self.interner
                     .insert_eval_memo(type_id, self.no_unchecked_indexed_access, result);
+            }
+            // Resolver-independent structural fixed point (issues #13250 /
+            // #8356). When a clean-window evaluation returns the input unchanged
+            // (`result == type_id`) for a type that holds none of the kinds
+            // `visit_type_key` rewrites nor any substitution-dependent leaf, the
+            // identity is universal: every evaluator and resolver returns
+            // `type_id`. Populating the shared structural-inertness bit here
+            // (amortized O(1), shared, monotonic — a closed structural type's
+            // inertness never changes) lets the fast path in `evaluate` retire
+            // the recompute for every later evaluator, regardless of resolver.
+            // It is populated unconditionally on `persistent_memo_reads`: the
+            // resolver-backed `with_resolver` evaluators that drop their local
+            // cache each call are exactly the ones this fixed point must reach.
+            // `is_structurally_eval_inert` descends the full structural surface
+            // and writes the bit as a side effect, so an unresolved `Lazy`
+            // hidden in any child position keeps the type out of the cache —
+            // only a genuine, resolver-independent fixed point is recorded. The
+            // `is_none` guard skips the walk once the bit is already settled.
+            if result == type_id
+                && !type_id.is_intrinsic()
+                && self
+                    .interner
+                    .structurally_eval_inert_cached(type_id)
+                    .is_none()
+            {
+                let _inert =
+                    crate::type_queries::is_structurally_eval_inert(self.interner, type_id);
             }
             // Measurement-only (issue #13097): record clean computes so the
             // memo audit can count cross-evaluator recomputation.

@@ -735,7 +735,7 @@ impl TypeInterner {
     /// Instead of `sort_by(compare_union_members)` which does 4-6 DashMap/arena lookups
     /// per comparison (O(N log N * lookups)), this pre-caches all lookup data for each
     /// member in O(N) reads, then sorts using the cached data with zero further lookups.
-    fn sort_union_members(&self, flat: &mut TypeListBuffer) {
+    pub(crate) fn sort_union_members(&self, flat: &mut TypeListBuffer) {
         if flat.len() <= 1 {
             return;
         }
@@ -898,7 +898,21 @@ impl TypeInterner {
         }
 
         // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
-        // Skip reduction if union contains complex types (TypeParameters, Lazy, etc.)
+        // Skip reduction wholesale only when the union contains a `TypeParameter`
+        // or `Lazy` member: those interact with reduction non-locally (an
+        // unresolved type parameter can stand for a supertype/subtype of any
+        // concrete peer, and a `Lazy` ref names a symbol whose shape is not yet
+        // available), so reducing the surrounding concrete members against an
+        // arbitrary instantiation is unsound. Unevaluated *deferred operations*
+        // (`Conditional` / `IndexAccess`) are NOT skipped here: they are inert in
+        // the shallow engine (never relate as source or target except by
+        // identity), so `reduce_union_subtypes` short-circuits the pairwise work
+        // over them internally while still reducing the concrete members beside
+        // them — which is what tsc does when distributing `Exclude`/`Extract`
+        // over a wide union (the deferred arms stay lazy; the concrete arms still
+        // collapse). Folding them into a whole-union skip dropped legitimate
+        // concrete-vs-concrete reduction (e.g. JSX intrinsic-element props unions
+        // carrying an `IndexAccess` member), changing the union result.
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
