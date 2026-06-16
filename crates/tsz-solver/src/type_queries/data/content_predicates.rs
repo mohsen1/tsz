@@ -78,6 +78,14 @@ pub(super) trait ContentPredicate {
     fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool>;
     /// Store a deep-walk result for `type_id`.
     fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool);
+    /// Child set the cached walk descends into. Defaults to
+    /// [`ChildPolicy::CONTENT_PREDICATE`], matching the historical content-walk
+    /// reachability shared by all `contains_*` predicates. Predicates whose
+    /// answer must agree with a wider traversal (e.g. the reachability gate on
+    /// `collect_type_queries`, which walks `ChildPolicy::FULL`) override this.
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy::CONTENT_PREDICATE
+    }
 }
 
 pub(super) struct TypeParamPredicate;
@@ -170,6 +178,30 @@ impl ContentPredicate for TypeQueryPredicate {
     }
     fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
         db.set_contains_type_query_cache(type_id, result);
+    }
+}
+
+/// Like [`TypeQueryPredicate`], but descends the full structural surface
+/// ([`ChildPolicy::FULL`]) so the answer matches the reachability of
+/// `visitor::collect_type_queries`'s `walk_referenced_types` walk. The narrower
+/// `CONTENT_PREDICATE` policy skips `Application` bases (among others), so a
+/// `typeof X` reachable only through e.g. an `Application` base — as in
+/// `InstanceType<typeof Anon<T>>` — would otherwise be missed. Cached in its
+/// own [`PredicateCacheKind::ContainsTypeQueryFull`] slot, separate from the
+/// `CONTENT_PREDICATE` cache used for eval-result suppression.
+pub(super) struct TypeQueryFullPredicate;
+impl ContentPredicate for TypeQueryFullPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::TypeQuery(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_type_query_full_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_type_query_full_cache(type_id, result);
+    }
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy::FULL
     }
 }
 
@@ -418,6 +450,7 @@ fn contains_content_cached<P: ContentPredicate>(
     let mut walker = CachedContentWalker {
         db,
         predicate,
+        policy: predicate.child_policy(),
         visiting: FxHashSet::default(),
     };
     walker.check(type_id)
@@ -426,6 +459,7 @@ fn contains_content_cached<P: ContentPredicate>(
 struct CachedContentWalker<'a, P: ContentPredicate> {
     db: &'a dyn TypeDatabase,
     predicate: &'a P,
+    policy: ChildPolicy,
     visiting: FxHashSet<TypeId>,
 }
 
@@ -449,7 +483,7 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         }
         // Terminal fast path: a node with no children under the walker's
         // policy cannot match below itself; skip the visiting-set round-trip.
-        if !has_policy_children(&key, &ChildPolicy::CONTENT_PREDICATE) {
+        if !has_policy_children(&key, &self.policy) {
             self.predicate.set_cache(self.db, type_id, false);
             return (false, false);
         }
@@ -473,25 +507,20 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         self.check_tracked(type_id).0
     }
 
-    /// Walk the node's children under the same child set as the generic
-    /// uncached walker, by construction.
+    /// Walk the node's children under the predicate's child set.
     fn walk_children(&mut self, key: &TypeData) -> (bool, bool) {
         let db = self.db;
+        let policy = self.policy;
         let mut tainted = false;
-        let found = try_for_each_child_with_policy::<(), _>(
-            db,
-            key,
-            &ChildPolicy::CONTENT_PREDICATE,
-            &mut |child| {
-                let (child_found, child_tainted) = self.check_tracked(child);
-                tainted |= child_tainted;
-                if child_found {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            },
-        )
+        let found = try_for_each_child_with_policy::<(), _>(db, key, &policy, &mut |child| {
+            let (child_found, child_tainted) = self.check_tracked(child);
+            tainted |= child_tainted;
+            if child_found {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
         .is_break();
         if found {
             // A `true` answer is never tainted: a found match is a definite
@@ -849,6 +878,18 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // The deep walk is memoized per node in the project-wide `contains_type_query`
     // cache, so repeated checks over the same shapes stay O(1).
     contains_content_cached(db, type_id, &TypeQueryPredicate)
+}
+
+/// Check whether a `TypeQuery` is reachable over the full structural surface.
+///
+/// Unlike [`contains_type_query_db`] (which uses the narrower `CONTENT_PREDICATE`
+/// child set for eval-cache suppression), this walks [`ChildPolicy::FULL`], so
+/// its answer agrees with `visitor::collect_type_queries`'s reachability. Use it
+/// to gate that collector's full walk: a `false` result is a sound guarantee
+/// that the collector would return the empty set. Memoized per node in its own
+/// project-wide cache, so repeats stay O(1).
+pub fn contains_type_query_full_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_content_cached(db, type_id, &TypeQueryFullPredicate)
 }
 
 /// Check if a type contains unresolved type parameters other than tsz's internal
