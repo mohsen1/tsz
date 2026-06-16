@@ -1,6 +1,7 @@
 //! Type analysis: qualified name resolution, symbol type computation,
 //! type queries, and contextual literal type analysis.
 
+mod circular_export_ownership;
 mod circular_partial_ctor;
 pub(crate) mod computed;
 mod computed_alias;

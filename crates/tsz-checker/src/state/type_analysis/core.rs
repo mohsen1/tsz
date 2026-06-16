@@ -1105,10 +1105,24 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::SymbolRef;
         let factory = self.ctx.types.factory();
         self.record_symbol_dependency(sym_id);
+        // A plain value `const`/`let`/`var` genuinely declared in the current file
+        // must be resolved locally, even if the dynamic cross-file overlay claims
+        // a foreign owner. When the current file's own exports are re-exported
+        // back to it through an `export *` cycle (`internal.ts` does
+        // `export * from "./common"` and `common.ts` imports from `./internal`),
+        // the namespace-export stamp registers the current file's `export const`
+        // symbols against the re-exporting file. Delegating to that file's arena —
+        // which has no concrete declaration for the const — would collapse its
+        // value type to `any` (false `TS7053` on `obj[K]`, masked real `TS2322`).
+        // tsc resolves the const to its declared literal everywhere; honor the
+        // current-file declaration here.
         let cross_file_owner_idx = self
             .ctx
             .resolve_symbol_file_index(sym_id)
-            .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
+            .filter(|&file_idx| file_idx != self.ctx.current_file_idx)
+            .filter(|&foreign_idx| {
+                !self.value_variable_owned_by_current_file_not_foreign(sym_id, foreign_idx)
+            });
         let use_local_symbol_state = cross_file_owner_idx.is_none();
         if let Some(file_idx) = cross_file_owner_idx
             && let Some((cached, _params)) = self
