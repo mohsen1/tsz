@@ -228,6 +228,40 @@ pub fn display_widen_for_redeclaration(
     widen_type_deep(db, type_id)
 }
 
+/// Widen a fresh `let`/`var` initializer type, recursing into union members.
+///
+/// Like [`widen_type`] but additionally widens fresh object/array members that
+/// sit inside a top-level union, matching tsc's `getWidenedType`, which widens
+/// every constituent of a union carrying the widening flag. The plain
+/// [`widen_type`] entry only widens a union when it is a small union of bare
+/// literals (`1 | 2`), so a union produced by a conditional over array literals
+/// — `cond ? [1, 2, 3] : [4, 5]` → `(1 | 2 | 3)[] | (4 | 5)[]` — was returned
+/// unchanged, leaving literal element types that collapse a later `.push`
+/// parameter to `never` (the contravariant intersection of the per-arm element
+/// types). With `widen_object_union_members`, each array constituent widens to
+/// `number[]` and the union dedupes to `number[]`.
+///
+/// Object freshness is still respected: a non-fresh object constituent (from a
+/// type alias or annotation) is left untouched, so `let y = aliasUnion` keeps
+/// its declared literal members. This entry is reached only from the
+/// fresh-initializer widening path (callers gate on
+/// `is_fresh_literal_expression`), so widening the array constituents is safe —
+/// they originate from fresh array literals.
+pub fn widen_type_for_mutable_binding(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    // Only top-level unions differ from `widen_type`; everything else (literals,
+    // single arrays/tuples, objects) already widens identically, so defer to the
+    // memoized general entry to keep the common path O(1).
+    if !matches!(db.lookup(type_id), Some(crate::types::TypeData::Union(_))) {
+        return widen_type(db, type_id);
+    }
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache, true, true, true, false, false)
+}
+
 /// Deep-widen a type including inside function/callable signatures.
 ///
 /// Unlike `widen_type` which skips Function/Callable types for performance
