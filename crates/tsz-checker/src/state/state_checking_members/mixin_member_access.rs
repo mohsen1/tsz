@@ -24,11 +24,23 @@ impl<'a> CheckerState<'a> {
             return cached.clone();
         }
 
-        let computed = self.compute_member_access_info(class_idx, name, is_static);
-        self.ctx
-            .member_access_info_cache
-            .borrow_mut()
-            .insert(cache_key, computed.clone());
+        let (computed, stable) = self.compute_member_access_info_stable(class_idx, name, is_static);
+        // Only memoize results that are a pure function of the immutable AST.
+        // The base-chain fall-through into the mixin instance/static lookups
+        // reads `class_instance_type_cache` / the base-constructor type, which
+        // are populated lazily, so an early access can observe an incomplete
+        // (often `None`) answer that later becomes a real restricted-access
+        // classification. Caching that provisional answer froze the empty
+        // result and dropped later protected/private access diagnostics
+        // (e.g. `c4.p` in a sibling mixin subclass). Skip the memo in that case
+        // and recompute until the lazy type caches are populated; the common
+        // `this.x` hot path resolves through the pure AST scan and is cached.
+        if stable {
+            self.ctx
+                .member_access_info_cache
+                .borrow_mut()
+                .insert(cache_key, computed.clone());
+        }
         computed
     }
 
@@ -38,34 +50,63 @@ impl<'a> CheckerState<'a> {
         name: &str,
         is_static: bool,
     ) -> Option<MemberAccessInfo> {
+        self.compute_member_access_info_stable(class_idx, name, is_static)
+            .0
+    }
+
+    /// Compute the member access classification and report whether the result
+    /// is a pure function of the immutable AST (`stable == true`) or was derived
+    /// from the lazily-populated mixin instance/static type caches
+    /// (`stable == false`). Only stable results may be memoized; provisional
+    /// results must be recomputed because the lazy caches can fill in later.
+    fn compute_member_access_info_stable(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+        is_static: bool,
+    ) -> (Option<MemberAccessInfo>, bool) {
         let mut current = class_idx;
         let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
 
         while visited.insert(current) {
             match self.lookup_member_access_in_class(current, name, is_static) {
                 MemberLookup::Restricted(level) => {
-                    return Some(MemberAccessInfo {
-                        level,
-                        declaring_class_idx: current,
-                        declaring_class_name: self
-                            .get_class_name_with_type_params_from_decl(current),
-                    });
+                    return (
+                        Some(MemberAccessInfo {
+                            level,
+                            declaring_class_idx: current,
+                            declaring_class_name: self
+                                .get_class_name_with_type_params_from_decl(current),
+                        }),
+                        true,
+                    );
                 }
-                MemberLookup::Public => return None,
+                MemberLookup::Public => return (None, true),
                 MemberLookup::NotFound => {
                     let Some(base_idx) = self.get_base_class_idx(current) else {
-                        return if is_static {
+                        // Base-chain end: the only remaining source is a mixin
+                        // base whose instance/static shape comes from lazily
+                        // built type caches (`class_instance_type_cache` /
+                        // base-constructor type). A `None` here can be a cache
+                        // miss that later resolves to a real restricted-access
+                        // classification once those caches fill, so a `None` is
+                        // provisional and must not be memoized. A `Some(..)` is a
+                        // concrete private/protected classification read from an
+                        // already-materialized shape and is stable.
+                        let info = if is_static {
                             self.find_mixin_static_member_access_info(current, name)
                         } else {
                             self.find_mixin_instance_member_access_info(current, name)
                         };
+                        let stable = info.is_some();
+                        return (info, stable);
                     };
                     current = base_idx;
                 }
             }
         }
 
-        None
+        (None, true)
     }
 
     pub(crate) fn find_mixin_static_member_access_info(
