@@ -215,3 +215,52 @@ fn test_is_generic_ref_intrinsics_are_never_generic() {
         );
     }
 }
+
+/// An `Application` whose base alias the active resolver cannot expand survives
+/// evaluation as an opaque `Application`. When such an opaque application sits
+/// in a conditional's CHECK position, the structural relation has no structure
+/// to compare and degrades the application toward the bottom type, so the
+/// subtype check is vacuously satisfied and the conditional would take its TRUE
+/// branch. That is the mechanism by which the key filter
+/// `IsOptionalKeyOf<O, K> extends false ? never : K` collapses every key to
+/// `never` and corrupts `RequiredKeysOf`/`OptionalKeysOf` (#13609). The
+/// evaluator must instead DEFER the conditional (keep it a `Conditional`) so a
+/// later resolver pass that can expand the application decides the branch.
+///
+/// `extends unknown` is used only because every type — including the
+/// degraded-to-bottom opaque application — is a subtype of `unknown`, which
+/// deterministically forces the vacuous-true path the guard intercepts without
+/// depending on how a particular resolver treats an unresolvable base. The
+/// real-world witness is the `extends false` key filter above. The alias
+/// `DefId` and the branch types carry no special spelling (name-agnostic).
+#[test]
+fn opaque_application_check_type_defers_instead_of_taking_true_branch() {
+    let interner = TypeInterner::new();
+    // Opaque check type: `Unresolvable<string>` whose base `Lazy(DefId)` has no
+    // body under the default `NoopResolver`.
+    let unresolvable_base = interner.lazy(crate::def::DefId(4242));
+    let opaque_app = interner.application(unresolvable_base, vec![TypeId::STRING]);
+    // `<opaque> extends unknown ? never : string`.
+    let cond = interner.conditional(crate::types::ConditionalType {
+        check_type: opaque_app,
+        extends_type: TypeId::UNKNOWN,
+        true_type: TypeId::NEVER,
+        false_type: TypeId::STRING,
+        is_distributive: false,
+    });
+
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+    let result = evaluator.evaluate(cond);
+
+    // A deferred `Conditional` (rather than the `never` true branch or the
+    // `string` false branch) proves the evaluator did not vacuously collapse the
+    // opaque check type into a branch.
+    assert!(
+        matches!(
+            interner.lookup(result),
+            Some(crate::types::TypeData::Conditional(_))
+        ),
+        "opaque-application check type must keep the conditional deferred, got {:?}",
+        interner.lookup(result)
+    );
+}
