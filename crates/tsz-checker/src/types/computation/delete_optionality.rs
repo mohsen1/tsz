@@ -42,16 +42,50 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let prop_name = self
-            .ctx
-            .arena
-            .get_identifier_at(access.name_or_argument)
-            .map(|ident| ident.escaped_text.clone())
-            .or_else(|| self.get_literal_string_from_node(access.name_or_argument))
-            .or_else(|| {
-                self.get_literal_index_from_node(access.name_or_argument)
-                    .map(|idx| idx.to_string())
-            });
+        // tsc keys TS2790 off `getNodeLinks(expr).resolvedSymbol`: the check
+        // only runs when the access resolves to a single concrete declared
+        // property symbol. A property access (`obj.name`) always names a
+        // property. An element access resolves a symbol only when its argument
+        // denotes a single literal property name — a string/number literal
+        // (`obj["x"]`, `obj[0]`), a `const`-typed identifier whose type is a
+        // literal (`KEY: "k"`), or a well-known/unique symbol. When the
+        // element-access argument is a wider expression — a `string`/`number`
+        // variable, or a generic key `K extends keyof T` — its type is not a
+        // single literal, so tsc resolves no symbol and never reports TS2790.
+        // The argument's *type* (not its syntactic identifier text) is what
+        // decides this.
+        let is_property_access = operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+        let prop_name = if is_property_access {
+            self.ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.clone())
+                .or_else(|| self.get_literal_string_from_node(access.name_or_argument))
+                .or_else(|| {
+                    self.get_literal_index_from_node(access.name_or_argument)
+                        .map(|idx| idx.to_string())
+                })
+        } else {
+            // Element access: a syntactic string/number literal, a well-known
+            // symbol (`get_literal_string_from_node` recovers `[Symbol.x]`),
+            // or — failing those — a single literal property name recovered
+            // from the *type* of the argument expression (so a const-literal
+            // identifier `KEY: "k"` resolves to `"k"`, but a generic-key or
+            // wide-primitive index resolves to nothing).
+            self.get_literal_string_from_node(access.name_or_argument)
+                .or_else(|| {
+                    self.get_literal_index_from_node(access.name_or_argument)
+                        .map(|idx| idx.to_string())
+                })
+                .or_else(|| {
+                    let arg_type = self.get_type_of_node(access.name_or_argument);
+                    crate::query_boundaries::type_computation::access::literal_property_name(
+                        self.ctx.types,
+                        arg_type,
+                    )
+                    .map(|atom| self.ctx.types.resolve_atom(atom))
+                })
+        };
         let Some(prop_name) = prop_name else {
             return;
         };
