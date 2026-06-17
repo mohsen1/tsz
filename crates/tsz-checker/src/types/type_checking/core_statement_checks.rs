@@ -489,14 +489,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
-            .into_iter()
-            .any(|ty| {
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
-                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
-                    .is_some_and(|sym_id| self.is_unresolved_import_symbol_id(sym_id))
-            })
+    pub(crate) fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
+        self.ctx.type_references_unresolved_import(type_id)
     }
 
     fn should_report_primitive_to_generic_indexed_conditional_return(

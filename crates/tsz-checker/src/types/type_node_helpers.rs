@@ -739,6 +739,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if matches!(t, TypeId::ANY | TypeId::NEVER | TypeId::ERROR) {
             return false;
         }
+        // Error-type contagion: a rest element rooted at an *unresolved imported
+        // alias* (e.g. `[...TupleParts<T>["suffix"]]` where `TupleParts` comes
+        // from a module that failed to resolve — already flagged TS2307) has the
+        // permissive `error` apparent type in tsc, which is assignable to
+        // `readonly any[]`, so the spread is legal. Treat it as array-like
+        // (indeterminate) rather than emitting a spurious TS2574.
+        if self.ctx.type_references_unresolved_import(t) {
+            return false;
+        }
         // tsc's nullable guard: bare `null`/`undefined` are rejected.
         if q::is_nullish_type(self.ctx.types, t) {
             return true;
