@@ -957,32 +957,35 @@ fn probe_parenthesized_conditional_extends_type_remains_grouped() {
     );
 }
 
+// `take_diagnostics`/`normalize_portability_diagnostics` performs EXACT dedup
+// only. #13155 fixed the TS2883 argument order at every checker emission site
+// (`{0}=name, {1}=from_path, {2}=type_name`) and removed the prior message-text
+// "swapped argument" canonicalization (`parse_ts2883_named_reference_message` /
+// `canonical_ts2883_named_reference_message` / `looks_like_module_path`) because
+// driving dedup off rendered diagnostic text violated the anti-hardcoding
+// contract. Emission can no longer produce a swapped-order TS2883, so the only
+// dedup the emitter owes is collapsing byte-identical duplicates. These tests
+// pin that contract (the obsolete swapped-canonicalization tests were retired
+// alongside the logic they exercised).
 #[test]
-fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
+fn take_diagnostics_dedupes_identical_ts2883() {
     use tsz_common::diagnostics::Diagnostic;
 
     let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
-        "src/index.ts",
-        10,
-        3,
-        &["foo", "Other", "../node_modules/some-dep/dist/inner"],
-    ));
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
-        "src/index.ts",
-        10,
-        3,
-        &["foo", "../node_modules/some-dep/dist/inner", "SomeType"],
-    ));
+    let args = ["foo", "../node_modules/some-dep/dist/inner", "SomeType"];
+    emitter
+        .diagnostics
+        .push(Diagnostic::from_code(2883, "src/index.ts", 10, 3, &args));
+    emitter
+        .diagnostics
+        .push(Diagnostic::from_code(2883, "src/index.ts", 10, 3, &args));
 
     let diagnostics = emitter.take_diagnostics();
     assert_eq!(
         diagnostics.len(),
         1,
-        "expected swapped TS2883 to be removed"
+        "byte-identical TS2883 diagnostics at the same site must collapse to one"
     );
     assert_eq!(
         diagnostics[0].message_text,
@@ -991,11 +994,13 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
 }
 
 #[test]
-fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() {
+fn take_diagnostics_keeps_distinct_ts2883_at_same_site() {
     use tsz_common::diagnostics::Diagnostic;
 
     let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
+    // Two genuinely different non-portable references at the same location
+    // (distinct referenced type names) are NOT duplicates and both survive.
     emitter.diagnostics.push(Diagnostic::from_code(
         2883,
         "src/index.ts",
@@ -1008,18 +1013,14 @@ fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() 
         "src/index.ts",
         10,
         3,
-        &["foo", "SomeType", "../node_modules/some-dep/dist/inner"],
+        &["foo", "../node_modules/some-dep/dist/inner", "OtherType"],
     ));
 
     let diagnostics = emitter.take_diagnostics();
     assert_eq!(
         diagnostics.len(),
-        1,
-        "expected one surviving canonical TS2883 diagnostic"
-    );
-    assert_eq!(
-        diagnostics[0].message_text,
-        "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."
+        2,
+        "distinct TS2883 references at the same site must both be preserved"
     );
 }
 
