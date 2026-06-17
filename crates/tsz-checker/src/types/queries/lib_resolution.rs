@@ -1213,7 +1213,23 @@ impl<'a> CheckerState<'a> {
         // Finalize after heritage merge — `merge_lib_interface_heritage`
         // above may have produced a new TypeId; helper rewires type→def
         // and the DefId body so literal and annotation paths agree.
-        if let Some(ty) = lib_type_id {
+        //
+        // Gate on `!heritage_incomplete`: publishing a heritage-incomplete
+        // (base-dropped) body through `register_finalized_lib_body` writes it
+        // into the program-shared `DefinitionStore`, which sibling fresh
+        // per-file checkers read via `Lazy(DefId)` resolution. The store is
+        // last-writer-wins without the opt-in freeze, so a heritage-thin form
+        // (own members only, inherited members missing) published during the
+        // DOM `Node`/`Element`/`HTMLElement` cycle (#12299) can be observed by
+        // another checker's relation — producing false TS2345/TS2740/TS2322
+        // where a derived element interface is not recognized as its
+        // transitive base (e.g. `HTMLDivElement` not assignable to `Node`).
+        // The depth-0 drain below re-resolves the name once the dropped base
+        // has completed and publishes the full body, so skipping the publish
+        // here removes only the poisoned intermediate, never the final form.
+        if let Some(ty) = lib_type_id
+            && !heritage_incomplete
+        {
             self.register_finalized_lib_body(name, ty);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
@@ -1251,9 +1267,10 @@ impl<'a> CheckerState<'a> {
             // `lib_type_id` is missing inherited members. Mark `name` incomplete
             // and do NOT persist the type: remove the local slot and skip the
             // shared cache so the next request recomputes once the base has
-            // completed. The def body / `symbol_types` entries written above are
-            // overwritten by that recompute (`register_finalized_lib_body`
-            // rewires the body and clears eval caches). See #12299.
+            // completed. The finalized def-body / `symbol_types` publication is
+            // skipped above while incomplete, so the shared store never carries
+            // the heritage-thin form; the depth-0 drain's recompute publishes
+            // the full body once the dropped base resolves. See #12299.
             set_lib_resolution_mark(name, LibResolutionMark::Incomplete);
             self.ctx.lib_type_resolution_caches.types.remove(name);
             return lib_type_id;

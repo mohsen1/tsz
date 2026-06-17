@@ -300,3 +300,105 @@ fn forced_parallel_scope_registry_alias_republication_matches_sequential() {
         7,
     );
 }
+
+/// Fifth witness family (#13862): deep-heritage DOM lib interfaces materialized
+/// by the fresh per-file checker pool. A derived element interface
+/// (`HTMLxElement extends HTMLElement extends Element extends Node`) is a valid
+/// `Node`, but the shared `DefinitionStore` was last-writer-wins, so a
+/// heritage-thin body re-derived by a sibling checker could clobber the
+/// heritage-merged form mid-`Node`/`Element`/`HTMLElement` diamond resolution
+/// (#12299) and a reader's relation saw the thin one — false `TS2345`/`TS2740`
+/// where the element was "missing the following properties from type 'Node'".
+///
+/// The pool path only engages above the small-project session-reuse ceiling
+/// (`FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`, 32), so this drives a 40-file
+/// project. Each file names a *distinct* DOM element interface (varied binders
+/// per the anti-hardcoding test discipline) and asserts assignability to `Node`.
+///
+/// This pins the default (DOM-gated sequential) schedule users actually hit:
+/// DOM projects keep `should_use_sequential_fresh_checking` on
+/// (`has_parallel_order_sensitive_global_lib`), so the program must type-check
+/// clean here. Pre-fix this emitted a deterministic cluster of false
+/// diagnostics. Lifting the DOM serialization gate so the *forced-parallel*
+/// schedule is also clean/byte-identical is the separate materialization
+/// campaign tracked in #13862 / #13861.
+const DOM_ELEMENT_NAMES: &[&str] = &[
+    "Div",
+    "Span",
+    "Heading",
+    "Paragraph",
+    "Pre",
+    "Body",
+    "Style",
+    "Script",
+    "Meta",
+    "Link",
+    "Source",
+    "Map",
+    "Meter",
+    "Option",
+    "Label",
+    "Legend",
+    "Dialog",
+    "Details",
+    "DataList",
+    "Data",
+    "Base",
+    "Audio",
+    "Table",
+    "Form",
+    "Input",
+    "Select",
+    "Button",
+    "Anchor",
+    "Area",
+    "Canvas",
+    "Object",
+    "Output",
+    "Embed",
+    "FieldSet",
+    "Image",
+    "Progress",
+    "Quote",
+    "Title",
+    "Time",
+    "Track",
+];
+
+const DOM_HERITAGE_TSCONFIG: &str = r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["dom", "es2020"],
+    "strict": true,
+    "skipLibCheck": true,
+    "module": "es2020",
+    "target": "es2020"
+  },
+  "include": ["*.ts"]
+}"#;
+
+/// Deep-heritage DOM element interfaces must type-check clean (assignable to
+/// `Node`) when the program is large enough to engage the fresh per-file
+/// checker pool on the default DOM-gated sequential schedule.
+#[test]
+fn dom_element_heritage_clean_sequential() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping DOM heritage test: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("dom_heritage").expect("temp dir");
+    for (i, elem) in DOM_ELEMENT_NAMES.iter().enumerate() {
+        let contents = format!(
+            "export function use_{elem}(node: HTML{elem}Element): Node {{\n    return node;\n}}\n"
+        );
+        std::fs::write(temp.path.join(format!("f{i}.ts")), contents).expect("write fixture file");
+    }
+    std::fs::write(temp.path.join("tsconfig.json"), DOM_HERITAGE_TSCONFIG).expect("write tsconfig");
+
+    let output = run_project(&tsz_bin, &temp.path, false);
+    assert!(
+        !output.contains("error TS"),
+        "DOM element interfaces must be recognized as Node under the fresh per-file \
+         checker pool (default sequential schedule); got diagnostics:\n{output}"
+    );
+}

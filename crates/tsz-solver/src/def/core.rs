@@ -45,6 +45,19 @@ use tsz_common::interner::Atom;
 /// Used for debugging `DefId` collision issues.
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Whether monotone lib-interface body publication (#13862) is active.
+///
+/// Default-on; `TSZ_DISABLE_LIB_DEF_MONOTONE=1` is the kill switch. When on, a
+/// def whose finalized lib-interface body has been published rejects later
+/// non-finalize different-body overwrites (heritage-thin re-derivations from
+/// sibling fresh per-file checkers), so the shared store keeps the
+/// heritage-complete form. See `set_body_with_params_impl`.
+fn lib_def_monotone_publish_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("TSZ_DISABLE_LIB_DEF_MONOTONE").is_ok_and(|v| v == "1"))
+}
+
 type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
@@ -830,6 +843,29 @@ impl DefinitionStore {
             }
             if suppressed || deferred {
                 return;
+            }
+
+            // Monotone lib-interface publication (#13862): the program-shared
+            // `DefinitionStore` is read by sibling fresh per-file checkers via
+            // `Lazy(DefId)` resolution. Without isolation it is last-writer-wins,
+            // so a heritage-thin body re-derived by a cross-arena lowering path
+            // (`resolver.rs` `insert_def_with_params`, the cross-file delegation
+            // helpers) can clobber the heritage-merged body another checker
+            // already finalized — the DOM `Node`/`Element`/`HTMLElement` diamond
+            // (#12299) then oscillates between forms and a reader's relation sees
+            // the thin one (false TS2345/TS2740/TS2322 where a derived element
+            // interface is not recognized as its transitive base). Once a
+            // *finalized* interface body is published (only
+            // `register_finalized_lib_body` reaches the finalize entry point, and
+            // only on heritage-complete resolution — see `lib_resolution`), mark
+            // the def deferred so later non-finalize different-body overwrites are
+            // dropped. Marking at the finalize point (rather than blanket
+            // up-front, the opt-in `mark_non_program_interface_defs_deferred`
+            // path) keeps the load-bearing pre-finalize forms for augmented names
+            // intact — finalize re-publications (which carry the augmentation)
+            // still win. Kill switch: `TSZ_DISABLE_LIB_DEF_MONOTONE=1`.
+            if finalize && entry.kind == DefKind::Interface && lib_def_monotone_publish_enabled() {
+                self.state_flags.mark_deferred_publish(id);
             }
 
             // Identical republication is a no-op: nothing a reader can
