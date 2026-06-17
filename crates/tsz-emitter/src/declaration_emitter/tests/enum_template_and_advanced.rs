@@ -957,70 +957,91 @@ fn probe_parenthesized_conditional_extends_type_remains_grouped() {
     );
 }
 
+// TS2883 argument canonicalization is owned by the structured emission site
+// `emit_non_portable_named_reference_diagnostic`, which classifies the two name
+// arguments by *path shape* (a structured-value decision) and always seats the
+// module path in the `from` slot before rendering. `take_diagnostics` then only
+// needs exact-key dedup. This replaces the former
+// `parse_ts2883_named_reference_message` string-parsing canonicalizer that PR
+// #13155 removed as an anti-hardcoding violation (a rendered diagnostic string
+// must not drive semantic decisions). These two tests therefore exercise the
+// structured canonicalizer rather than re-rendered message text.
+const TS2883_CANONICAL_FOO_MESSAGE: &str = "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary.";
+
 #[test]
 fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
-    use tsz_common::diagnostics::Diagnostic;
-
     let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
+
+    // Swapped structured form: the module path is supplied in the `type_name`
+    // slot and the type name in the `from_path` slot. The structured emitter
+    // restores canonical order from the path shape before rendering.
+    emitter.emit_non_portable_named_reference_diagnostic(
+        "foo",
         "src/index.ts",
         10,
         3,
-        &["foo", "Other", "../node_modules/some-dep/dist/inner"],
-    ));
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
+        "SomeType",
+        "../node_modules/some-dep/dist/inner",
+    );
+    // Canonical structured form for the same site.
+    emitter.emit_non_portable_named_reference_diagnostic(
+        "foo",
         "src/index.ts",
         10,
         3,
-        &["foo", "../node_modules/some-dep/dist/inner", "SomeType"],
-    ));
+        "../node_modules/some-dep/dist/inner",
+        "SomeType",
+    );
 
     let diagnostics = emitter.take_diagnostics();
     assert_eq!(
         diagnostics.len(),
         1,
-        "expected swapped TS2883 to be removed"
+        "expected swapped TS2883 to canonicalize and dedup away: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| d.message_text.as_str())
+            .collect::<Vec<_>>()
     );
-    assert_eq!(
-        diagnostics[0].message_text,
-        "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."
-    );
+    assert_eq!(diagnostics[0].message_text, TS2883_CANONICAL_FOO_MESSAGE);
 }
 
 #[test]
 fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() {
-    use tsz_common::diagnostics::Diagnostic;
-
     let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
+
+    // Swapped form first, canonical form second: both canonicalize to the same
+    // message, so exactly one survives regardless of arrival order.
+    emitter.emit_non_portable_named_reference_diagnostic(
+        "foo",
         "src/index.ts",
         10,
         3,
-        &["foo", "../node_modules/some-dep/dist/inner", "SomeType"],
-    ));
-    emitter.diagnostics.push(Diagnostic::from_code(
-        2883,
+        "SomeType",
+        "../node_modules/some-dep/dist/inner",
+    );
+    emitter.emit_non_portable_named_reference_diagnostic(
+        "foo",
         "src/index.ts",
         10,
         3,
-        &["foo", "SomeType", "../node_modules/some-dep/dist/inner"],
-    ));
+        "../node_modules/some-dep/dist/inner",
+        "SomeType",
+    );
 
     let diagnostics = emitter.take_diagnostics();
     assert_eq!(
         diagnostics.len(),
         1,
-        "expected one surviving canonical TS2883 diagnostic"
+        "expected one surviving canonical TS2883 diagnostic: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| d.message_text.as_str())
+            .collect::<Vec<_>>()
     );
-    assert_eq!(
-        diagnostics[0].message_text,
-        "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."
-    );
+    assert_eq!(diagnostics[0].message_text, TS2883_CANONICAL_FOO_MESSAGE);
 }
 
 // ── Private class namespace emission ────────────────────────────────

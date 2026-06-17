@@ -17,6 +17,17 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_reverse_mapped_handler_type_text(expr_idx))
+                    // A tuple-shaped source return (`[...]`) is a high-priority
+                    // structural reconstruction, but it does not carry tuple
+                    // element labels. The rest-identity and Parameters-return
+                    // paths below recover labeled tuples for
+                    // `f(...g(...)): Parameters<...>` shapes (including ones
+                    // routed through a generic type-alias such as
+                    // `type ArgsOf<Fn> = Parameters<Fn>`). Try those labeled
+                    // paths first so an alias-resolved labeled tuple is not
+                    // clobbered by the unlabeled source-return tuple.
+                    .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
+                    .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
                     .or_else(|| {
                         self.call_expression_source_return_type_text(expr_idx)
                             .filter(|text| text.trim_start().starts_with('['))
@@ -29,8 +40,6 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
-                    .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
-                    .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
                     .or_else(|| self.generic_spread_array_call_return_type_text(expr_idx))
                     .or_else(|| {
                         self.explicit_type_argument_indexed_member_return_type_text(expr_idx)
