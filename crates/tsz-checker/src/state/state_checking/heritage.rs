@@ -258,6 +258,16 @@ impl<'a> CheckerState<'a> {
                     }
                 });
                 if let Some(heritage_sym) = heritage_sym {
+                    // When the base is named through a chain of named re-exports
+                    // (`export type { X } from './x'`), the local heritage symbol
+                    // is an import alias whose own declaration carries no type
+                    // parameters. Chase the alias chain to the original
+                    // declaration so the arity / "is generic" checks below read
+                    // the real type-parameter list instead of falsely emitting
+                    // TS2315.
+                    let heritage_sym = self
+                        .resolve_heritage_alias_to_declaration_symbol(heritage_sym, expr_idx)
+                        .unwrap_or(heritage_sym);
                     let type_args = self
                         .ctx
                         .arena

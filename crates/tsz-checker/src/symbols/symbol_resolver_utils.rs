@@ -450,6 +450,69 @@ impl<'a> CheckerState<'a> {
         resolved
     }
 
+    /// Follow a heritage symbol that is itself a *named* import/re-export alias to
+    /// the original declaration symbol, chasing multi-hop named (type-only or
+    /// value) re-export chains (`export type { X } from './x'`).
+    ///
+    /// The arity / "is generic" checks in the heritage path read type parameters
+    /// off the symbol's own declarations. When the heritage clause names a symbol
+    /// imported through a barrel of named re-exports, that local alias's
+    /// declaration is the import specifier — it carries no type-parameter list —
+    /// so the checks would conclude the base is non-generic and falsely emit
+    /// TS2315. This mirrors the reference-type-parameter path, which already
+    /// resolves the alias chain via `reference_import_alias_export_target` before
+    /// reading type parameters.
+    ///
+    /// The re-point is deliberately narrow: it only applies when the chased target
+    /// resolves to a *generic* declaration. Non-generic targets keep the original
+    /// alias symbol so that the namespace / `import =` / `export =` value-vs-type
+    /// heritage diagnostics (TS2507, TS2708, the genuine-non-generic TS2315) keep
+    /// reading the alias surface exactly as before. Returns `Some(declaration_symbol)`
+    /// only when the resolved target differs from the alias and is generic.
+    pub(crate) fn resolve_heritage_alias_to_declaration_symbol(
+        &mut self,
+        heritage_sym: SymbolId,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let expected_name = self.heritage_name_text(expr_idx)?;
+        let leaf_name = expected_name
+            .rsplit('.')
+            .next()
+            .unwrap_or(&expected_name)
+            .to_owned();
+        let alias_symbol = self.ctx.binder.get_symbol(heritage_sym)?;
+        if !self.reference_symbol_is_import_alias(alias_symbol) {
+            return None;
+        }
+        // Only chase named member aliases (`import { X }` / `export { X } from`).
+        // Namespace (`import * as`/`export * as`) and `import =`/`export =`
+        // aliases name a module/namespace value, not a single declaration, and
+        // re-pointing them would suppress namespace-vs-value heritage diagnostics.
+        let import_name = alias_symbol.import_name()?;
+        if import_name == "*" || import_name == "export=" || import_name == "default" {
+            return None;
+        }
+        let (target_sym_id, target_file_idx) =
+            self.reference_import_alias_export_target(alias_symbol, &leaf_name)?;
+        if target_sym_id == heritage_sym {
+            return None;
+        }
+        if let Some(file_idx) = target_file_idx {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
+        // Keep the re-point confined to the generic-detection bug: only forward
+        // when the chased declaration actually carries type parameters. Reading
+        // the type-parameter list off the resolved target (which honors the
+        // freshly-registered cross-file target) leaves genuinely non-generic
+        // re-exported bases on the original alias surface, preserving the
+        // TS2315 / namespace-vs-value heritage diagnostics.
+        if self.get_type_params_for_symbol(target_sym_id).is_empty() {
+            return None;
+        }
+        Some(target_sym_id)
+    }
+
     /// Check if an expression is a property access on an unresolved import.
     ///
     /// Used to suppress TS2304 errors when TS2307 was already emitted for the module.
