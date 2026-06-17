@@ -342,6 +342,7 @@ pub struct NarrowingCacheStatistics {
     pub narrow_type_cache_entries: usize,
     pub narrow_excluding_cache_entries: usize,
     pub narrow_assignable_cache_entries: usize,
+    pub narrow_subtype_cache_entries: usize,
     pub estimated_size_bytes: usize,
 }
 
@@ -360,6 +361,7 @@ impl NarrowingCacheStatistics {
             + self.narrow_type_cache_entries
             + self.narrow_excluding_cache_entries
             + self.narrow_assignable_cache_entries
+            + self.narrow_subtype_cache_entries
     }
 }
 
@@ -447,6 +449,16 @@ pub struct NarrowingCache {
     /// over one recursive `TSchema`, so memoizing the boolean collapses the
     /// repeated deep materialization (issue #13242 / #13250).
     pub(crate) narrow_assignable_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+    /// Memo for the narrowing-boundary subtype check
+    /// ([`NarrowingContext::is_subtype_for_narrowing`]) keyed by
+    /// `(source, target, resolver_generation)`.
+    ///
+    /// This is the single chokepoint that constructs a fresh `SubtypeChecker`
+    /// for narrowing; both the positive type-predicate branch and
+    /// `is_assignable_to` funnel here, so it is the deepest point at which the
+    /// recursive-schema `collect_properties_cached` walk can be cached once per
+    /// `(source, target)` pair (issue #13242 / #13250).
+    pub(crate) narrow_subtype_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
 }
 
 /// Cache key for [`NarrowingContext::narrow_excluding_type`] and
@@ -513,6 +525,10 @@ impl NarrowingCache {
                 512,
                 Default::default(),
             )),
+            narrow_subtype_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                Default::default(),
+            )),
         }
     }
 
@@ -537,6 +553,7 @@ impl NarrowingCache {
             narrow_type_cache_entries: self.narrow_type_cache.borrow().len(),
             narrow_excluding_cache_entries: self.narrow_excluding_cache.borrow().len(),
             narrow_assignable_cache_entries: self.narrow_assignable_cache.borrow().len(),
+            narrow_subtype_cache_entries: self.narrow_subtype_cache.borrow().len(),
             estimated_size_bytes: self.estimated_size_bytes(),
         }
     }
@@ -639,6 +656,13 @@ impl NarrowingCache {
         }
         {
             let map = self.narrow_assignable_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowExcludingKey>()
+                    + std::mem::size_of::<bool>());
+        }
+        {
+            let map = self.narrow_subtype_cache.borrow();
             size += map.capacity()
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<NarrowExcludingKey>()
