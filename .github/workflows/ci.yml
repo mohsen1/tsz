@@ -632,7 +632,7 @@ jobs:
       - name: Pack dist-fast binaries
         run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-lsp tsz-server tsz-conformance generate-tsc-cache
       - name: Upload dist-fast binaries
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-fast-binaries
           path: dist-fast-binaries.tar
@@ -687,7 +687,7 @@ jobs:
       - name: Upload project compile compatibility
         if: always()
         id: project_compile_compatibility_artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: project-compile-compatibility
           path: |
@@ -755,7 +755,7 @@ jobs:
       - name: Upload compile canary logs
         if: always()
         id: project_compile_canary_artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: project-compile-canary-logs-${{ matrix.shard }}
           path: |
@@ -878,7 +878,7 @@ jobs:
       - name: Upload compile canary logs
         if: always()
         id: project_compile_canary_artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: project-compile-canary-logs
           path: |
@@ -977,7 +977,7 @@ jobs:
           NODE
       - name: Upload advisory microbenchmark report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: premerge-microbench
           path: premerge-microbench.json
@@ -1043,7 +1043,7 @@ jobs:
           exit "$status"
       - name: Upload forced-parallel determinism captures
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: forced-parallel-determinism
           path: .target/forced-parallel-determinism/**
@@ -1071,7 +1071,7 @@ jobs:
       - name: Verify web WASM artifact
         run: test -s pkg/web/tsz_wasm_bg.wasm
       - name: Upload web WASM artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wasm-web
           path: pkg/web/
@@ -1103,7 +1103,7 @@ jobs:
             TypeScript/node_modules \
             TypeScript/tests/cases/fourslash
       - name: Upload node harness artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: node-harness
           path: node-harness.tar
@@ -1193,7 +1193,7 @@ jobs:
         run: scripts/ci/github-suite.sh conformance
       - name: Upload conformance shard result
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-shard-${{ matrix.shard }}
           path: |
@@ -1368,7 +1368,7 @@ jobs:
         run: scripts/ci/github-suite.sh emit-shard
       - name: Upload emit shard result
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: emit-shard-${{ matrix.shard }}
           path: |
