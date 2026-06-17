@@ -2,7 +2,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source;
 
 /// Regression: `typeof x === "function"` narrowing over a union member that is
-/// a generic type-alias instantiation (`TypeData::Application`) must resolve the
+/// a generic type-alias instantiation (a deferred `Application`) must resolve the
 /// alias to its underlying shape before classifying it. A generic alias whose
 /// body is a function type (`type Fn<A> = (a: A) => R`) was previously dropped
 /// from the function branch because the structural function predicate cannot see
