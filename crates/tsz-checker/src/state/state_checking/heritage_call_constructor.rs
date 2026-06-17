@@ -3,7 +3,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Check if a type (including intersection members) has generic construct signatures.
     ///
     /// For intersection types like `T & Constructor<MyMixin>`, checks each member
