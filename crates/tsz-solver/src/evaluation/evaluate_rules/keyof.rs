@@ -364,6 +364,83 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.evaluate(keyof)
     }
 
+    /// Whether a per-member `keyof` result is the *universal* key space and so is
+    /// the identity element of the `keyof (A | B) = keyof A ∩ keyof B`
+    /// intersection.
+    ///
+    /// Structural rule: tsc gives a deferred *conditional* type the apparent type
+    /// of its default constraint, but `keyof` of a conditional that does not
+    /// reduce — most notably a **self-referential / recursive** conditional whose
+    /// inferred true branch is the conditional itself (`type R<T> = T extends U ?
+    /// R<T> : Concrete`) — is left as the universal `string | number | symbol`. In
+    /// a union `R<T> | Concrete` the recursive branch must therefore not restrict
+    /// the shared key space (`universal ∩ keyof Concrete = keyof Concrete`).
+    ///
+    /// tsz models the unreduced `keyof` as a deferred `KeyOf` whose operand is (or
+    /// reduces to) a `Conditional`. Treating such a member as universal lets the
+    /// concrete branches own the key space instead of the whole intersection
+    /// collapsing to an opaque, unresolved `KeyOf` (which downstream
+    /// indexed-access validation rejects, producing a spurious `TS2536`). A
+    /// non-conditional deferred `KeyOf` (e.g. `keyof T` for a bare type parameter)
+    /// is *not* universal and still restricts the intersection.
+    fn keyof_member_is_universal(&self, keyof_member: TypeId) -> bool {
+        let Some(TypeData::KeyOf(inner)) = self.interner().lookup(keyof_member) else {
+            return false;
+        };
+        self.keyof_operand_is_deferred_conditional(inner)
+    }
+
+    /// Whether `operand` is — or transparently reduces to (through alias
+    /// `Application`/`Lazy` wrappers) — a deferred `Conditional`. Bounded peel
+    /// guards against pathological wrapper nesting.
+    fn keyof_operand_is_deferred_conditional(&self, operand: TypeId) -> bool {
+        let mut current = operand;
+        for _ in 0..8 {
+            match self.interner().lookup(current) {
+                Some(TypeData::Conditional(_)) => return true,
+                Some(TypeData::Application(app_id)) => {
+                    current = self.interner().type_application(app_id).base;
+                }
+                Some(TypeData::Lazy(def_id)) => {
+                    match self.resolver().resolve_lazy(def_id, self.interner()) {
+                        Some(resolved) if resolved != current => current = resolved,
+                        _ => return false,
+                    }
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Compute `keyof (members…)` = the intersection of each member's key space,
+    /// dropping members whose `keyof` is the universal key space (the identity
+    /// element — see [`Self::keyof_member_is_universal`]). When every member is
+    /// universal the result is the universal key space itself (a recursed `keyof`
+    /// over the first member, which is already universal); otherwise the restated
+    /// intersection of the remaining concrete members is returned.
+    fn keyof_union_intersection(&mut self, member_list: &[TypeId]) -> TypeId {
+        let mut key_types: SmallVec<[TypeId; 4]> = SmallVec::with_capacity(member_list.len());
+        let mut universal_member: Option<TypeId> = None;
+        for &member in member_list.iter() {
+            let keyof_member = self.recurse_keyof(member);
+            if self.keyof_member_is_universal(keyof_member) {
+                universal_member.get_or_insert(keyof_member);
+                continue;
+            }
+            key_types.push(keyof_member);
+        }
+        if key_types.is_empty() {
+            // Every branch contributed the universal key space; keep it.
+            return universal_member.unwrap_or(TypeId::NEVER);
+        }
+        if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
+            intersection
+        } else {
+            self.interner().intersection(key_types.into_vec())
+        }
+    }
+
     /// Evaluate keyof T - extract the keys of an object type
     pub fn evaluate_keyof(&mut self, operand: TypeId) -> TypeId {
         // PERF: Single lookup for both TemplateLiteral and Union checks.
@@ -397,23 +474,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 else {
                     return self.recurse_keyof(narrowed_operand);
                 };
-                let member_list = self.interner().type_list(members);
+                let member_list = self.interner().type_list(members).to_vec();
 
-                // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
-                let mut key_types: SmallVec<[TypeId; 4]> =
-                    SmallVec::with_capacity(member_list.len());
-                for &member in member_list.iter() {
-                    key_types.push(self.recurse_keyof(member));
-                }
-
-                // keyof (A | B) = keyof A & keyof B - compute intersection of all key sets
-                // Prefer explicit key-set intersection to avoid opaque literal intersections
-                return if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
-                    intersection
-                } else {
-                    // Fallback: use general intersection
-                    self.interner().intersection(key_types.into_vec())
-                };
+                // keyof (A | B) = keyof A & keyof B — the intersection of each
+                // member's key space. Universal (deferred-conditional) members are
+                // the identity element and are dropped so they do not collapse the
+                // shared key space to an opaque, unresolved KeyOf.
+                return self.keyof_union_intersection(&member_list);
             }
             _ => {}
         }
@@ -442,17 +509,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     else {
                         return self.recurse_keyof(narrowed_operand);
                     };
-                    let member_list = self.interner().type_list(members);
-                    let mut key_types: SmallVec<[TypeId; 4]> =
-                        SmallVec::with_capacity(member_list.len());
-                    for &member in member_list.iter() {
-                        key_types.push(self.recurse_keyof(member));
-                    }
-                    if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
-                        intersection
-                    } else {
-                        self.interner().intersection(key_types.into_vec())
-                    }
+                    let member_list = self.interner().type_list(members).to_vec();
+                    self.keyof_union_intersection(&member_list)
                 }
                 TypeData::Mapped(mapped_id) => {
                     let mapped = self.interner().get_mapped(mapped_id);
@@ -716,6 +774,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // already been substituted to its body before reaching `evaluate_keyof`.
                 TypeData::Conditional(_) => self
                     .try_keyof_from_conditional_branches(evaluated_operand)
+                    .or_else(|| {
+                        self.try_keyof_from_conditional_default_constraint(evaluated_operand)
+                    })
                     .unwrap_or_else(|| self.interner().keyof(operand)),
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().keyof(operand),
@@ -877,6 +938,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let keyof_source = self.interner().keyof(source);
         Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    /// `keyof` of a deferred conditional through its **default constraint** (tsc's
+    /// `getApparentType` resolves a deferred conditional to
+    /// `getDefaultConstraintOfConditionalType` — the union of its branch results —
+    /// and computes `keyof` of that). This is the general fallback used when the
+    /// branch-shares-check-parameter reduction
+    /// ([`Self::try_keyof_from_conditional_branches`]) does not apply: it lets the
+    /// keys produced inside the (possibly nested / recursive) branches participate
+    /// in the key space instead of leaving an opaque deferred `KeyOf` that
+    /// downstream indexed-access validation rejects (spurious `TS2536`).
+    ///
+    /// Returns `None` when:
+    /// - the conditional has no default constraint (it is not actually deferred);
+    /// - the constraint is `error`/`any` (no usable key space — preserve the
+    ///   strict path);
+    /// - the constraint references the conditional itself directly (a guard
+    ///   against unbounded keyof recursion that
+    ///   [`Self::keyof_union_intersection`] cannot break because the self-edge is
+    ///   not a union member);
+    /// - the resulting `keyof` is itself still an unresolved deferred `KeyOf`
+    ///   (nothing was gained — keep the caller's deferred form).
+    fn try_keyof_from_conditional_default_constraint(
+        &mut self,
+        conditional: TypeId,
+    ) -> Option<TypeId> {
+        let constraint =
+            crate::type_queries::get_conditional_default_constraint(self.interner(), conditional)?;
+        if constraint == conditional || constraint == TypeId::ERROR || constraint == TypeId::ANY {
+            return None;
+        }
+        let keyof = self.recurse_keyof(constraint);
+        // Only adopt a key space that actually resolved past a bare deferred
+        // `KeyOf` (e.g. `keyof <recursive conditional>` that did not reduce). A
+        // resolved literal/primitive key union — or `never` (the empty key space
+        // for a conditional whose branches share no keys) — is usable.
+        if matches!(self.interner().lookup(keyof), Some(TypeData::KeyOf(_))) {
+            return None;
+        }
+        Some(keyof)
     }
 
     fn is_type_param_named(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
