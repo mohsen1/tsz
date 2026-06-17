@@ -1084,12 +1084,22 @@ impl TypeInterner {
                 c.interner_intern_hits
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            // #13246: split the TLS-cache hit out of the aggregate intern_hits
+            // and record this id in the per-file working set.
+            tsz_common::perf_counters::record_interner_intern_tls_outcome(true);
+            tsz_common::perf_counters::note_interner_working_set_id(id.0);
             return id;
         }
 
+        // #13246: TLS intern-cache miss -> shard slow path.
+        tsz_common::perf_counters::record_interner_intern_tls_outcome(false);
         let result = self.intern_slow(key, hash, pc);
         if result != TypeId::ERROR {
-            cache::intern_insert(hash, self.instance_id, key, result);
+            let evicted = cache::intern_insert(hash, self.instance_id, key, result);
+            if evicted {
+                tsz_common::perf_counters::record_interner_intern_tls_eviction();
+            }
+            tsz_common::perf_counters::note_interner_working_set_id(result.0);
         }
         result
     }
@@ -1245,14 +1255,45 @@ impl TypeInterner {
             return self.get_intrinsic_key(id);
         }
 
+        // #13246 locality instrumentation: record the distinct-id working set
+        // and the TLS-cache outcome. Both calls short-circuit on
+        // `enabled_fast()`, so default builds pay only a gate load.
+        tsz_common::perf_counters::note_interner_working_set_id(id.0);
+
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
         if let Some(data) = cache::lookup_probe(id, self.instance_id) {
+            tsz_common::perf_counters::record_interner_lookup(true);
             return Some(data);
         }
 
+        // Opt-in promote-first probe (`TSZ_PROMOTE_FIRST`, default OFF): on a
+        // TLS miss, consult the promoted global hot tier before the cold shard.
+        // Measurement-only — the tier only holds ids the cold shard already
+        // returned, so the answer is identical; only lookup order changes.
+        if tsz_common::perf_counters::promote_first_enabled() {
+            if let Some(data) = cache::promote_tier_probe(id, self.instance_id) {
+                tsz_common::perf_counters::record_interner_promote_tier_probe(true);
+                tsz_common::perf_counters::record_interner_lookup(true);
+                let evicted = cache::lookup_insert(id, self.instance_id, data);
+                if evicted {
+                    tsz_common::perf_counters::record_interner_lookup_tls_eviction();
+                }
+                return Some(data);
+            }
+            tsz_common::perf_counters::record_interner_promote_tier_probe(false);
+        }
+
+        // Cold path: sharded `RwLock<Vec<TypeData>>` read.
+        tsz_common::perf_counters::record_interner_lookup(false);
         let data = self.lookup_slow(id)?;
-        cache::lookup_insert(id, self.instance_id, data);
+        let evicted = cache::lookup_insert(id, self.instance_id, data);
+        if evicted {
+            tsz_common::perf_counters::record_interner_lookup_tls_eviction();
+        }
+        if tsz_common::perf_counters::promote_first_enabled() {
+            cache::promote_tier_insert(id, self.instance_id, data);
+        }
         Some(data)
     }
 

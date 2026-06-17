@@ -73,6 +73,20 @@ impl PerfCounters {
              application intern calls   {:>12}\n  \
              conditional intern calls   {:>12}\n  \
              mapped intern calls        {:>12}\n\
+             TypeInterner locality (#13246):\n  \
+             lookup calls               {:>12}\n  \
+             lookup TLS hits            {:>12}\n  \
+             lookup cold-Vec fallbacks  {:>12}\n  \
+             lookup TLS evictions       {:>12}\n  \
+             intern TLS hits            {:>12}\n  \
+             intern cold fallbacks      {:>12}\n  \
+             intern TLS evictions       {:>12}\n  \
+             working-set distinct max   {:>12}\n  \
+             working-set distinct total {:>12}\n  \
+             working-set files sampled  {:>12}\n  \
+             working-set files >cache   {:>12}\n  \
+             promote-tier hits          {:>12}\n  \
+             promote-tier misses        {:>12}\n\
              Solver materialization:\n  \
              union subtype reductions   {:>12}\n  \
              union reduction members    {:>12}\n  \
@@ -140,6 +154,19 @@ impl PerfCounters {
             snap.interner.application_intern_calls,
             snap.interner.conditional_intern_calls,
             snap.interner.mapped_intern_calls,
+            snap.interner.lookup_calls,
+            snap.interner.lookup_tls_hits,
+            snap.interner.lookup_cold_vec_fallbacks,
+            snap.interner.lookup_tls_evictions,
+            snap.interner.intern_tls_hits,
+            snap.interner.intern_cold_fallbacks,
+            snap.interner.intern_tls_evictions,
+            snap.interner.working_set_distinct_max,
+            snap.interner.working_set_distinct_total,
+            snap.interner.working_set_files_sampled,
+            snap.interner.working_set_files_over_cache,
+            snap.interner.promote_tier_hits,
+            snap.interner.promote_tier_misses,
             snap.solver_materialization
                 .union_subtype_reduction_calls,
             snap.solver_materialization

@@ -1163,3 +1163,23 @@ interface ErrorConstructor {
 }
 TYPES
 }
+
+tsz_write_io_ts_external_stubs() {
+  # io-ts's `src/` imports the `fp-ts` peer dependency through deep `/lib/*`
+  # subpaths (`fp-ts/lib/Either`, `fp-ts/lib/HKT`, `fp-ts/lib/function`, …). The
+  # fixture clone runs no npm install and the bench baseline pins `"types": []`,
+  # so without a stub tsc emits a wall of spurious TS2307 "Cannot find module
+  # 'fp-ts/lib/…'", each of which degrades the imported symbol to `error` and
+  # seeds a downstream TS2304/TS2315 cascade through io-ts's HKT-parameterized
+  # codec definitions. Mirror the drizzle-orm `*` convention: a single
+  # `export = any` module plus a `paths` entry that maps every `fp-ts/lib/*`
+  # specifier onto it, so fp-ts-typed positions resolve to `any` exactly as a
+  # bare-`any` install would, while io-ts's own `./` source stays real-checked.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-external-module.d.ts" <<'TYPES'
+declare const tszBenchExternalModule: any;
+export = tszBenchExternalModule;
+TYPES
+}
