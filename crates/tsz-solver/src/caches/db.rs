@@ -1784,6 +1784,36 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// is not eligible for merging (contains callables, non-objects, etc.).
     fn insert_intersection_merge(&self, _intersection_id: TypeId, _result: Option<TypeId>) {}
 
+    /// Look up a previously memoized `collect_properties` result.
+    ///
+    /// The key carries the resolver generation so that a result computed under
+    /// an older resolver view (fewer lazy `DefId`s resolvable) is never reused
+    /// after the resolver advances. Callers MUST only consult/populate this
+    /// cache for a *context-free* collection — one that began with an empty
+    /// `COLLECT_PROPERTIES_STACK` (entry depth 0) — so that the recursion-guard
+    /// truncation baked into the stored result is the type's own intrinsic
+    /// cycle, identical on every standalone collection, and never an
+    /// outer-frame artifact. See `collect_properties_cached`. Default
+    /// implementation always misses.
+    fn lookup_collect_properties(
+        &self,
+        _type_id: TypeId,
+        _resolver_generation: u64,
+    ) -> Option<crate::objects::PropertyCollectionResult> {
+        None
+    }
+
+    /// Memoize a context-free `collect_properties` result. See
+    /// [`Self::lookup_collect_properties`] for the safety contract. Default
+    /// implementation is a no-op.
+    fn insert_collect_properties(
+        &self,
+        _type_id: TypeId,
+        _resolver_generation: u64,
+        _result: crate::objects::PropertyCollectionResult,
+    ) {
+    }
+
     /// Look up a cached assignability result for the given key.
     /// Returns `None` if the result is not cached.
     /// Default implementation returns `None` (no caching).

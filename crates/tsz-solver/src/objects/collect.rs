@@ -43,6 +43,19 @@ impl CollectPropertiesDepthGuard {
     }
 }
 
+/// Current depth of the active cross-collector property stack.
+///
+/// A depth of `0` means no `collect_properties` call is in flight up the stack,
+/// so a collection that begins here can only ever be truncated by the type's
+/// *own* intrinsic cycle (a `TypeId` that reappears inside its own structure) —
+/// never by a `TypeId` an outer collector already pushed. That makes its result
+/// a context-free function of the resolved `TypeId`, safe to memoize and reuse.
+/// At any non-zero depth the result may be a partial closure (the #12142
+/// pitfall) and must NOT be cached. See `collect_properties_cached`.
+fn collect_properties_stack_depth() -> usize {
+    COLLECT_PROPERTIES_STACK.with_borrow(Vec::len)
+}
+
 impl Drop for CollectPropertiesDepthGuard {
     fn drop(&mut self) {
         COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
@@ -126,6 +139,39 @@ pub fn collect_properties_cached<'a, R>(
 where
     R: TypeResolver,
 {
+    // Context-free result memo (issue #13242, workstream B). A collection that
+    // begins at `COLLECT_PROPERTIES_STACK` depth 0 cannot have any member
+    // truncated by an *outer* collector's recursion guard, so its result is a
+    // pure function of `(resolved TypeId, resolver_generation)` and is safe to
+    // reuse. Recursive-schema canary rows (typebox/kysely/ts-morph) re-collect
+    // the same generic-application/intersection shapes thousands of times across
+    // relation and member-access touches; without this memo each touch re-walks
+    // and re-instantiates the entire property closure. Nested (depth > 0)
+    // collections deliberately bypass the cache: their result may be a partial
+    // closure that the guard truncated against an outer frame (the #12142
+    // pitfall — a truncated closure served out of context yields wrong types).
+    //
+    // The generation is taken from the *resolver actually used to resolve the
+    // members* (`resolver`), not the `query_db`: when the two differ (e.g. a
+    // `NOOP` resolver paired with a real query database) the lazy members
+    // resolve through `resolver`, so the result is a function of its generation.
+    // Both production resolvers (`TypeEnvironment`) bump on every write that can
+    // change a resolution outcome; `NOOP` is generation-0 and stable, and a
+    // generation-0 result is only ever served back to another generation-0
+    // (same `NOOP`) collection.
+    let cacheable = query_db.is_some() && collect_properties_stack_depth() == 0;
+    let generation = if cacheable {
+        resolver.resolver_generation()
+    } else {
+        0
+    };
+    if cacheable
+        && let Some(db) = query_db
+        && let Some(cached) = db.lookup_collect_properties(type_id, generation)
+    {
+        return cached;
+    }
+
     let mut collector = PropertyCollector {
         interner,
         resolver,
@@ -139,27 +185,32 @@ where
     };
     collector.collect(type_id);
 
-    // If we encountered Any at any point, the result is Any (commutative)
-    if collector.found_any {
-        return PropertyCollectionResult::Any;
-    }
-
-    // If no properties were collected, return NonObject
-    if collector.properties.is_empty()
+    let result = if collector.found_any {
+        // If we encountered Any at any point, the result is Any (commutative)
+        PropertyCollectionResult::Any
+    } else if collector.properties.is_empty()
         && collector.string_index.is_none()
         && collector.number_index.is_none()
     {
-        return PropertyCollectionResult::NonObject;
+        // If no properties were collected, return NonObject
+        PropertyCollectionResult::NonObject
+    } else {
+        // Sort properties by name to maintain interner invariants
+        collector.properties.sort_by_key(|p| p.name.0);
+        PropertyCollectionResult::Properties {
+            properties: collector.properties,
+            string_index: collector.string_index,
+            number_index: collector.number_index,
+        }
+    };
+
+    // Store only the depth-0 (context-free) result; see the cache contract at
+    // the top of this function.
+    if cacheable && let Some(db) = query_db {
+        db.insert_collect_properties(type_id, generation, result.clone());
     }
 
-    // Sort properties by name to maintain interner invariants
-    collector.properties.sort_by_key(|p| p.name.0);
-
-    PropertyCollectionResult::Properties {
-        properties: collector.properties,
-        string_index: collector.string_index,
-        number_index: collector.number_index,
-    }
+    result
 }
 
 /// Helper function to resolve Lazy types via DefId
