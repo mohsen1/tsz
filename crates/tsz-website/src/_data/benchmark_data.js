@@ -58,14 +58,32 @@ function measurementProfileSummary(data) {
   return `tsz ${mode}`;
 }
 
+// Builds the "show runner info" line as an HTML string. Each part is either a
+// pre-escaped text fragment or intentional markup: the generated timestamp is a
+// GitHub <relative-time> web component (relative display, absolute ISO as
+// fallback text + title), and the source sha links to its GitHub commit. The
+// caller embeds this without further escaping, so every dynamic text value is
+// escaped here.
+const TSZ_COMMIT_URL_BASE = "https://github.com/tsz-org/tsz/commit/";
+
 function runnerEnvironmentSummary(data) {
   const parts = [];
   const generatedAt = formatUtcTimestamp(data?.generated_at);
-  if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  if (generatedAt) {
+    const iso = escapeHtml(generatedAt);
+    parts.push(
+      `Generated <relative-time datetime="${iso}" tense="past" format="relative" title="${iso}">${iso}</relative-time>`,
+    );
+  }
   const sourceCommit = normalizedCommit(data?.source_commit);
-  if (sourceCommit) parts.push(`sha ${sourceCommit.slice(0, 12)}`);
+  if (sourceCommit) {
+    const href = escapeHtml(`${TSZ_COMMIT_URL_BASE}${sourceCommit}`);
+    parts.push(
+      `sha <a href="${href}" target="_blank" rel="noreferrer noopener"><code>${escapeHtml(sourceCommit.slice(0, 12))}</code></a>`,
+    );
+  }
   const measurement = measurementProfileSummary(data);
-  if (measurement) parts.push(measurement);
+  if (measurement) parts.push(escapeHtml(measurement));
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {
@@ -73,24 +91,24 @@ function runnerEnvironmentSummary(data) {
   }
 
   const platform = [env.platform, env.arch].filter(Boolean).join("/");
-  if (platform) parts.push(platform);
+  if (platform) parts.push(escapeHtml(platform));
   if (env.cpu_count) {
     const cpuModel = env.cpu_model ? ` ${env.cpu_model}` : "";
-    parts.push(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`);
+    parts.push(escapeHtml(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`));
   }
   const memory = formatMemory(env.total_memory_bytes);
-  if (memory) parts.push(memory);
+  if (memory) parts.push(escapeHtml(memory));
   if (env.github_actions?.runner_os || env.github_actions?.runner_arch) {
     const runner = [
       env.github_actions.runner_os,
       env.github_actions.runner_arch,
     ].filter(Boolean).join("/");
-    parts.push(`GitHub Actions ${runner}`);
+    parts.push(escapeHtml(`GitHub Actions ${runner}`));
   } else if (env.ci) {
-    parts.push("CI runner");
+    parts.push(escapeHtml("CI runner"));
   }
   if (env.cloud_build?.machine_type) {
-    parts.push(`Cloud Build ${env.cloud_build.machine_type}`);
+    parts.push(escapeHtml(`Cloud Build ${env.cloud_build.machine_type}`));
   }
 
   return parts.join(" · ");
@@ -1639,9 +1657,11 @@ export function getBenchmarkMicroCharts() {
 export function getBenchmarkEnvironmentSummary() {
   const summary = runnerEnvironmentSummary(loadBenchmarks());
   if (!summary) return "";
+  // summary is already HTML-safe (text fragments escaped; the timestamp and sha
+  // carry intentional <relative-time>/<a> markup), so it is embedded raw here.
   return `<details class="bench-runner-details">
   <summary>show runner info</summary>
-  <p class="bench-runner-meta">${escapeHtml(summary)}</p>
+  <p class="bench-runner-meta">${summary}</p>
 </details>`;
 }
 

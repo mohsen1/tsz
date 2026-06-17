@@ -17,7 +17,7 @@ mod lib_resolution;
 
 use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
-    resolve_extends_path,
+    resolve_extends_path, substitute_config_dir_templates,
 };
 use lib_offsets::find_lib_entry_offset;
 
@@ -1177,13 +1177,26 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner(path, &mut visited, false)
+    let config_dir = root_config_dir(path);
+    load_tsconfig_inner(path, &mut visited, false, &config_dir)
 }
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
+    let config_dir = root_config_dir(path);
+    load_tsconfig_inner_with_diagnostics(path, &mut visited, false, &config_dir)
+}
+
+/// Absolute directory of the root config being compiled. Every `${configDir}`
+/// template in this config and in any config it `extends` resolves against this
+/// single directory (the inheriting/leaf config's directory), so it is computed
+/// once at the entry point and threaded through the `extends` recursion
+/// unchanged. Canonicalization falls back to the lexical path off the
+/// filesystem (e.g. on `wasm32`), matching the existing anchoring helpers.
+fn root_config_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
 }
 
 fn config_ignore_deprecations_silences_6_0(config: &TsConfig) -> bool {
@@ -1206,6 +1219,7 @@ fn load_tsconfig_inner(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
     inherited: bool,
+    config_dir: &Path,
 ) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -1216,6 +1230,9 @@ fn load_tsconfig_inner(
         .with_context(|| format!("failed to read tsconfig: {}", path.display()))?;
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    // Resolve `${configDir}` against the root config's directory before any
+    // `extends` anchoring, which only fires on the leftover relative paths.
+    substitute_config_dir_templates(&mut config, config_dir);
     anchor_inherited_path_options(&mut config, path);
     if inherited {
         anchor_inherited_root_selectors(&mut config, path);
@@ -1232,7 +1249,7 @@ fn load_tsconfig_inner(
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
             let base_path = resolve_extends_path(path, extends_path_str)?;
-            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true, config_dir)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -1251,6 +1268,7 @@ fn load_tsconfig_inner_with_diagnostics(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
     inherited: bool,
+    config_dir: &Path,
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -1262,6 +1280,9 @@ fn load_tsconfig_inner_with_diagnostics(
     let file_display = path.display().to_string();
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    // Resolve `${configDir}` against the root config's directory before any
+    // `extends` anchoring, which only fires on the leftover relative paths.
+    substitute_config_dir_templates(&mut parsed.config, config_dir);
     anchor_inherited_path_options(&mut parsed.config, path);
     if inherited {
         anchor_inherited_root_selectors(&mut parsed.config, path);
@@ -1292,7 +1313,8 @@ fn load_tsconfig_inner_with_diagnostics(
             // `verbatimModuleSyntax` replacement). The post-merge block below
             // owns that re-emission; letting the base's per-option TS5102
             // through would double-report and anchor at the wrong file.
-            let base_parsed = load_tsconfig_inner_with_diagnostics(&base_path, visited, true)?;
+            let base_parsed =
+                load_tsconfig_inner_with_diagnostics(&base_path, visited, true, config_dir)?;
             parsed
                 .diagnostics
                 .extend(base_parsed.diagnostics.into_iter().filter(|d| {
