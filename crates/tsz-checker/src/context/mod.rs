@@ -117,6 +117,13 @@ pub(crate) type AccessorLevelsCache =
 pub(crate) type MemberAccessInfoCache =
     RefCell<FxHashMap<(NodeIndex, Atom, bool), Option<crate::state::MemberAccessInfo>>>;
 
+/// Per-file memo for the contextual-callback return-type mismatch derivation
+/// (`raw_block_body_callback_mismatch`). Maps the inline callback argument node
+/// and its expected contextual type to the stable mismatch outcome
+/// `(arg index, recovery actual, expected)`, or `None` when no mismatch is
+/// forced. Backs [`CheckerContext::callback_mismatch_memo`].
+pub type CallbackMismatchMemo = FxHashMap<(NodeIndex, TypeId), Option<(usize, TypeId, TypeId)>>;
+
 /// Cache key for type-node results resolved under active generic bindings.
 ///
 /// Plain `node_types` entries are keyed only by `NodeIndex`, so they are safe
@@ -1367,6 +1374,18 @@ pub struct CheckerContext<'a> {
     /// provisional (in-progress) inference is never published. Cleared per file
     /// session like the other return-circularity caches.
     pub inferred_return_type_memo: FxHashMap<InferredReturnTypeKey, TypeId>,
+    /// Memo for the contextual-callback return-type mismatch derivation
+    /// (`raw_block_body_callback_mismatch`). Keyed by the inline callback
+    /// argument node and the expected contextual type for that argument. The
+    /// value is the stable mismatch outcome `(arg index, recovery actual,
+    /// expected)`, or `None` when no mismatch is forced. Overload resolution and
+    /// the union/signature-specific passes re-enter the derivation for the same
+    /// pair many times; the derivation snapshots and rolls back all speculative
+    /// state it touches, so its result is a pure function of the key. Only
+    /// non-generator callbacks are recorded (generator callbacks additionally
+    /// depend on the durable diagnostic vector). Cleared per file session like
+    /// `inferred_return_type_memo`.
+    pub callback_mismatch_memo: CallbackMismatchMemo,
     /// Variables that have already had TS7034 emitted, keyed by the deferred
     /// implicit-any classification that triggered it.
     pub reported_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyKind>>,

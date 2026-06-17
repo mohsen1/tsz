@@ -138,6 +138,7 @@ pending_implicit_any_vars = { lifetime = "SpeculationScoped", capability = "Spec
 pending_circular_return_sites = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 non_closure_circular_return_tracking_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 inferred_return_type_memo = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "per-function resolved-return-type memo keyed by node, contextual type, and type-parameter-scope fingerprint; reset at file-session boundary" }
+callback_mismatch_memo = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "contextual-callback return-type mismatch memo keyed by callback argument node and expected contextual type; reset at file-session boundary" }
 reported_implicit_any_vars = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
 inheritance_graph = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 node_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
