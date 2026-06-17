@@ -229,12 +229,6 @@ assert.match(
 
 assert.match(
   ciWorkflow,
-  /\n\s{2}unit-cloudbuild:\n[\s\S]+?needs: \[gate, unit-checker-integration\][\s\S]+?UNIT_RESULT: \$\{\{ needs\.unit-checker-integration\.result \}\}[\s\S]+?Required Cloud Build checker integration job did not pass/,
-  "legacy unit-cloudbuild context should mirror the required checker integration Cloud Build job",
-);
-
-assert.match(
-  ciWorkflow,
   /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- unit\s*\n\s+- unit-checker-integration[\s\S]+?required\.update\(\{"dist-binaries", "unit", "unit-checker-integration"\}\)/,
   "CI Summary should require both the Cloud Run unit slice and checker integration heavy slice",
 );

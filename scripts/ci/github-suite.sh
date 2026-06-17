@@ -47,6 +47,21 @@ stop_suite_heartbeat() {
   fi
 }
 
+# Best-effort cache save with a MemAvailable preflight. The save tars a
+# multi-GB target dir at post-build memory peak; on a starved runner the
+# kernel OOM-killer SIGKILLs the container mid-tar, failing a green job and
+# wedging the merge queue (#13733). ci_cache_save_memory_ok (ci-resources.sh)
+# refuses the tar when MemAvailable is below TSZ_CI_CACHE_SAVE_MIN_FREE_MB,
+# mirroring bench-shard-prelude's gate. The save itself stays best-effort.
+run_cache_save() {
+  ci_report_memory "pre-cache-save-${suite}"
+  if ! ci_cache_save_memory_ok; then
+    echo "warning: CI cache save skipped — MemAvailable below floor (${TSZ_CI_CACHE_SAVE_MIN_FREE_MB:-2048}MB); deferring the cache-save tar to avoid an OOM SIGKILL at post-build memory peak (see #13733/#13748)" >&2
+    return 0
+  fi
+  scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+}
+
 trap stop_suite_heartbeat EXIT
 start_suite_heartbeat
 
@@ -91,7 +106,7 @@ elif [[ "$rc" -ne 0 ]]; then
   if [[ "${TSZ_CI_CACHE_SAVE_ON_FAILURE:-0}" == "1" ]]; then
     echo "info: suite failed (rc=${rc}) but TSZ_CI_CACHE_SAVE_ON_FAILURE=1 — saving cache anyway"
     if command -v gsutil >/dev/null 2>&1; then
-      scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+      run_cache_save
     else
       echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
     fi
@@ -99,7 +114,7 @@ elif [[ "$rc" -ne 0 ]]; then
     echo "info: GCS cache save skipped (suite failed with rc=${rc})"
   fi
 elif command -v gsutil >/dev/null 2>&1; then
-  scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+  run_cache_save
 else
   echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
 fi

@@ -1057,6 +1057,11 @@ jobs:
     needs: bench-prep-artifact
     if: always() && needs.bench-prep-artifact.result == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
+    # Outermost ceiling of the decoupled budget (#13751): build (105m) <
+    # wait-deadline (115m) < this GitHub job timeout (135m). The extra slack
+    # over the wait deadline covers pre-wait overhead (checkout, prep-artifact
+    # download, validate, and the 600s submit cap) so a near-budget shard can
+    # download artifacts after SUCCESS instead of being killed mid-poll.
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
@@ -1070,31 +1075,31 @@ jobs:
       matrix:
         include:
           - label: compiler-files
-            timeout: 120
+            timeout: 135
             filter: 'conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable\.ts|manyConstExports\.ts|binderBinaryExpressionStress\.ts|binderBinaryExpressionStressJs\.ts|enumLiteralsSubtypeReduction\.ts|binaryArithmeticControlFlowGraphNotTooLarge\.ts|privacyFunctionParameterDeclFile\.ts|privacyGloFunc\.ts|privacyTypeParameterOfFunctionDeclFile\.ts|typedArrays\.ts|controlFlowArrays\.ts'
           - label: synthetic
-            timeout: 120
+            timeout: 135
             filter: '[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members'
           - label: project-hotspots
-            timeout: 120
+            timeout: 135
             filter: 'Recursive utility aliases|Indexed access hotspot|Remapped accessor hotspot|Conditional infer hotspot|Object spread hotspot|Contextual callback hotspot'
           - label: solver-stress
-            timeout: 120
+            timeout: 135
             filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
           - label: algorithmic-bct
-            timeout: 120
+            timeout: 135
             filter: 'BCT candidates'
           - label: algorithmic-constraint
-            timeout: 120
+            timeout: 135
             filter: 'Constraint conflicts N'
           - label: algorithmic-mapped
-            timeout: 120
+            timeout: 135
             filter: 'Mapped complex template keys'
           - label: projects
-            timeout: 120
+            timeout: 135
             filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|comlink-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
-            timeout: 120
+            timeout: 135
             filter: '^large-ts-repo$'
     steps:
       - uses: actions/checkout@v4
@@ -1300,7 +1305,18 @@ jobs:
           NODE
           }
 
-          deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
+          # Decoupled timeout budget (#13751): build-timeout < wait-deadline <
+          # github-job-timeout. The Cloud Build shard self-terminates at 6300s
+          # (105m, cloudbuild-bench-shard.yaml), so this wait deadline must be
+          # strictly *longer* than that — otherwise the poll loop would give up
+          # before a near-budget-but-successful build reaches SUCCESS, killing it
+          # mid-poll before artifacts download (the false-negative this fixes).
+          # SECONDS counts from this wait step's start (after checkout/download/
+          # submit, ~10m into the job), so a 6900s (115m) wait window ends well
+          # inside the 135m GitHub job timeout (timeout-minutes above) while
+          # still outlasting the 105m Cloud Build ceiling.
+          wait_deadline_seconds=6900
+          deadline=$((SECONDS + wait_deadline_seconds))
           while true; do
             status="$(cloudbuild_status)"
             if [[ "$status" == "SUCCESS" ]]; then
@@ -1339,6 +1355,10 @@ jobs:
             esac
 
             if (( SECONDS >= deadline )); then
+              # Note: the wait window is wait_deadline_seconds (115m), which is
+              # decoupled from and shorter than matrix.timeout (the 135m GitHub
+              # job timeout) per #13751. The message reuses matrix.timeout as a
+              # stable label; the effective wait deadline is 115 minutes.
               echo "No finished Cloud Build benchmark shard artifact is available for ${{ matrix.label }} after ${{ matrix.timeout }} minutes."
               [[ -z "$status" ]] || echo "Last Cloud Build benchmark shard status: ${status} (${{ steps.cloudbuild-submit.outputs.build_id }})."
               capture_cloudbuild_log

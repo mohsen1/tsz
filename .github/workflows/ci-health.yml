@@ -6,6 +6,13 @@ on:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
+# Serialize overlapping firings (a slow */15 run must not race the next one over
+# the single main-red sentinel issue). Do NOT cancel-in-progress: a useful
+# health check should run to completion rather than be dropped. See issue #13744.
+concurrency:
+  group: ci-health
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: read
@@ -21,6 +28,10 @@ jobs:
   wip-state-comments:
     name: wip-state-comments
     runs-on: ubuntu-latest
+    # Pure advisory probes (WIP-state + stale-run gaps). A transient gh API
+    # error must not red the health workflow — matches bench-artifact-readiness.
+    # The scripts already retry transient transport; this is belt-and-suspenders.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +78,10 @@ jobs:
   ci-job-timing:
     name: ci-job-timing
     runs-on: ubuntu-latest
+    # Pure advisory baseline — a transient gh API error must not red the health
+    # workflow (matches bench-artifact-readiness). The script also retries
+    # transient transport; this is belt-and-suspenders.
+    continue-on-error: true
     # Advisory baseline: records per-job queue_wait + run seconds over recent
     # successful ci.yml runs so every other CI speed claim on this fleet can be
     # checked against measured numbers (issue #13605 item 2). No wall-clock

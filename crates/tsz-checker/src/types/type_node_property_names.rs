@@ -59,6 +59,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return Some(name);
         }
 
+        // A computed name `[s]` whose identifier resolves to a user binding with
+        // unique-symbol identity (`const s: unique symbol` / a verified global
+        // `Symbol(...)`/`Symbol.for(...)` const) keys the member under the
+        // canonical `__unique_<id>` binding-identity atom. The strong
+        // `CheckerState` lowering path (`computed_identifier_unique_symbol_property_ref`)
+        // already does this; without the same leg here, an *inline* object type
+        // literal `{ [s]: T }` reached through the `TypeNodeChecker` path (e.g. as
+        // the object operand of an indexed-access type `{ [s]: T }[typeof s]`, or
+        // nested inside a union/intersection) silently dropped the symbol member,
+        // collapsing the shape to `{}` and yielding false TS2536/TS2339. Resolve
+        // the value symbol scope-aware (matching the strong path) and emit the
+        // binding-identity key so both lowering paths agree on the member atom.
+        if let Some(sym_id) = self.resolve_computed_name_value_symbol(computed.expression)
+            && let Some(sym_ref) = computed_names::unique_symbol_property_ref(self.ctx, sym_id)
+        {
+            return Some(format!("__unique_{}", sym_ref.0));
+        }
+
         if let Some(atom) = self.computed_property_expression_name_atom(computed.expression) {
             let name = self.ctx.types.resolve_atom(atom);
             if name.starts_with("[Symbol.")
@@ -110,6 +128,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             |idx| self.resolve_computed_property_symbol(idx),
             expr_idx,
         )
+    }
+
+    /// Resolve the binding a computed-name expression refers to, mirroring the
+    /// strong `CheckerState` path's `resolve_computed_name_expression_symbol`:
+    /// scope-aware `resolve_identifier` with a `file_locals` fallback (no
+    /// VALUE-flag filtering, no eager import-alias following — the canonical key
+    /// helpers in `computed_names` own alias hops). Used only for the
+    /// unique-symbol binding-identity key leg, so both lowering paths agree on
+    /// the same symbol and therefore the same `__unique_<id>` member atom.
+    fn resolve_computed_name_value_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.resolve_computed_name_value_symbol(paren.expression);
+        }
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, expr_idx)
+                .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text));
+        }
+        self.resolve_computed_property_symbol(expr_idx)
     }
 
     fn resolve_computed_property_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {

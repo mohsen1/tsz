@@ -1465,3 +1465,163 @@ fn test_conditional_infer_template_literal_union_input_distributive() {
 
     assert_eq!(result, TypeId::STRING);
 }
+
+#[test]
+fn test_conditional_generic_tuple_bare_infer_pattern_resolves_true_branch() {
+    // `[unknown, A] extends [infer F, infer Tuple] ? Tuple : never` where `A` is
+    // a free type parameter. The pattern is a rest-free tuple of *bare* infers,
+    // so it matches for any instantiation of `A`; the conditional must resolve
+    // the true branch with `Tuple` bound to `A` rather than staying deferred
+    // (which would strand the `infer` variables unbound).
+    let interner = TypeInterner::new();
+
+    let (_a_name, a_param) = test_type_param(&interner, "A");
+    let (_f_name, infer_f) = test_infer_param(&interner, "F");
+    let (_t_name, infer_t) = test_infer_param(&interner, "Tuple");
+
+    let check = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: a_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let extends = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_f,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_t,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: infer_t,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, a_param);
+}
+
+#[test]
+fn test_conditional_generic_tuple_constrained_infer_satisfied_resolves_true_branch() {
+    // `[object, A] extends [infer F, infer Tuple extends unknown[]] ? Tuple : never`
+    // where `A extends unknown[]`. The constrained `infer Tuple extends unknown[]`
+    // is provably satisfied by `A`'s own upper bound for every instantiation, so
+    // the conditional resolves the true branch (`Tuple = A`) instead of deferring.
+    let interner = TypeInterner::new();
+
+    let array_unknown = interner.array(TypeId::UNKNOWN);
+    let a_name = interner.intern_string("A");
+    let a_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: a_name,
+        constraint: Some(array_unknown),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+
+    let (_f_name, infer_f) = test_infer_param(&interner, "F");
+    let (_t_name, infer_t) = test_constrained_infer_param(&interner, "Tuple", array_unknown);
+
+    let check = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::OBJECT,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: a_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let extends = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_f,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_t,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: infer_t,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, a_param);
+}
+
+#[test]
+fn test_conditional_generic_tuple_shape_pattern_still_defers() {
+    // `[A] extends [[infer U]] ? U : never` where `A` is a free type parameter.
+    // The pattern position is a *nested tuple* shape, not a bare/constrained
+    // `infer`, so whether `A` matches depends on its instantiation. The
+    // conditional must stay deferred (returns a `Conditional`), preserving the
+    // existing shape/constraint-dependent behavior.
+    let interner = TypeInterner::new();
+
+    let (_a_name, a_param) = test_type_param(&interner, "A");
+    let (_u_name, infer_u) = test_infer_param(&interner, "U");
+
+    let check = interner.tuple(vec![TupleElement {
+        type_id: a_param,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let inner = interner.tuple(vec![TupleElement {
+        type_id: infer_u,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let extends = interner.tuple(vec![TupleElement {
+        type_id: inner,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Conditional(_))),
+        "shape-pattern conditional over a generic tuple must stay deferred; got {:?}",
+        interner.lookup(result)
+    );
+}
