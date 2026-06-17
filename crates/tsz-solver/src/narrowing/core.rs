@@ -1411,6 +1411,86 @@ impl<'a> NarrowingContext<'a> {
         self.narrow_to_type(literal, target) != TypeId::NEVER
     }
 
+    /// Exclude the positive (true-branch) narrowing from a source for the
+    /// false branch of a type-predicate guard, mirroring tsc's
+    /// `getNarrowedTypeWorker(assumeTrue=false)`:
+    /// `filterType(type, t => !isTypeSubsetOf(t, trueType))`.
+    ///
+    /// tsc's `filterType` is a *shallow* pass over the source union's top-level
+    /// members, and `isTypeSubsetOf` is a pure identity/containment test (no
+    /// structural subtype walk, no descent into a member's intersection
+    /// sub-structure). The general [`Self::narrow_excluding_type`] instead
+    /// recurses into every intersection/union member and runs a deep
+    /// `is_assignable_to` per member; over a recursive-schema union (typebox /
+    /// ts-morph `value is T` guards, where each nested schema instantiates to a
+    /// distinct `TypeId` so the `(source, excluded)` memo never hits) that
+    /// recursion is exponential and was the dominant non-termination frame.
+    ///
+    /// This boundary keeps the false-branch predicate exclusion on tsc's cheap
+    /// O(N) shallow path. It returns `None` when the shallow filter cannot
+    /// reduce the source (every member survives `isTypeSubsetOf`), so the caller
+    /// can fall back to its structural-assignability member pass for the cases
+    /// tsc covers through `directlyRelated`/intersection construction.
+    pub fn narrow_excluding_positive_subset(
+        &self,
+        source_type: TypeId,
+        positive_type: TypeId,
+    ) -> Option<TypeId> {
+        // `any`/`unknown` are never reduced by exclusion (tsc returns the source
+        // unchanged), so there is nothing for the shallow filter to do.
+        if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
+            return None;
+        }
+
+        let resolved_source = self.resolve_type(source_type);
+        let Some(members) = union_list_id(self.db, resolved_source) else {
+            // A non-union source is dropped to `never` iff it is a subset of the
+            // positive type; otherwise it is unrelated and kept. tsc:
+            // `type.flags & Never || f(type) ? type : neverType`.
+            return self
+                .is_type_subset_of(resolved_source, positive_type)
+                .then_some(TypeId::NEVER);
+        };
+
+        let members = self.db.type_list(members);
+        let remaining: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&member| !self.is_type_subset_of(member, positive_type))
+            .collect();
+
+        if remaining.len() == members.len() {
+            // Nothing filtered — let the caller try its structural fallback.
+            return None;
+        }
+        Some(match remaining.as_slice() {
+            [] => TypeId::NEVER,
+            [single] => *single,
+            _ => self.db.union(remaining),
+        })
+    }
+
+    /// tsc's `isTypeSubsetOf`: a pure identity/containment relation used by
+    /// false-branch predicate exclusion. `source` is a subset of `target` when
+    /// it is identical, is `never`, or — when `target` is a union — every
+    /// constituent of `source` is one of `target`'s constituents. No structural
+    /// subtype walk is performed (that is the divergence this avoids).
+    fn is_type_subset_of(&self, source: TypeId, target: TypeId) -> bool {
+        if source == target || source == TypeId::NEVER {
+            return true;
+        }
+        let Some(target_members) = union_list_id(self.db, target) else {
+            return false;
+        };
+        let target_members = self.db.type_list(target_members);
+        if let Some(source_members) = union_list_id(self.db, source) {
+            let source_members = self.db.type_list(source_members);
+            source_members.iter().all(|s| target_members.contains(s))
+        } else {
+            target_members.contains(&source)
+        }
+    }
+
     /// Narrow a type to exclude members assignable to target.
     ///
     /// Memoizing entry point. The recursive body (`narrow_excluding_type_uncached`)
@@ -2124,6 +2204,35 @@ impl<'a> NarrowingContext<'a> {
                             let resolved_source = self.resolve_for_exclusion_narrowing(source_type);
                             let resolved_target =
                                 self.resolve_for_exclusion_narrowing(*target_type);
+
+                            // tsc's `getNarrowedTypeWorker(assumeTrue=false)` first
+                            // computes the true-branch type, then shallow-filters the
+                            // source: `filterType(type, t => !isTypeSubsetOf(t,
+                            // trueType))`. `filterType`/`isTypeSubsetOf` are a pure
+                            // identity/containment pass over the source union's
+                            // top-level members — no descent into a member's
+                            // intersection sub-structure and no structural subtype
+                            // walk. Take that cheap path when it reduces the source:
+                            // the general `narrow_excluding_type` recurses into every
+                            // member with a deep `is_assignable_to`, which explodes on
+                            // recursive-schema unions (typebox / ts-morph `value is T`,
+                            // where each nested schema instantiates to a distinct
+                            // `TypeId` so the `(source, excluded)` memo never hits).
+                            // The positive (true-branch) type is the union members of
+                            // the source that overlap the target, so filtering members
+                            // that are subsets of it matches tsc. When the shallow
+                            // filter cannot reduce the source (no member is a clean
+                            // subset — e.g. type-parameter / single-intersection
+                            // sources tsc handles via its intersection step), fall back
+                            // to the existing structural exclusion.
+                            let positive = self.narrow_to_type(resolved_source, resolved_target);
+                            if positive != TypeId::NEVER
+                                && positive != resolved_source
+                                && let Some(excluded) =
+                                    self.narrow_excluding_positive_subset(resolved_source, positive)
+                            {
+                                return excluded;
+                            }
                             self.narrow_excluding_type(resolved_source, resolved_target)
                         }
                     }
