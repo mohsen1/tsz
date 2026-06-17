@@ -15,7 +15,7 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Whether `object_type` is a deferred conditional whose apparent type (tsc's
     /// `getDefaultConstraintOfConditionalType` — the union of branch results) has
     /// a concrete key space that admits the index key. Mirrors tsc's
@@ -263,8 +263,10 @@ impl<'a> CheckerState<'a> {
         // union shape, else fall back to the raw constraint.
         let members: Vec<TypeId> = q::union_members(self.ctx.types, evaluated_constraint)
             .or_else(|| q::union_members(self.ctx.types, constraint))
-            .map(|list| list.iter().copied().collect())
-            .unwrap_or_else(|| vec![evaluated_constraint, constraint]);
+            .map_or_else(
+                || vec![evaluated_constraint, constraint],
+                |list| list.iter().copied().collect(),
+            );
         if !members.iter().any(|&m| is_error_contagious(self, m)) {
             return None;
         }

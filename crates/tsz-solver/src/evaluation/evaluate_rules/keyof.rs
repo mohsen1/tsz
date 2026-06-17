@@ -422,7 +422,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn keyof_union_intersection(&mut self, member_list: &[TypeId]) -> TypeId {
         let mut key_types: SmallVec<[TypeId; 4]> = SmallVec::with_capacity(member_list.len());
         let mut universal_member: Option<TypeId> = None;
-        for &member in member_list.iter() {
+        for &member in member_list {
             let keyof_member = self.recurse_keyof(member);
             if self.keyof_member_is_universal(keyof_member) {
                 universal_member.get_or_insert(keyof_member);
