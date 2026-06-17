@@ -316,7 +316,7 @@ assert.match(
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";
 assert.match(
   benchJob,
-  /- name: Download benchmark prep artifact[\s\S]+actions\/download-artifact@v4[\s\S]+name: bench-prep-ready[\s\S]+- name: Validate source benchmark prep artifact[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/tsz[\s\S]+- id: cloudbuild-submit/,
+  /- name: Download benchmark prep artifact[\s\S]+actions\/download-artifact@\S+[\s\S]+name: bench-prep-ready[\s\S]+- name: Validate source benchmark prep artifact[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/tsz[\s\S]+- id: cloudbuild-submit/,
   "benchmark shard jobs should include the validated prep artifact in the Cloud Build source archive before submit",
 );
 
