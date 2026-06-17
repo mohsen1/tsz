@@ -1419,8 +1419,15 @@ jobs:
           test -x .target-bench/dist/tsz
           test -f .target-bench/dist/.bench-pgo-optimized
 
+          # Skip category:"application" canary rows here: they clone+install real
+          # apps (minutes each) and are excluded from the benchmark corpus, so
+          # they produce no PGO timing data but would blow this job's 30m budget
+          # (observed 2026-06-17: bench-publish timed out for ~14h, freezing the
+          # published benchmarks). Application *compatibility* is still tracked by
+          # the CI project-compile-canary shards, which do not set this flag.
           TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
           TSZ_PROJECT_COMPILE_SET=canary \
+          TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 \
           TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
           scripts/ci/project-compile-guard.sh
 
