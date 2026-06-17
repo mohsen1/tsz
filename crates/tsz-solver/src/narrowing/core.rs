@@ -12,7 +12,7 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;
 use tracing::{Level, span, trace};
@@ -478,56 +478,50 @@ pub(crate) struct NarrowExcludingKey {
 impl NarrowingCache {
     pub fn new() -> Self {
         Self {
-            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                1024,
-                Default::default(),
-            )),
+            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(1024, FxBuildHasher)),
             resolve_visiting: RefCell::new(FxHashSet::default()),
-            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                Default::default(),
-            )),
+            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(512, FxBuildHasher)),
             required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
-                Default::default(),
+                FxBuildHasher,
             )),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             contains_type_parameters_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
-                Default::default(),
+                FxBuildHasher,
             )),
             optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
-                Default::default(),
+                FxBuildHasher,
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
             narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
-                Default::default(),
+                FxBuildHasher,
             )),
             narrow_excluding_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
-                Default::default(),
+                FxBuildHasher,
             )),
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
             narrow_assignable_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             narrow_subtype_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
         }
     }
