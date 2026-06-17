@@ -20,6 +20,30 @@ use tsz_solver::{TupleElement, TypeId};
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
+/// Whether a spread argument `...v` must be kept whole (as a single `[...A]`
+/// marker) rather than destructured through its constraint's tuple elements.
+///
+/// This is true only for a bare type parameter whose apparent tuple is
+/// *variadic* — it contains a rest element (e.g. `A extends readonly [L,
+/// ...ReadonlyArray<L>]`). Such a spread has an indeterminate length and its
+/// identity must be preserved so that a rest type parameter inferred from it
+/// (`f<A>(...v: A): A[number]`) infers the type parameter itself rather than a
+/// reconstructed concrete tuple.
+///
+/// A *fixed*-length tuple constraint (e.g. `V extends [number, number]`) is
+/// positionally expandable; expanding it element-wise is the historical
+/// behaviour and is required so multi-spread combinations like
+/// `f(...u, ...v)` still infer correctly. Array-constrained type parameters
+/// are not tuples, so `tuple_elements_for_type` returns `None` for them and
+/// they reach the dedicated type-parameter spread branch on their own.
+fn type_param_variadic_tuple_spread(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    spread_type: TypeId,
+    elems: &[TupleElement],
+) -> bool {
+    is_type_parameter_type(db, spread_type) && elems.iter().any(|elem| elem.rest)
+}
+
 impl<'a> CheckerState<'a> {
     fn generic_function_argument_has_own_type_params(&self, arg_idx: NodeIndex) -> bool {
         let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
@@ -385,16 +409,16 @@ impl<'a> CheckerState<'a> {
                     expanded_count += elements.len();
                     continue;
                 }
-                // A bare type-parameter spread (`...v` where `v: A`, `A` a type
-                // parameter) must NOT be destructured through its constraint's
-                // tuple shape: that loses `A`'s identity and forces a downstream
-                // rest-parameter type parameter to infer the concrete constraint
-                // shape instead of `A` itself. tsc keeps such a spread whole
-                // (its `isTupleType` test inspects the actual type, not the
-                // apparent/constraint type), so it flows to the dedicated
-                // type-parameter spread branch below as a single `[...A]` marker.
-                if !is_type_parameter_type(self.ctx.types, spread_type)
-                    && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                // A type-parameter spread whose constraint is a *variadic* tuple
+                // (`...v` where `v: A`, `A extends readonly [L, ...L[]]`) must NOT
+                // be destructured through its constraint: that loses `A`'s
+                // identity and forces a downstream rest-parameter type parameter
+                // to infer the concrete constraint shape instead of `A` itself.
+                // It is kept whole as a single `[...A]` marker by the
+                // type-parameter spread branch (see `type_param_variadic_tuple_spread`).
+                // Fixed-length tuple constraints stay positionally expandable.
+                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                    && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
                 {
                     expanded_count += self.expanded_tuple_spread_len(&elems);
                     continue;
@@ -526,15 +550,17 @@ impl<'a> CheckerState<'a> {
 
                     // If it's a tuple type, expand its elements.
                     //
-                    // A bare type-parameter spread (`...v` where `v: A`, `A` a
-                    // type parameter) is excluded: destructuring it through its
-                    // constraint's tuple shape discards `A`'s identity. tsc keeps
-                    // it whole, so it falls through to the type-parameter spread
-                    // branch below, which emits a single `[...A]` marker that
-                    // rest-tuple inference can reconstruct while preserving the
-                    // type-parameter identity.
-                    if !is_type_parameter_type(self.ctx.types, spread_type)
-                        && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                    // A type-parameter spread with a *variadic* tuple constraint
+                    // (`...v`, `v: A extends readonly [L, ...L[]]`) is excluded:
+                    // destructuring it discards `A`'s identity. It falls through
+                    // to the type-parameter spread branch below, which emits a
+                    // single `[...A]` marker that rest-tuple inference
+                    // reconstructs while preserving identity. A fixed-length tuple
+                    // constraint stays positionally expandable here, so multi-
+                    // spread combinations (`f(...u, ...v)`) keep inferring as
+                    // before. See `type_param_variadic_tuple_spread`.
+                    if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                        && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
                     {
                         // An open-ended tuple (one whose flattened rest is
                         // array-backed, e.g. `[number, ...string[]]`) has an
@@ -1813,10 +1839,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
             {
                 let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-                // A bare type-parameter spread stays a single unit (see argument
+                // A variadic-tuple type-parameter spread stays a single unit (see argument
                 // collection); do not count its constraint's tuple elements.
-                if !is_type_parameter_type(self.ctx.types, spread_type)
-                    && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                    && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
                 {
                     expanded_count += elems.len();
                     continue;
@@ -1847,11 +1873,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            // A bare type-parameter spread stays a single unit (see argument
+            // A variadic-tuple type-parameter spread stays a single unit (see argument
             // collection and the type-parameter spread branch below); do not
             // advance by its constraint's tuple element count.
-            if !is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
             {
                 effective_index += elems.len();
                 continue;
@@ -1924,11 +1950,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            // A bare type-parameter spread stays a single unit (see argument
+            // A variadic-tuple type-parameter spread stays a single unit (see argument
             // collection); treat it as one position rather than its constraint's
             // tuple element count.
-            if !is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
             {
                 if mismatch_index < effective_index + elems.len() {
                     return prior_non_tuple_spread;
