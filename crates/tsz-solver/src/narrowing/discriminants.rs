@@ -16,7 +16,6 @@ use rustc_hash::FxHashMap;
 
 use super::{CachedPropertyType, DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
     LiteralValueKind, TypeParameterConstraintKind, UnionMembersKind, classify_for_literal_value,
     classify_for_type_parameter_constraint, classify_for_union_members,
@@ -462,7 +461,7 @@ impl<'a> NarrowingContext<'a> {
                     true
                 } else {
                     self.literal_subtype_fast(prop_type, literal_value)
-                        .unwrap_or_else(|| is_subtype_of(self.db, prop_type, literal_value))
+                        .unwrap_or_else(|| self.is_subtype_for_narrowing(prop_type, literal_value))
                 };
                 if is_excluded {
                     if excluded_idx.is_some() {
@@ -513,20 +512,22 @@ impl<'a> NarrowingContext<'a> {
                             crate::type_queries::contains_generic_type_parameters_db(self.db, part)
                                 || self
                                     .literal_subtype_fast(literal_value, part)
-                                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, part))
+                                    .unwrap_or_else(|| {
+                                        self.is_subtype_for_narrowing(literal_value, part)
+                                    })
                         })
                     } else {
                         true
                     }
                 } else {
                     self.literal_subtype_fast(literal_value, prop_type)
-                        .unwrap_or_else(|| is_subtype_of(self.db, literal_value, prop_type))
+                        .unwrap_or_else(|| self.is_subtype_for_narrowing(literal_value, prop_type))
                 }
             } else {
                 // false branch: exclude members where property_type <: excluded_literal
                 !self
                     .literal_subtype_fast(prop_type, literal_value)
-                    .unwrap_or_else(|| is_subtype_of(self.db, prop_type, literal_value))
+                    .unwrap_or_else(|| self.is_subtype_for_narrowing(prop_type, literal_value))
             };
 
             if should_keep {
@@ -957,6 +958,14 @@ impl<'a> NarrowingContext<'a> {
         // narrow `obj` to `never` when the property doesn't exist.
         let mut any_member_has_property = false;
 
+        // Resolver-aware subtype check. The bare `is_subtype_of` builds a
+        // `SubtypeChecker` with no resolver, so the nominal enum-member-to-
+        // whole-enum rule (`E.B <: E`, which needs
+        // `resolver.get_enum_parent_def_id`) cannot fire and silently returns
+        // `false`. For a discriminant property typed as a whole enum that makes
+        // every member fail the match and collapses the receiver to `never`
+        // (false TS2339). Route through the narrowing context's resolver-aware
+        // subtype helper so enum-typed discriminant properties relate correctly.
         let literal_matches_property_type = |prop_type: TypeId| -> bool {
             if let Some(parts_id) = intersection_list_id(self.db, prop_type) {
                 return self.db.type_list(parts_id).iter().all(|&part| {
@@ -964,7 +973,7 @@ impl<'a> NarrowingContext<'a> {
                     crate::type_queries::contains_generic_type_parameters_db(
                         self.db,
                         normalized_part,
-                    ) || is_subtype_of(self.db, literal_value, normalized_part)
+                    ) || self.is_subtype_for_narrowing(literal_value, normalized_part)
                 });
             }
 
@@ -973,7 +982,7 @@ impl<'a> NarrowingContext<'a> {
                 self.db,
                 normalized_prop_type,
             ) {
-                return is_subtype_of(self.db, literal_value, normalized_prop_type);
+                return self.is_subtype_for_narrowing(literal_value, normalized_prop_type);
             }
 
             let Some(parts_id) = intersection_list_id(self.db, normalized_prop_type) else {
@@ -982,7 +991,7 @@ impl<'a> NarrowingContext<'a> {
             self.db.type_list(parts_id).iter().all(|&part| {
                 let normalized_part = normalize_constructor_property_type(part);
                 crate::type_queries::contains_generic_type_parameters_db(self.db, normalized_part)
-                    || is_subtype_of(self.db, literal_value, normalized_part)
+                    || self.is_subtype_for_narrowing(literal_value, normalized_part)
             })
         };
 
@@ -1235,8 +1244,10 @@ impl<'a> NarrowingContext<'a> {
 
                 // Exclude member ONLY if property type is subtype of excluded value
                 // This means the property is ALWAYS the excluded value
-                // REVERSE of narrow_by_discriminant logic
-                let should_exclude = is_subtype_of(self.db, resolved_prop_type, excluded_value);
+                // REVERSE of narrow_by_discriminant logic. Resolver-aware so
+                // nominal enum relations (`E.A <: E`) resolve correctly.
+                let should_exclude =
+                    self.is_subtype_for_narrowing(resolved_prop_type, excluded_value);
 
                 if should_exclude {
                     trace!(
@@ -1277,7 +1288,7 @@ impl<'a> NarrowingContext<'a> {
                     if normalized_prop_type == TypeId::ANY {
                         true
                     } else {
-                        !is_subtype_of(self.db, normalized_prop_type, excluded_value)
+                        !self.is_subtype_for_narrowing(normalized_prop_type, excluded_value)
                     }
                 } else {
                     let effective_type = self.db.intersection(prop_types);
@@ -1286,7 +1297,7 @@ impl<'a> NarrowingContext<'a> {
                     if normalized_effective_type == TypeId::ANY {
                         true
                     } else {
-                        !is_subtype_of(self.db, normalized_effective_type, excluded_value)
+                        !self.is_subtype_for_narrowing(normalized_effective_type, excluded_value)
                     }
                 }
             } else {
@@ -1509,9 +1520,10 @@ impl<'a> NarrowingContext<'a> {
                     return false; // Exclude
                 }
 
-                // Subtype check for each excluded value
+                // Subtype check for each excluded value. Resolver-aware so
+                // nominal enum relations (`E.A <: E`) resolve correctly.
                 for &excluded in excluded_values {
-                    if is_subtype_of(self.db, resolved_prop_type, excluded) {
+                    if self.is_subtype_for_narrowing(resolved_prop_type, excluded) {
                         return false; // Exclude
                     }
                 }
