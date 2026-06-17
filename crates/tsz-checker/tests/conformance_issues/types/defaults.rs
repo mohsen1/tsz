@@ -1267,7 +1267,7 @@ function foo({
 }
 
 /// A parameter default whose template literal reads the `.name` *property* of an
-/// earlier parameter (e.g. `name = \`Array<${item.name}>\``) is NOT a
+/// earlier parameter (e.g. a default of `Array<${item.name}>`) is NOT a
 /// self-reference: the `.name` part is a member name resolved in the object's
 /// namespace, not the sibling parameter named `name`. `tsc` accepts this; tsz
 /// previously walked into the property-name child of the access expression and
