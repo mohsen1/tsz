@@ -93,37 +93,6 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
-/// Per-file memo value for `find_accessor_levels_in_hierarchy`: the resolved
-/// getter level, setter level, and the declaring-class node, or `None` when no
-/// getter/setter pair declares the requested name in the class chain. Keyed by
-/// `(class node, member-name Atom, is_static)` in
-/// [`CheckerContext::accessor_levels_cache`].
-pub(crate) type AccessorLevelsCacheValue = Option<(
-    Option<crate::state::MemberAccessLevel>,
-    Option<crate::state::MemberAccessLevel>,
-    NodeIndex,
-)>;
-
-/// Per-file memo mapping `(class node, member-name Atom, is_static)` to the
-/// accessor-level classification produced by `find_accessor_levels_in_hierarchy`.
-/// Backs [`CheckerContext::accessor_levels_cache`].
-pub(crate) type AccessorLevelsCache =
-    RefCell<FxHashMap<(NodeIndex, Atom, bool), AccessorLevelsCacheValue>>;
-
-/// Per-file memo mapping `(class node, member-name Atom, is_static)` to the
-/// access-restriction classification produced by `find_member_access_info`,
-/// or `None` when the member is public/absent. Backs
-/// [`CheckerContext::member_access_info_cache`].
-pub(crate) type MemberAccessInfoCache =
-    RefCell<FxHashMap<(NodeIndex, Atom, bool), Option<crate::state::MemberAccessInfo>>>;
-
-/// Per-file memo for the contextual-callback return-type mismatch derivation
-/// (`raw_block_body_callback_mismatch`). Maps the inline callback argument node
-/// and its expected contextual type to the stable mismatch outcome
-/// `(arg index, recovery actual, expected)`, or `None` when no mismatch is
-/// forced. Backs [`CheckerContext::callback_mismatch_memo`].
-pub type CallbackMismatchMemo = FxHashMap<(NodeIndex, TypeId), Option<(usize, TypeId, TypeId)>>;
-
 /// Cache key for type-node results resolved under active generic bindings.
 ///
 /// Plain `node_types` entries are keyed only by `NodeIndex`, so they are safe
