@@ -9,6 +9,7 @@ pub(crate) mod directive;
 mod dts_rules;
 pub(crate) mod heritage;
 mod heritage_class_recovery;
+mod heritage_constructor_checks;
 mod heritage_support;
 mod isolated_declarations;
 mod js_grammar;
