@@ -24,6 +24,7 @@ pub mod literals;
 pub mod mapped_chain;
 pub mod mapped_expansion;
 pub mod mapped_key_constraints;
+pub mod mapped_target;
 pub mod objects;
 pub mod promise_like;
 pub mod tuples;

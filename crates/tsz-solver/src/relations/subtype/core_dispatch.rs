@@ -1264,7 +1264,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             enum_components(self.interner, source),
             enum_components(self.interner, target),
         ) {
-            if s_def_id == t_def_id
+            // Cross-module import barrels can give the same enum (or member)
+            // declaration two distinct `DefId`s (the declaring file's key and an
+            // import-alias key reached via a re-export). They denote the same
+            // nominal enum, so compare through `defs_are_equivalent` (which
+            // canonicalizes alias-forwarding and falls back to `SymbolId`)
+            // instead of raw `DefId` equality. Raw `==` here makes the narrowing
+            // subtype check (`E.MEMBER <: E`) fail whenever the discriminant
+            // property type and the literal member were reached through
+            // different module paths, collapsing the receiver to `never` (the
+            // mobx `IDerivationState_` cross-file enum cascade).
+            let same_def = self.resolver.defs_are_equivalent(s_def_id, t_def_id);
+
+            if same_def
                 && source != target
                 && crate::type_queries::is_literal_enum_member(self.interner, source)
                 && crate::type_queries::is_literal_enum_member(self.interner, target)
@@ -1272,14 +1284,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::False;
             }
 
-            // Enum to Enum: Nominal check - DefIds must match
-            if s_def_id == t_def_id {
+            // Enum to Enum: Nominal check - definitions must match
+            if same_def {
                 return SubtypeResult::True;
             }
 
             // Check for member-to-parent relationship (e.g., E.A -> E)
             // If source is a member of the target enum, it is a subtype
-            if self.resolver.get_enum_parent_def_id(s_def_id) == Some(t_def_id) {
+            if self
+                .resolver
+                .get_enum_parent_def_id(s_def_id)
+                .is_some_and(|parent| self.resolver.defs_are_equivalent(parent, t_def_id))
+            {
                 // Source is a member of target enum
                 // Only allow if target is the full enum type (not a different member)
                 if self.resolver.is_enum_type(target, self.interner) {
