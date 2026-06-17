@@ -653,7 +653,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -676,7 +676,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -744,7 +744,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -867,7 +867,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download canary shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: project-compile-canary-logs-*
           path: .canary-shards
@@ -926,7 +926,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1001,7 +1001,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1183,7 +1183,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1280,7 +1280,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download conformance shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: conformance-shard-*
           path: .conformance-shards
@@ -1351,14 +1351,14 @@ jobs:
           _TSZ_CI_SUITE: emit-shard
         run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
       - name: Unpack dist-fast binaries
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: node-harness
           path: .
@@ -1382,7 +1382,15 @@ jobs:
     name: emit-aggregate
     needs: [gate, emit]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled'
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Pure-IO aggregate: run_emit_aggregate prefers the downloaded .emit-shards
+    # artifacts (github-suite.sh emit-aggregate concatenates them and reads no
+    # dist binary); it only falls back to GCS when that artifact dir is absent,
+    # and since the download-artifact step below always populates it, the GCS
+    # path is never taken. The GCS env is best-effort CI cache that gracefully
+    # no-ops when gsutil is absent. A free ubuntu-latest runner is sufficient
+    # and frees a scarce Cloud Run slot (mirrors conformance-aggregate /
+    # project-compile-canary-aggregate, #13745).
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
@@ -1448,7 +1456,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download emit shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: emit-shard-*
           path: .emit-shards
@@ -1491,14 +1499,14 @@ jobs:
           _TSZ_CI_SUITE: fourslash-shard
         run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
       - name: Unpack dist-fast binaries
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: node-harness
           path: .
@@ -1511,6 +1519,15 @@ jobs:
     name: fourslash-aggregate
     needs: [gate, fourslash]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
+    # Stays self-hosted (unlike conformance/emit/canary aggregates): the
+    # fourslash shards hand their results off over GCS (run_fourslash_shard
+    # uploads via `gsutil cp` to fourslash-runs/<sha>/), NOT as GitHub Actions
+    # artifacts, and run_fourslash_aggregate downloads them with a mandatory
+    # `gsutil cp` that hard-fails without a bucket/run key (no artifact-
+    # preferring fallback like emit/conformance). ubuntu-latest has no gsutil
+    # or GCS auth by default, so migrating this job would require re-plumbing
+    # the shard->aggregate handoff to download-artifact first. Left on Cloud
+    # Run until that handoff change lands (#13745).
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -1539,7 +1556,13 @@ jobs:
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
-      - project-compile-canary-aggregate
+      # project-compile-canary-aggregate is intentionally NOT a dependency here.
+      # It is an advisory, continue-on-error suite (ALLOW_FAILURES=1) that now
+      # installs deps for ~20 real applications, so it runs for tens of minutes
+      # and queues on a busy pool. Keeping it in `needs` made the required
+      # CI Summary wait on it indefinitely ("expected — waiting for status to be
+      # reported") even though it never gates correctness. It still runs and
+      # records results out of band.
       - wasm
       - node-harness-prep
       - unit
@@ -1701,7 +1724,9 @@ jobs:
           if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
-                  "project-compile-canary-aggregate",
+                  # project-compile-canary-aggregate is advisory (continue-on-error,
+                  # ALLOW_FAILURES=1) and no longer a CI Summary dependency, so it is
+                  # not required to pass; it must not block/delay the merge gate.
                   "conformance-snapshot-gate",
               })
               required.update({

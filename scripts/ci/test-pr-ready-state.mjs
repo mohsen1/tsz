@@ -195,10 +195,16 @@ assert.doesNotMatch(
   "CI Summary must not treat cancelled required jobs as a neutral protected check",
 );
 
-assert.match(
+// The project-compile-canary suite is advisory (continue-on-error + ALLOW_FAILURES)
+// and now installs dependencies for ~20 real applications, so it runs for tens of
+// minutes and queues on a busy pool. It must NOT be a dependency of, or required by,
+// the CI Summary gate — otherwise the required CI Summary stalls "expected — waiting
+// for status to be reported" on a suite that never gates correctness. It still runs
+// and records its compatibility results out of band.
+assert.doesNotMatch(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary-aggregate[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary-aggregate",/,
-  "CI Summary must wait for the project compile canary aggregate (the shard recombiner) before reporting required full-run success",
+  /^\s+- project-compile-canary-aggregate\s*$/m,
+  "CI Summary must NOT list project-compile-canary-aggregate in needs: the advisory canary must not block/delay the required gate",
 );
 
 for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
