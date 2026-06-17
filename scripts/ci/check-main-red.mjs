@@ -89,8 +89,49 @@ function parseArgs(argv) {
   return options;
 }
 
+// Bounded exponential backoff over transient gh transport failures (5xx,
+// secondary rate limit, transient network errors). This retries only the
+// transport — never a real verdict/finding — so the sentinel's signal is
+// unchanged; it just survives a flaky GitHub API call instead of reddening the
+// advisory ci-health workflow. See issue #13744.
+const GH_RETRY_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GH_RETRY_ATTEMPTS || "", 10) || 4);
+const GH_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.GH_RETRY_BASE_MS || "", 10) || 500);
+const GH_RETRY_MAX_MS = 8000;
+const TRANSIENT_NET_CODES = new Set([
+  "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "EPIPE",
+]);
+
+function sleepSync(ms) {
+  if (!(ms > 0)) return;
+  // Synchronous sleep without busy-waiting; spawnSync gives us no async seam.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isTransientGhResult(result) {
+  if (result.error) {
+    // ENOBUFS is a hard output-size error, not transient.
+    if (result.error.code === "ENOBUFS") return false;
+    return TRANSIENT_NET_CODES.has(result.error.code);
+  }
+  if ((result.status ?? 0) === 0) return false;
+  const text = `${result.stdout || ""}\n${result.stderr || ""}`;
+  return /\bHTTP\s+(?:408|425|429|5\d\d)\b/i.test(text)
+    || /secondary rate limit/i.test(text)
+    || /\b(?:Bad Gateway|Service Unavailable|Gateway Time-?out|Internal Server Error|Server Error)\b/i.test(text);
+}
+
+function spawnGh(args, spawnOptions) {
+  let result;
+  for (let attempt = 1; attempt <= GH_RETRY_ATTEMPTS; attempt += 1) {
+    result = spawnSync("gh", args, spawnOptions);
+    if (attempt === GH_RETRY_ATTEMPTS || !isTransientGhResult(result)) break;
+    sleepSync(Math.min(GH_RETRY_BASE_MS * 2 ** (attempt - 1), GH_RETRY_MAX_MS));
+  }
+  return result;
+}
+
 function runGhJson(args) {
-  const result = spawnSync("gh", args, {
+  const result = spawnGh(args, {
     encoding: "utf8",
     maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
@@ -104,7 +145,7 @@ function runGhJson(args) {
 }
 
 function runGh(args) {
-  const result = spawnSync("gh", args, {
+  const result = spawnGh(args, {
     encoding: "utf8",
     maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
@@ -274,6 +315,18 @@ export function formatReport(verdict, regressedTests = []) {
 
 // --- issue lifecycle (gh I/O) ---
 
+// The issue body always carries the tracked head commit in its "Head commit"
+// row (see formatIssueBody). Recover the short sha last recorded so we can post
+// the heartbeat comment only when the red head actually moved, not every cron
+// firing.
+const TRACKED_SHA_RE = /Head commit\s*\|\s*`([0-9a-f]+)`/i;
+
+function lastTrackedSha(issue) {
+  if (!issue || typeof issue.body !== "string") return "";
+  const match = issue.body.match(TRACKED_SHA_RE);
+  return match ? match[1] : "";
+}
+
 function findSentinelIssue(repository, fetchJson) {
   const issues = fetchJson([
     "api",
@@ -292,11 +345,18 @@ export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
 
   if (verdict.red) {
     if (existing) {
-      // Refresh the body and add a heartbeat comment if the red head changed.
+      // Always refresh the body (idempotent: same sha -> same body). Only add a
+      // heartbeat comment when the red head sha changed since the last recorded
+      // one, so a long-red `main` does not spam a comment every 15-min firing.
+      const currentSha = (verdict.run.sha || "").slice(0, 12);
+      const previousSha = lastTrackedSha(existing);
       runCommand(["issue", "edit", String(existing.number), "--repo", repository, "--body", body]);
-      runCommand(["issue", "comment", String(existing.number), "--repo", repository,
-        "--body", `Still red as of ${nowIso}: \`${(verdict.run.sha || "").slice(0, 12)}\` ([run](${verdict.run.url})).`]);
-      return { action: "updated", number: existing.number };
+      const headChanged = currentSha !== "" && currentSha !== previousSha;
+      if (headChanged) {
+        runCommand(["issue", "comment", String(existing.number), "--repo", repository,
+          "--body", `Still red as of ${nowIso}: \`${currentSha}\` ([run](${verdict.run.url})).`]);
+      }
+      return { action: "updated", number: existing.number, commented: headChanged };
     }
     const created = runCommand(["issue", "create", "--repo", repository,
       "--title", ISSUE_TITLE, "--body", body, "--label", "tech-debt"]);

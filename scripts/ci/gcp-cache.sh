@@ -331,6 +331,33 @@ refresh_rust_source_mtimes_after_target_restore() {
   echo "Refreshed Rust source mtimes after Cargo target cache restore"
 }
 
+# Observability for #13747: how stale is the restored workspace-rlib baseline?
+#
+# The cargo-target-deps (dist-fast) blob is the only cross-commit reuse the
+# sccache-disabled dist-binaries job gets. Its refresh is gated on
+# rust_cache_refresh (Cargo.lock/Cargo.toml/.cargo/config.toml changes only),
+# so on a long run of source-only main pushes the workspace .rlibs inside it
+# drift many commits behind HEAD and Cargo recompiles the hot crates against an
+# old baseline every PR. We pack a tiny `.tsz-cache-commit` marker into the
+# blob at save time (no extra GCS object) and read it back here so the staleness
+# is measurable before we decide whether to broaden the save trigger.
+#
+# Best-effort: never fails the build. dist-binaries checks out fetch-depth:1, so
+# `git rev-list` usually cannot resolve the blob commit — in that case we still
+# log both SHAs and report distance as unknown.
+log_cargo_target_deps_staleness() {
+  local marker=".target/dist-fast/.tsz-cache-commit"
+  if [[ ! -f "$marker" ]]; then
+    echo "cargo-target-deps staleness: no commit marker in restored blob (pre-#13747 blob or cache miss)"
+    return 0
+  fi
+  local blob_commit head_commit distance
+  blob_commit="$(tr -d '[:space:]' < "$marker" 2>/dev/null || true)"
+  head_commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  distance="$(git rev-list --count "${blob_commit}..HEAD" 2>/dev/null || echo unknown)"
+  echo "cargo-target-deps staleness: blob built at ${blob_commit:-unknown}; HEAD ${head_commit}; workspace-rlib baseline is ${distance} commit(s) behind (#13747)"
+}
+
 # save_archive <label> <gs://...> <base> <path...>
 #
 # Cache write policy: only push-on-main runs publish blobs. PRs and
@@ -500,6 +527,7 @@ restore_caches() {
     # accepting stale workspace test binaries from the cache. This is the
     # inverse of the old backdating trick: correctness first, sccache for reuse.
     refresh_rust_source_mtimes_after_target_restore
+    log_cargo_target_deps_staleness
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi
@@ -609,12 +637,46 @@ save_caches() {
     # blob; new write policy (main-only) plus profile isolation makes
     # the dedicated lint cache redundant.
     cargo_target_key="$(cargo_target_cache_key)"
-    if [[ "${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}" == "1" ]]; then
+
+    # Lock-gated trigger (set from gate.outputs.rust_cache_refresh in ci.yml):
+    # save every profile blob when the dep graph changed.
+    local save_cargo_targets="${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}"
+
+    # Opt-in, default-off broader-refresh path for #13747. When enabled, the
+    # workspace-rlib (dist-fast) blob is republished on EVERY green main build,
+    # not only on Cargo.lock/profile changes, so PR dist-binaries restores a
+    # fresher incremental base instead of a many-commits-stale one.
+    #
+    # Bounded by construction, so it cannot reintroduce the #13733/#13748 OOM:
+    #   * default off — main-push behavior is unchanged until an operator reads
+    #     the staleness marker (log_cargo_target_deps_staleness) and flips the
+    #     repo variable, so this ships measured rather than as a blind change;
+    #   * gated by the MemAvailable preflight at the top of save_caches (and the
+    #     duplicate gate in github-suite.sh run_cache_save) — the save defers
+    #     instead of risking a kernel SIGKILL at post-build memory peak;
+    #   * scoped to the dist-fast blob only — the unit/wasm profile blobs stay
+    #     lock-gated, so this does not broaden the whole target tree;
+    #   * reuses the existing cargo-target-deps key — no namespace bump, so
+    #     existing blobs remain valid and are simply overwritten by a fresher
+    #     green main build.
+    local refresh_workspace_rlibs="${TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS:-0}"
+
+    if [[ "$save_cargo_targets" == "1" || "$refresh_workspace_rlibs" == "1" ]]; then
+      # Pack a tiny provenance marker into the blob so the next restore can
+      # measure how stale this workspace-rlib baseline is (#13747). Best-effort.
+      if [[ -d .target/dist-fast ]]; then
+        printf '%s\n' "$commit" > .target/dist-fast/.tsz-cache-commit 2>/dev/null || true
+      fi
       save_archive \
         "cargo-target-deps-${cargo_target_key}" \
         "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
         "." \
         .target/dist-fast
+    else
+      echo "Cache save skipped: cargo-target-deps (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0, TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS=0)"
+    fi
+
+    if [[ "$save_cargo_targets" == "1" ]]; then
       save_archive \
         "cargo-target-unit-${cargo_target_key}" \
         "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
@@ -626,7 +688,7 @@ save_caches() {
         "." \
         .target/wasm32-unknown-unknown
     else
-      echo "Cache save skipped: cargo-target-* (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
+      echo "Cache save skipped: cargo-target-unit/wasm (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
     fi
   fi
 

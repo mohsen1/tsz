@@ -33,6 +33,10 @@ COMBINED_SUMMARY="$FIXTURE_ROOT/project-compatibility-summary.json"
 PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-canary}"
 PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
 ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-1}"
+# Number of canary shards the matrix is expected to produce. The aggregate job
+# passes the real count (TSZ_CANARY_SHARDS_EXPECTED) from ci.yml so a dead shard
+# is detectable; the default is a conservative fallback for standalone runs.
+SHARDS_EXPECTED="${TSZ_CANARY_SHARDS_EXPECTED:-3}"
 
 mkdir -p "$FIXTURE_ROOT"
 
@@ -54,7 +58,8 @@ if [[ "${#shard_dirs[@]}" -eq 0 ]]; then
   exit 1
 fi
 
-echo "Found ${#shard_dirs[@]} canary shard artifact directories:"
+SHARDS_SEEN="${#shard_dirs[@]}"
+echo "Found ${SHARDS_SEEN} canary shard artifact directories (expected ${SHARDS_EXPECTED}):"
 printf '  %s\n' "${shard_dirs[@]}"
 
 # Copy every shard's files into the combined fixture root first (logs,
@@ -116,3 +121,65 @@ SUMMARY_FAILURES="$combined_failures" \
 node scripts/ci/project-compatibility.mjs summary
 
 echo "Wrote combined canary summary to $COMBINED_SUMMARY"
+
+# Record shard-set completeness into the regenerated summary JSON so downstream
+# consumers can detect a silently-incomplete canary run. Unlike conformance /
+# fourslash / emit (which fail-closed), the canary is intentionally advisory and
+# continue-on-error: a hard `exit 1` here would let one dead self-hosted runner
+# wedge the required CI Summary on pure infra flakiness. So we record the gap and
+# emit a DISTINCT, greppable signal instead of failing.
+SHARDS_COMPLETE=1
+if [[ "$SHARDS_SEEN" -lt "$SHARDS_EXPECTED" ]]; then
+  SHARDS_COMPLETE=0
+fi
+
+if [[ -f "$COMBINED_SUMMARY" ]]; then
+  SUMMARY_SHARDS_SEEN="$SHARDS_SEEN" \
+  SUMMARY_SHARDS_EXPECTED="$SHARDS_EXPECTED" \
+  SUMMARY_SHARDS_COMPLETE="$SHARDS_COMPLETE" \
+  node -e '
+    const fs = require("node:fs");
+    const file = process.argv[1];
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.shards_seen = Number(process.env.SUMMARY_SHARDS_SEEN || 0);
+    data.shards_expected = Number(process.env.SUMMARY_SHARDS_EXPECTED || 0);
+    data.shards_complete = process.env.SUMMARY_SHARDS_COMPLETE === "1";
+    fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  ' "$COMBINED_SUMMARY"
+  echo "Recorded shard completeness in summary: shards_seen=${SHARDS_SEEN} shards_expected=${SHARDS_EXPECTED} shards_complete=${SHARDS_COMPLETE}"
+else
+  echo "warning: combined summary $COMBINED_SUMMARY not found; cannot record shard completeness" >&2
+fi
+
+if [[ "$SHARDS_COMPLETE" -ne 1 ]]; then
+  # Distinct, greppable, non-warning-class marker. This is intentionally NOT a
+  # bare warning string: downstream tooling and humans can grep for
+  # `CANARY_SHARDS_INCOMPLETE` to know the required canary check passed over a
+  # silently-incomplete project set (a dead/missing shard) rather than a
+  # genuinely green full set.
+  echo "CANARY_SHARDS_INCOMPLETE shards_seen=${SHARDS_SEEN} shards_expected=${SHARDS_EXPECTED}"
+  echo "::warning title=Canary shard set incomplete::CANARY_SHARDS_INCOMPLETE: only ${SHARDS_SEEN}/${SHARDS_EXPECTED} canary shards aggregated; the required canary check covers a partial project set (likely a dead/missing self-hosted shard)."
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo "> [!WARNING]"
+      echo "> **CANARY_SHARDS_INCOMPLETE** — aggregated ${SHARDS_SEEN}/${SHARDS_EXPECTED} canary shards."
+      echo "> The required canary check passed over a partial project set (likely a dead/missing self-hosted shard)."
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    {
+      echo "shards_seen=${SHARDS_SEEN}"
+      echo "shards_expected=${SHARDS_EXPECTED}"
+      echo "shards_complete=false"
+    } >> "$GITHUB_OUTPUT"
+  fi
+else
+  echo "Canary shard set complete: ${SHARDS_SEEN}/${SHARDS_EXPECTED}."
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    {
+      echo "shards_seen=${SHARDS_SEEN}"
+      echo "shards_expected=${SHARDS_EXPECTED}"
+      echo "shards_complete=true"
+    } >> "$GITHUB_OUTPUT"
+  fi
+fi

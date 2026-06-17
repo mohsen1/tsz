@@ -10,6 +10,7 @@ _TSZ_CI_GITHUB_SUITES=(
   conformance
   conformance-aggregate
   emit-shard
+  emit-aggregate
   fourslash-shard
   fourslash-aggregate
 )
@@ -160,7 +161,7 @@ ci_suite_caches() {
       # from TypeScript source. No npm/harness restore needed.
       echo "typescript-source dist-fast-commit"
       ;;
-    conformance-aggregate|fourslash-aggregate)
+    conformance-aggregate|emit-aggregate|fourslash-aggregate)
       # Aggregates only download per-shard JSONs from GCS.
       echo ""
       ;;
