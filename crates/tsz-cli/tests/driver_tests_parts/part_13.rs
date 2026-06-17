@@ -78,3 +78,115 @@ var visModel = new moduleMap[moduleName].VisualizationModel();
         result.diagnostics
     );
 }
+
+/// `import X = E.Member` whose root `E` is an unresolved namespace import
+/// (`import * as E from 'missing'`, TS2307 emitted) must bind `X` to the
+/// error/`any` type: tsc types members reached through the `any` namespace as
+/// `any`, so `X<args>.member` access does not cascade into TS2339. tsz
+/// previously lowered `X<args>` to a real generic application (e.g. `Eq<number>`)
+/// with no members, producing a false TS2339.
+#[test]
+fn compile_import_equals_member_of_unresolved_namespace_suppresses_member_access_cascade() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "moduleResolution": "node10",
+            "ignoreDeprecations": "6.0",
+            "noEmit": true
+          },
+          "files": ["importEqualsUnresolvedRoot.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("importEqualsUnresolvedRoot.ts"),
+        r#"import * as E from 'totally-missing-pkg/lib/Eq';
+import Eq = E.Eq;
+declare const e: Eq<number>;
+e.equals(1, 2);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes.iter().filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS).count(),
+        1,
+        "Expected exactly one TS2307 for the missing module. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected no TS2339 cascade on the any-typed alias member. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+/// Renamed binders plus an assignment-position use of the unresolved-rooted
+/// alias: the alias is `any`, so assigning it to a concrete annotation does not
+/// cascade into TS2322. Also exercises a deep `Pkg.Inner.Leaf` entity name.
+#[test]
+fn compile_import_equals_unresolved_namespace_suppresses_assignment_and_deep_cascade() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "moduleResolution": "node10",
+            "ignoreDeprecations": "6.0",
+            "noEmit": true
+          },
+          "files": ["importEqualsRenamedRoot.ts", "importEqualsDeepRoot.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("importEqualsRenamedRoot.ts"),
+        r#"import * as NS from 'another-missing/Codec';
+import Codec = NS.Type;
+declare const c: Codec<string>;
+const n: number = c;
+"#,
+    );
+    write_file(
+        &base.join("importEqualsDeepRoot.ts"),
+        r#"import * as Pkg from 'deep-missing/mod';
+import Deep = Pkg.Inner.Leaf;
+declare const d: Deep<string>;
+d.foo.bar;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes.iter().filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS).count(),
+        2,
+        "Expected one TS2307 per missing module. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 cascade assigning an any-typed alias. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected no TS2339 cascade on the deep any-typed alias member. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}

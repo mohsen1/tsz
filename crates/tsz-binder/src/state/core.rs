@@ -1252,9 +1252,28 @@ impl BinderState {
                         & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
                         != 0
                 {
-                    // If the module has an exports table, merge it into file_exports
+                    // If the module has an exports table, merge it into file_exports.
+                    //
+                    // A symbol declared *inside* a namespace
+                    // (`export declare namespace X { export type Result = ... }`)
+                    // is a NAMESPACE MEMBER: its `parent` points at the namespace
+                    // symbol `X`. tsc exposes only the namespace `X` at the file's
+                    // top level (member access is qualified as `X.Result`), never the
+                    // bare member `Result`. Hoisting such members would leak them into
+                    // the file's top-level export set — under a barrel `export *` this
+                    // produces phantom TS2308 collisions and resolves bare imports to
+                    // the wrong (namespace-member) binding. So skip members whose
+                    // `parent` is this namespace symbol; the namespace symbol itself is
+                    // still exposed by the `is_exported` branch below.
                     if let Some(module_exports) = symbol.exports.as_ref() {
                         for (export_name, &export_sym_id) in module_exports.iter() {
+                            let is_namespace_member = self
+                                .symbols
+                                .get(export_sym_id)
+                                .is_some_and(|member| member.parent == sym_id);
+                            if is_namespace_member {
+                                continue;
+                            }
                             if !file_exports.has(export_name) {
                                 file_exports.set(export_name.clone(), export_sym_id);
                             }
