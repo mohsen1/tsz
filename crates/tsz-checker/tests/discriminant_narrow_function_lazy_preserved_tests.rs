@@ -78,3 +78,68 @@ function f(instance: Function | string) {
         "Expected no TS2339 with Function | string, got: {diags:#?}"
     );
 }
+
+/// Regression: `typeof x === 'function'` narrowing over a *generic type-alias
+/// instantiation* whose alias resolves to a union containing a call signature.
+/// `narrow_to_function` inspected the raw `Application`/`Lazy` wrapper, which
+/// `union_list_id` does not recognize as a union, so the call-signature member
+/// was dropped and the result was no longer callable (spurious TS2349) and the
+/// non-function member rendered as a lost-member union (spurious TS2322).
+///
+/// Mirrors `tanstack-query`'s `resolveStaleTime`/`resolveQueryBoolean`:
+/// `typeof option === 'function' ? option(query) : option` over
+/// `option: undefined | Fn<T>`.
+#[test]
+fn typeof_function_narrows_generic_alias_union_member() {
+    let source = r#"
+type Fn<T> = number | ((x: T) => number)
+function resolve<T>(option: undefined | Fn<T>, x: T): number | undefined {
+    return typeof option === 'function' ? option(x) : option
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics narrowing a generic-alias union, got: {diags:#?}"
+    );
+}
+
+/// Adjacent: the same alias-union reached *directly* (not behind an outer
+/// `undefined`), narrowed in an `if` block rather than a ternary, with the
+/// negative (`else`) branch keeping only the non-function members.
+#[test]
+fn typeof_function_narrows_generic_alias_if_and_else_branches() {
+    let source = r#"
+type Fn<T> = number | ((x: T) => number)
+function resolve<T>(option: Fn<T>, x: T): number {
+    if (typeof option === 'function') {
+        return option(x)
+    }
+    return option
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics on if/else alias-union narrowing, got: {diags:#?}"
+    );
+}
+
+/// Adjacent: a concrete instantiation `Fn<string>` (no free type parameter)
+/// must narrow identically to the generic form — the bug was in the wrapper
+/// handling, not the type parameter.
+#[test]
+fn typeof_function_narrows_concrete_alias_instantiation() {
+    let source = r#"
+type Fn<T> = number | ((x: T) => number)
+function resolve(option: Fn<string>, x: string): number {
+    if (typeof option === 'function') { return option(x) }
+    return option
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics on concrete alias instantiation, got: {diags:#?}"
+    );
+}

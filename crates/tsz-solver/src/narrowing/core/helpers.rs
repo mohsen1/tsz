@@ -231,14 +231,47 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow to function types only.
     pub(super) fn narrow_to_function(&self, source_type: TypeId) -> TypeId {
+        // A Lazy/Application wrapper that aliases a union (e.g. a generic
+        // type-alias instantiation `Fn<T> = number | ((x: T) => number)`) is
+        // opaque to `union_list_id`, so without resolving it the call-signature
+        // member is dropped and the narrowed type is no longer callable. Other
+        // typeof targets reach `narrow_to_type`, which resolves the source
+        // itself; the "function" branch needs the same unwrapping. We only do
+        // this when the wrapper resolves to a *union* — resolving an object-like
+        // wrapper (e.g. the global `Function` interface) to its shape and
+        // recursing would wrongly collapse it to `never`, so those keep the
+        // direct structural handling below. Identity of `source_type` is
+        // preserved when narrowing is a no-op.
+        if union_list_id(self.db, source_type).is_none() {
+            let resolved = self.resolve_type(source_type);
+            if resolved != source_type
+                && resolved != TypeId::ERROR
+                && union_list_id(self.db, resolved).is_some()
+            {
+                let narrowed = self.narrow_to_function(resolved);
+                return if narrowed == resolved {
+                    source_type
+                } else {
+                    narrowed
+                };
+            }
+        }
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut functions: Option<Vec<TypeId>> = None;
             for (index, &member) in members.iter().enumerate() {
                 let narrowed = if let Some(narrowed) = self.narrow_type_param_to_function(member) {
                     narrowed.non_never()
+                } else if self.is_function_type(member) {
+                    Some(member)
+                } else if let Some(resolved_member) = self.resolve_alias_union_member(member) {
+                    // A union member may itself be a Lazy/Application wrapper
+                    // aliasing a union with a call signature. Resolve and recurse
+                    // so the call-signature members inside the wrapper survive
+                    // instead of being dropped from the function-narrowed result.
+                    self.narrow_to_function(resolved_member).non_never()
                 } else {
-                    self.is_function_type(member).then_some(member)
+                    None
                 };
 
                 match (narrowed, &mut functions) {
@@ -307,8 +340,48 @@ impl<'a> NarrowingContext<'a> {
         is_function_type_through_type_constraints(self.db, type_id)
     }
 
+    /// Resolve a union member that is a Lazy/Application wrapper aliasing a
+    /// *union* (e.g. a generic type-alias instantiation
+    /// `Fn<T> = number | ((x: T) => number)`). Returns the resolved union when
+    /// the member is such a wrapper, otherwise `None`. Members that resolve to a
+    /// non-union (object shapes like the global `Function` interface, type
+    /// params, intrinsics) are left to the direct structural handling so they
+    /// are not collapsed.
+    fn resolve_alias_union_member(&self, member: TypeId) -> Option<TypeId> {
+        if union_list_id(self.db, member).is_some() {
+            return None;
+        }
+        let resolved = self.resolve_type(member);
+        if resolved != member
+            && resolved != TypeId::ERROR
+            && union_list_id(self.db, resolved).is_some()
+        {
+            Some(resolved)
+        } else {
+            None
+        }
+    }
+
     /// Narrow a type to exclude function-like members (typeof !== "function").
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
+        // Mirror `narrow_to_function`: resolve a Lazy/Application wrapper that
+        // aliases a union (such as a generic type-alias instantiation) so the
+        // function members inside it are excluded rather than surviving whole.
+        // The positive/negative typeof branches must partition the same union.
+        if union_list_id(self.db, source_type).is_none() {
+            let resolved = self.resolve_type(source_type);
+            if resolved != source_type
+                && resolved != TypeId::ERROR
+                && union_list_id(self.db, resolved).is_some()
+            {
+                let narrowed = self.narrow_excluding_function(resolved);
+                return if narrowed == resolved {
+                    source_type
+                } else {
+                    narrowed
+                };
+            }
+        }
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut remaining: Option<Vec<TypeId>> = None;
@@ -318,6 +391,12 @@ impl<'a> NarrowingContext<'a> {
                         narrowed.non_never()
                     } else if self.is_function_type(member) {
                         None
+                    } else if let Some(resolved_member) = self.resolve_alias_union_member(member) {
+                        // A union member may itself be a Lazy/Application
+                        // wrapper aliasing a union with a call signature.
+                        // Resolve and recurse so its function members are
+                        // excluded instead of kept whole.
+                        self.narrow_excluding_function(resolved_member).non_never()
                     } else {
                         Some(member)
                     };
