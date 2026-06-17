@@ -938,6 +938,49 @@ pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: T
     widen_literal_type_tracked(db, type_id, &mut FxHashSet::default())
 }
 
+/// Rebuild an object type from `original` (whose shape is `shape`) substituting
+/// `new_props` for its properties, preserving index signatures, flags
+/// (including `FRESH_LITERAL`), declaring symbol, and display provenance.
+///
+/// This is the same reconstruction the object branch of `widen_type_cached`
+/// performs; it is exposed so AST-driven callers (e.g. return-type inference
+/// that preserves const-asserted property literals) can widen a subset of an
+/// object literal's properties without losing the object's freshness/identity
+/// metadata. Returns `original` unchanged when the properties are unchanged.
+pub fn rebuild_object_with_shape_metadata(
+    db: &dyn crate::construction::TypeDatabase,
+    original: TypeId,
+    shape: &crate::types::ObjectShape,
+    new_props: Vec<crate::types::PropertyInfo>,
+) -> TypeId {
+    if new_props == shape.properties {
+        return original;
+    }
+
+    let rebuilt = if shape.string_index.is_some() || shape.number_index.is_some() {
+        let mut new_shape = shape.clone();
+        new_shape.properties = new_props;
+        db.object_with_index(new_shape)
+    } else {
+        db.object_with_flags_and_symbol(new_props, shape.flags, shape.symbol)
+    };
+
+    if rebuilt != original {
+        if let Some(display_props) = db.get_display_properties(original) {
+            display_provenance::record_fresh_object_literal_display(
+                db,
+                FreshObjectLiteralDisplayProvenance {
+                    type_id: rebuilt,
+                    properties: display_props.as_ref().clone(),
+                },
+            );
+        }
+        propagate_display_alias(db, original, rebuilt);
+    }
+
+    rebuilt
+}
+
 /// `widen_literal_type` with an on-stack ancestor set guarding union recursion.
 ///
 /// A union's display-origin provenance can transitively reference the union

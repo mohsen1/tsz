@@ -444,9 +444,121 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
         if self.is_fresh_literal_expression(expr_idx) {
-            return self.widen_literal_type(type_id);
+            return self.widen_return_contribution_preserving_const(expr_idx, type_id);
         }
         type_id
+    }
+
+    /// Widen a fresh return-expression contribution while preserving literal
+    /// property types whose object-literal initializer is a const assertion.
+    ///
+    /// tsc's `getWidenedType` only widens types carrying the widening flag. A
+    /// per-property const assertion such as `{ type: "tracked" as const }`
+    /// produces a *regular* (non-widening) literal, so the inferred return type
+    /// keeps `type: "tracked"` while still widening its non-asserted siblings
+    /// (`store: "x"` → `store: string`). This matters for discriminated-union
+    /// narrowing on the inferred return type: widening the discriminant to
+    /// `string` collapses the union and produces false `TS2339`/`TS2322`.
+    ///
+    /// The plain `widen_literal_type` widens every literal leaf unconditionally,
+    /// so this AST-driven walk recurses through object-literal initializers and
+    /// preserves the const-asserted subtrees, mirroring the const-assertion
+    /// carve-out already applied to whole-expression `return x as const`.
+    fn widen_return_contribution_preserving_const(
+        &mut self,
+        expr_idx: NodeIndex,
+        type_id: TypeId,
+    ) -> TypeId {
+        let expr_idx = self.unwrap_parenthesized_expression(expr_idx);
+
+        // A const-asserted subtree is preserved wholesale.
+        if self.return_expression_is_const_assertion(expr_idx) {
+            return type_id;
+        }
+
+        // Only object literals need per-property preservation. Other fresh
+        // expressions (bare literals, array literals, template/conditional)
+        // keep the existing blanket widening.
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return self.widen_literal_type(type_id);
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return self.widen_literal_type(type_id);
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return self.widen_literal_type(type_id);
+        };
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        else {
+            return self.widen_literal_type(type_id);
+        };
+
+        // Map declared property names to their initializer expression so each
+        // shape property can consult its own AST node. Spread/shorthand members
+        // are not recorded; their properties fall back to plain widening (a
+        // no-op for the annotated/non-fresh types that spreads contribute).
+        let element_nodes: Vec<NodeIndex> = obj.elements.nodes.clone();
+        let mut initializer_for: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
+        for element_idx in element_nodes {
+            let Some(element) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                && let Some(prop) = self.ctx.arena.get_property_assignment(element)
+                && let Some(name) = self.get_property_name(prop.name)
+            {
+                initializer_for.insert(name, prop.initializer);
+            }
+        }
+
+        let mut new_props = Vec::with_capacity(shape.properties.len());
+        let mut changed = false;
+        for prop in &shape.properties {
+            let name = self.ctx.types.resolve_atom(prop.name);
+            let widened_type = match initializer_for.get(name.as_str()) {
+                // Recurse so nested object-literal const assertions
+                // (`{ outer: { type: "x" as const } }`) are preserved too.
+                Some(&init_idx) => {
+                    self.widen_return_contribution_preserving_const(init_idx, prop.type_id)
+                }
+                // Spread/shorthand-sourced property: widen as before.
+                None => self.widen_literal_type(prop.type_id),
+            };
+            if widened_type != prop.type_id {
+                changed = true;
+            }
+            let mut new_prop = prop.clone();
+            new_prop.type_id = widened_type;
+            new_prop.write_type = widened_type;
+            new_props.push(new_prop);
+        }
+
+        if !changed {
+            return type_id;
+        }
+
+        crate::query_boundaries::common::rebuild_object_with_shape_metadata(
+            self.ctx.types,
+            type_id,
+            &shape,
+            new_props,
+        )
+    }
+
+    fn unwrap_parenthesized_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
+        let mut current = expr_idx;
+        while let Some(node) = self.ctx.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            break;
+        }
+        current
     }
 
     pub(crate) fn maybe_evaluate_inferred_return_contribution(
