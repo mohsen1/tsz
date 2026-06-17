@@ -288,8 +288,33 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let required_count = self.count_required_type_params(heritage_sym);
-                    let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();
+                    // Genericity / arity of the heritage reference. For a plain
+                    // identifier (`extends Base<...>`), resolve type parameters
+                    // through the same name-aware path a type-reference position
+                    // uses, so a generic declaration reached through an import or
+                    // a named re-export (`export type { Base } from './base'`) is
+                    // seen as generic instead of falsely flagged TS2315. The raw
+                    // `SymbolId` helpers stop at the unresolved import/re-export
+                    // alias and report zero type parameters. Call expressions and
+                    // qualified names keep the raw-symbol path below, which also
+                    // consults construct signatures.
+                    let heritage_ref_name = self
+                        .ctx
+                        .arena
+                        .get(expr_idx)
+                        .filter(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                        .and_then(|_| self.heritage_name_text(expr_idx));
+                    let (required_count, total_type_params) = match heritage_ref_name.as_deref() {
+                        Some(name) => (
+                            self.count_required_reference_type_params(heritage_sym, name),
+                            self.get_reference_type_params_for_symbol(heritage_sym, name)
+                                .len(),
+                        ),
+                        None => (
+                            self.count_required_type_params(heritage_sym),
+                            self.get_type_params_for_symbol(heritage_sym).len(),
+                        ),
+                    };
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
                             let symbol_type = self.get_type_of_symbol(heritage_sym);

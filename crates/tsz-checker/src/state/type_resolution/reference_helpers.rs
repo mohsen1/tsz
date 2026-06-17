@@ -451,6 +451,14 @@ impl CheckerState<'_> {
                 .or_else(|| self.get_cross_file_symbol(effective_sym_id))
         })?;
         let declarations = symbol.declarations.clone();
+        // When the reference resolved through an import/re-export chain, the
+        // resolved target declaration legitimately carries its *own* name, which
+        // can differ from both the use-site name and the use-site import name
+        // when an intermediate re-export renamed it
+        // (`export type { Original as Renamed } from './base'`). Accept that name
+        // too. Gated on `import_target` so the raw-`SymbolId` fallback — which can
+        // collide across binders — keeps its strict use-site name gate.
+        let resolved_target_decl_name = import_target.map(|_| symbol.escaped_name.clone());
         let imported_decl_name = self
             .ctx
             .binder
@@ -560,8 +568,12 @@ impl CheckerState<'_> {
                 {
                     if let Some(name_node) = decl_arena.get(type_alias.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
-                        && ident.escaped_text != expected_name
-                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
+                        && !Self::reference_decl_name_is_accepted(
+                            ident.escaped_text.as_str(),
+                            expected_name,
+                            imported_decl_name.as_deref(),
+                            resolved_target_decl_name.as_deref(),
+                        )
                     {
                         continue;
                     }
@@ -659,8 +671,12 @@ impl CheckerState<'_> {
                 } else if let Some(iface) = decl_arena.get_interface(node) {
                     if let Some(name_node) = decl_arena.get(iface.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
-                        && ident.escaped_text != expected_name
-                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
+                        && !Self::reference_decl_name_is_accepted(
+                            ident.escaped_text.as_str(),
+                            expected_name,
+                            imported_decl_name.as_deref(),
+                            resolved_target_decl_name.as_deref(),
+                        )
                     {
                         continue;
                     }
@@ -757,8 +773,12 @@ impl CheckerState<'_> {
                 } else if !mixed_class_interface && let Some(class) = decl_arena.get_class(node) {
                     if let Some(name_node) = decl_arena.get(class.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
-                        && ident.escaped_text != expected_name
-                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
+                        && !Self::reference_decl_name_is_accepted(
+                            ident.escaped_text.as_str(),
+                            expected_name,
+                            imported_decl_name.as_deref(),
+                            resolved_target_decl_name.as_deref(),
+                        )
                     {
                         continue;
                     }
@@ -932,6 +952,24 @@ impl CheckerState<'_> {
             return Some(Vec::new());
         }
         None
+    }
+
+    /// Whether a declaration's own identifier `ident_text` matches one of the
+    /// names that legitimately denote the referenced symbol: the use-site name,
+    /// the use-site import name, or — when the reference was resolved through an
+    /// import/re-export chain — the resolved target declaration's own name (which
+    /// differs when an intermediate re-export renamed it). A non-match means the
+    /// declaration belongs to a different symbol that merely shares a colliding
+    /// raw `SymbolId`, so its type parameters must not be read.
+    fn reference_decl_name_is_accepted(
+        ident_text: &str,
+        expected_name: &str,
+        imported_decl_name: Option<&str>,
+        resolved_target_decl_name: Option<&str>,
+    ) -> bool {
+        ident_text == expected_name
+            || imported_decl_name == Some(ident_text)
+            || resolved_target_decl_name == Some(ident_text)
     }
 
     /// Whether the declaration at `decl_idx` carries a non-empty type-parameter
