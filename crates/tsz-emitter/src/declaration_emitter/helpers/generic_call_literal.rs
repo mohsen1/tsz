@@ -17,10 +17,6 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_reverse_mapped_handler_type_text(expr_idx))
-                    .or_else(|| {
-                        self.call_expression_source_return_type_text(expr_idx)
-                            .filter(|text| text.trim_start().starts_with('['))
-                    })
                     .or_else(|| self.generic_mapped_tuple_rest_call_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.generic_call_pick_mapped_type_text(expr_idx))
@@ -31,6 +27,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
                     .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
+                    // A call whose source return annotation already resolves to a
+                    // tuple (`[...]`) is emitted verbatim — but only AFTER the
+                    // label-preserving rest-identity/parameters paths above, so an
+                    // alias-wrapped `Parameters<...>` (e.g. `type A<F> = Parameters<F>`)
+                    // keeps its element labels instead of collapsing to `[object, ...]`.
+                    .or_else(|| {
+                        self.call_expression_source_return_type_text(expr_idx)
+                            .filter(|text| text.trim_start().starts_with('['))
+                    })
                     .or_else(|| self.generic_spread_array_call_return_type_text(expr_idx))
                     .or_else(|| {
                         self.explicit_type_argument_indexed_member_return_type_text(expr_idx)
