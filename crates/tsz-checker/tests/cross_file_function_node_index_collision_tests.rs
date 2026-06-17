@@ -130,7 +130,7 @@ fn die_resolution_is_order_independent() {
 
 /// Adjacent case with renamed binders: the colliding local function and the
 /// foreign function carry different user names and the barrel re-exports them,
-/// proving the fix is structural (NodeIndex round-trip) and not keyed on any
+/// proving the fix is structural (`NodeIndex` round-trip) and not keyed on any
 /// identifier string.
 #[test]
 fn renamed_binders_do_not_cross_contaminate_signatures() {
