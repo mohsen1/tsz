@@ -323,6 +323,113 @@ fn anchor_relative_path_option(option: &mut Option<String>, base_dir: &Path) {
     *option = Some(normalized.to_string_lossy().into_owned());
 }
 
+/// The TypeScript 5.5 `${configDir}` tsconfig template variable.
+///
+/// When a path-shaped tsconfig field begins with this token, `tsc` substitutes
+/// it with the directory of the config file that is being compiled in this
+/// invocation — i.e. for an `extends` chain it resolves to the *inheriting*
+/// (leaf) config's directory, never the base config's own directory. That is
+/// the whole point of the feature: a shared base config can write
+/// `"${configDir}/src"` and have every consumer resolve it against the
+/// consumer's directory.
+const CONFIG_DIR_TEMPLATE: &str = "${configDir}";
+
+/// Substitute the `${configDir}` template in every path-shaped tsconfig field
+/// against `config_dir`, the directory of the root config being compiled.
+///
+/// `config_dir` is the same value for every config in an `extends` chain (the
+/// leaf/inheriting config's directory), so callers thread the root directory
+/// through the recursion unchanged. Substitution must run *before* the
+/// `extends` anchoring helpers: it rewrites a leading `${configDir}` into an
+/// absolute, lexically-normalized path, which the `anchor_*` helpers then leave
+/// untouched (they skip already-absolute values). Fields whose value does not
+/// start with the template are left exactly as written so ordinary relative
+/// paths keep being anchored at their declaring config's directory.
+pub(super) fn substitute_config_dir_templates(config: &mut TsConfig, config_dir: &Path) {
+    // Root file selectors may carry glob metacharacters (`**`, `*.ts`), so they
+    // are normalized lexically (never canonicalized) just like the anchoring
+    // path for inherited selectors.
+    for selectors in [
+        config.files.as_mut(),
+        config.include.as_mut(),
+        config.exclude.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for selector in selectors {
+            substitute_config_dir_in_place(selector, config_dir);
+        }
+    }
+
+    let Some(opts) = config.compiler_options.as_mut() else {
+        return;
+    };
+    for option in [
+        &mut opts.base_url,
+        &mut opts.root_dir,
+        &mut opts.out_dir,
+        &mut opts.declaration_dir,
+        &mut opts.out_file,
+        &mut opts.ts_build_info_file,
+    ] {
+        if let Some(value) = option.as_mut() {
+            substitute_config_dir_in_place(value, config_dir);
+        }
+    }
+    for list in [opts.root_dirs.as_mut(), opts.type_roots.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        for entry in list {
+            substitute_config_dir_in_place(entry, config_dir);
+        }
+    }
+    if let Some(paths) = opts.paths.as_mut() {
+        for substitutions in paths.values_mut() {
+            for substitution in substitutions {
+                substitute_config_dir_in_place(substitution, config_dir);
+            }
+        }
+    }
+}
+
+/// Rewrite a single string in place when it begins with `${configDir}`.
+fn substitute_config_dir_in_place(value: &mut String, config_dir: &Path) {
+    if let Some(replaced) = substitute_config_dir(value, config_dir) {
+        *value = replaced;
+    }
+}
+
+/// Replace a leading `${configDir}` token with `config_dir` and lexically
+/// normalize the result. Returns `None` when the value does not start with the
+/// template, so non-template paths are left byte-for-byte unchanged.
+///
+/// Mirrors `tsc`'s `getSubstitutedPathWithConfigDirTemplate`, which rewrites the
+/// template to `./` and resolves it against the config directory: a bare
+/// `${configDir}` becomes the directory itself, and `${configDir}/src` becomes
+/// `<config_dir>/src`. The template is honored only at the start of the value
+/// (the TS spec restricts it to the leading segment).
+fn substitute_config_dir(value: &str, config_dir: &Path) -> Option<String> {
+    let rest = value.strip_prefix(CONFIG_DIR_TEMPLATE)?;
+    // Drop the single separator that follows the token so the remainder joins
+    // as a relative path; `${configDir}` on its own resolves to the directory.
+    let rest = rest
+        .strip_prefix('/')
+        .or_else(|| rest.strip_prefix('\\'))
+        .unwrap_or(rest);
+    let joined = if rest.is_empty() {
+        config_dir.to_path_buf()
+    } else {
+        config_dir.join(rest)
+    };
+    Some(
+        lexically_normalize_selector(&joined)
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
 pub(super) fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
     let Some(parent) = config_path.parent() else {
         return;
@@ -547,6 +654,79 @@ mod tests {
     use super::super::TsConfigReference;
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn substitute_config_dir_expands_root_selectors_and_path_options() {
+        let config_dir = Path::new("/proj/app");
+        let mut config = TsConfig {
+            include: Some(vec![
+                "${configDir}/src".to_string(),
+                "src/**/*.ts".to_string(),
+            ]),
+            exclude: Some(vec!["${configDir}/dist".to_string()]),
+            files: Some(vec!["${configDir}/entry.ts".to_string()]),
+            compiler_options: Some(CompilerOptions {
+                base_url: Some("${configDir}".to_string()),
+                out_dir: Some("${configDir}/dist".to_string()),
+                type_roots: Some(vec![
+                    "${configDir}/types".to_string(),
+                    "./node_modules/@types".to_string(),
+                ]),
+                paths: Some(
+                    [("@app/*".to_string(), vec!["${configDir}/src/*".to_string()])]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        substitute_config_dir_templates(&mut config, config_dir);
+
+        let include = config.include.as_ref().unwrap();
+        assert_eq!(
+            include[0], "/proj/app/src",
+            "${{configDir}}/src resolves against the root config dir"
+        );
+        assert_eq!(
+            include[1], "src/**/*.ts",
+            "non-template selectors are left for the extends anchoring step"
+        );
+        assert_eq!(config.exclude.as_ref().unwrap()[0], "/proj/app/dist");
+        assert_eq!(config.files.as_ref().unwrap()[0], "/proj/app/entry.ts");
+
+        let opts = config.compiler_options.as_ref().unwrap();
+        assert_eq!(
+            opts.base_url.as_deref(),
+            Some("/proj/app"),
+            "bare ${{configDir}} resolves to the directory itself"
+        );
+        assert_eq!(opts.out_dir.as_deref(), Some("/proj/app/dist"));
+        let type_roots = opts.type_roots.as_ref().unwrap();
+        assert_eq!(type_roots[0], "/proj/app/types");
+        assert_eq!(
+            type_roots[1], "./node_modules/@types",
+            "non-template entries untouched"
+        );
+        assert_eq!(opts.paths.as_ref().unwrap()["@app/*"][0], "/proj/app/src/*");
+    }
+
+    #[test]
+    fn substitute_config_dir_only_matches_leading_token() {
+        let config_dir = Path::new("/proj");
+        let mut config = TsConfig {
+            // The TS spec only honors `${configDir}` at the start of a value.
+            include: Some(vec!["src/${configDir}/x".to_string()]),
+            ..Default::default()
+        };
+        substitute_config_dir_templates(&mut config, config_dir);
+        assert_eq!(
+            config.include.as_ref().unwrap()[0],
+            "src/${configDir}/x",
+            "a non-leading template is left literal, matching tsc"
+        );
+    }
 
     #[test]
     fn merge_configs_child_overrides_base_compiler_options() {

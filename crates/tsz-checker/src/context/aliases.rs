@@ -1,14 +1,49 @@
 //! Type aliases and supporting types used across the checker context.
 //!
-//! Cross-binder index shapes, module-resolution caches, and the
+//! Cross-binder index shapes, module-resolution caches, the per-file
+//! member-access / accessor / callback-mismatch memo shapes, and the
 //! `ResolutionError` / `ResolutionModeOverride` helpers they depend on. Kept
 //! in one file so the `pub type`/helper-type surface doesn't dilute `mod.rs`.
 
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use tsz_binder::{ModuleAugmentation, SymbolId, SymbolTable};
+use tsz_common::interner::Atom;
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+
+/// Per-file memo value for `find_accessor_levels_in_hierarchy`: the resolved
+/// getter level, setter level, and the declaring-class node, or `None` when no
+/// getter/setter pair declares the requested name in the class chain. Keyed by
+/// `(class node, member-name Atom, is_static)` in
+/// [`crate::context::CheckerContext::accessor_levels_cache`].
+pub(crate) type AccessorLevelsCacheValue = Option<(
+    Option<crate::state::MemberAccessLevel>,
+    Option<crate::state::MemberAccessLevel>,
+    NodeIndex,
+)>;
+
+/// Per-file memo mapping `(class node, member-name Atom, is_static)` to the
+/// accessor-level classification produced by `find_accessor_levels_in_hierarchy`.
+/// Backs [`crate::context::CheckerContext::accessor_levels_cache`].
+pub(crate) type AccessorLevelsCache =
+    RefCell<FxHashMap<(NodeIndex, Atom, bool), AccessorLevelsCacheValue>>;
+
+/// Per-file memo mapping `(class node, member-name Atom, is_static)` to the
+/// access-restriction classification produced by `find_member_access_info`,
+/// or `None` when the member is public/absent. Backs
+/// [`crate::context::CheckerContext::member_access_info_cache`].
+pub(crate) type MemberAccessInfoCache =
+    RefCell<FxHashMap<(NodeIndex, Atom, bool), Option<crate::state::MemberAccessInfo>>>;
+
+/// Per-file memo for the contextual-callback return-type mismatch derivation
+/// (`raw_block_body_callback_mismatch`). Maps the inline callback argument node
+/// and its expected contextual type to the stable mismatch outcome
+/// `(arg index, recovery actual, expected)`, or `None` when no mismatch is
+/// forced. Backs [`crate::context::CheckerContext::callback_mismatch_memo`].
+pub type CallbackMismatchMemo = FxHashMap<(NodeIndex, TypeId), Option<(usize, TypeId, TypeId)>>;
 
 /// Flow-analysis result memo: `(FlowNodeId, SymbolId, InitialTypeId) ->
 /// NarrowedTypeId`.

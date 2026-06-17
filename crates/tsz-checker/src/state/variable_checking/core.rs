@@ -1009,9 +1009,19 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // An inline-exported variable (`export const/let/var x = []`) is not an
+            // evolving array: tsc fixes its declared type to the array literal's own
+            // type (`never[]`) because the type must be observable to consuming
+            // modules, so it never enters the control-flow evolving-array path and
+            // never reports TS7034/TS7005. A variable exported via a separate
+            // `export { x }` statement keeps the normal evolving-array behavior
+            // (matching tsc), which is why this gates on the inline export modifier
+            // (`is_declaration_exported`) rather than on whether the symbol is
+            // referenced by any export.
             let direct_empty_array_implicit_any = self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && !sym_already_cached
+                && !is_exported
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
                 && self
