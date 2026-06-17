@@ -932,7 +932,7 @@ mod lpt_bin_assignment_tests {
     /// occasionally tie or edge it on a single shape; the aggregate cannot.)
     #[test]
     fn lpt_respects_greedy_bound_and_wins_in_aggregate() {
-        let mut state: u64 = 0x9E3779B9;
+        let mut state: u64 = 0x9E37_79B9;
         let mut next = || {
             state ^= state << 13;
             state ^= state >> 7;
