@@ -691,3 +691,82 @@ where
         .flatten()
         .collect()
 }
+
+/// Check all `work_items` on a **bounded pool of `pool_size` long-lived
+/// checkers** (the `TSZ_CHECKER_POOL` scheduler mode).
+///
+/// Unlike [`check_files_in_parallel_chunks_with_reuse`], which splits the work
+/// into `ceil(files / chunk_size)` contiguous chunks — and therefore builds
+/// `ceil(files / chunk_size)` `CheckerState`s — this distributes files
+/// **round-robin** into exactly `pool_size` partitions. Each partition is one
+/// long-lived `CheckerState` (built once via `apply_to`, re-targeted per file
+/// via `switch_to_file`), so the expensive O(program) per-file setup is
+/// amortised over `files / pool_size` files instead of `chunk_size`. Round-robin
+/// (vs contiguous) also spreads heavy files (deep `delegate_cross_arena`
+/// cascades) across partitions instead of clustering them in one chunk.
+///
+/// Results are reassembled into the original `work_items` order (downstream
+/// diagnostic aggregation is order-sensitive). The per-partition body is
+/// [`check_files_sequentially_with_reuse`] verbatim, so the reset contract
+/// (`CheckerContext::switch_to_file`) and stats accounting are unchanged.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_files_round_robin_pool<F>(
+    work_items: &[usize],
+    ctx: &CheckFilesReuseCtx<'_>,
+    flags: &CheckFileFlags,
+    pool_size: usize,
+    build_checker_binder: &F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState + Sync,
+{
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+    debug_assert!(!flags.extract_type_cache);
+    let pool_size = pool_size.max(1).min(work_items.len().max(1));
+
+    // Distribute round-robin, carrying each file's original position so the
+    // partitions' results can be stitched back into `work_items` order.
+    let mut partitions: Vec<Vec<(usize, usize)>> = vec![Vec::new(); pool_size];
+    for (pos, &file_idx) in work_items.iter().enumerate() {
+        partitions[pos % pool_size].push((pos, file_idx));
+    }
+
+    // Each partition runs on its own long-lived checker, in parallel. Bounding
+    // to `pool_size` partitions bounds the number of live `CheckerState`s (and
+    // their O(program) `apply_to` setups) to `pool_size`.
+    let partition_results: Vec<Vec<(usize, CheckFileResult)>> = partitions
+        .into_par_iter()
+        .map(|partition| {
+            let partition_ctx = CheckFilesReuseCtx {
+                program: ctx.program,
+                compiler_options: ctx.compiler_options,
+                program_context: ctx.program_context,
+                resolved_modules_per_file: ctx.resolved_modules_per_file,
+                shared_lib_cache: Arc::clone(&ctx.shared_lib_cache),
+                shared_constraint_proofs: Arc::clone(&ctx.shared_constraint_proofs),
+                shared_query_cache: ctx.shared_query_cache,
+            };
+            let (positions, file_list): (Vec<usize>, Vec<usize>) = partition.into_iter().unzip();
+            let results = check_files_sequentially_with_reuse(
+                &file_list,
+                &partition_ctx,
+                flags,
+                build_checker_binder,
+            );
+            positions.into_iter().zip(results).collect::<Vec<_>>()
+        })
+        .collect();
+
+    // Reassemble into original order. Every position is filled exactly once.
+    let mut ordered: Vec<Option<CheckFileResult>> = (0..work_items.len()).map(|_| None).collect();
+    for partition in partition_results {
+        for (pos, result) in partition {
+            ordered[pos] = Some(result);
+        }
+    }
+    ordered
+        .into_iter()
+        .map(|slot| slot.expect("round-robin pool filled every work-item position"))
+        .collect()
+}
