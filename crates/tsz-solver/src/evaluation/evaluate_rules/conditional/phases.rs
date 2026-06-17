@@ -75,6 +75,114 @@ pub(super) enum TailCallStep {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Decide whether a conditional with an `infer`-bearing extends pattern and a
+    /// generic-tuple check type must stay deferred.
+    ///
+    /// tsc only defers a conditional whose check type is generic when the
+    /// extends relation's outcome actually depends on how the free type
+    /// parameter is later instantiated. For a tuple check type matched against a
+    /// tuple `infer` pattern, that dependence exists only when a generic element
+    /// is aligned with a pattern position that imposes a structural shape or a
+    /// constraint the element might not satisfy (e.g. `[T] extends [[infer U]]`,
+    /// where `T` may or may not be a one-tuple). When every generic element lines
+    /// up with an `infer` position it always satisfies (a bare `infer`, or a
+    /// constrained `infer X extends C` whose `C` already bounds the element),
+    /// the pattern matches for any instantiation, so tsc resolves the true
+    /// branch eagerly with the element captured by the `infer`. Deferring in that
+    /// case strands the `infer` variables unbound in the true branch.
+    ///
+    /// The relaxation is intentionally conservative: it only skips deferral for
+    /// rest-free, equal-length positional tuples whose every generic element
+    /// faces such an always-matching `infer`. Any rest element, length mismatch,
+    /// or generic element facing a non-`infer` / not-provably-satisfied position
+    /// keeps the original deferral so shape/constraint-dependent patterns
+    /// (`[T] extends [[infer U]]`) are unaffected. The downstream infer-pattern
+    /// match (Step 3) and its own generic-check-type deferral then own the
+    /// resolved case.
+    pub(super) fn generic_tuple_infer_defer_required(
+        &self,
+        check_type: TypeId,
+        extends_unwrapped: TypeId,
+    ) -> bool {
+        let Some(TypeData::Tuple(check_list)) = self.interner().lookup(check_type) else {
+            return false;
+        };
+        let check_elems = self.interner().tuple_list(check_list);
+        let has_generic_element = check_elems
+            .iter()
+            .any(|element| Self::is_generic_ref(self.interner(), element.type_id));
+        if !has_generic_element {
+            // Not a generic tuple at all — the original gate would not fire.
+            return false;
+        }
+
+        // Only relax for a rest-free, equal-length positional tuple pattern.
+        let Some(TypeData::Tuple(pattern_list)) = self.interner().lookup(extends_unwrapped) else {
+            return true;
+        };
+        let pattern_elems = self.interner().tuple_list(pattern_list);
+        if check_elems.len() != pattern_elems.len() {
+            return true;
+        }
+        if check_elems.iter().any(|e| e.rest) || pattern_elems.iter().any(|e| e.rest) {
+            return true;
+        }
+
+        // Defer unless every generic check element faces an `infer` position
+        // that matches it for *every* instantiation. A bare (unconstrained)
+        // `infer` matches any type. A constrained `infer X extends C` matches the
+        // generic element for all instantiations only when the element's own
+        // upper bound is already a subtype of `C` (so no instantiation can fall
+        // outside `C`). Both cases make the conditional resolve identically
+        // regardless of the free parameter, so eager resolution is sound and
+        // matches tsc; deferring would strand the `infer` variables unbound.
+        for (check_elem, pattern_elem) in check_elems.iter().zip(pattern_elems.iter()) {
+            if !Self::is_generic_ref(self.interner(), check_elem.type_id) {
+                continue;
+            }
+            let Some(TypeData::Infer(info)) = self.interner().lookup(pattern_elem.type_id) else {
+                return true;
+            };
+            let Some(infer_constraint) = info.constraint else {
+                // Bare infer: matches any instantiation of the element.
+                continue;
+            };
+            // Constrained infer: only safe when the element provably satisfies
+            // the constraint for every instantiation, i.e. its upper bound is a
+            // subtype of the infer's constraint.
+            if !self
+                .generic_element_satisfies_infer_constraint(check_elem.type_id, infer_constraint)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True when a generic check-tuple element provably satisfies a constrained
+    /// `infer`'s upper bound for *every* instantiation — i.e. the element's own
+    /// declared constraint (upper bound) is assignable to `infer_constraint`.
+    /// Used by [`Self::generic_tuple_infer_defer_required`] to decide whether a
+    /// constrained `infer` position matches unconditionally. A `false` result
+    /// keeps the conditional deferred, never widening the resolved set.
+    fn generic_element_satisfies_infer_constraint(
+        &self,
+        element: TypeId,
+        infer_constraint: TypeId,
+    ) -> bool {
+        let Some(TypeData::TypeParameter(param)) = self.interner().lookup(element) else {
+            return false;
+        };
+        let Some(element_constraint) = param.constraint else {
+            // An unconstrained type parameter's upper bound is `unknown`, which
+            // is not a subtype of a non-trivial `infer_constraint`.
+            return false;
+        };
+        let mut checker = self.conditional_subtype_checker();
+        checker.allow_bivariant_rest = true;
+        checker.is_subtype_of(element_constraint, infer_constraint)
+    }
+
     /// Resolve and pre-compute operands for one conditional evaluation step.
     ///
     /// Evaluates `check_type` and `extends_type`, normalises object shapes, expands

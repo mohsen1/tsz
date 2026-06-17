@@ -38,6 +38,35 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A genuine cross-file conditional type alias whose `extends` operand is
+        // a bare provider-private named type must be lowered in its declaring
+        // arena: its body references types invisible in the consumer scope (e.g.
+        // a non-exported `type Rec = object` used by
+        // `export type Pick2<T> = T extends Rec ? T : number`). Re-lowering that
+        // body in the consumer scope leaves `Rec` an unresolved name, so the
+        // conditional's extends operand never binds and the alias degrades (the
+        // false branch / a `T | false-branch` union — the cross-arena
+        // `error`/`never`-in-type-argument family, #13618).
+        //
+        // The gate is deliberately tight. The broad form (delegate every
+        // imported alias) regressed JSX element/prop checking, because library
+        // conditional helpers such as React's `PropsWithRef`/`ElementType`
+        // instantiate the *caller's* type argument and must stay in the consumer
+        // arena. `symbol_has_local_type_alias_declaration` returns `false`
+        // exactly when the alias is NOT declared in the current arena
+        // (distinguishing a real import from a same-`SymbolId` local collision,
+        // still handled by the name/def heuristics below), and
+        // `cross_file_alias_body_is_private_extends_conditional` confirms the
+        // imported body is the #13618 shape — a conditional whose `extends`
+        // operand is a bare named reference. `delegate_cross_arena_symbol_resolution`
+        // re-checks the same locality predicate, so requesting delegation here is
+        // safe.
+        if !self.symbol_has_local_type_alias_declaration(local_symbol, sym_id)
+            && self.cross_file_alias_body_is_private_extends_conditional(sym_id)
+        {
+            return true;
+        }
+
         if let Some(local_def) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied()
             && let Some(local_def_name) = self.ctx.definition_store.get_name(local_def)
         {

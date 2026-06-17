@@ -551,35 +551,105 @@ impl<'a> CheckerState<'a> {
             };
             if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import) = self.ctx.arena.get_import_decl(decl_node)
-                && let Some(ref_node) = self.ctx.arena.get(import.module_specifier)
-                && ref_node.kind == SyntaxKind::StringLiteral as u16
-                && let Some(lit) = self.ctx.arena.get_literal(ref_node)
             {
-                let module_name = &lit.text;
-                if !self
-                    .ctx
-                    .module_exports_contains_module(self.ctx.binder, module_name)
-                    && !self
-                        .ctx
-                        .binder
-                        .shorthand_ambient_modules
-                        .contains(module_name)
-                    && !self
-                        .ctx
-                        .declared_modules_contains(self.ctx.binder, module_name)
-                    && !self
-                        .ctx
-                        .resolved_modules
-                        .as_ref()
-                        .is_some_and(|r| r.contains(module_name))
-                    && self.ctx.resolve_import_target(module_name).is_none()
+                if let Some(ref_node) = self.ctx.arena.get(import.module_specifier)
+                    && ref_node.kind == SyntaxKind::StringLiteral as u16
+                    && let Some(lit) = self.ctx.arena.get_literal(ref_node)
                 {
+                    let module_name = &lit.text;
+                    if !self
+                        .ctx
+                        .module_exports_contains_module(self.ctx.binder, module_name)
+                        && !self
+                            .ctx
+                            .binder
+                            .shorthand_ambient_modules
+                            .contains(module_name)
+                        && !self
+                            .ctx
+                            .declared_modules_contains(self.ctx.binder, module_name)
+                        && !self
+                            .ctx
+                            .resolved_modules
+                            .as_ref()
+                            .is_some_and(|r| r.contains(module_name))
+                        && self.ctx.resolve_import_target(module_name).is_none()
+                    {
+                        return true;
+                    }
+                }
+
+                // `import X = E.Member` (entity-name import-equals). The RHS is a
+                // qualified/property-access name rather than a `require("…")`
+                // string. When the entity name's leftmost root is itself an
+                // unresolved module import (its TS2307 was already emitted), the
+                // alias inherits the error/any poison: `E.Member` is a member of
+                // an `any` namespace, so `X` is `any` and downstream member
+                // access / type-argument instantiation must not cascade. This
+                // mirrors tsc, which types members reached through an unresolved
+                // import as `any`.
+                if self.import_equals_entity_name_root_is_unresolved(import.module_specifier) {
                     return true;
                 }
             }
         }
 
         false
+    }
+
+    /// For an `import X = <entity-name>` declaration, return `true` when the
+    /// entity name (`E`, `E.M`, `E.M.N`, …) is rooted in an unresolved module
+    /// import — i.e. the leftmost identifier resolves to an alias whose module
+    /// could not be resolved (TS2307 already emitted). String-literal
+    /// `require("…")` forms are handled separately by the caller.
+    fn import_equals_entity_name_root_is_unresolved(&self, entity_name_idx: NodeIndex) -> bool {
+        let mut current = entity_name_idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                    return false;
+                };
+                current = qn.left;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                    return false;
+                };
+                current = access.expression;
+                continue;
+            }
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let Some(root_sym_id) = self.resolve_identifier_symbol(current) else {
+                    return false;
+                };
+                // The root must be a direct module import (`import * as E from
+                // "mod"` / `import E from "mod"` / `import E = require("mod")`)
+                // whose module is unresolved. Restricting to aliases that carry
+                // a module specifier keeps this a single, non-recursive check:
+                // `is_unresolved_import_symbol_id` resolves the module without
+                // re-entering the entity-name walk, so chained or cyclic
+                // entity-name import-equals aliases cannot loop.
+                let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id) else {
+                    return false;
+                };
+                if !root_symbol.has_any_flags(symbol_flags::ALIAS)
+                    || root_symbol.import_module().is_none()
+                {
+                    return false;
+                }
+                return self.is_unresolved_import_symbol_id(root_sym_id);
+            }
+            return false;
+        }
     }
 
     /// Check if a module specifier matches a declared or shorthand ambient module pattern.
