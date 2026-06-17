@@ -237,6 +237,22 @@ impl CheckerState<'_> {
 
         // When the user re-declares a lib global function, keep the user's overloads in scope
         // (delegating to the lib arena would drop them and mis-resolve calls).
+        //
+        // The pin must confirm genuine current-arena OWNERSHIP, not just the
+        // presence of *a* function node at the symbol's raw `NodeIndex`. A raw
+        // `NodeIndex` is arena-relative: `cross_file_symbol` here is the FOREIGN
+        // owner's symbol, so its declaration `NodeIndex`es are indices into the
+        // OWNER's arena. Reusing one as an index into the CURRENT arena can land
+        // on an unrelated function node that the current binder assigned to a
+        // DIFFERENT symbol (e.g. mobx `die` in `errors.ts` and `runInAction` in
+        // `api/action.ts` both declared at the same raw `NodeIndex(364)`).
+        // Pinning that collision locally computes the wrong function's signature
+        // for the foreign symbol and — because the result is then cached under
+        // the owner's `(file_idx, SymbolId)` key first-writer-wins — poisons every
+        // later reader of the real symbol. Require the current binder's
+        // `get_node_symbol` round-trip to map the node back to exactly `sym_id`,
+        // which holds for a genuine lib/local re-declaration (the binder assigned
+        // the merged symbol to that node) but rejects the cross-arena collision.
         {
             let sym_found = cross_file_symbol;
             if let Some(symbol) = sym_found
@@ -251,6 +267,7 @@ impl CheckerState<'_> {
                         .get(d)
                         .and_then(|n| self.ctx.arena.get_function(n))
                         .is_some()
+                        && self.ctx.binder.get_node_symbol(d) == Some(sym_id)
                 });
                 if has_function_in_current_arena {
                     return None; // Handle locally, don't delegate to lib arena
@@ -329,6 +346,14 @@ impl CheckerState<'_> {
         // so a current-file function declaration always pins resolution locally.
         // This covers both the lib-merge case (`declare function f` in current arena
         // overlapping a lib `declare function f`) and the multi-file collision case.
+        //
+        // As with the lib-redeclaration guard above, require the current binder's
+        // `get_node_symbol` round-trip to confirm the candidate function node in
+        // the current arena genuinely belongs to `sym_id`. A bare
+        // `arena.get_function(d)` presence test fires on a raw-`NodeIndex`
+        // collision — a function the current binder bound to a DIFFERENT symbol at
+        // the same index — and would pin a foreign symbol to the wrong local
+        // declaration.
         let mut function_has_local_decl = false;
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::FUNCTION)
@@ -341,6 +366,7 @@ impl CheckerState<'_> {
                     .get(d)
                     .and_then(|n| self.ctx.arena.get_function(n))
                     .is_some()
+                    && self.ctx.binder.get_node_symbol(d) == Some(sym_id)
             });
             if has_local_function_decl {
                 delegate_arena = None;
