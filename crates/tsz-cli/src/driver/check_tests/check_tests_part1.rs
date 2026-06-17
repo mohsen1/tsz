@@ -788,6 +788,31 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
     );
 }
 
+#[test]
+fn checker_pool_refuses_order_sensitive_global_lib_by_default() {
+    // The bounded checker pool shares one `DefinitionStore` across parallel
+    // partitions, so it must honor the same DOM/webworker serialization gate
+    // as the fresh-parallel lane — otherwise an explicit `TSZ_CHECKER_POOL=N`
+    // (or a default-on pool) routes a DOM project onto the pool and produces
+    // non-deterministic diagnostics.
+    assert!(
+        pool_refused_for_order_sensitive_global_lib(true, false),
+        "DOM/webworker programs must be refused the pool and take the sequential path"
+    );
+    assert!(
+        !pool_refused_for_order_sensitive_global_lib(false, false),
+        "non-DOM programs stay pool-eligible"
+    );
+    assert!(
+        !pool_refused_for_order_sensitive_global_lib(true, true),
+        "the force-parallel diagnosis override lifts the refusal for byte-diff testing"
+    );
+    assert!(
+        !pool_refused_for_order_sensitive_global_lib(false, true),
+        "the override is a no-op when no order-sensitive global lib is present"
+    );
+}
+
     #[test]
     fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
         assert!(
