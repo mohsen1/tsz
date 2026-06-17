@@ -803,6 +803,27 @@ impl<'a> CheckerState<'a> {
 
         let js_global_fallback =
             self.is_checked_js_global_element_access_fallback_assignment(left_idx, right_idx);
+        // A cross-file generic-interface member whose declared type is a type-alias
+        // reference (e.g. `interface I<V> { read: Read<V> }`) is left as an
+        // unresolved `Application(Lazy(alias DefId), args)` after the solver
+        // instantiates the interface: the solver-internal evaluator cannot resolve
+        // the alias `DefId`, so the application traverses to `ERROR`. That spurious
+        // error then trips the `!type_contains_error` guard below, which would skip
+        // contextual typing for a function/arrow RHS and emit false TS7006/TS7019.
+        // Resolve the LHS through the `TypeEnvironment` (which owns DefId -> TypeId)
+        // so the member alias collapses to its real signature before the guard.
+        if self.type_contains_error(left_type)
+            && self.ctx.arena.get(right_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            })
+        {
+            let resolved_left = self.evaluate_type_with_env(left_type);
+            if resolved_left != left_type && !self.type_contains_error(resolved_left) {
+                left_type = resolved_left;
+            }
+        }
+
         let contextual_request = if is_destructuring {
             self.destructuring_assignment_initializer_request(left_idx, right_idx)
         } else if left_type != TypeId::ANY
