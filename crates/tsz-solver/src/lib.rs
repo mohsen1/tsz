@@ -260,6 +260,11 @@ pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
 pub use diagnostics::{SubtypeFailureReason, TupleArity};
+/// Measurement-only eval-materialization probe report (#13250). Re-exported at
+/// the crate root as a named facade so measurement consumers (CLI
+/// `--diagnostics`) do not reach through the `evaluation` module path. Returns
+/// an empty string unless `TSZ_PERF_COUNTERS` is set.
+pub use evaluation::eval_materialization_probe::dump_report as eval_materialization_probe_report;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use evaluation::evaluate::{
