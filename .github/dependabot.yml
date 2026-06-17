@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Keep GitHub Actions pinned to commit SHAs current (see #13752).
+  # SHAs are pinned in .github/workflows/*; Dependabot bumps the SHA and the
+  # trailing version comment together on the weekly schedule.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "ci"
+      - "dependencies"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

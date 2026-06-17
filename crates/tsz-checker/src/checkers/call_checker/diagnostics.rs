@@ -10,6 +10,18 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ParamInfo, TypeId};
 
+/// Kill-switch (#13250): set `TSZ_DISABLE_CALLBACK_MISMATCH_MEMO` to a
+/// non-empty, non-`0` value to bypass the contextual-callback mismatch memo and
+/// recompute the speculative derivation on every re-entry. Used to A/B the memo
+/// on a single binary and to prove byte-identical diagnostics when disabled.
+fn callback_mismatch_memo_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_CALLBACK_MISMATCH_MEMO").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_preserve_speculative_call_diagnostic(
         diag: &crate::diagnostics::Diagnostic,
@@ -493,6 +505,23 @@ impl<'a> CheckerState<'a> {
             if expected == TypeId::ERROR || expected == TypeId::UNKNOWN || expected == TypeId::ANY {
                 return None;
             }
+            // Contextual-callback mismatch memo (#13250). Overload resolution and
+            // the union/signature-specific passes re-enter this derivation for
+            // the SAME `(callback arg, expected contextual type)` pair many
+            // times; each re-entry otherwise re-snapshots checker state,
+            // re-infers the callback body under contextual typing, and re-scans
+            // diagnostics. The result `(index, recovery_actual, expected)` is a
+            // pure function of that pair: the speculative inference is rolled
+            // back (incl. the saved `node_types[arg]`), so no durable state it
+            // reads varies between re-entries. Generator callbacks are excluded
+            // below because their `has_callback_body_diagnostic` term reads the
+            // durable diagnostic vector, which is not part of the key.
+            let memoizable = !callback_mismatch_memo_disabled() && !func.asterisk_token;
+            if memoizable
+                && let Some(&cached) = self.ctx.callback_mismatch_memo.get(&(arg_idx, expected))
+            {
+                return cached;
+            }
             let expected_is_concrete = expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN
                 && expected != TypeId::ERROR
@@ -678,7 +707,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 has_return_type_mismatch
             };
-            should_force_argument_mismatch.then_some((index, recovery_actual, expected))
+            let result = should_force_argument_mismatch.then_some((index, recovery_actual, expected));
+            // Publish the stable derivation. Only non-generator callbacks are
+            // memoized (the `memoizable` gate above excludes `func.asterisk_token`):
+            // the generator path's `has_callback_body_diagnostic` reads the
+            // durable diagnostic vector, which is not part of the `(arg,
+            // expected)` key.
+            if memoizable {
+                self.ctx
+                    .callback_mismatch_memo
+                    .insert((arg_idx, expected), result);
+            }
+            result
         })
     }
 

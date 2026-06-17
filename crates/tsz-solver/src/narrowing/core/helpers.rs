@@ -170,7 +170,10 @@ impl<'a> NarrowingContext<'a> {
             return false;
         };
 
-        left_parent == right_parent
+        // Cross-module import barrels can give the same enum two `DefId`s;
+        // compare parents through `defs_are_equivalent` (alias-forward /
+        // `SymbolId` aware) rather than raw equality.
+        resolver.defs_are_equivalent(left_parent, right_parent)
             && self.literal_values_equivalent_for_narrowing(left_inner, right_inner)
     }
 
@@ -876,7 +879,11 @@ impl<'a> NarrowingContext<'a> {
         self.is_structurally_assignable_to_object(resolved_source, resolved_target)
     }
 
-    pub(super) fn is_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
+    pub(in crate::narrowing) fn is_subtype_for_narrowing(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         if let Some(resolver) = self.resolver {
             let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
                 .with_query_db(self.db);

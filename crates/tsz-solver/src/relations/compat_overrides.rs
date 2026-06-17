@@ -369,8 +369,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Case 1: Both are enums (or enum members or Union-based enums)
             // Note: Same-DefId, different-TypeId case is now handled above before get_enum_def_id
             (Some(s_def), Some(t_def)) => {
-                if s_def == t_def {
-                    // Same DefId: Same type (E.A -> E.A or E -> E)
+                // Cross-module import barrels can give the same enum declaration
+                // two distinct `DefId`s (the declaring file's key and an
+                // import-alias key reached through a re-export). They denote the
+                // same nominal enum, so compare through `defs_are_equivalent`
+                // (which canonicalizes alias-forwarding and falls back to
+                // `SymbolId`) rather than raw `DefId` equality. Raw `==` here
+                // collapses `E.X <: E` to a nominal mismatch whenever the field
+                // type and the member's parent were reached through different
+                // module paths (mobx `IDerivationState_` cascade).
+                if self.subtype.resolver.defs_are_equivalent(s_def, t_def) {
+                    // Same definition: Same type (E.A -> E.A or E -> E)
                     return Some(true);
                 }
 
@@ -380,7 +389,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 let t_parent = self.subtype.resolver.get_enum_parent_def_id(t_def);
 
                 match (s_parent, t_parent) {
-                    (Some(sp), Some(tp)) if sp == tp => {
+                    (Some(sp), Some(tp)) if self.subtype.resolver.defs_are_equivalent(sp, tp) => {
                         // Same parent enum
                         if self.same_parent_enum_members_share_value(source, target) {
                             return Some(true);
@@ -395,8 +404,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     }
                     (Some(sp), None) => {
                         // Source is a member, target doesn't have a parent (target is not a member)
-                        // Check if target is the parent enum type
-                        if t_def == sp {
+                        // Check if target is the parent enum type (cross-module
+                        // identity via `defs_are_equivalent`, see above).
+                        if self.subtype.resolver.defs_are_equivalent(t_def, sp) {
                             // Target is the parent enum of source member
                             // Allow member to parent enum assignment (E.A -> E)
                             return Some(true);
@@ -496,7 +506,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         };
 
-        source_parent == target_parent
+        self.subtype
+            .resolver
+            .defs_are_equivalent(source_parent, target_parent)
             && matches!(
                 (
                     crate::visitor::literal_value(self.interner, source_inner),

@@ -50,7 +50,7 @@ mod source_resolution_setup;
 use check_file::{
     CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
     check_file_for_parallel, check_files_in_parallel_chunks_with_reuse,
-    check_files_sequentially_with_reuse,
+    check_files_round_robin_pool, check_files_sequentially_with_reuse,
 };
 use checker_diagnostics::{
     keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
@@ -325,6 +325,27 @@ fn parallel_file_session_reuse_requested() -> bool {
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
     )
+}
+
+/// Bounded long-lived checker-pool width, or `None` when the pool scheduler is
+/// off (the default).
+///
+/// `TSZ_CHECKER_POOL` opts into checking files on a fixed pool of `N`
+/// long-lived `CheckerState`s (round-robin file assignment, each reused via
+/// `switch_to_file`) instead of the default per-file fresh checker. This
+/// amortises the O(program) per-file setup over `files / N` files — the lever
+/// that unblocks large multi-file projects. `=auto` (or `=1`) sizes the pool
+/// to `available_parallelism`; `=N` sets an explicit width; unset / `0` / empty
+/// disables it.
+fn checker_pool_size() -> Option<usize> {
+    let raw = std::env::var("TSZ_CHECKER_POOL").ok()?;
+    match raw.trim() {
+        "" | "0" => None,
+        "auto" | "1" => {
+            Some(std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
+        }
+        n => n.parse::<usize>().ok().filter(|&w| w >= 1),
+    }
 }
 
 /// Decide whether fresh per-file checkers run sequentially instead of on the
@@ -1318,7 +1339,41 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // than narrowing it.
             let use_file_session_reuse =
                 use_sequential_checking && !extract_type_cache && reuse_requested;
-            if use_file_session_reuse {
+            if let Some(pool_size) = checker_pool_size().filter(|_| !extract_type_cache) {
+                // Bounded long-lived checker pool (`TSZ_CHECKER_POOL`): N
+                // round-robin partitions, each a long-lived `CheckerState`
+                // reused via `switch_to_file`, amortising the O(program)
+                // per-file setup over `files / N` files — the lever that
+                // unblocks large multi-file projects. Gated default-off; the
+                // per-partition body is the proven sequential-reuse path, so
+                // diagnostics are byte-identical to the fresh-checker arm.
+                tsz::parallel::ensure_rayon_global_pool();
+                let reuse_ctx = CheckFilesReuseCtx {
+                    program,
+                    compiler_options: &compiler_options,
+                    program_context: &program_context,
+                    resolved_modules_per_file: &resolved_modules_per_file,
+                    shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_constraint_proofs: Arc::clone(&shared_constraint_proofs),
+                    shared_query_cache: shared_query_cache.as_ref(),
+                };
+                let reuse_flags = CheckFileFlags {
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                };
+                check_files_round_robin_pool(
+                    &work_items,
+                    &reuse_ctx,
+                    &reuse_flags,
+                    pool_size,
+                    &build_checker_binder,
+                )
+            } else if use_file_session_reuse {
                 let reuse_ctx = CheckFilesReuseCtx {
                     program,
                     compiler_options: &compiler_options,
