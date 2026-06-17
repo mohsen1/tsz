@@ -1112,23 +1112,35 @@ jobs:
           compression-level: 1
 
   unit:
-    # Required unit context. Run this directly on the Cloud Run runner fleet;
-    # checker integration tests are split out below because their binaries can
-    # exceed the 32 GiB linker budget.
+    # Required unit context. The general (non-checker) lib-test compiles are a
+    # linker-heavy exception alongside unit-checker-integration: a single rustc
+    # at the LLVM codegen peak can exceed the 32 GiB Cloud Run runner budget
+    # even at the already-forced CARGO_BUILD_JOBS=1 (ci-unit profile is already
+    # debug=false / opt-level=0 / codegen-units=1, so no parallelism is left to
+    # cut). That SIGKILLs the runner ("lost communication ... starves it for
+    # CPU/Memory") and wedges the required CI Summary. Submit the same
+    # gcp-full-ci.sh unit slice to the larger Cloud Build worker pool, where
+    # memory is not the constraint, mirroring unit-checker-integration. The
+    # Cloud Run runner here only orchestrates the submit, so it cannot OOM.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 45
-    env:
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION: "1"
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
-      - name: Run unit suite on Cloud Run runner
-        run: scripts/ci/github-suite.sh unit
+      - name: Submit unit suite to Cloud Build pool
+        run: |
+          set -euo pipefail
+          timeout 45m gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --polling-interval=10 \
+            --config=scripts/cloudbuild/cloudbuild-unit.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            .
 
   unit-checker-integration:
     # Heavy exception to the Cloud Run default. Individual checker integration
