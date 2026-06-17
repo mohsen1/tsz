@@ -1206,7 +1206,13 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Pure-IO aggregate: consumes ONLY the downloaded conformance-shard-*
+    # artifacts (github-suite.sh conformance-aggregate concatenates them and
+    # reads no dist binary); the GCS env below is best-effort CI cache that
+    # gracefully no-ops when gsutil is absent. A free ubuntu-latest runner is
+    # sufficient and frees a scarce Cloud Run slot (mirrors
+    # project-compile-canary-aggregate, #13745).
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
