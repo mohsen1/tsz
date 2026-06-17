@@ -457,8 +457,21 @@ impl<'a> CheckerState<'a> {
             found
         })
         .unwrap_or_else(|| {
+            // A contextually sensitive body (e.g. a nested arrow/closure) can still
+            // receive useful parameter context from an `expected_return_type` that
+            // mentions free type parameters from an enclosing generic signature.
+            // tsc applies the expected return type to such a body so the inner
+            // closure's own parameters acquire their declared shapes (e.g. `set`
+            // gets `(p: T) => void` rather than `any`). Only genuine `infer`
+            // placeholders — which carry no usable shape yet — must block the
+            // contextual body. Free type parameters do not, so gate on
+            // `contains_infer_types` rather than the broader inference-hole check
+            // (which also trips on any `contains_type_parameters`).
             let can_apply_contextual_body =
-                !self.type_has_unresolved_inference_holes(expected_return_type);
+                !crate::query_boundaries::state::type_environment::contains_infer_types(
+                    self.ctx.types,
+                    expected_return_type,
+                );
             let literal_sensitive_return = crate::query_boundaries::common::literal_value(
                 self.ctx.types,
                 expected_return_type,
