@@ -385,7 +385,17 @@ impl<'a> CheckerState<'a> {
                     expanded_count += elements.len();
                     continue;
                 }
-                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                // A bare type-parameter spread (`...v` where `v: A`, `A` a type
+                // parameter) must NOT be destructured through its constraint's
+                // tuple shape: that loses `A`'s identity and forces a downstream
+                // rest-parameter type parameter to infer the concrete constraint
+                // shape instead of `A` itself. tsc keeps such a spread whole
+                // (its `isTupleType` test inspects the actual type, not the
+                // apparent/constraint type), so it flows to the dedicated
+                // type-parameter spread branch below as a single `[...A]` marker.
+                if !is_type_parameter_type(self.ctx.types, spread_type)
+                    && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                {
                     expanded_count += self.expanded_tuple_spread_len(&elems);
                     continue;
                 }
@@ -514,8 +524,18 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // If it's a tuple type, expand its elements
-                    if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                    // If it's a tuple type, expand its elements.
+                    //
+                    // A bare type-parameter spread (`...v` where `v: A`, `A` a
+                    // type parameter) is excluded: destructuring it through its
+                    // constraint's tuple shape discards `A`'s identity. tsc keeps
+                    // it whole, so it falls through to the type-parameter spread
+                    // branch below, which emits a single `[...A]` marker that
+                    // rest-tuple inference can reconstruct while preserving the
+                    // type-parameter identity.
+                    if !is_type_parameter_type(self.ctx.types, spread_type)
+                        && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                    {
                         // An open-ended tuple (one whose flattened rest is
                         // array-backed, e.g. `[number, ...string[]]`) has an
                         // indeterminate length, exactly like a bare array
@@ -1793,7 +1813,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
             {
                 let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                // A bare type-parameter spread stays a single unit (see argument
+                // collection); do not count its constraint's tuple elements.
+                if !is_type_parameter_type(self.ctx.types, spread_type)
+                    && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                {
                     expanded_count += elems.len();
                     continue;
                 }
@@ -1823,7 +1847,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+            // A bare type-parameter spread stays a single unit (see argument
+            // collection and the type-parameter spread branch below); do not
+            // advance by its constraint's tuple element count.
+            if !is_type_parameter_type(self.ctx.types, spread_type)
+                && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+            {
                 effective_index += elems.len();
                 continue;
             }
@@ -1895,7 +1924,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+            // A bare type-parameter spread stays a single unit (see argument
+            // collection); treat it as one position rather than its constraint's
+            // tuple element count.
+            if !is_type_parameter_type(self.ctx.types, spread_type)
+                && let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+            {
                 if mismatch_index < effective_index + elems.len() {
                     return prior_non_tuple_spread;
                 }
