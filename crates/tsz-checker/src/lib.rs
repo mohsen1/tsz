@@ -1093,6 +1093,9 @@ mod nonunique_symbol_property_access_tests;
 #[path = "tests/nullable_union_callback_variance_tests.rs"]
 mod nullable_union_callback_variance_tests;
 #[cfg(test)]
+#[path = "../tests/nullish_coalescing_unknown_result_tests.rs"]
+mod nullish_coalescing_unknown_result_tests;
+#[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]

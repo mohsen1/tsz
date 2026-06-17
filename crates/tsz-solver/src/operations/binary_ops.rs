@@ -966,7 +966,18 @@ impl<'a> BinaryOpEvaluator<'a> {
         } else {
             // left ?? right
             // tsc uses UnionReduction.Subtype for ?? result types.
-            let non_nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::ExcludeNullish);
+            //
+            // The non-nullish operand is tsc's `getNonNullableType(left)`. For
+            // `unknown` (= `{} | null | undefined`) that is the empty object
+            // `{}`, NOT `unknown`: `unknown ?? X` is `{} | X` (e.g.
+            // `Object.entries(data ?? {})` with `data: unknown`). `narrow_by_nullishness`
+            // deliberately keeps `unknown` for flow `!= null` narrowing, so the
+            // `??` result type takes the empty-object non-nullable form here.
+            let non_nullish_left = if left == TypeId::UNKNOWN {
+                self.interner.object(vec![])
+            } else {
+                ctx.narrow_by_nullishness(left, NullishFilter::ExcludeNullish)
+            };
             let nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::KeepNullish);
 
             if nullish_left == TypeId::NEVER {

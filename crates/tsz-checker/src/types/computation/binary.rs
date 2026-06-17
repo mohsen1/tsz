@@ -232,8 +232,18 @@ impl<'a> CheckerState<'a> {
                     // logical evaluator uses truthiness narrowing — a widened
                     // `string` cannot be narrowed to NEVER on the falsy branch,
                     // so the result wrongly unions in the right operand.
+                    //
+                    // Scope the flag to syntactic primitive-literal operands.
+                    // tsc carries no contextual type on a logical operand, so a
+                    // non-literal operand (a call, identifier, or nested array
+                    // literal) still widens its array/object literals normally;
+                    // setting the flag for every operand would suppress that
+                    // widening (e.g. `[...].includes(s) && ...` would keep the
+                    // element literal union).
                     let prev_preserve = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
+                    if self.logical_operand_is_primitive_literal(left_idx) {
+                        self.ctx.preserve_literal_types = true;
+                    }
                     let left_type =
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     self.ctx.preserve_literal_types = prev_preserve;
@@ -249,9 +259,12 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
                     // Preserve literal types for the left operand — see comment
-                    // on the && branch above for the rationale.
+                    // on the && branch above for the rationale (scoped to
+                    // syntactic primitive-literal operands).
                     let prev_preserve = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
+                    if self.logical_operand_is_primitive_literal(left_idx) {
+                        self.ctx.preserve_literal_types = true;
+                    }
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let outer_context = request.contextual_type;
