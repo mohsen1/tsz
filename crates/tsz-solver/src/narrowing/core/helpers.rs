@@ -762,7 +762,11 @@ impl<'a> NarrowingContext<'a> {
         self.is_structurally_assignable_to_object(resolved_source, resolved_target)
     }
 
-    pub(super) fn is_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
+    pub(in crate::narrowing) fn is_subtype_for_narrowing(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         if let Some(resolver) = self.resolver {
             let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
                 .with_query_db(self.db);
