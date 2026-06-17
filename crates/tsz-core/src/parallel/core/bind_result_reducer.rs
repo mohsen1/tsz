@@ -684,18 +684,18 @@ impl BindResultReducer {
                                 // `var Object` / `interface Object` is a genuine
                                 // duplicate-identifier conflict (`TS2300`); its members
                                 // must not be silently merged in.
-                                use crate::binder::symbol_flags;
                                 let conflicting =
-                                    symbol_flags::VARIABLE
-                                        | symbol_flags::FUNCTION
-                                        | symbol_flags::CLASS
-                                        | symbol_flags::INTERFACE
-                                        | symbol_flags::TYPE_ALIAS
-                                        | symbol_flags::ENUM;
-                                let user_is_pure_namespace = sym.flags & symbol_flags::MODULE != 0
-                                    && sym.flags & conflicting == 0;
+                                    crate::binder::symbol_flags::VARIABLE
+                                        | crate::binder::symbol_flags::FUNCTION
+                                        | crate::binder::symbol_flags::CLASS
+                                        | crate::binder::symbol_flags::INTERFACE
+                                        | crate::binder::symbol_flags::TYPE_ALIAS
+                                        | crate::binder::symbol_flags::ENUM;
+                                let user_is_pure_namespace =
+                                    sym.flags & crate::binder::symbol_flags::MODULE != 0
+                                        && sym.flags & conflicting == 0;
                                 let lib_is_pure_namespace =
-                                    lib_original_flags & symbol_flags::MODULE != 0
+                                    lib_original_flags & crate::binder::symbol_flags::MODULE != 0
                                         && lib_original_flags & conflicting == 0;
                                 if user_is_pure_namespace
                                     && lib_is_pure_namespace
