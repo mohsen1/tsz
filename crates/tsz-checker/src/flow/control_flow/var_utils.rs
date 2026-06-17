@@ -560,6 +560,18 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         }
 
+        // Bare truthiness reference: `if (ref)` / `if (!ref)`.
+        // In the positive (truthy) sense, the variable is narrowed to its truthy
+        // members; tsc removes the falsy "unassigned" marker on that branch, so
+        // the reference is treated as definitely assigned there. The negative
+        // (falsy) sense keeps the marker — falsy values include the unassigned
+        // sentinel — so it does NOT prove assignment. This mirrors tsc, which
+        // suppresses the downstream truthy-branch TS2454 (the condition read
+        // itself still reports) even when the variable was never assigned.
+        if is_true_condition && self.is_matching_reference(condition, reference) {
+            return true;
+        }
+
         if node_data.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return false;
         }

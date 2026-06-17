@@ -223,6 +223,9 @@ mod flow_inferred_predicate_boundary_tests;
 #[path = "tests/flow_promise_identity_tests.rs"]
 mod flow_promise_identity_tests;
 #[cfg(test)]
+#[path = "tests/flow_truthy_proves_assignment_tests.rs"]
+mod flow_truthy_proves_assignment_tests;
+#[cfg(test)]
 #[path = "tests/flow_usage_relation_routing_arch_tests.rs"]
 mod flow_usage_relation_routing_arch_tests;
 #[cfg(test)]
