@@ -18,9 +18,7 @@ fn callback_mismatch_memo_disabled() -> bool {
     use std::sync::OnceLock;
     static DISABLED: OnceLock<bool> = OnceLock::new();
     *DISABLED.get_or_init(|| {
-        std::env::var("TSZ_DISABLE_CALLBACK_MISMATCH_MEMO")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
+        std::env::var("TSZ_DISABLE_CALLBACK_MISMATCH_MEMO").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
