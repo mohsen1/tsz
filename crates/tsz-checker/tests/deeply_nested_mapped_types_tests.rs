@@ -578,13 +578,27 @@ function f3(ors: (typeof Input.static)[]): Output[] { return ors; }
     );
 }
 
-/// KNOWN FALSE-NEGATIVE (accepted-regression `deeplyNestedMappedTypes.ts`).
+/// PARTIAL witness (still accepted-regression `deeplyNestedMappedTypes.ts`).
 ///
 /// The authoritative tsc baseline emits TS2322 for `problematicFunction1` and
 /// `problematicFunction3` (`Input[]` is not assignable to `Output[]` because
-/// `Output.static` carries a `bar` property that `Input.static` lacks). tsz
-/// currently MISSES both, while correctly emitting the other three baseline
-/// errors (`foo2`, `foo4`, `problematicFunction2`).
+/// `Output.static` carries a `bar` property that `Input.static` lacks).
+/// `problematicFunction1` and the `const Readonly` shadowing analysis below were
+/// fixed separately. `problematicFunction3` is the parenthesized-`typeof`-array
+/// element gap (`(typeof Input.static)[]`): the `ARRAY_TYPE` branch of
+/// `CheckerState::get_type_from_type_node` now unwraps a parenthesized `typeof`
+/// element and resolves the operand through the rich path so it is evaluated like
+/// `Array<typeof X.y>`/an alias rather than left under-evaluated for the
+/// `isDeeplyNestedType` relation bailout to mis-accept (see the driver test
+/// `parenthesized_typeof_array_element_relates_like_alias_and_array_generic`).
+/// That lowering fix resolves the simplified/embedded-lib reducer, but with the
+/// full pinned `lib.es5`/`lib.es2015` utilities the `Static`/`PropertiesReduce`
+/// reducer is deeper and STILL trips `isDeeplyNestedType`, so
+/// `problematicFunction3` remains a real-lib miss and the row stays accepted
+/// pending the deeper relation/evaluation work.
+///
+/// The original `const Readonly` shadowing analysis below is retained as
+/// historical context.
 ///
 /// Root cause (verified by one-variable isolation — see the companion test
 /// `renaming_readonly_unique_symbol_restores_ts2322`): the fixture declares

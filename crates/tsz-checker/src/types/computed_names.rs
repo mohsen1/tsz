@@ -223,6 +223,18 @@ fn any_declaration_matches(
         .get_binder_for_file(symbol.decl_file_idx as usize)
         .unwrap_or(ctx.binder);
 
+    // The declaration node lives in the *current* checker arena when the
+    // symbol is declared in the file under check. Pointer-equality between
+    // `owner_binder` (resolved via `get_binder_for_file`, an `Arc`-backed
+    // binder from `all_binders`) and `ctx.binder` does not always hold even
+    // for that file, so also admit `ctx.arena` whenever the symbol's
+    // declaration file is the current file. Without this, a symbol whose
+    // `declaration_arenas`/`symbol_arenas` maps were not populated (e.g. a
+    // top-level `declare const s: unique symbol` consulted from a
+    // `TypeNodeChecker` lowering path) had no candidate arena, so its
+    // declaration was never inspected and `unique symbol` identity queries
+    // silently returned `false`.
+    let decl_is_current_file = symbol.decl_file_idx as usize == ctx.current_file_idx;
     symbol.all_declarations().into_iter().any(|decl_idx| {
         let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
         if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
@@ -231,7 +243,7 @@ fn any_declaration_matches(
         if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
             candidate_arenas.push(symbol_arena.as_ref());
         }
-        if std::ptr::eq(owner_binder, ctx.binder) {
+        if decl_is_current_file || std::ptr::eq(owner_binder, ctx.binder) {
             candidate_arenas.push(ctx.arena);
         }
 

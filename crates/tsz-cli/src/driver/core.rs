@@ -1574,6 +1574,9 @@ mod config_deprecation_tests;
 #[path = "cross_file_circular_alias_tests.rs"]
 mod cross_file_circular_alias_tests;
 #[cfg(test)]
+#[path = "cross_file_conditional_alias_private_extends_tests.rs"]
+mod cross_file_conditional_alias_private_extends_tests;
+#[cfg(test)]
 #[path = "explain_files_reason_tests.rs"]
 mod explain_files_reason_tests;
 #[cfg(test)]

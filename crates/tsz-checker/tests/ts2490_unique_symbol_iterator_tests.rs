@@ -473,3 +473,62 @@ for (const x of badIterable) {}
         "TS2490 or TS2488 must fire for iterator missing 'value'; got: {codes:?}"
     );
 }
+
+// ============================================================
+// Inline symbol-keyed object literal in compound type positions
+// (regression: weak `TypeNodeChecker` lowering dropped user
+// unique-symbol members, collapsing `{ [s]: T }` to `{}`).
+// ============================================================
+
+#[test]
+fn inline_unique_symbol_literal_indexed_access_preserves_member() {
+    // `{ [s]: T }[typeof s]` lowers the object operand through the
+    // `TypeNodeChecker` path; the symbol member must survive so the index
+    // resolves to `T` rather than `undefined` (false TS2536/TS2339/TS2322).
+    let codes = diagnostic_codes(
+        r#"
+declare const rawArgs: unique symbol;
+type A = { [rawArgs]: number }[typeof rawArgs];
+const a: number = null as any as A;
+"#,
+    );
+    assert!(
+        !codes.contains(&2536) && !codes.contains(&2339) && !codes.contains(&2322),
+        "inline symbol-keyed literal indexed access must preserve the member; got: {codes:?}"
+    );
+}
+
+#[test]
+fn inline_unique_symbol_literal_in_union_indexed_access_preserves_member() {
+    let codes = diagnostic_codes(
+        r#"
+declare const rawArgs: unique symbol;
+type U = { [rawArgs]: number } | { [rawArgs]: string };
+type A = U[typeof rawArgs];
+const a: number | string = null as any as A;
+"#,
+    );
+    assert!(
+        !codes.contains(&2536) && !codes.contains(&2339) && !codes.contains(&2322),
+        "inline symbol-keyed literal in a union indexed access must preserve the member; got: {codes:?}"
+    );
+}
+
+#[test]
+fn inline_unique_symbol_literal_intersection_with_interface_member() {
+    // The interface declares the same symbol member; the inline literal in the
+    // intersection must also keep its member so the indexed access resolves to
+    // the intersected value type.
+    let codes = diagnostic_codes(
+        r#"
+declare const rawArgs: unique symbol;
+interface Fn { [rawArgs]: unknown; }
+type A = (Fn & { [rawArgs]: [number, string] })[typeof rawArgs];
+const a: [number, string] = null as any as A;
+"#,
+    );
+    assert!(
+        !codes.contains(&2536) && !codes.contains(&2339) && !codes.contains(&2322),
+        "inline symbol-keyed literal in an intersection must preserve the member; got: {codes:?}"
+    );
+}

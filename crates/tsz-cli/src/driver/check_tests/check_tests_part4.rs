@@ -521,3 +521,78 @@ export const r = x["a"];
         );
     }
 
+    // ------------------------------------------------------------------
+    // A parenthesized `typeof value.prop` used as a postfix-array element
+    // (`(typeof X.p)[]`) must lower its `typeof` operand through the rich,
+    // binder-aware resolution path — the same one `Array<typeof X.p>` and a
+    // `type E = typeof X.p; E[]` alias already use — so it relates like those
+    // forms. Before the fix the parenthesized element fell to the leaner
+    // `TypeNodeChecker::check` path and stayed in an under-evaluated deferred
+    // form; when its evaluated apparent type is a deeply-nested generic
+    // application (a TypeBox-style `Static`/`PropertiesReduce` reducer) the
+    // relation then mis-accepted it against a structurally-equal target via the
+    // `isDeeplyNestedType` one-sided expansion bailout, dropping the expected
+    // TS2322 (conformance `deeplyNestedMappedTypes.ts`, `problematicFunction3`).
+    //
+    // Renamed binders + non-colliding key symbols make the coverage structural.
+    #[test]
+    fn parenthesized_typeof_array_element_relates_like_alias_and_array_generic() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available to provide Readonly/Pick/Omit/Required/Record/Partial"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[(
+                "/p/main.ts",
+                r#"
+export type Flatten<G> = G extends infer O ? { [K in keyof O]: O[K] } : never
+export declare const RoMark: unique symbol;
+export declare const OptMark: unique symbol;
+export declare const KindMark: unique symbol;
+export interface NodeKind { [KindMark]: string }
+export interface SchemaNode extends NodeKind { [RoMark]?: string; [OptMark]?: string; slots: unknown[]; resolved: unknown }
+export type RoNode<N extends SchemaNode> = N & { [RoMark]: 'ro' }
+export type OptNode<N extends SchemaNode> = N & { [OptMark]: 'opt' }
+export interface StrNode extends SchemaNode { [KindMark]: 'Str'; resolved: string; tag: 'string' }
+export type RoOptKeys<M extends PropMap> = { [K in keyof M]: M[K] extends RoNode<SchemaNode> ? (M[K] extends OptNode<M[K]> ? K : never) : never }[keyof M]
+export type RoKeys<M extends PropMap> = { [K in keyof M]: M[K] extends RoNode<SchemaNode> ? (M[K] extends OptNode<M[K]> ? never : K) : never }[keyof M]
+export type OptKeys<M extends PropMap> = { [K in keyof M]: M[K] extends OptNode<SchemaNode> ? (M[K] extends RoNode<M[K]> ? never : K) : never }[keyof M]
+export type ReqKeys<M extends PropMap> = keyof Omit<M, RoOptKeys<M> | RoKeys<M> | OptKeys<M>>
+export type FoldReducer<M extends PropMap, R extends Record<keyof any, unknown>> = Flatten<(
+    Readonly<Partial<Pick<R, RoOptKeys<M>>>> &
+    Readonly<Pick<R, RoKeys<M>>> &
+    Partial<Pick<R, OptKeys<M>>> &
+    Required<Pick<R, ReqKeys<M>>>
+)>
+export type FoldProps<M extends PropMap, P extends unknown[]> = FoldReducer<M, { [K in keyof M]: Resolve<M[K], P> }>
+export type PropMap = Record<string | number, SchemaNode>
+export interface ObjNode<M extends PropMap = PropMap> extends SchemaNode { [KindMark]: 'Obj'; resolved: FoldProps<M, this['slots']>; tag: 'object'; fields: M }
+export type Resolve<N extends SchemaNode, P extends unknown[] = []> = (N & { slots: P; })['resolved']
+declare namespace Make { function Obj<M extends PropMap>(fields: M): ObjNode<M>; function Str(): StrNode }
+export type Alpha = Resolve<typeof Alpha>
+export const Alpha = Make.Obj({ a: Make.Obj({ b: Make.Obj({ foo: Make.Str() }) }) })
+export type Beta = Resolve<typeof Beta>
+export const Beta = Make.Obj({ a: Make.Obj({ b: Make.Obj({ foo: Make.Str(), bar: Make.Str() }) }) })
+function viaAlias(xs: Alpha[]): Beta[] { return xs; }
+function viaTypeofArray(xs: (typeof Alpha.resolved)[]): Beta[] { return xs; }
+function viaArrayGeneric(xs: Array<typeof Alpha.resolved>): Beta[] { return xs; }
+"#,
+            )],
+            &lib_files,
+            &options,
+        );
+
+        // `Alpha` lacks the required `bar` that `Beta` carries, so every form
+        // of `Alpha[] -> Beta[]` is a structural mismatch. The bug dropped the
+        // TS2322 only for the parenthesized-`typeof`-array form; assert all
+        // three return sites now report it.
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322_count, 3,
+            "all three Alpha[] -> Beta[] return sites (alias, parenthesized typeof[], Array<typeof>) must report TS2322; got {ts2322_count} from {diagnostics:?}"
+        );
+    }
+
