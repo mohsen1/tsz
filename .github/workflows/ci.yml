@@ -653,7 +653,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -676,7 +676,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -744,7 +744,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -867,7 +867,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download canary shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: project-compile-canary-logs-*
           path: .canary-shards
@@ -926,7 +926,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1001,7 +1001,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1183,7 +1183,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
@@ -1280,7 +1280,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download conformance shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: conformance-shard-*
           path: .conformance-shards
@@ -1351,14 +1351,14 @@ jobs:
           _TSZ_CI_SUITE: emit-shard
         run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
       - name: Unpack dist-fast binaries
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: node-harness
           path: .
@@ -1448,7 +1448,7 @@ jobs:
             echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download emit shard results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: emit-shard-*
           path: .emit-shards
@@ -1491,14 +1491,14 @@ jobs:
           _TSZ_CI_SUITE: fourslash-shard
         run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-fast-binaries
           path: .
       - name: Unpack dist-fast binaries
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: node-harness
           path: .
