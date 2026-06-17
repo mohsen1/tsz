@@ -128,21 +128,21 @@ impl<'a> AsyncES5Transformer<'a> {
         let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
         let end_placeholder = delayed_end_label.then(|| self.next_loop_exit_placeholder());
 
-        let mut else_label: Option<u32> = if delayed_else_label {
-            None
-        } else {
+        let mut else_label: Option<u32> = if has_else && !delayed_else_label {
             Some(self.state.next_label())
+        } else {
+            // No else branch (no separate else label is needed), or the else label
+            // must be delayed until the suspending then branch allocates its
+            // resume labels.
+            None
         };
         let mut end_label: Option<u32> = if delayed_end_label {
             None
         } else {
-            // No branch suspends: both else_label and end_label are safe to allocate now.
-            if has_else {
-                Some(self.state.next_label())
-            } else {
-                // No else: end_label == else_label (the next case after the then block)
-                else_label
-            }
+            // No branch suspends: end_label is safe to allocate now. With an else
+            // branch the else label was just allocated above; without one this is
+            // simply the next case after the then block.
+            Some(self.state.next_label())
         };
 
         // Emit: if (!(condition)) return [3 /*break*/, else_or_end_placeholder];
@@ -278,7 +278,42 @@ impl<'a> AsyncES5Transformer<'a> {
             }
             *current_label = end_l;
         } else {
-            // No else branch.
+            // No else branch. When the then branch suspended, `end_label` was
+            // delayed (see `delayed_end_label`) so the then branch's yield-resume
+            // labels are allocated first. Resolve it now and patch the placeholder
+            // that the initial `if (!cond) break` skip target referenced.
+            if let Some(end_ph) = end_placeholder {
+                let patched_end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, end_ph, patched_end_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    end_ph,
+                    patched_end_label,
+                );
+                end_label = Some(patched_end_label);
+            }
+            let end_l = end_label.expect("end label must be available after if lowering");
+
+            // Emit `_a.label = end_label` so the state machine falls through to the
+            // merge point on re-entry, mirroring the else-branch path above. The
+            // then branch suspended, so its yield-resume statements (`_a.sent()`)
+            // are the last case; without the hint a re-entry would not advance.
+            if !current_statements.is_empty()
+                && !matches!(
+                    current_statements.last(),
+                    Some(
+                        IRNode::ReturnStatement(_)
+                            | IRNode::ThrowStatement(_)
+                            | IRNode::BreakStatement(_)
+                    )
+                )
+            {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                    IRNode::GeneratorLabel,
+                    IRNode::number(end_l.to_string()),
+                ))));
+            }
+
             // Flush current case and start end label
             if !current_statements.is_empty() {
                 cases.push(IRGeneratorCase {
@@ -286,7 +321,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     statements: std::mem::take(current_statements),
                 });
             }
-            *current_label = end_label.expect("end label must be available after if lowering");
+            *current_label = end_l;
         }
     }
 
