@@ -261,6 +261,10 @@ fn run_check_on_existing_checker<'a>(
         let check_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
         tsz::checker::reset_stack_overflow_flag();
         checker.check_source_file(file.source_file);
+        // #13246: snapshot and reset the per-file interner working set at the
+        // file boundary so the distinct-`TypeId` high-water / over-cache
+        // buckets attribute thrash per file. No-op when counters are disabled.
+        tsz_common::perf_counters::record_interner_working_set_for_file();
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
         let effective_options = ResolvedCompilerOptions {
             check_js,
