@@ -235,7 +235,7 @@ export interface D extends Plain<number> { z: string }
         strict_opts(),
     );
     assert!(
-        codes(&diags).iter().any(|c| *c == 2315),
+        codes(&diags).contains(&2315),
         "non-generic re-exported type applied with type args must still report TS2315; got {diags:#?}"
     );
 }
@@ -293,7 +293,7 @@ export interface D extends Base<number> { extra: number }
         strict_opts(),
     );
     assert!(
-        codes(&diags).iter().any(|c| *c == 2344),
+        codes(&diags).contains(&2344),
         "constraint violation through barrel must report TS2344; got {diags:#?}"
     );
 }
@@ -330,7 +330,7 @@ export interface D extends LocalPlain<number> { z: string }
         strict_opts(),
     );
     assert!(
-        codes(&errs).iter().any(|c| *c == 2315),
+        codes(&errs).contains(&2315),
         "local non-generic heritage with args must still report TS2315; got {errs:#?}"
     );
 }
