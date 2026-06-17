@@ -1628,6 +1628,17 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| self.resolve_global_augmentation_root_symbol(root_name, &lib_binders))?;
 
+        // Bare reference to an import alias from an unresolved module: same
+        // poison-to-`any` rule as the `NodeIndex` path above (qualified members
+        // like `E.URI` fail in the segment walk below and return `None` there).
+        if segments.clone().next().is_none() && self.is_unresolved_import_symbol_id(current_sym) {
+            self.ctx
+                .lowering_entity_name_resolution_cache
+                .borrow_mut()
+                .insert(name.to_string(), None);
+            return None;
+        }
+
         for segment in segments {
             let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
@@ -1791,6 +1802,16 @@ impl<'a> CheckerState<'a> {
                 && let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(idx)
             {
+                // An import alias from a module that never resolved (TS2307
+                // already emitted) must not bind to a stable `DefId`: lowering
+                // would build `Application(Lazy(alias_def), args)`, a non-error
+                // shape that keeps its type arguments for structural comparison
+                // (so two instantiations differing only in an argument fail to
+                // relate). tsc poisons it to `any`; `None` routes lowering to the
+                // error-like `UnresolvedTypeName`. See `is_unresolved_import_symbol_id`.
+                if self.is_unresolved_import_symbol_id(sym_id) {
+                    return None;
+                }
                 let lib_binders = self.get_lib_binders();
                 if let Some(alias_symbol) =
                     self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
