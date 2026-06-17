@@ -35,6 +35,38 @@ fn select_external_module_lib_interface(
         })
 }
 
+/// Find a global (script, non-external-module) lib interface symbol directly in
+/// the loaded lib contexts by name.
+///
+/// The primary symbol resolution path (`resolve_lib_symbol_by_entity_name`)
+/// reads the active checker's binder, which carries the standard-lib globals
+/// merged in via `merge_lib_contexts_into_binder`. A transient cross-arena
+/// delegation child (`delegate_cross_arena_class_instance_type`) runs against
+/// the imported file's binder, which never received that merge, so a global
+/// lib base reached through a heritage clause (e.g. a generic class
+/// `extends Response`, where `Response extends Body`) fails to resolve there.
+/// `select_external_module_lib_interface` only covers module-scoped lib
+/// declarations, so global script libs (`lib.dom.d.ts`, `lib.es5.d.ts`) need
+/// this context-independent fallback to keep the lib base's own transitive
+/// heritage from being dropped. Mirrors the same `lib_ctx.binder.file_locals`
+/// scan `resolve_lib_type_with_params` uses for the lib base's OWN members, so
+/// the two resolutions agree on the same lib symbol.
+fn select_global_lib_interface(
+    name: &str,
+    actual_lib_file_count: usize,
+    lib_contexts: &[crate::context::LibContext],
+) -> Option<(SymbolId, Option<Arc<BinderState>>)> {
+    lib_contexts
+        .iter()
+        .take(actual_lib_file_count)
+        .find_map(|lib_ctx| {
+            let sym_id = lib_ctx.binder.file_locals.get(name)?;
+            let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+            (symbol.escaped_name == name && symbol.has_any_flags(symbol_flags::INTERFACE))
+                .then_some((sym_id, Some(Arc::clone(&lib_ctx.binder))))
+        })
+}
+
 impl<'a> CheckerState<'a> {
     /// Merge base interface members into a lib interface type by walking
     /// heritage (`extends`) clauses in declaration-specific arenas.
@@ -111,6 +143,20 @@ impl<'a> CheckerState<'a> {
             .map(|id| (id, None))
             .or_else(|| {
                 select_external_module_lib_interface(
+                    name,
+                    self.ctx.actual_lib_file_count,
+                    &self.ctx.lib_contexts,
+                )
+            })
+            .or_else(|| {
+                // A transient cross-arena delegation child checks against an
+                // imported file's binder, which lacks the merged standard-lib
+                // globals, so the binder-based resolution above returns None for
+                // a global lib base (e.g. a class `extends Response`). Fall back
+                // to a direct lib-context scan so the lib base's own transitive
+                // heritage (`Response extends Body`) is still merged instead of
+                // dropped.
+                select_global_lib_interface(
                     name,
                     self.ctx.actual_lib_file_count,
                     &self.ctx.lib_contexts,
