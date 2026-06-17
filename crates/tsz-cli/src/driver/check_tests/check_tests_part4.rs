@@ -597,45 +597,37 @@ function viaArrayGeneric(xs: Array<typeof Alpha.resolved>): Beta[] { return xs; 
     }
 
     // ------------------------------------------------------------------
-    // #13232 (line-16 facet): resolver-less evaluation must not distribute a
-    // still-generic conditional during relation pre-evaluation / flow read.
+    // #13232: a member-access (`context.response`) write before an `if` must
+    // keep its assignment narrowing across the `if`-join.
     //
     // A generic async function expression contextually typed by an interface
-    // member signature whose return type embeds a still-generic conditional
-    // alias (`MappedResponseType<R, T>` with `R`/`T` free type parameters) must
-    // NOT false-fail TS2322. tsc keeps `R extends keyof ResponseMap ? ... : ...`
-    // deferred while `R` is generic, so the flow-narrowed `context.response`
-    // (source) and the contextual return element (target) are the *same*
-    // deferred type and relate by identity.
+    // member signature returns `context.response` after `context.response = …`
+    // and an `if` statement. tsc narrows the optional `response?` property to
+    // non-`undefined` at the assignment and carries that across the merge, so the
+    // return type relates to the declared element type and reports no TS2322.
     //
-    // tsz degrades the source: the flow-narrowed read evaluates the conditional
-    // through a relation-internal evaluator whose resolver cannot expand the
-    // cross-file `Lazy(def)` (`resolver_generation() == 0`), so it evaluates the
-    // operands — `keyof ResponseMap` -> the key-literal union and the true
-    // branch `ResponseMap[R]` -> the value-type union — instead of keeping them
-    // as the deferred alias the target carries. The two structurally-identical
-    // `FetchResponse<MappedResponseType<R, T>>` types then fail to relate, so a
-    // self-assignment reports the canonical false
-    //   `'FetchResponse<MappedResponseType<R, T>>' is not assignable to
-    //    'FetchResponse<MappedResponseType<R, T>>'`.
+    // The earlier "resolver-less still-generic conditional distribution" framing
+    // was a red herring: the source and target `FetchResponse<MappedResponseType<
+    // R, T>>` relate fine. The real failure is that `context.response` stays
+    // `… | undefined` at the `return`. The flow walk reaches the `if`'s CONDITION
+    // node whose antecedent is the property-write ASSIGNMENT; the CONDITION
+    // defer-classifier (`condition_antecedent_requires_defer`) decided whether to
+    // process that antecedent using a symbol-equality shortcut that only matches
+    // plain-identifier references. A member-access reference carries no
+    // `symbol_id`, so the targeting assignment was missed, the CONDITION finalized
+    // on the un-narrowed declared type, and the assignment narrowing was dropped
+    // at the join. The fix makes that classifier fall back to the same structural
+    // `assignment_targets_reference_node` / `assignment_affects_reference_node`
+    // predicate the worklist's ASSIGNMENT branch and the sibling
+    // `antecedent_requires_defer` classifier already use.
     //
     // Binder names vary from the original ofetch witness so the behavior follows
     // the type shape, not a spelling. Both returns and the flow narrowing are
     // required: a single direct return passes (the issue's "both returns are
-    // needed" note).
-    //
-    // The durable fix is the #13232 resolver-threading work (thread the
-    // checker's def-resolving resolver into the relation-internal evaluator so
-    // the cross-file `keyof`/alias expands, OR refuse to serve resolver-less
-    // results so a resolved pass recomputes them). That is architectural and
-    // validated by the full conformance/canary suite, so this is committed as an
-    // `#[ignore]`d synthetic witness that pins the bug deterministically in ~1s
-    // (the prior reproductions were project-corpus-only). Un-ignore when the
-    // resolver-less deferred-conditional relation is fixed.
+    // needed" note). The focused minimal witness for the flow fix itself lives in
+    // `member_property_write_narrowing_survives_if_join` below.
     // ------------------------------------------------------------------
     #[test]
-    #[ignore = "#13232 line-16: resolver-less relation distributes a still-generic \
-                deferred conditional; un-ignore when resolver threading lands"]
     fn program_mode_generic_conditional_in_contextual_return_stays_deferred() {
         let lib_files = tsz::checker::test_utils::load_lib_files(&[
             "es5.d.ts",
@@ -726,6 +718,96 @@ export const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
             bogus.is_empty(),
             "a still-generic conditional alias in the contextual return type must \
              stay deferred (no false TS2322): {bogus:?}; all: {diagnostics:?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // #13232 (minimal flow witness): assignment narrowing of an optional
+    // *property* reference must survive a CONDITION (`if`) join.
+    //
+    // `c.r = { s: 1 }` narrows the optional `r?: Inner` to non-`undefined`. With a
+    // following `if` statement the flow walk for the `return c.r` read reaches the
+    // `if`'s CONDITION node whose antecedent is the property-write ASSIGNMENT. The
+    // CONDITION's defer classifier must process (defer to) that antecedent so the
+    // narrowing reaches the merge; previously it used a symbol-equality shortcut
+    // that only matched plain-identifier references and silently skipped the
+    // member-access write, dropping the narrowing and reporting a false TS2322.
+    //
+    // Adjacency is asserted in one pass: a plain-identifier local (`local`) and an
+    // element-access write (`elem`) must also narrow; base reassignment (`reassign`)
+    // and an `undefined` overwrite on one branch (`overwrite`) must still keep
+    // `undefined` and report TS2322. Binder names differ across the cases so the
+    // behavior tracks the reference shape, not a spelling.
+    // ------------------------------------------------------------------
+    #[test]
+    fn member_property_write_narrowing_survives_if_join() {
+        let options = project_mode_es2015_strict_options();
+        let base = std::path::Path::new("/");
+
+        // Positive: property write before an `if` narrows the optional away.
+        let positive = collect_test_diagnostics_with_options(
+            &[(
+                "/p/a.ts",
+                r#"
+interface Inner { s: number }
+interface C { r?: Inner }
+export function f(c: C, flag: boolean): Inner {
+  c.r = { s: 1 };
+  if (flag) {}
+  return c.r;
+}
+export function viaElement(obj: C, flag: boolean): Inner {
+  obj["r"] = { s: 1 };
+  if (flag) {}
+  return obj["r"];
+}
+export function viaLocal(flag: boolean): Inner {
+  let r: Inner | undefined;
+  r = { s: 1 };
+  if (flag) {}
+  return r;
+}
+"#,
+            )],
+            &options,
+            base,
+        );
+        let positive_2322: Vec<_> = positive.iter().filter(|d| d.code == 2322).collect();
+        assert!(
+            positive_2322.is_empty(),
+            "property/element/local write before an `if` must keep its narrowing \
+             across the join (no false TS2322): {positive_2322:?}; all: {positive:?}"
+        );
+
+        // Negative: a branch that reassigns the base or writes `undefined` must
+        // re-introduce `undefined` at the merge and still report TS2322.
+        let negative = collect_test_diagnostics_with_options(
+            &[(
+                "/p/b.ts",
+                r#"
+interface Inner { s: number }
+interface C { r?: Inner }
+export function reassign(c: C, other: C, flag: boolean): Inner {
+  c.r = { s: 1 };
+  if (flag) { c = other; }
+  return c.r;
+}
+export function overwrite(c: C, flag: boolean): Inner {
+  c.r = { s: 1 };
+  if (flag) { c.r = undefined; }
+  return c.r;
+}
+"#,
+            )],
+            &options,
+            base,
+        );
+        let negative_2322 = negative.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            negative_2322, 2,
+            "base reassignment and `undefined` overwrite on one branch must keep \
+             `undefined` at the merge (TS2322 at both returns); got {negative_2322} \
+             from {negative:?}"
         );
     }
 

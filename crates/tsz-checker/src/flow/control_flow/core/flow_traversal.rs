@@ -392,6 +392,7 @@ impl<'a> FlowAnalyzer<'a> {
                         //     the declared type instead of the assignment-narrowed type)
                         let ant_needs_defer = self.condition_antecedent_requires_defer_cached(
                             ant,
+                            reference,
                             symbol_id,
                             &mut condition_antecedent_defer_memo,
                         );
@@ -1557,13 +1558,14 @@ impl<'a> FlowAnalyzer<'a> {
     fn condition_antecedent_requires_defer_cached(
         &self,
         antecedent: FlowNodeId,
+        reference: NodeIndex,
         symbol_id: Option<SymbolId>,
         memo: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
         if let Some(&cached) = memo.get(&antecedent) {
             return cached;
         }
-        let result = self.condition_antecedent_requires_defer(antecedent, symbol_id);
+        let result = self.condition_antecedent_requires_defer(antecedent, reference, symbol_id);
         memo.insert(antecedent, result);
         result
     }
@@ -1571,6 +1573,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn condition_antecedent_requires_defer(
         &self,
         antecedent: FlowNodeId,
+        reference: NodeIndex,
         symbol_id: Option<SymbolId>,
     ) -> bool {
         let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
@@ -1579,11 +1582,24 @@ impl<'a> FlowAnalyzer<'a> {
         let ant_flags = ant_flow.flags;
         let ant_is_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0;
         // Check if the antecedent ASSIGNMENT targets our reference.
-        let ant_is_targeting_assignment = ant_is_assignment && {
-            // Quick symbol check: does this assignment target our ref?
-            let assignment_sym = self.reference_symbol(ant_flow.node);
-            assignment_sym.is_some() && symbol_id.is_some() && assignment_sym == symbol_id
-        };
+        //
+        // The symbol-equality shortcut only works for plain-identifier references,
+        // whose `symbol_id` is the binder symbol the assignment also resolves to.
+        // Member-access references (`c.r`, `o[k]`) carry no `symbol_id`, so a
+        // symbol-only test silently misses an assignment that DOES target them
+        // (`c.r = …` before an `if`), and the CONDITION join then drops the
+        // assignment's narrowing. Fall back to the same structural targeting
+        // predicate the worklist's ASSIGNMENT branch and the sibling
+        // `antecedent_requires_defer` classifier use, gated by the O(1) root
+        // pre-filter so unrelated assignments stay cheap to reject.
+        let ant_is_targeting_assignment = ant_is_assignment
+            && ant_flow.node.is_some()
+            && self.assignment_root_symbols_may_overlap(ant_flow.node, reference, symbol_id)
+            && (symbol_id
+                .zip(self.reference_symbol(ant_flow.node))
+                .is_some_and(|(target, assignment)| target == assignment)
+                || self.assignment_targets_reference_node(ant_flow.node, reference)
+                || self.assignment_affects_reference_node(ant_flow.node, reference));
         // Also defer to non-targeting ASSIGNMENT antecedents when
         // their own antecedent chain contains a deferrable node.
         // This covers the pattern: `x = 10; var b = x; typeof x`
