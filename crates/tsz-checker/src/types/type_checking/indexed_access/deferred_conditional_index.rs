@@ -5,7 +5,7 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// When the indexed-access object base is a *deferred* conditional, validate
     /// the index key against the conditional's base constraint — the union of
     /// its two branch results (tsc's `getBaseConstraintOfType` of a conditional).

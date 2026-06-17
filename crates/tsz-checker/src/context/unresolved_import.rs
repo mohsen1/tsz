@@ -14,7 +14,7 @@ use tsz_solver::TypeId;
 
 use crate::context::CheckerContext;
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Whether `type_id` (recursively) references an *unresolved imported alias*:
     /// a `Lazy(DefId)`/`UnresolvedTypeName` whose backing symbol is an `import`
     /// from a module that failed to resolve. Covers the
