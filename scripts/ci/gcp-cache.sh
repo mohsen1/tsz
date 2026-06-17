@@ -201,22 +201,68 @@ tmp_archive() {
   printf '/tmp/tsz-cache-%s-%s.tar.gz\n' "$label" "$$"
 }
 
+# Emit a tar.gz byte stream of <base>/<path...> on stdout.
+#
+# Shared producer for both the staged-file (create_archive) and the
+# stream-to-GCS (stream_archive_to_uri) save paths. Keeping a single
+# producer guarantees both paths pack BYTE-IDENTICAL blobs — same `tar`
+# selection/flags, same `gzip -n` (no timestamp/name header) at the same
+# level — so switching staging strategy never changes blob contents or the
+# downstream cache hit.
+#
+# Cut the in-process compression peak at tar time. The default tar `-z`
+# uses gzip level 6, whose deflate path keeps large hash chains/window
+# buffers; gzip levels 1-3 use the lighter `deflate_fast` algorithm with
+# smaller tables and far less CPU. Since the save-path tar runs at
+# post-build memory peak (#13733/#13748), pipe tar -> gzip with an explicit,
+# tunable level so the compressor never inflates RSS at the worst moment.
+# TSZ_CI_CACHE_GZIP_LEVEL tunes the size/speed tradeoff (default 1; raise it
+# to trade CPU/RSS for a smaller blob). Note: this only lowers the
+# compression level — it does NOT switch codecs (zstd is tracked separately
+# in #13605 item 4).
+emit_archive_stream() {
+  local base="$1"
+  shift
+  local level="${TSZ_CI_CACHE_GZIP_LEVEL:-1}"
+  COPYFILE_DISABLE=1 tar --exclude='._*' -cf - -C "$base" "$@" \
+    | gzip -n -"${level}"
+}
+
 create_archive() {
   local archive="$1" base="$2"
   shift 2
-  # Cut the in-process compression peak at tar time. The default tar `-z`
-  # uses gzip level 6, whose deflate path keeps large hash chains/window
-  # buffers; gzip levels 1-3 use the lighter `deflate_fast` algorithm with
-  # smaller tables and far less CPU. Since the save-path tar runs at
-  # post-build memory peak (#13733/#13748), pipe tar -> gzip with an explicit,
-  # tunable level so the compressor never inflates RSS at the worst moment.
-  # TSZ_CI_CACHE_GZIP_LEVEL tunes the size/speed tradeoff (default 1; raise it
-  # to trade CPU/RSS for a smaller blob). Note: this only lowers the
-  # compression level — it does NOT switch codecs (zstd is tracked separately
-  # in #13605 item 4).
-  local level="${TSZ_CI_CACHE_GZIP_LEVEL:-1}"
-  COPYFILE_DISABLE=1 tar --exclude='._*' -cf - -C "$base" "$@" \
-    | gzip -n -"${level}" > "$archive"
+  emit_archive_stream "$base" "$@" > "$archive"
+}
+
+# Stream tar -> gzip -> gsutil cp - DIRECTLY to GCS, never staging the full
+# blob on the local filesystem (#13733/#13748).
+#
+# Why this is the real OOM lever: dist-binaries runs on Cloud Run, whose
+# `/tmp` (and the rest of the writable tree) is a RAM-backed tmpfs that
+# counts against the container memory limit. The previous save_archive
+# staged a multi-GB `.target/dist-fast` tar.gz under /tmp via create_archive
+# and only then ran `gsutil cp <file>`, so the whole compressed blob became
+# resident at the post-build memory peak — exactly when MemAvailable is
+# lowest — and the kernel OOM-killer SIGKILL'd the container (exit 137),
+# wedging the merge queue. Streaming the producer straight into
+# `gsutil cp -` keeps only the pipe buffers (a few MiB) resident regardless
+# of blob size, which is what lets the bounded #13747 workspace-rlib refresh
+# run on every green main build without re-triggering the OOM.
+#
+# Correctness: byte-identical to the staged path (same emit_archive_stream
+# producer, same destination URI/key). `gsutil cp -` performs a single
+# resumable streaming upload whose object only becomes visible after the
+# stream completes, so a mid-pipe failure (caught by `pipefail`) leaves no
+# partial object — same atomicity the staged path had via a complete temp
+# file. Upload size logging becomes a best-effort post-upload `gsutil du`
+# (diagnostic only; never gates the save).
+stream_archive_to_uri() {
+  local uri="$1" base="$2"
+  shift 2
+  if emit_archive_stream "$base" "$@" | gsutil -q cp - "$uri"; then
+    return 0
+  fi
+  return 1
 }
 
 validate_typescript_cache_tree() {
@@ -390,22 +436,21 @@ save_archive() {
     return 0
   fi
 
-  local archive
-  archive="$(tmp_archive "$label")"
+  # Stream pack+upload directly to GCS — never stage the blob on the local
+  # (Cloud Run tmpfs / RAM-backed) filesystem, which is the residual OOM hog
+  # at post-build memory peak (#13733/#13748). See stream_archive_to_uri.
   local t0=$SECONDS
-  create_archive "$archive" "$base" "${existing[@]}"
-  local pack_secs=$((SECONDS - t0))
-  local size_h
-  size_h="$(du -h "$archive" 2>/dev/null | awk '{print $1}')"
-
-  local t1=$SECONDS
-  if gsutil -q cp "$archive" "$uri"; then
-    local upload_secs=$((SECONDS - t1))
-    echo "Cache saved: ${label} (size=${size_h:-?}, pack=${pack_secs}s, upload=${upload_secs}s)"
+  if stream_archive_to_uri "$uri" "$base" "${existing[@]}"; then
+    local total_secs=$((SECONDS - t0))
+    # Best-effort, post-upload size for diagnostics only. `gsutil du` reads
+    # the object's stored size from GCS metadata (no local re-read), so it
+    # adds no memory pressure to the save path.
+    local size_h
+    size_h="$(gsutil du -h "$uri" 2>/dev/null | awk '{print $1 $2}')"
+    echo "Cache saved: ${label} (size=${size_h:-?}, pack+upload=${total_secs}s, streamed)"
   else
-    echo "warning: failed to upload cache ${label}" >&2
+    echo "warning: failed to pack/upload cache ${label}" >&2
   fi
-  rm -f "$archive"
 }
 
 suite_needs_rust_compile() {

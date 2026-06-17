@@ -17,7 +17,7 @@ mod lib_resolution;
 
 use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
-    resolve_extends_path,
+    resolve_extends_path, substitute_config_dir_templates,
 };
 use lib_offsets::find_lib_entry_offset;
 
@@ -572,6 +572,27 @@ fn find_top_level_value_offset_in_source(source: &str, key: &str) -> u32 {
         (after_colon + whitespace_len) as u32
     } else {
         key_pos as u32
+    }
+}
+
+/// Locate the source span of an `extends` specifier string (including its
+/// surrounding quotes) for anchoring TS6053 on an unresolved base config.
+///
+/// The search starts at the top-level `extends` key so an array element is
+/// anchored at its own position; when the literal cannot be located (e.g. the
+/// value was rewritten by JSONC stripping) it falls back to the `extends`
+/// value start with the specifier's quoted width, matching `tsc`'s anchor on
+/// the `extends` value.
+fn find_extends_specifier_span(source: &str, specifier: &str) -> (u32, u32) {
+    let quoted = format!("\"{specifier}\"");
+    let extends_pos = source.find("\"extends\"").unwrap_or(0);
+    if let Some(rel) = source[extends_pos..].find(&quoted) {
+        ((extends_pos + rel) as u32, quoted.len() as u32)
+    } else {
+        (
+            find_top_level_value_offset_in_source(source, "extends"),
+            specifier.len() as u32 + 2,
+        )
     }
 }
 
@@ -1177,13 +1198,26 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner(path, &mut visited, false)
+    let config_dir = root_config_dir(path);
+    load_tsconfig_inner(path, &mut visited, false, &config_dir)
 }
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
+    let config_dir = root_config_dir(path);
+    load_tsconfig_inner_with_diagnostics(path, &mut visited, false, &config_dir)
+}
+
+/// Absolute directory of the root config being compiled. Every `${configDir}`
+/// template in this config and in any config it `extends` resolves against this
+/// single directory (the inheriting/leaf config's directory), so it is computed
+/// once at the entry point and threaded through the `extends` recursion
+/// unchanged. Canonicalization falls back to the lexical path off the
+/// filesystem (e.g. on `wasm32`), matching the existing anchoring helpers.
+fn root_config_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
 }
 
 fn config_ignore_deprecations_silences_6_0(config: &TsConfig) -> bool {
@@ -1206,6 +1240,7 @@ fn load_tsconfig_inner(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
     inherited: bool,
+    config_dir: &Path,
 ) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -1216,6 +1251,9 @@ fn load_tsconfig_inner(
         .with_context(|| format!("failed to read tsconfig: {}", path.display()))?;
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    // Resolve `${configDir}` against the root config's directory before any
+    // `extends` anchoring, which only fires on the leftover relative paths.
+    substitute_config_dir_templates(&mut config, config_dir);
     anchor_inherited_path_options(&mut config, path);
     if inherited {
         anchor_inherited_root_selectors(&mut config, path);
@@ -1231,8 +1269,14 @@ fn load_tsconfig_inner(
         // Each base is merged into the accumulated config.
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
-            let base_path = resolve_extends_path(path, extends_path_str)?;
-            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
+            // An unresolved `extends` is a recoverable condition (tsc reports
+            // TS6053 and continues with the local config). This diagnostic-free
+            // loader simply degrades: skip the missing base rather than aborting
+            // the whole config load.
+            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
+                continue;
+            };
+            let base_config = load_tsconfig_inner(&base_path, visited, true, config_dir)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -1251,6 +1295,7 @@ fn load_tsconfig_inner_with_diagnostics(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
     inherited: bool,
+    config_dir: &Path,
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -1262,6 +1307,9 @@ fn load_tsconfig_inner_with_diagnostics(
     let file_display = path.display().to_string();
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    // Resolve `${configDir}` against the root config's directory before any
+    // `extends` anchoring, which only fires on the leftover relative paths.
+    substitute_config_dir_templates(&mut parsed.config, config_dir);
     anchor_inherited_path_options(&mut parsed.config, path);
     if inherited {
         anchor_inherited_root_selectors(&mut parsed.config, path);
@@ -1275,8 +1323,25 @@ fn load_tsconfig_inner_with_diagnostics(
         };
         let mut accumulated: Option<TsConfig> = None;
         let mut base_removed_options: Vec<String> = Vec::new();
+        let stripped = strip_jsonc(&source);
         for extends_path_str in &extends_paths {
-            let base_path = resolve_extends_path(path, extends_path_str)?;
+            // An `extends` specifier that names no existing config file is a
+            // recoverable error: tsc emits TS6053 anchored at the specifier and
+            // continues with the remaining (local) options. Emit the same and
+            // skip this base instead of failing the whole config load.
+            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
+                let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
+                let message =
+                    format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
+                parsed.diagnostics.push(Diagnostic::error(
+                    &file_display,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::FILE_NOT_FOUND,
+                ));
+                continue;
+            };
             // Collect removed options from base configs for TS5102 diagnostics.
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
@@ -1292,7 +1357,8 @@ fn load_tsconfig_inner_with_diagnostics(
             // `verbatimModuleSyntax` replacement). The post-merge block below
             // owns that re-emission; letting the base's per-option TS5102
             // through would double-report and anchor at the wrong file.
-            let base_parsed = load_tsconfig_inner_with_diagnostics(&base_path, visited, true)?;
+            let base_parsed =
+                load_tsconfig_inner_with_diagnostics(&base_path, visited, true, config_dir)?;
             parsed
                 .diagnostics
                 .extend(base_parsed.diagnostics.into_iter().filter(|d| {
@@ -1391,7 +1457,7 @@ fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
         .as_object()
         .and_then(|o| o.get("extends"))
         .and_then(|v| v.as_str())
-        && let Ok(base_path) = resolve_extends_path(path, extends)
+        && let Ok(Some(base_path)) = resolve_extends_path(path, extends)
     {
         collect_removed_options_from_config(&base_path, removed);
     }

@@ -266,6 +266,10 @@ impl<'a> CheckerContext<'a> {
         // The inferred-return-type memo keys on file-local node indices and
         // type-parameter `TypeId`s, so it shares the per-file lifecycle.
         self.inferred_return_type_memo.clear();
+        // The contextual-callback mismatch memo keys on file-local callback
+        // argument nodes and expected `TypeId`s, so it shares the same per-file
+        // lifecycle as the inferred-return-type memo.
+        self.callback_mismatch_memo.clear();
 
         // Symbol/circularity state whose keys or values are file-local
         // `SymbolId`s, plus string-name guards that are meaningful only inside
