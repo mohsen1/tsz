@@ -53,6 +53,29 @@ pub fn should_probe_stack() -> bool {
     c & STACK_COUNTER_MASK == 0
 }
 
+/// Decide whether measured stack headroom is below `min_bytes`.
+///
+/// Pure function of the measurement so the `None` case is unit-testable without
+/// controlling the real stack. `stacker::remaining_stack()` returns `None` on
+/// targets whose stack bounds cannot be determined (notably `wasm32`). Treating
+/// that unknown as "critically low" (the old `unwrap_or(0)` form) trips the
+/// breaker on the very first probe, aborting the recursive walk mid-input and
+/// silently dropping every node after the trip point. With no measurement there
+/// is no evidence of exhaustion, so we report "not low" and let the walk
+/// proceed; `stacker::maybe_grow` still handles genuine growth.
+#[inline]
+#[must_use]
+pub const fn measured_headroom_below(remaining: Option<usize>, min_bytes: usize) -> bool {
+    matches!(remaining, Some(r) if r < min_bytes)
+}
+
+/// `true` only when the remaining stack can be measured AND is below `min_bytes`.
+#[inline]
+#[must_use]
+pub fn headroom_below(min_bytes: usize) -> bool {
+    measured_headroom_below(stacker::remaining_stack(), min_bytes)
+}
+
 /// Trip the stack overflow breaker.  Called from guards in `dispatch.rs` and
 /// `state/type_analysis/core.rs` when `stacker::remaining_stack()` reports
 /// < 256 KB remaining.
@@ -168,6 +191,22 @@ mod tests {
     fn stack_overflow_tripped_starts_false() {
         reset();
         assert!(!stack_overflow_tripped());
+    }
+
+    #[test]
+    fn unmeasurable_headroom_never_trips() {
+        // `wasm32` reports `None`; that must not count as critically low, or the
+        // checker bails to `TypeId::ERROR` mid-recursion on every guarded entry
+        // point (issue #13815 family).
+        assert!(!measured_headroom_below(None, 1024 * 1024));
+        assert!(!measured_headroom_below(None, usize::MAX));
+    }
+
+    #[test]
+    fn measured_headroom_compares_against_threshold() {
+        assert!(measured_headroom_below(Some(256 * 1024), 1024 * 1024));
+        assert!(!measured_headroom_below(Some(4 * 1024 * 1024), 1024 * 1024));
+        assert!(!measured_headroom_below(Some(1024 * 1024), 1024 * 1024));
     }
 
     #[test]

@@ -1088,7 +1088,7 @@ impl<'a> CheckerState<'a> {
         }
         // Periodically probe remaining stack and trip the breaker if low.
         if crate::checkers_domain::should_probe_stack()
-            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+            && crate::checkers_domain::headroom_below(1024 * 1024)
         {
             crate::checkers_domain::trip_stack_overflow();
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
