@@ -844,66 +844,82 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .get_application_eval_origin(target)
                         .and_then(|origin| application_id(self.interner, origin))
                 });
-            let variance_result =
-                if let (Some(s_app_id), Some(t_app_id)) = (s_app_id_for_variance, t_app_id) {
-                    self.try_variance_fast_path(s_app_id, t_app_id)
-                } else if let Some(t_app_id) = t_app_id_for_recovered_target {
-                    self.try_same_base_all_any_target_args(source, s_app_id_for_variance, t_app_id)
-                        .or_else(|| {
-                            // Accept-only variance on a provenance-recovered
-                            // same-base pair: tsc relates two instantiations of
-                            // the same generic reference by per-argument
-                            // variance (`relateVariances`) before any
-                            // structural expansion, so an `any` argument
-                            // relates bidirectionally and silences the member
-                            // walk (kysely `ExpressionWrapper<DB, TB, any>` vs
-                            // `ExpressionWrapper<DB, TB, O[K]>`, whose `and`
-                            // member is a deferred conditional that can never
-                            // relate structurally). tsz's checker computes
-                            // class member types in evaluated form, so BOTH
-                            // sides may have lost their `Application` identity
-                            // here; recover each via display provenance and
-                            // honor only a conclusive `True` — rejections from
-                            // display-grade identity are discarded and the
-                            // relation falls through to the structural path.
-                            // The semantic eval-origin map may recover the
-                            // source where display provenance declined to
-                            // record (generic-arg repaint guards); both
-                            // channels are trusted here because this branch
-                            // is accept-only.
-                            let s_app_id = s_app_id_for_variance.or_else(|| {
-                                self.interner
-                                    .get_application_eval_origin(source)
-                                    .and_then(|origin| application_id(self.interner, origin))
-                            })?;
-                            // Identical argument lists prove nothing here:
-                            // the sides are distinct shapes for a
-                            // non-argument reason (context-dependent
-                            // evaluation of the same application, e.g. under
-                            // exactOptionalPropertyTypes), and only the
-                            // structural comparison can judge that.
-                            {
-                                let s_app = self.interner.type_application(s_app_id);
-                                let t_app = self.interner.type_application(t_app_id);
-                                if s_app.args == t_app.args {
-                                    return None;
-                                }
-                            }
-                            let vr = self
-                                .try_same_base_args_identical_or_any(s_app_id, t_app_id)
-                                .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
-                            match vr {
-                                Some(SubtypeResult::True) => Some(SubtypeResult::True),
-                                _ => None,
-                            }
-                        })
-                } else if let Some(s_app_id) = s_app_id {
-                    // Source is Application, target might be Union containing an Application.
-                    // This handles optional properties where target is App<X> | undefined.
-                    self.try_variance_against_union_target(source, s_app_id, target)
-                } else {
-                    None
-                };
+            let variance_result = if let (Some(s_app_id), Some(t_app_id)) =
+                (s_app_id_for_variance, t_app_id)
+            {
+                self.try_variance_fast_path(s_app_id, t_app_id)
+            } else if let Some(t_app_id) = t_app_id_for_recovered_target {
+                // Accept-only variance on a provenance-recovered same-base
+                // pair: tsc relates two instantiations of the same generic
+                // reference by per-argument variance (`relateVariances`)
+                // before any structural expansion, so an `any` argument
+                // relates bidirectionally and silences the member walk
+                // (kysely `ExpressionWrapper<DB, TB, any>` vs
+                // `ExpressionWrapper<DB, TB, O[K]>`, whose `and` member is a
+                // deferred conditional that can never relate structurally).
+                // tsz's checker computes class member types in evaluated
+                // form, so BOTH sides may have lost their `Application`
+                // identity here; recover each via display provenance and
+                // honor only a conclusive `True` — rejections from
+                // display-grade identity are discarded and the relation
+                // falls through to the structural path.
+                //
+                // The display-alias and the semantic eval-origin channels
+                // can name DIFFERENT bases for one value: a value typed
+                // through a generic alias over a self-referential generic
+                // (e.g. `Async<T> = Promise<T>`) records the user alias
+                // `Async` as its display provenance but the underlying
+                // `Promise` as its eval origin, while the target only
+                // recovered its underlying base. Try both source candidates
+                // so the one that shares the target's definition
+                // (`Promise<any>` vs `Promise<X>`) is found and its `any`
+                // argument relates the pair before the order-dependent
+                // structural expansion of the recursive `then` member can
+                // spuriously reject it (the false `TS2416` on method
+                // overrides whose return type is a generic alias over
+                // `Promise` — zod's `_parse`).
+                let s_candidates = [
+                    s_app_id_for_variance,
+                    self.interner
+                        .get_application_eval_origin(source)
+                        .and_then(|origin| application_id(self.interner, origin)),
+                ];
+                let mut vr = None;
+                for s_app_id in s_candidates.into_iter().flatten() {
+                    vr = self.try_same_base_all_any_target_args(source, Some(s_app_id), t_app_id);
+                    if matches!(vr, Some(SubtypeResult::True)) {
+                        break;
+                    }
+                    // Identical argument lists prove nothing here: the sides
+                    // are distinct shapes for a non-argument reason
+                    // (context-dependent evaluation of the same application,
+                    // e.g. under exactOptionalPropertyTypes), and only the
+                    // structural comparison can judge that.
+                    {
+                        let s_app = self.interner.type_application(s_app_id);
+                        let t_app = self.interner.type_application(t_app_id);
+                        if s_app.args == t_app.args {
+                            continue;
+                        }
+                    }
+                    vr = self
+                        .try_same_base_args_identical_or_any(s_app_id, t_app_id)
+                        .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
+                    if matches!(vr, Some(SubtypeResult::True)) {
+                        break;
+                    }
+                }
+                match vr {
+                    Some(SubtypeResult::True) => Some(SubtypeResult::True),
+                    _ => None,
+                }
+            } else if let Some(s_app_id) = s_app_id {
+                // Source is Application, target might be Union containing an Application.
+                // This handles optional properties where target is App<X> | undefined.
+                self.try_variance_against_union_target(source, s_app_id, target)
+            } else {
+                None
+            };
 
             if let Some(result) = variance_result {
                 if let Some(dp) = def_entered {
