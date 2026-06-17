@@ -16,7 +16,7 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Compute the VALUE-space type a `typeof X` query should resolve to for a
     /// symbol declared as both an interface and a value.
     ///

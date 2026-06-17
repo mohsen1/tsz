@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
     /// and pre-compute the flow-narrowed type of each expression.
     ///
