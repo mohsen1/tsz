@@ -402,6 +402,20 @@ pub struct DefinitionStore {
     /// `DefId` on demand during type checking.
     class_to_constructor: DefDashMap<DefId, DefId>,
 
+    /// Program-wide enum member `DefId` -> parent enum `DefId` map.
+    ///
+    /// `TypeEnvironment::enum_parents` is reset per file (it lives in the
+    /// file-local evaluator/flow-analyzer env). Cross-file enum discriminant
+    /// narrowing reads the member→parent edge through the *consuming* file's
+    /// flow-analyzer env, by which point the producing file's local
+    /// registration has been wiped. This shared map survives the per-file
+    /// reset (it lives on the program-wide `DefinitionStore`), so
+    /// `TypeEnvironment::get_enum_parent` can fall back to it and resolve the
+    /// nominal `E.B <: E` relation at narrowing time regardless of which file
+    /// declared the enum. Populated by write-through from
+    /// `TypeEnvironment::register_enum_parent`.
+    enum_member_to_parent: DefDashMap<DefId, DefId>,
+
     /// Shared cross-file instance-type cache for class `DefId`s.
     ///
     /// A class has two `TypeId`s: the constructor (value side, written into
@@ -493,6 +507,7 @@ impl DefinitionStore {
                 id_capacity / 2,
                 Default::default(),
             ),
+            enum_member_to_parent: DefDashMap::default(),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             cross_file_cache: CrossFileQueryCache::default(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
@@ -1138,6 +1153,7 @@ impl DefinitionStore {
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
         self.class_to_instance.clear();
+        self.enum_member_to_parent.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
         self.bump_generation();
@@ -1274,6 +1290,31 @@ impl DefinitionStore {
     /// finished building the class yet.
     pub fn get_class_instance_type(&self, class_def: DefId) -> Option<TypeId> {
         self.class_to_instance.get(&class_def).map(|r| *r)
+    }
+
+    /// Publish an enum member `DefId` -> parent enum `DefId` edge into the
+    /// shared, program-wide map (see the `enum_member_to_parent` field doc).
+    ///
+    /// Write-through target for `TypeEnvironment::register_enum_parent`. The
+    /// producing file's local `enum_parents` map is wiped on its file-session
+    /// reset; this shared copy persists so a consuming file's flow-analyzer env
+    /// can still resolve the member's parent during cross-file enum
+    /// discriminant narrowing.
+    pub fn register_enum_parent(&self, member_def: DefId, parent_def: DefId) {
+        if self
+            .enum_member_to_parent
+            .insert(member_def, parent_def)
+            .is_none()
+        {
+            self.bump_generation();
+        }
+    }
+
+    /// Look up the parent enum `DefId` for an enum member `DefId` in the shared
+    /// program-wide map. Returns `None` when no checker has registered the edge
+    /// (e.g. a non-enum-member `DefId`).
+    pub fn get_enum_parent(&self, member_def: DefId) -> Option<DefId> {
+        self.enum_member_to_parent.get(&member_def).map(|r| *r)
     }
 
     /// Get exports for a namespace/module `DefId`.

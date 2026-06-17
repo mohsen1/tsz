@@ -170,7 +170,10 @@ impl<'a> NarrowingContext<'a> {
             return false;
         };
 
-        left_parent == right_parent
+        // Cross-module import barrels can give the same enum two `DefId`s;
+        // compare parents through `defs_are_equivalent` (alias-forward /
+        // `SymbolId` aware) rather than raw equality.
+        resolver.defs_are_equivalent(left_parent, right_parent)
             && self.literal_values_equivalent_for_narrowing(left_inner, right_inner)
     }
 

@@ -1239,12 +1239,33 @@ impl TypeEnvironment {
                 .or_default()
                 .push(member_def_id);
         }
+        // Write through to the program-wide shared store. The per-file env reset
+        // wipes `self.enum_parents` before a consuming file narrows on a
+        // cross-file enum discriminant; the shared store survives that reset so
+        // `get_enum_parent` can recover the member->parent edge at narrowing
+        // time (see `DefinitionStore::enum_member_to_parent`).
+        if let Some(store) = self.definition_store.as_ref() {
+            store.register_enum_parent(member_def_id, parent_def_id);
+        }
         self.bump_generation();
     }
 
     /// Get the parent enum `DefId` for an enum member `DefId`.
+    ///
+    /// Falls back to the shared program-wide `DefinitionStore` when the
+    /// file-local `enum_parents` map lacks the entry. The local map is reset per
+    /// file, so a consuming file's flow-analyzer env (which drives cross-file
+    /// enum discriminant narrowing) would otherwise see `None` for a member
+    /// declared in another file, collapsing the narrowed receiver to `never`.
     pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
-        self.enum_parents.get(&member_def_id.0).copied()
+        self.enum_parents
+            .get(&member_def_id.0)
+            .copied()
+            .or_else(|| {
+                self.definition_store
+                    .as_ref()
+                    .and_then(|store| store.get_enum_parent(member_def_id))
+            })
     }
 
     /// Get the registered member `DefIds` for a parent enum `DefId` (in
@@ -1467,10 +1488,14 @@ impl TypeResolver for TypeEnvironment {
     fn is_enum_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> bool {
         use crate::visitors::visitor_extract::enum_components;
         if let Some((def_id, _)) = enum_components(interner, type_id) {
-            // A full enum type's DefId is NOT registered as a member (key) in enum_parents.
-            // Member DefIds ARE keys in enum_parents (mapping to their parent DefId).
-            // So if the DefId is NOT a member, it's the parent enum type.
-            !self.enum_parents.contains_key(&def_id.0)
+            // A full enum type's DefId is NOT registered as a member (key) in
+            // enum_parents. Member DefIds ARE keys (mapping to their parent
+            // DefId). So if the DefId has no parent, it's the parent enum type.
+            // Use the store-fallback-aware `get_enum_parent` so a member
+            // declared in another file (absent from the per-file `enum_parents`
+            // map after the file-session reset) is not misclassified as a whole
+            // enum type.
+            Self::get_enum_parent(self, def_id).is_none()
         } else {
             false
         }
@@ -1766,6 +1791,56 @@ mod tests {
             Some(instance_type),
             "shared slot must be visible to any checker holding the store"
         );
+    }
+
+    /// Pins the cross-module enum-parent residency fix: a producing env's
+    /// `register_enum_parent` write-through publishes the member->parent edge to
+    /// the shared `DefinitionStore`, so a *fresh* consumer env (modeling the
+    /// per-file `TypeEnvironment::new()` session reset) recovers the parent via
+    /// the store fallback even though its local `enum_parents` map is empty.
+    ///
+    /// Without the fallback, cross-file enum discriminant narrowing reads the
+    /// consuming file's reset env, gets `None`, and collapses the receiver to
+    /// `never` (false TS2339 in mobx's `IDerivationState_` cascade).
+    #[test]
+    fn enum_parent_survives_file_reset_via_shared_store() {
+        let store = Arc::new(DefinitionStore::new());
+        let member_def = DefId(501);
+        let parent_def = DefId(500);
+
+        // Producing file's env registers the member->parent edge and, because
+        // it holds the shared store, writes through to it.
+        let mut producer_env = TypeEnvironment::new();
+        producer_env.set_definition_store(Arc::clone(&store));
+        producer_env.register_enum_parent(member_def, parent_def);
+        assert_eq!(
+            store.get_enum_parent(member_def),
+            Some(parent_def),
+            "register_enum_parent must write through to the shared store"
+        );
+
+        // Consuming file's env is fresh (its local enum_parents is empty, as
+        // after a file-session reset) but shares the same store.
+        let mut consumer_env = TypeEnvironment::new();
+        consumer_env.set_definition_store(Arc::clone(&store));
+        assert!(
+            !consumer_env.enum_parents.contains_key(&member_def.0),
+            "consumer's local enum_parents must be cold"
+        );
+        assert_eq!(
+            consumer_env.get_enum_parent(member_def),
+            Some(parent_def),
+            "consumer must recover the parent via the shared-store fallback"
+        );
+        assert_eq!(
+            TypeResolver::get_enum_parent_def_id(&consumer_env, member_def),
+            Some(parent_def),
+            "resolver-trait accessor must use the same fallback path"
+        );
+
+        // An env with no store still returns None (no panic, no false edge).
+        let bare_env = TypeEnvironment::new();
+        assert_eq!(bare_env.get_enum_parent(member_def), None);
     }
 
     /// Pins the `get_def_kind` store-fallback path:
