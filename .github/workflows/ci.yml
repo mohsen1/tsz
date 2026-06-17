@@ -1382,7 +1382,15 @@ jobs:
     name: emit-aggregate
     needs: [gate, emit]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled'
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Pure-IO aggregate: run_emit_aggregate prefers the downloaded .emit-shards
+    # artifacts (github-suite.sh emit-aggregate concatenates them and reads no
+    # dist binary); it only falls back to GCS when that artifact dir is absent,
+    # and since the download-artifact step below always populates it, the GCS
+    # path is never taken. The GCS env is best-effort CI cache that gracefully
+    # no-ops when gsutil is absent. A free ubuntu-latest runner is sufficient
+    # and frees a scarce Cloud Run slot (mirrors conformance-aggregate /
+    # project-compile-canary-aggregate, #13745).
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
@@ -1511,6 +1519,15 @@ jobs:
     name: fourslash-aggregate
     needs: [gate, fourslash]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
+    # Stays self-hosted (unlike conformance/emit/canary aggregates): the
+    # fourslash shards hand their results off over GCS (run_fourslash_shard
+    # uploads via `gsutil cp` to fourslash-runs/<sha>/), NOT as GitHub Actions
+    # artifacts, and run_fourslash_aggregate downloads them with a mandatory
+    # `gsutil cp` that hard-fails without a bucket/run key (no artifact-
+    # preferring fallback like emit/conformance). ubuntu-latest has no gsutil
+    # or GCS auth by default, so migrating this job would require re-plumbing
+    # the shard->aggregate handoff to download-artifact first. Left on Cloud
+    # Run until that handoff change lands (#13745).
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
