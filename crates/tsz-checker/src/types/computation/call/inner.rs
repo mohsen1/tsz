@@ -722,6 +722,22 @@ impl<'a> CheckerState<'a> {
                 )
                 .or_else(|| ctx_helper.get_parameter_type_for_call(i, args.len()))
                 .map(|param_type| self.normalize_contextual_call_param_type(param_type))
+                .filter(|&param_type| {
+                    // A call argument whose contextual type is a bare free type
+                    // parameter from an enclosing generic signature — e.g.
+                    // `set((p) => ...)` where `set: (p: T) => void` and `T` is free
+                    // in the enclosing `<T>(...)` middleware — must NOT be
+                    // contextually typed by that type parameter. `tsc` treats such a
+                    // `T` as "could be instantiated with an arbitrary type": it does
+                    // not flow into the argument, so a callback argument's own
+                    // parameters stay implicitly `any` (TS7006) and the argument is
+                    // checked against `T` directly (TS2345). This only applies when
+                    // the callee is non-generic; a genuine generic callee's own type
+                    // parameters are inferred from these arguments and must keep their
+                    // contextual seed. Mirrors the bare type-parameter filter on
+                    // contextual *return* types in `return_expression_type`.
+                    is_generic_call || !is_type_parameter_type(self.ctx.types, param_type)
+                })
             })
             .collect();
         // For union callees, skip excess property checking during argument collection.
