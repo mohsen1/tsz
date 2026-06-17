@@ -138,20 +138,63 @@ pub(crate) fn resolve_exports_target(
     }
 }
 
-pub(crate) fn resolve_exports_target_candidates(
+/// Resolve a package.json `imports` subpath to ordered `(target, is_types)`
+/// candidates. `is_types` reports whether the matched value passed through a
+/// types-flavored condition (`types`/`types@<range>`); the imports caller uses
+/// it to keep declaration-aware probing of an extensionless target, mirroring
+/// the spec'd `PACKAGE_TARGET_RESOLVE` algorithm shared with the `exports` field.
+pub(crate) fn resolve_imports_subpath_candidates_with_flavor(
+    imports: &serde_json::Value,
+    subpath_key: &str,
+    conditions: &[&str],
+    compiler_version: SemVer,
+) -> Vec<(String, bool)> {
+    let serde_json::Value::Object(map) = imports else {
+        return Vec::new();
+    };
+
+    let has_subpath_keys = map.keys().any(|key| key.starts_with('#'));
+    if !has_subpath_keys {
+        return Vec::new();
+    }
+
+    if let Some(value) = map.get(subpath_key) {
+        return resolve_target_candidates_with_flavor(value, conditions, compiler_version, false);
+    }
+
+    if let Some((wildcard, value)) =
+        find_best_subpath_pattern(map, |key| match_imports_subpath(key, subpath_key))
+    {
+        return resolve_target_candidates_with_flavor(value, conditions, compiler_version, false)
+            .into_iter()
+            .map(|(target, is_types)| (apply_exports_subpath(&target, &wildcard), is_types))
+            .collect();
+    }
+
+    Vec::new()
+}
+
+/// Resolve a value side of an `exports`/`imports` entry to ordered
+/// `(target, is_types)` candidates. Condition keys (including versioned
+/// `<base>@<range>`) are matched against `conditions`; `is_types` is set when
+/// the value was reached through a `types`/`types@<range>` condition, so the
+/// caller can keep declaration-aware probing of an extensionless target.
+fn resolve_target_candidates_with_flavor(
     target: &serde_json::Value,
     conditions: &[&str],
     compiler_version: SemVer,
-) -> Vec<String> {
+    is_types_condition: bool,
+) -> Vec<(String, bool)> {
     match target {
-        serde_json::Value::String(value) => vec![value.clone()],
+        serde_json::Value::String(value) => vec![(value.clone(), is_types_condition)],
         serde_json::Value::Array(list) => {
             let mut candidates = Vec::new();
             for entry in list {
-                candidates.extend(resolve_exports_target_candidates(
+                candidates.extend(resolve_target_candidates_with_flavor(
                     entry,
                     conditions,
                     compiler_version,
+                    is_types_condition,
                 ));
             }
             candidates
@@ -168,20 +211,24 @@ pub(crate) fn resolve_exports_target_candidates(
                         if value.is_null() {
                             return Vec::new();
                         }
-                        candidates.extend(resolve_exports_target_candidates(
+                        let nested_is_types = is_types_condition || base_condition == "types";
+                        candidates.extend(resolve_target_candidates_with_flavor(
                             value,
                             conditions,
                             compiler_version,
+                            nested_is_types,
                         ));
                     }
                 } else if conditions.contains(&key.as_str()) {
                     if value.is_null() {
                         return Vec::new();
                     }
-                    candidates.extend(resolve_exports_target_candidates(
+                    let nested_is_types = is_types_condition || key == "types";
+                    candidates.extend(resolve_target_candidates_with_flavor(
                         value,
                         conditions,
                         compiler_version,
+                        nested_is_types,
                     ));
                 }
             }
@@ -189,37 +236,6 @@ pub(crate) fn resolve_exports_target_candidates(
         }
         _ => Vec::new(),
     }
-}
-
-pub(crate) fn resolve_imports_subpath_candidates(
-    imports: &serde_json::Value,
-    subpath_key: &str,
-    conditions: &[&str],
-    compiler_version: SemVer,
-) -> Vec<String> {
-    let serde_json::Value::Object(map) = imports else {
-        return Vec::new();
-    };
-
-    let has_subpath_keys = map.keys().any(|key| key.starts_with('#'));
-    if !has_subpath_keys {
-        return Vec::new();
-    }
-
-    if let Some(value) = map.get(subpath_key) {
-        return resolve_exports_target_candidates(value, conditions, compiler_version);
-    }
-
-    if let Some((wildcard, value)) =
-        find_best_subpath_pattern(map, |key| match_imports_subpath(key, subpath_key))
-    {
-        return resolve_exports_target_candidates(value, conditions, compiler_version)
-            .into_iter()
-            .map(|target| apply_exports_subpath(&target, &wildcard))
-            .collect();
-    }
-
-    Vec::new()
 }
 
 /// `(prefix_len, suffix_len)` specificity for a package.json `exports` /
@@ -494,13 +510,13 @@ mod tests {
             }),
         ] {
             assert_eq!(
-                resolve_imports_subpath_candidates(
+                resolve_imports_subpath_candidates_with_flavor(
                     &imports,
                     "#abc/abc",
                     &["default"],
                     TEST_VERSION,
                 ),
-                vec!["./by-abc-star.js".to_string()],
+                vec![("./by-abc-star.js".to_string(), false)],
             );
         }
     }
