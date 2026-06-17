@@ -10,7 +10,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Check whether `node_idx` is lexically enclosed within a class declaration
     /// whose binder symbol equals `target_class_sym`.
     ///
