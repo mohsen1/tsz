@@ -502,6 +502,21 @@ impl<'a> CheckerState<'a> {
             return self.get_type_from_type_reference(idx);
         }
 
+        // Poison an indexed access whose object is an unresolved-module import
+        // to `any`. `tsc` resolves a reference to a generic interface from a
+        // module it could not find (TS2307) to `any`, so `T[K]` collapses to
+        // `any[K] = any` instead of a deferred `Application(UnresolvedTypeName,
+        // …)[K]`. Keeping it deferred false-fails an arrow initializer with
+        // TS2322 and suppresses the implicit-`any` parameter diagnostics that
+        // `tsc` reports. The object root is detected structurally via
+        // `is_unresolved_import_symbol_id` (#13755/#13780), not by name.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && self.indexed_access_object_is_unresolved_import(node)
+        {
+            return TypeId::ANY;
+        }
+
         // Pre-warm namespace-qualified interface types before entering the &self lowering pass.
         // When `import * as L` is used only in type positions, `symbol_types[L.Foo]` stays unset;
         // `ensure_type_alias_resolved_inner` then bails at the TYPE_ALIAS guard for interfaces,
