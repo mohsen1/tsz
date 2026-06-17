@@ -36,6 +36,13 @@ env:
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
   BENCH_MAX_TARGET_AGE_HOURS: "48"
+  # A healthy Bench run whose slowest shard times out at 105m can legitimately
+  # stay in_progress for ~2h, so bench-catch-up-after-active already treats a
+  # still-active run as stale after 180m. Mirror that bound in the gate: past
+  # this age an "active" run is presumed wedged (e.g. an orphaned Cloud Build
+  # left running after its GH run was cancelled), so we stop deferring fresh
+  # runs to it instead of freezing published benchmark data indefinitely.
+  BENCH_STALE_ACTIVE_RUN_MINUTES: "180"
   BENCH_CATCH_UP_MIN_INTERVAL_HOURS: "4"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -135,11 +142,11 @@ jobs:
             list_other_active_runs() {
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
-                  --json databaseId,headSha,url \
-                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+                  --json databaseId,headSha,url,createdAt \
+                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status queued --limit 20 \
-                  --json databaseId,headSha,url \
-                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+                  --json databaseId,headSha,url,createdAt \
+                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
               } | sort -u
             }
             if ! active_runs_raw="$(gh_retry list_other_active_runs)"; then
@@ -147,9 +154,21 @@ jobs:
               should_run=false
               active_runs_raw=""
             fi
+            stale_active_minutes="${BENCH_STALE_ACTIVE_RUN_MINUTES:-180}"
+            if ! [[ "$stale_active_minutes" =~ ^[0-9]+$ ]]; then
+              stale_active_minutes=180
+            fi
+            stale_active_seconds=$((stale_active_minutes * 60))
+            now_epoch="$(date -u +%s)"
             active_runs=""
-            while IFS=$'\t' read -r run_id run_sha run_url; do
+            while IFS=$'\t' read -r run_id run_sha run_url run_created; do
               [[ -n "${run_id:-}" ]] || continue
+              run_created_epoch="$(date -u -d "${run_created}" +%s 2>/dev/null || true)"
+              if [[ "$run_created_epoch" =~ ^[0-9]+$ &&
+                    $((now_epoch - run_created_epoch)) -ge "$stale_active_seconds" ]]; then
+                echo "Ignoring active Bench run ${run_id} (${run_url}); it started ${run_created} (>= ${stale_active_minutes}m ago) and is presumed wedged, so it will not block this run."
+                continue
+              fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
