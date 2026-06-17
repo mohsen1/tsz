@@ -330,7 +330,7 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// The user's explicit `TSZ_CHECKER_POOL` request, parsed once.
 ///
 /// The bounded checker pool checks files on a fixed pool of `N` long-lived
-/// `CheckerState`s (cost-balanced file assignment, each reused via
+/// `CheckerState`s (round-robin file assignment, each reused via
 /// `switch_to_file`) instead of the per-file fresh checker. This amortises the
 /// O(program) per-file setup over `files / N` files — the lever that unblocks
 /// large multi-file projects.
