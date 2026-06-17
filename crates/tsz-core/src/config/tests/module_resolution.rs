@@ -1499,7 +1499,7 @@ fn config_dir_template_in_base_resolves_to_inheriting_config_dir() {
     .expect("write child");
 
     let merged = load_tsconfig(&child_path).expect("load child");
-    let canonical_app = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+    let canonical_app = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
     let canonical_base = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
 
     let include = merged.include.expect("inherited include present");
