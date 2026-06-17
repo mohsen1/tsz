@@ -341,3 +341,61 @@ type Mit = (typeof oit)[typeof Symbol.iterator];
 "#,
     );
 }
+
+// ── unique-symbol index via a same-named `type X = typeof X` alias ───────────
+//
+// When a value `const s: unique symbol` and a type `type s = typeof s` share one
+// merged symbol (the HOTScript `rawArgs` pattern), indexing `Obj[s]` in type
+// position resolves the index through the alias body, which the resolver leaves
+// as a self-referential `TypeQuery(s)` rather than rewriting it to
+// `UniqueSymbol(s)`. The member is stored under `__unique_<s>`, so the indexed
+// access must map a unique-symbol-denoting `TypeQuery` to that same key — without
+// the fix the lookup misses and the access wrongly evaluates to `undefined`.
+#[test]
+fn unique_symbol_indexed_access_via_same_named_typeof_alias() {
+    assert_no_ts2322_or_2536(
+        "type literal indexed by same-named typeof alias",
+        r#"
+declare const sym: unique symbol;
+type sym = typeof sym;
+type WithSym = { [sym]: number };
+type Got = WithSym[sym];
+const ok: Got = 5;
+"#,
+    );
+    // Negative side: the access resolves to the real member type, so a mismatched
+    // assignment must still error (the value isn't silently widened to `unknown`).
+    let diags = crate::test_utils::check_source_diagnostics(
+        r#"
+declare const sym: unique symbol;
+type sym = typeof sym;
+type WithSym = { [sym]: number };
+type Got = WithSym[sym];
+const bad: Got = "x";
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for string assigned to number-typed symbol member; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+// Binder-name variation: the same shape must work regardless of the chosen
+// identifier, confirming the fix keys on the symbol binding, not the name text.
+#[test]
+fn unique_symbol_indexed_access_via_same_named_typeof_alias_renamed() {
+    assert_no_ts2322_or_2536(
+        "renamed binder, same-named typeof alias",
+        r#"
+declare const tag: unique symbol;
+type tag = typeof tag;
+interface Carrier { [tag]: string }
+type Inner = Carrier[tag];
+const ok: Inner = "hello";
+"#,
+    );
+}

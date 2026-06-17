@@ -3,15 +3,52 @@
 use crate::construction::TypeDatabase;
 use crate::objects::ApparentMemberKind;
 use crate::objects::apparent::is_member;
-use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
+use crate::relations::subtype::TypeResolver;
+use crate::types::{
+    IntrinsicKind, LiteralValue, SymbolRef, TupleElement, TypeData, TypeId, TypeListId,
+};
 use crate::utils;
 use crate::visitor::{TypeVisitor, array_element_type, literal_number, tuple_list_id};
 
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
-    ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID,
+    ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 use super::apparent::make_apparent_method_type;
+
+impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// A symbol-typed index key (`UniqueSymbol`, or a unique-symbol-denoting
+    /// `typeof` query) — must route to a symbol index, never a string index.
+    pub(super) fn index_type_is_symbol_key(&self, index_type: TypeId) -> bool {
+        match self.interner().lookup(index_type) {
+            Some(TypeData::UniqueSymbol(_)) => true,
+            Some(TypeData::TypeQuery(sym)) => self.type_query_denotes_symbol(sym),
+            _ => false,
+        }
+    }
+
+    /// True when `typeof <sym>` denotes a `symbol`/`unique symbol` (a valid key),
+    /// not a class/function constructor. A unique-symbol const's query resolves
+    /// back to itself or to `UniqueSymbol`/`symbol`.
+    pub(super) fn type_query_denotes_symbol(&self, sym: SymbolRef) -> bool {
+        if self
+            .resolver()
+            .well_known_symbol_name_for_ref(sym)
+            .is_some()
+        {
+            return true;
+        }
+        match self.resolver().resolve_type_query(sym, self.interner()) {
+            Some(resolved) => {
+                matches!(
+                    self.interner().lookup(resolved),
+                    Some(TypeData::UniqueSymbol(_) | TypeData::Intrinsic(IntrinsicKind::Symbol))
+                ) || self.interner().lookup(resolved) == Some(TypeData::TypeQuery(sym))
+            }
+            None => false,
+        }
+    }
+}
 
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
