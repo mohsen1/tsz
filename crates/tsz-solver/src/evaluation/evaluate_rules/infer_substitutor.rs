@@ -594,12 +594,27 @@ impl<'a> InferSubstitutor<'a> {
         // The mapped binder shadows an outer infer binding with the same name in
         // `name_type` and `template`, so cached substitutions from the constraint
         // must not leak across this scope boundary.
+        //
+        // But the shadow only exists when an infer binding of that name is
+        // actually masked. When `masked` is `None`, `name` was not bound, so the
+        // `bindings.remove` above is a no-op and the binding environment inside
+        // `f` is *identical* to the caller's: every `visiting` memo entry stays
+        // valid and must be preserved. This is the common case for an infer
+        // pattern such as `{ [X in K]: F<T[K], R> }`, whose mapped iteration
+        // variable `X` does not collide with the captured infer variables
+        // (`K`/`R`). Resetting the memo there would discard correct work and
+        // force re-substitution of every shared subtree under each mapped scope —
+        // the dominant infer-substitution hotspot on deeply-nested mapped/
+        // conditional expansions (kysely #10663). Keeping the memo across a
+        // non-shadowing scope is behavior-identical; only the redundant re-walk
+        // is removed.
+        let Some(masked) = masked else {
+            return f(self);
+        };
         let outer_visiting = std::mem::take(&mut self.visiting);
         let result = f(self);
         self.visiting = outer_visiting;
-        if let Some(masked) = masked {
-            self.bindings.insert(name, masked);
-        }
+        self.bindings.insert(name, masked);
         result
     }
 }

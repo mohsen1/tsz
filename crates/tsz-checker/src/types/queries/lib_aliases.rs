@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if crate::checkers_domain::should_probe_stack()
-            && stacker::remaining_stack().unwrap_or(usize::MAX) < 512 * 1024
+            && crate::checkers_domain::headroom_below(512 * 1024)
         {
             crate::checkers_domain::trip_stack_overflow();
             return None;
