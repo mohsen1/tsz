@@ -228,12 +228,28 @@ impl<'a> CheckerState<'a> {
         // redundant pass dominated their type-check time. The second pass still
         // runs when first-pass progress was made (`result != type_id`), since
         // the more powerful resolver may then lower sub-terms further.
-        let first_pass_made_no_progress = first_pass_silent_bailed && result == type_id;
-        let first_pass_unresolved_application = result != type_id
-            && crate::query_boundaries::spread::contains_unresolved_application(
+        // An unchanged `Application(UnresolvedTypeName(name), args)` residue is
+        // the exception to the silent-bail no-progress short-circuit: the
+        // `TypeEnvironment` resolver only resolves such names from a lazily-seeded
+        // map and returns `None` for an import-alias name it has not seen, so the
+        // first pass *cannot* make progress regardless of depth. The residue
+        // arises when a `"prop" in x` narrowing captures a receiver typed through
+        // an import alias. Two things must still happen: (1) cross-arena delegate
+        // the declaring def's body even when `result == type_id` (the no-progress
+        // case the old `result != type_id` gate skipped) — without it
+        // `resolve_lazy(def)` stays `None` because the foreign interface body was
+        // never registered into this importing checker's envs; (2) run the
+        // `CheckerContext` resolver pass, which recovers the def by name and
+        // expands the now-registered body. Without both, property access reports
+        // false `TS2339` on inherited (and own) members.
+        let result_has_unresolved_application =
+            crate::query_boundaries::spread::contains_unresolved_application(
                 self.ctx.types,
                 result,
             );
+        let first_pass_made_no_progress =
+            first_pass_silent_bailed && result == type_id && !result_has_unresolved_application;
+        let first_pass_unresolved_application = result_has_unresolved_application;
         if first_pass_unresolved_application {
             self.resolve_unresolved_application_bodies(result);
         }
@@ -256,10 +272,7 @@ impl<'a> CheckerState<'a> {
                 // resolver. CheckerContext can walk the merged binder graph
                 // via `resolve_unresolved_type_name`, recover the alias's
                 // `DefId`, and let the application expand normally.
-                || crate::query_boundaries::spread::contains_unresolved_application(
-                    self.ctx.types,
-                    result,
-                )
+                || result_has_unresolved_application
                 // `result != type_id` guards against re-running the second pass
                 // when the first pass deferred a generic conditional unchanged
                 // (type params present); we only retry when the first pass
