@@ -107,6 +107,38 @@ impl ContentPredicate for TypeParamPredicate {
     }
 }
 
+/// `TypeParameter`/`Infer`/`ThisType`/`BoundParameter` containment over the
+/// FREE child set: generic function/callable signature bodies bind their own
+/// parameters and are skipped wholesale (`skip_generic_signature_bodies`).
+///
+/// Matches the same node kinds as [`TypeParamPredicate`] but walks the narrower
+/// [`ChildPolicy::FREE_TYPE_PARAMS`] surface, so a `<T>() => T` signature does
+/// not force the enclosing type to count as containing a free `T`. Freeness is
+/// a pure structural function of the `TypeId` within one interner, so the deep
+/// walk is memoized per node in its own project-wide cache slot — the hot
+/// `resolve_operands` gate asks this twice per conditional node.
+pub(super) struct FreeTypeParamPredicate;
+impl ContentPredicate for FreeTypeParamPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(
+            key,
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+        )
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_free_type_params_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_free_type_params_cache(type_id, result);
+    }
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy::FREE_TYPE_PARAMS
+    }
+}
+
 struct ParamOrInferPredicate;
 impl ContentPredicate for ParamOrInferPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
@@ -884,7 +916,17 @@ pub fn contains_free_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) 
         ) => return false,
         _ => {}
     }
-    crate::visitors::visitor_predicates::contains_free_type_parameters(db, type_id)
+    // The freeness answer is immutable per `TypeId` within one interner (a
+    // purely structural property: a generic signature binds its own parameters,
+    // everything else is the union of its children). Memoize the deep
+    // FREE-policy walk per node in the project-wide cache so the many fresh
+    // evaluators created during deferred conditional/mapped re-evaluation share
+    // closed subtrees instead of re-walking them. Mirrors the sibling
+    // `contains_param_or_infer_db` memo (#13250).
+    if let Some(cached) = db.contains_free_type_params_cached(type_id) {
+        return cached;
+    }
+    contains_content_cached(db, type_id, &FreeTypeParamPredicate)
 }
 
 /// Check if a type contains generic type parameters, excluding `ThisType`.

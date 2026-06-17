@@ -104,6 +104,16 @@ pub trait TypePredicateCache {
     /// interner cache. Default impl is a no-op.
     fn set_contains_never_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached free-type-parameter containment result if available.
+    /// Default impl returns `None` (no caching).
+    fn contains_free_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record a free-type-parameter containment result in the shared interner
+    /// cache. Default impl is a no-op.
+    fn set_contains_free_type_params_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_parameters_db(type_id)` result if
     /// available. Default impl returns `None` (no caching).
     fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
@@ -834,6 +844,14 @@ impl TypePredicateCache for TypeInterner {
             PredicateCacheKind::ContainsParamOrInferRoot,
             result,
         );
+    }
+
+    fn contains_free_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsFreeTypeParams)
+    }
+
+    fn set_contains_free_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsFreeTypeParams, result);
     }
 
     fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
