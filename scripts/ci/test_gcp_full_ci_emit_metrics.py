@@ -52,7 +52,17 @@ write_emit_metric "{out}" 13401 13530 1 0 1619 1669 11862
     def test_single_shard_emit_publishes_latest_metric(self):
         body = self.function_body("run_emit_shard", "\nrun_fourslash_shard() {")
         validate_idx = body.index(
-            'validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1',
+            'validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1',
+        )
+        write_idx = body.index('write_emit_metric "$METRICS_DIR/emit.json"', validate_idx)
+        publish_idx = body.index('publish_latest_metric emit "$METRICS_DIR/emit.json"', write_idx)
+        self.assertLess(validate_idx, write_idx)
+        self.assertLess(write_idx, publish_idx)
+
+    def test_emit_aggregate_validation_failure_is_fatal(self):
+        body = self.function_body("run_emit_aggregate", "\nrun_fourslash_shard() {")
+        validate_idx = body.index(
+            'validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards" || return 1',
         )
         write_idx = body.index('write_emit_metric "$METRICS_DIR/emit.json"', validate_idx)
         publish_idx = body.index('publish_latest_metric emit "$METRICS_DIR/emit.json"', write_idx)
