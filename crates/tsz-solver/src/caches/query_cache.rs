@@ -226,6 +226,12 @@ pub struct QueryCache<'a> {
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
+    /// Memo for completed top-level `collect_properties_cached(type_id)` results.
+    /// Shares this cache's `clear()`/lifecycle envelope (same as
+    /// `object_spread_properties_cache`); only top-level (non-re-entrant)
+    /// collections are stored, so entries are always complete.
+    collect_properties_result_cache:
+        RefCell<FxHashMap<TypeId, crate::objects::PropertyCollectionResult>>,
     subtype_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
     /// Separate cache for assignability to prevent loose results from poisoning subtype checks.
     assignability_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
@@ -297,6 +303,7 @@ impl<'a> QueryCache<'a> {
             application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
+            collect_properties_result_cache: RefCell::new(FxHashMap::default()),
             subtype_cache: RefCell::new(FxHashMap::default()),
             assignability_cache: RefCell::new(FxHashMap::default()),
             property_cache: RefCell::new(FxHashMap::default()),
@@ -324,6 +331,7 @@ impl<'a> QueryCache<'a> {
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
         self.object_spread_properties_cache.borrow_mut().clear();
+        self.collect_properties_result_cache.borrow_mut().clear();
         self.subtype_cache.borrow_mut().clear();
         self.assignability_cache.borrow_mut().clear();
         self.property_cache.borrow_mut().clear();
@@ -1777,6 +1785,26 @@ impl QueryDatabase for QueryCache<'_> {
         let result = self.collect_object_spread_properties_inner(spread_type, &mut visited);
         self.insert_object_spread_properties_cache(spread_type, result.clone());
         result
+    }
+
+    fn collect_properties_result_cached(
+        &self,
+        type_id: TypeId,
+    ) -> Option<crate::objects::PropertyCollectionResult> {
+        self.collect_properties_result_cache
+            .borrow()
+            .get(&type_id)
+            .cloned()
+    }
+
+    fn set_collect_properties_result_cache(
+        &self,
+        type_id: TypeId,
+        result: crate::objects::PropertyCollectionResult,
+    ) {
+        self.collect_properties_result_cache
+            .borrow_mut()
+            .insert(type_id, result);
     }
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
