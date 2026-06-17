@@ -166,14 +166,23 @@ impl TypeInternerCache {
         }
     }
 
+    /// Insert into the lookup cache, returning `true` when the slot already
+    /// held a live entry (non-empty tag) for a *different* `TypeId` in this
+    /// interner — a direct-mapped collision that evicts a still-useful entry.
+    /// The boolean drives the `#13246` locality eviction counter; the insert
+    /// itself is unconditional and correctness is unaffected (a stale slot is
+    /// always re-validated on probe via tag + `instance_id`).
     #[inline(always)]
-    fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
+    fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) -> bool {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
+        let prev = self.lookup[idx].get();
+        let evicted = prev.tag != 0 && (prev.tag != id.0 || prev.instance_id != instance_id);
         self.lookup[idx].set(LookupCacheEntry {
             tag: id.0,
             instance_id,
             data,
         });
+        evicted
     }
 
     #[inline(always)]
@@ -187,15 +196,24 @@ impl TypeInternerCache {
         }
     }
 
+    /// Insert into the intern cache, returning `true` when the slot already
+    /// held a live entry (non-zero `result`) for a *different* hash/instance —
+    /// a direct-mapped collision that evicts a still-useful entry. Drives the
+    /// `#13246` intern-side eviction counter; correctness is unaffected
+    /// (probe re-validates hash + key + `instance_id`).
     #[inline(always)]
-    fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
+    fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) -> bool {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
+        let prev = self.intern[idx].get();
+        let evicted =
+            prev.result != TypeId::NONE && (prev.hash != hash || prev.instance_id != instance_id);
         self.intern[idx].set(InternCacheEntry {
             hash,
             instance_id,
             key,
             result,
         });
+        evicted
     }
 
     #[inline]
@@ -265,9 +283,12 @@ pub(super) fn lookup_probe(id: TypeId, instance_id: u32) -> Option<TypeData> {
     TL_CACHE.with(|cache| cache.lookup_probe(id, instance_id))
 }
 
+/// Insert into the TLS lookup cache. Returns `true` when a live entry for a
+/// different `TypeId` was evicted (a direct-mapped collision), which the
+/// `lookup()` hot path forwards to the `#13246` eviction counter.
 #[inline(always)]
-pub(super) fn lookup_insert(id: TypeId, instance_id: u32, data: TypeData) {
-    TL_CACHE.with(|cache| cache.lookup_insert(id, instance_id, data));
+pub(super) fn lookup_insert(id: TypeId, instance_id: u32, data: TypeData) -> bool {
+    TL_CACHE.with(|cache| cache.lookup_insert(id, instance_id, data))
 }
 
 #[inline(always)]
@@ -275,9 +296,11 @@ pub(super) fn intern_probe(hash: u64, instance_id: u32, key: &TypeData) -> Optio
     TL_CACHE.with(|cache| cache.intern_probe(hash, instance_id, key))
 }
 
+/// Insert into the TLS intern cache. Returns `true` when a live entry for a
+/// different hash/instance was evicted (a direct-mapped collision).
 #[inline(always)]
-pub(super) fn intern_insert(hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
-    TL_CACHE.with(|cache| cache.intern_insert(hash, instance_id, key, result));
+pub(super) fn intern_insert(hash: u64, instance_id: u32, key: TypeData, result: TypeId) -> bool {
+    TL_CACHE.with(|cache| cache.intern_insert(hash, instance_id, key, result))
 }
 
 #[inline]
@@ -288,4 +311,81 @@ pub(super) fn string_probe(hash: u64, instance_id: u32, s: &str) -> Option<Atom>
 #[inline]
 pub(super) fn string_insert(hash: u64, instance_id: u32, s: &str, result: Atom) {
     TL_CACHE.with(|cache| cache.string_insert(hash, instance_id, s, result));
+}
+
+// ---------------------------------------------------------------------------
+// Promoted global lookup tier (opt-in probe, `TSZ_PROMOTE_FIRST`, issue #13246)
+// ---------------------------------------------------------------------------
+// Measurement-only. The per-instance TLS lookup cache is small (1024 slots) and
+// thrashes once a file's working set exceeds it, sending lookups to the cold
+// sharded `RwLock<Vec<TypeData>>`. This promoted tier is a *much larger*
+// process-global direct-mapped cache. When the probe is ON, every cold-Vec
+// fallback also populates this tier, and the next time the same id misses the
+// TLS cache the tier serves it before the cold shard. The fraction of TLS
+// misses the tier catches (`interner_promote_tier_hits`) is a direct estimate
+// of how much a bounded-partition / promoted hot-set interner would cut the
+// cold-Vec fallback rate. It never changes the answer: the tier only ever holds
+// `(instance_id, TypeId) -> TypeData` pairs the cold shard already returned, so
+// a tier hit yields the identical `TypeData` the shard read would have.
+//
+// The tier is sized to comfortably hold a large file's working set (256K slots,
+// ~12 bytes/slot under `Cell<u32 tag + u32 instance + TypeData>` ≈ a few MB) so
+// it measures the "no-thrash" ceiling rather than a second small cache. It is
+// only allocated when `TSZ_PROMOTE_FIRST` is set, so default runs never pay for
+// it. A `RwLock` guards interior mutability for `Sync`; under the single-thread
+// CLI/bench workload the read/write locks are uncontended.
+
+const PROMOTE_TIER_BITS: u32 = 18;
+const PROMOTE_TIER_SIZE: usize = 1 << PROMOTE_TIER_BITS; // 262_144
+const PROMOTE_TIER_MASK: u32 = (PROMOTE_TIER_SIZE as u32) - 1;
+
+#[derive(Clone, Copy)]
+struct PromoteTierEntry {
+    tag: u32,
+    instance_id: u32,
+    data: TypeData,
+}
+
+const EMPTY_PROMOTE_ENTRY: PromoteTierEntry = PromoteTierEntry {
+    tag: 0,
+    instance_id: 0,
+    data: TypeData::Error,
+};
+
+static PROMOTE_TIER: std::sync::OnceLock<std::sync::RwLock<Vec<PromoteTierEntry>>> =
+    std::sync::OnceLock::new();
+
+#[inline]
+fn promote_tier() -> &'static std::sync::RwLock<Vec<PromoteTierEntry>> {
+    PROMOTE_TIER
+        .get_or_init(|| std::sync::RwLock::new(vec![EMPTY_PROMOTE_ENTRY; PROMOTE_TIER_SIZE]))
+}
+
+/// Probe the promoted global tier for a `TypeId` after a TLS-cache miss.
+/// Returns the cached `TypeData` when present for this interner. Only called
+/// when `TSZ_PROMOTE_FIRST` is enabled; otherwise the tier is never touched.
+#[inline]
+pub(super) fn promote_tier_probe(id: TypeId, instance_id: u32) -> Option<TypeData> {
+    let idx = (id.0 & PROMOTE_TIER_MASK) as usize;
+    let tier = promote_tier().read().ok()?;
+    let entry = tier[idx];
+    if entry.tag == id.0 && entry.instance_id == instance_id {
+        Some(entry.data)
+    } else {
+        None
+    }
+}
+
+/// Populate the promoted global tier after a cold-Vec fallback resolved a
+/// `TypeId`. Only called when `TSZ_PROMOTE_FIRST` is enabled.
+#[inline]
+pub(super) fn promote_tier_insert(id: TypeId, instance_id: u32, data: TypeData) {
+    let idx = (id.0 & PROMOTE_TIER_MASK) as usize;
+    if let Ok(mut tier) = promote_tier().write() {
+        tier[idx] = PromoteTierEntry {
+            tag: id.0,
+            instance_id,
+            data,
+        };
+    }
 }

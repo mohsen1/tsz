@@ -21,66 +21,84 @@ use crate::module_resolver_helpers::{
 
 use super::{CompilerOptions, TsConfig};
 
-/// Resolve `extends` to an absolute path on disk.
+/// Resolve a tsconfig `extends` specifier to the config file it names on disk.
 ///
-/// Handles four cases in order:
-/// 1. relative or absolute paths (`./base.json`, `/abs/base.json`);
-/// 2. package specifiers whose `package.json` exports map points to a
-///    config file (`pkg/tsconfig.json` -> `node_modules/pkg/configs/...`);
-/// 3. package-name extends that walk `node_modules` upward;
-/// 4. a final fallback that treats the value as a relative path.
-pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
+/// Returns `Ok(Some(path))` for a successfully located, existing config file,
+/// `Ok(None)` when the specifier cannot be resolved to an existing file (the
+/// caller then reports TS6053 and continues, matching `tsc`'s
+/// `getExtendsConfigPath`), and `Err` only for a malformed `current_path`.
+///
+/// Resolution mirrors `tsc`:
+/// - **Relative / absolute** specifiers (`./base`, `../base.json`, `/abs`)
+///   resolve against the declaring config's directory, appending `.json` when
+///   the specifier carries no extension. No directory lookup is attempted (a
+///   relative `extends` must name a file, like `tsc`).
+/// - **Non-relative** specifiers go through Node module resolution: first the
+///   package's `package.json` `"exports"` map, then a `node_modules` walk that
+///   honors an explicit file subpath (`pkg/base.json`), an extensionless
+///   subpath (`pkg/recommended` -> `recommended.json`), and a bare package
+///   whose root holds a `tsconfig.json`.
+pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<Option<PathBuf>> {
     let base_dir = current_path
         .parent()
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
 
-    // Check if this is a relative or absolute path
+    // Relative or absolute path: resolve against the declaring config's dir.
     if extends.starts_with('.') || extends.starts_with('/') {
-        let mut candidate = PathBuf::from(extends);
-        if candidate.extension().is_none() {
-            candidate.set_extension("json");
-        }
-
-        if candidate.is_absolute() {
-            return Ok(candidate);
-        }
-        return Ok(base_dir.join(candidate));
+        let candidate = if Path::new(extends).is_absolute() {
+            PathBuf::from(extends)
+        } else {
+            base_dir.join(extends)
+        };
+        return Ok(probe_extends_candidate(&candidate, false));
     }
 
+    // Non-relative: Node module resolution. `package.json` exports first.
     if let Some(resolved) = resolve_package_extends_path(current_path, extends) {
-        return Ok(resolved);
+        return Ok(Some(resolved));
     }
 
-    // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json")
-    // Resolve through node_modules, walking up directory ancestors.
+    // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json").
+    // Walk `node_modules` upward through directory ancestors.
     let mut search_dir = base_dir.to_path_buf();
     loop {
-        let mut candidate = search_dir.join("node_modules").join(extends);
-        if candidate.extension().is_none() {
-            candidate.set_extension("json");
-        }
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-        // Also try the package's tsconfig.json if extends points to a directory
-        let dir_candidate = search_dir.join("node_modules").join(extends);
-        if dir_candidate.is_dir() {
-            let tsconfig_in_dir = dir_candidate.join("tsconfig.json");
-            if tsconfig_in_dir.exists() {
-                return Ok(tsconfig_in_dir);
-            }
+        let candidate = search_dir.join("node_modules").join(extends);
+        if let Some(resolved) = probe_extends_candidate(&candidate, true) {
+            return Ok(Some(resolved));
         }
         if !search_dir.pop() {
             break;
         }
     }
 
-    // Fallback: treat as relative path (original behavior)
-    let mut candidate = PathBuf::from(extends);
-    if candidate.extension().is_none() {
-        candidate.set_extension("json");
+    Ok(None)
+}
+
+/// Probe a single candidate path for an `extends` target, returning the
+/// existing config file it names or `None`.
+///
+/// Tries, in order: the candidate as written, the candidate with a `.json`
+/// extension appended when it has none, and — only when `allow_dir_tsconfig`
+/// is set (the `node_modules` package-root case) — a `tsconfig.json` inside the
+/// candidate directory. Existence is checked at every step so a miss is
+/// reported as `None` rather than a path that does not exist.
+fn probe_extends_candidate(candidate: &Path, allow_dir_tsconfig: bool) -> Option<PathBuf> {
+    if candidate.is_file() {
+        return Some(candidate.to_path_buf());
     }
-    Ok(base_dir.join(candidate))
+    if candidate.extension().is_none() {
+        let with_json = candidate.with_extension("json");
+        if with_json.is_file() {
+            return Some(with_json);
+        }
+    }
+    if allow_dir_tsconfig && candidate.is_dir() {
+        let nested = candidate.join("tsconfig.json");
+        if nested.is_file() {
+            return Some(nested);
+        }
+    }
+    None
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -230,23 +248,11 @@ fn resolve_package_extends_export_value(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_config_export_target(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    // A package `"exports"` target names a package-relative path; probe it the
+    // same way as a `node_modules` extends candidate (exact file, `.json`
+    // append, or directory `tsconfig.json`).
     let resolved = package_dir.join(target.trim_start_matches("./"));
-    if resolved.is_file() {
-        return Some(resolved);
-    }
-    if resolved.extension().is_none() {
-        let json_path = resolved.with_extension("json");
-        if json_path.is_file() {
-            return Some(json_path);
-        }
-    }
-    if resolved.is_dir() {
-        let tsconfig_path = resolved.join("tsconfig.json");
-        if tsconfig_path.is_file() {
-            return Some(tsconfig_path);
-        }
-    }
-    None
+    probe_extends_candidate(&resolved, true)
 }
 
 /// Anchor relative path-like compiler options at the directory of the
@@ -321,6 +327,113 @@ fn anchor_relative_path_option(option: &mut Option<String>, base_dir: &Path) {
     let joined = base_abs.join(candidate);
     let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
     *option = Some(normalized.to_string_lossy().into_owned());
+}
+
+/// The TypeScript 5.5 `${configDir}` tsconfig template variable.
+///
+/// When a path-shaped tsconfig field begins with this token, `tsc` substitutes
+/// it with the directory of the config file that is being compiled in this
+/// invocation — i.e. for an `extends` chain it resolves to the *inheriting*
+/// (leaf) config's directory, never the base config's own directory. That is
+/// the whole point of the feature: a shared base config can write
+/// `"${configDir}/src"` and have every consumer resolve it against the
+/// consumer's directory.
+const CONFIG_DIR_TEMPLATE: &str = "${configDir}";
+
+/// Substitute the `${configDir}` template in every path-shaped tsconfig field
+/// against `config_dir`, the directory of the root config being compiled.
+///
+/// `config_dir` is the same value for every config in an `extends` chain (the
+/// leaf/inheriting config's directory), so callers thread the root directory
+/// through the recursion unchanged. Substitution must run *before* the
+/// `extends` anchoring helpers: it rewrites a leading `${configDir}` into an
+/// absolute, lexically-normalized path, which the `anchor_*` helpers then leave
+/// untouched (they skip already-absolute values). Fields whose value does not
+/// start with the template are left exactly as written so ordinary relative
+/// paths keep being anchored at their declaring config's directory.
+pub(super) fn substitute_config_dir_templates(config: &mut TsConfig, config_dir: &Path) {
+    // Root file selectors may carry glob metacharacters (`**`, `*.ts`), so they
+    // are normalized lexically (never canonicalized) just like the anchoring
+    // path for inherited selectors.
+    for selectors in [
+        config.files.as_mut(),
+        config.include.as_mut(),
+        config.exclude.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for selector in selectors {
+            substitute_config_dir_in_place(selector, config_dir);
+        }
+    }
+
+    let Some(opts) = config.compiler_options.as_mut() else {
+        return;
+    };
+    for option in [
+        &mut opts.base_url,
+        &mut opts.root_dir,
+        &mut opts.out_dir,
+        &mut opts.declaration_dir,
+        &mut opts.out_file,
+        &mut opts.ts_build_info_file,
+    ] {
+        if let Some(value) = option.as_mut() {
+            substitute_config_dir_in_place(value, config_dir);
+        }
+    }
+    for list in [opts.root_dirs.as_mut(), opts.type_roots.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        for entry in list {
+            substitute_config_dir_in_place(entry, config_dir);
+        }
+    }
+    if let Some(paths) = opts.paths.as_mut() {
+        for substitutions in paths.values_mut() {
+            for substitution in substitutions {
+                substitute_config_dir_in_place(substitution, config_dir);
+            }
+        }
+    }
+}
+
+/// Rewrite a single string in place when it begins with `${configDir}`.
+fn substitute_config_dir_in_place(value: &mut String, config_dir: &Path) {
+    if let Some(replaced) = substitute_config_dir(value, config_dir) {
+        *value = replaced;
+    }
+}
+
+/// Replace a leading `${configDir}` token with `config_dir` and lexically
+/// normalize the result. Returns `None` when the value does not start with the
+/// template, so non-template paths are left byte-for-byte unchanged.
+///
+/// Mirrors `tsc`'s `getSubstitutedPathWithConfigDirTemplate`, which rewrites the
+/// template to `./` and resolves it against the config directory: a bare
+/// `${configDir}` becomes the directory itself, and `${configDir}/src` becomes
+/// `<config_dir>/src`. The template is honored only at the start of the value
+/// (the TS spec restricts it to the leading segment).
+fn substitute_config_dir(value: &str, config_dir: &Path) -> Option<String> {
+    let rest = value.strip_prefix(CONFIG_DIR_TEMPLATE)?;
+    // Drop the single separator that follows the token so the remainder joins
+    // as a relative path; `${configDir}` on its own resolves to the directory.
+    let rest = rest
+        .strip_prefix('/')
+        .or_else(|| rest.strip_prefix('\\'))
+        .unwrap_or(rest);
+    let joined = if rest.is_empty() {
+        config_dir.to_path_buf()
+    } else {
+        config_dir.join(rest)
+    };
+    Some(
+        lexically_normalize_selector(&joined)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 pub(super) fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
@@ -547,6 +660,79 @@ mod tests {
     use super::super::TsConfigReference;
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn substitute_config_dir_expands_root_selectors_and_path_options() {
+        let config_dir = Path::new("/proj/app");
+        let mut config = TsConfig {
+            include: Some(vec![
+                "${configDir}/src".to_string(),
+                "src/**/*.ts".to_string(),
+            ]),
+            exclude: Some(vec!["${configDir}/dist".to_string()]),
+            files: Some(vec!["${configDir}/entry.ts".to_string()]),
+            compiler_options: Some(CompilerOptions {
+                base_url: Some("${configDir}".to_string()),
+                out_dir: Some("${configDir}/dist".to_string()),
+                type_roots: Some(vec![
+                    "${configDir}/types".to_string(),
+                    "./node_modules/@types".to_string(),
+                ]),
+                paths: Some(
+                    [("@app/*".to_string(), vec!["${configDir}/src/*".to_string()])]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        substitute_config_dir_templates(&mut config, config_dir);
+
+        let include = config.include.as_ref().unwrap();
+        assert_eq!(
+            include[0], "/proj/app/src",
+            "${{configDir}}/src resolves against the root config dir"
+        );
+        assert_eq!(
+            include[1], "src/**/*.ts",
+            "non-template selectors are left for the extends anchoring step"
+        );
+        assert_eq!(config.exclude.as_ref().unwrap()[0], "/proj/app/dist");
+        assert_eq!(config.files.as_ref().unwrap()[0], "/proj/app/entry.ts");
+
+        let opts = config.compiler_options.as_ref().unwrap();
+        assert_eq!(
+            opts.base_url.as_deref(),
+            Some("/proj/app"),
+            "bare ${{configDir}} resolves to the directory itself"
+        );
+        assert_eq!(opts.out_dir.as_deref(), Some("/proj/app/dist"));
+        let type_roots = opts.type_roots.as_ref().unwrap();
+        assert_eq!(type_roots[0], "/proj/app/types");
+        assert_eq!(
+            type_roots[1], "./node_modules/@types",
+            "non-template entries untouched"
+        );
+        assert_eq!(opts.paths.as_ref().unwrap()["@app/*"][0], "/proj/app/src/*");
+    }
+
+    #[test]
+    fn substitute_config_dir_only_matches_leading_token() {
+        let config_dir = Path::new("/proj");
+        let mut config = TsConfig {
+            // The TS spec only honors `${configDir}` at the start of a value.
+            include: Some(vec!["src/${configDir}/x".to_string()]),
+            ..Default::default()
+        };
+        substitute_config_dir_templates(&mut config, config_dir);
+        assert_eq!(
+            config.include.as_ref().unwrap()[0],
+            "src/${configDir}/x",
+            "a non-leading template is left literal, matching tsc"
+        );
+    }
 
     #[test]
     fn merge_configs_child_overrides_base_compiler_options() {
@@ -788,22 +974,38 @@ mod tests {
         let temp = tempdir().unwrap();
         let project = temp.path().join("p");
         std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("base.json"), "{}").unwrap();
         let child = project.join("tsconfig.json");
 
+        // Extensionless relative specifier resolves by appending `.json`.
         let resolved = resolve_extends_path(&child, "./base").unwrap();
-        assert_eq!(resolved, project.join("base.json"));
+        assert_eq!(resolved, Some(project.join("base.json")));
+    }
+
+    #[test]
+    fn resolve_extends_path_relative_missing_is_none() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        // A relative specifier that names no existing file is reported as a
+        // miss (the caller then emits TS6053) rather than a bogus path.
+        let resolved = resolve_extends_path(&child, "./missing").unwrap();
+        assert_eq!(resolved, None);
     }
 
     #[test]
     fn resolve_extends_path_absolute() {
         let temp = tempdir().unwrap();
         let abs = temp.path().join("abs.json");
+        std::fs::write(&abs, "{}").unwrap();
         let project = temp.path().join("p");
         std::fs::create_dir_all(&project).unwrap();
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, abs.to_string_lossy().as_ref()).unwrap();
-        assert_eq!(resolved, abs);
+        assert_eq!(resolved, Some(abs));
     }
 
     #[test]
@@ -817,7 +1019,7 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/recommended").unwrap();
-        assert_eq!(resolved, base);
+        assert_eq!(resolved, Some(base));
     }
 
     #[test]
@@ -831,6 +1033,53 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/tsconfig.base.json").unwrap();
-        assert_eq!(resolved, base);
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_node_modules_walk_from_nested_dir() {
+        // The package config lives in the workspace-root `node_modules`, while
+        // the consuming config is several directories down (the directus /
+        // rocketchat / cal-com monorepo shape). The walk must climb ancestors.
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let pkg = root.join("node_modules").join("@scope").join("tsconfig");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let base = pkg.join("node22.json");
+        std::fs::write(&base, "{}").unwrap();
+        let nested = root.join("apps").join("web");
+        std::fs::create_dir_all(&nested).unwrap();
+        let child = nested.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "@scope/tsconfig/node22.json").unwrap();
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_bare_package_uses_root_tsconfig() {
+        // A bare package specifier resolves to the package root's tsconfig.json.
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        let pkg = project.join("node_modules").join("shared-config");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let base = pkg.join("tsconfig.json");
+        std::fs::write(&base, "{}").unwrap();
+        let child = project.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "shared-config").unwrap();
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_missing_package_is_none() {
+        // A non-relative specifier whose package is not installed resolves to a
+        // miss (caller emits TS6053), never to a literal config-dir path-join.
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "@scope/pkg/file.json").unwrap();
+        assert_eq!(resolved, None);
     }
 }
