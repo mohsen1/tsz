@@ -13,7 +13,11 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            return true;
+            // An indexed access whose object is an unresolved-module import is
+            // poisoned to `any` (see `get_type_from_type_node`); it cannot
+            // supply contextual parameter types, so `tsc` reports the
+            // implicit-`any` parameter diagnostics rather than deferring them.
+            return !self.indexed_access_object_is_unresolved_import(node);
         }
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
