@@ -6,6 +6,7 @@ use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::objects::{ApparentMemberKind, apparent_object_member_kind};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
 
@@ -177,6 +178,28 @@ impl PropertyAccessResult {
     }
 }
 
+/// Key for the deferred-property memo table.
+///
+/// `(obj_type, prop_atom)` is the logical identity of a property access, but the
+/// resolved result of a *deferred* (`Application`/`Lazy`) access also depends on
+/// the two mutable evaluator flags that gate `this`-binding and private-field
+/// visibility. Both are folded into the key so the memo never reuses a result
+/// computed under a different flag configuration.
+type DeferredPropertyMemoKey = (TypeId, Atom, bool, bool);
+
+/// Memo entry for the deferred-property cache.
+///
+/// `InProgress` is the cycle-safety marker: when a `(type, prop)` is currently
+/// being resolved and the resolver re-enters the same key through a cyclic
+/// deferred base, we return without re-walking the cycle. This mirrors the
+/// recursion guard's cycle prevention while *also* caching the eventual result
+/// so repeated accesses to the same deferred property are O(1)-amortized.
+#[derive(Clone, Copy)]
+enum DeferredPropertyMemo {
+    InProgress,
+    Done(PropertyAccessResult),
+}
+
 /// Evaluates property access.
 ///
 /// Uses `QueryDatabase` which provides both `TypeDatabase` and `TypeResolver` functionality,
@@ -196,6 +219,20 @@ pub struct PropertyAccessEvaluator<'a> {
     /// fields. Ordinary string/index lookups keep this false so ES-private
     /// fields do not leak through dynamic property access.
     allow_private_identifier_properties: Cell<bool>,
+    /// Per-access memo for deferred (`Application`/`Lazy`) property resolution.
+    ///
+    /// `resolve_application_property` and the deferred-`Lazy` walk re-instantiate
+    /// the base body and re-traverse heritage on every access. When a type
+    /// carries deferred base refs that form a cycle (e.g. interface heritage
+    /// retention), the recursion guard alone only prevents *infinite* recursion
+    /// within a single access — it resets between accesses and never reuses the
+    /// resolved property type, so each access re-walks the whole cycle and the
+    /// cost compounds combinatorially. This table memoizes the resolved result
+    /// per [`DeferredPropertyMemoKey`] so repeated and cyclic accesses collapse
+    /// to an O(1) lookup. It is scoped to a single top-level access tree (the
+    /// evaluator is constructed per access), so it needs no cross-access
+    /// invalidation: the table is dropped when the access completes.
+    deferred_property_memo: RefCell<FxHashMap<DeferredPropertyMemoKey, DeferredPropertyMemo>>,
 }
 
 struct PropertyAccessGuard<'a> {
@@ -221,6 +258,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             )),
             skip_this_binding: Cell::new(false),
             allow_private_identifier_properties: Cell::new(false),
+            deferred_property_memo: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -497,6 +535,72 @@ impl<'a> PropertyAccessEvaluator<'a> {
             evaluator: self,
             obj_type,
         })
+    }
+
+    /// Memoize a deferred (`Application`/`Lazy`) property resolution.
+    ///
+    /// This is pure memoization: `resolve` is invoked at most once per
+    /// [`DeferredPropertyMemoKey`] within a single access tree, and its result is
+    /// cached and reused for every later access to the same `(type, prop)` under
+    /// the same flag configuration.
+    ///
+    /// Cycle-safety: the key is marked `InProgress` before `resolve` runs. If the
+    /// resolution re-enters the *same* key through a cyclic deferred base, the
+    /// re-entry observes the marker and returns the `on_cycle` value (the same
+    /// deferred fallback the recursion guard already produces for these branches)
+    /// instead of re-walking the cycle. The cycle re-entry itself is not cached —
+    /// only the fully resolved outermost result is stored — so the final memoized
+    /// value is identical to the un-memoized computation. `on_cycle` is a closure
+    /// so it runs only on an actual cyclic re-entry, never on the hot path.
+    ///
+    /// Truncation-safety: the recursion guard can return a *degraded* fallback
+    /// when its depth or iteration budget is exhausted, and that fallback depends
+    /// on how deep the access already was — i.e. it is not a pure function of the
+    /// memo key. To stay behaviour-preserving we only store `Done` when the
+    /// guard reported no truncation across the whole resolution (`is_exceeded()`
+    /// is monotonic within an evaluator and is never cleared on the property-access
+    /// path). A truncated result is returned to the current caller but never
+    /// cached, so a later shallower access recomputes the complete answer.
+    fn memoize_deferred_property<R, C>(
+        &self,
+        obj_type: TypeId,
+        prop_atom: Atom,
+        on_cycle: C,
+        resolve: R,
+    ) -> PropertyAccessResult
+    where
+        R: FnOnce() -> PropertyAccessResult,
+        C: FnOnce() -> PropertyAccessResult,
+    {
+        let key = (
+            obj_type,
+            prop_atom,
+            self.skip_this_binding.get(),
+            self.allow_private_identifier_properties.get(),
+        );
+
+        match self.deferred_property_memo.borrow().get(&key) {
+            Some(DeferredPropertyMemo::Done(result)) => return *result,
+            Some(DeferredPropertyMemo::InProgress) => return on_cycle(),
+            None => {}
+        }
+
+        let exceeded_before = self.guard.borrow().is_exceeded();
+        self.deferred_property_memo
+            .borrow_mut()
+            .insert(key, DeferredPropertyMemo::InProgress);
+        let result = resolve();
+        let truncated = !exceeded_before && self.guard.borrow().is_exceeded();
+        if truncated {
+            // Degraded by a depth/iteration limit: not a pure function of the
+            // key, so drop the in-progress marker without caching the result.
+            self.deferred_property_memo.borrow_mut().remove(&key);
+        } else {
+            self.deferred_property_memo
+                .borrow_mut()
+                .insert(key, DeferredPropertyMemo::Done(result));
+        }
+        result
     }
 
     pub(crate) fn resolve_property_access_inner(
@@ -889,16 +993,29 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Application: handle nominally (preserve class/interface identity)
             TypeData::Application(app_id) => {
-                let _guard = match self.enter_property_access_guard(obj_type) {
-                    Some(guard) => guard,
-                    None => {
-                        return self.resolve_object_member_or_not_found(obj_type, prop_atom);
-                    }
-                };
+                // Memoize the deferred resolution. The cycle fallback matches the
+                // recursion guard's cycle path (`resolve_object_member_or_not_found`),
+                // so a cyclic re-entry observes the identical result it would have
+                // produced un-memoized.
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        let _guard = match self.enter_property_access_guard(obj_type) {
+                            Some(guard) => guard,
+                            None => {
+                                return self
+                                    .resolve_object_member_or_not_found(obj_type, prop_atom);
+                            }
+                        };
 
-                // Use nominal resolution for Application types
-                // This preserves class/interface identity instead of structurally expanding
-                self.resolve_application_property(obj_type, app_id, prop_atom)
+                        // Use nominal resolution for Application types. This
+                        // preserves class/interface identity instead of
+                        // structurally expanding.
+                        self.resolve_application_property(obj_type, app_id, prop_atom)
+                    },
+                )
             }
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
@@ -1081,38 +1198,55 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Lazy types (interfaces, classes, type aliases) need resolution
             TypeData::Lazy(def_id) => {
-                // CRITICAL: Add recursion guard for type aliases
-                // Type aliases can form cycles: type A = B; type B = A;
-                let _guard = match self.enter_property_access_guard(obj_type) {
-                    Some(guard) => guard,
-                    None => {
-                        return self.resolve_object_member_or_not_found(obj_type, prop_atom);
-                    }
-                };
+                // Memoize the deferred resolution. Resolving a Lazy ref
+                // re-instantiates and re-walks the referenced declaration body
+                // (and its heritage) on every access; when the body carries
+                // deferred base refs forming a cycle, this re-walk compounds.
+                // The cycle fallback matches the recursion guard's cycle path,
+                // so a cyclic re-entry observes the identical result it would
+                // have produced un-memoized.
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        // CRITICAL: Add recursion guard for type aliases.
+                        // Type aliases can form cycles: type A = B; type B = A;
+                        let _guard = match self.enter_property_access_guard(obj_type) {
+                            Some(guard) => guard,
+                            None => {
+                                return self
+                                    .resolve_object_member_or_not_found(obj_type, prop_atom);
+                            }
+                        };
 
-                // Resolve the lazy type using the resolver
-                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
-                    let resolved = if crate::contains_this_type(self.interner(), resolved) {
-                        crate::instantiation::instantiate::substitute_this_type(
-                            self.interner(),
-                            resolved,
-                            obj_type,
-                        )
-                    } else {
-                        resolved
-                    };
-                    // Successfully resolved - resolve property on the concrete type
-                    self.resolve_property_access_inner(resolved, prop_atom)
-                } else {
-                    // Can't resolve lazy type - try apparent members
-                    if let Some(result) = self.resolve_object_member(prop_atom) {
-                        result
-                    } else {
-                        // Lazy type couldn't be resolved (likely circular) - return ANY
-                        // to avoid false TS2339 errors
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
-                }
+                        // Resolve the lazy type using the resolver
+                        if let Some(resolved) =
+                            self.resolver().resolve_lazy(def_id, self.interner())
+                        {
+                            let resolved = if crate::contains_this_type(self.interner(), resolved) {
+                                crate::instantiation::instantiate::substitute_this_type(
+                                    self.interner(),
+                                    resolved,
+                                    obj_type,
+                                )
+                            } else {
+                                resolved
+                            };
+                            // Successfully resolved - resolve property on the concrete type
+                            self.resolve_property_access_inner(resolved, prop_atom)
+                        } else {
+                            // Can't resolve lazy type - try apparent members
+                            if let Some(result) = self.resolve_object_member(prop_atom) {
+                                result
+                            } else {
+                                // Lazy type couldn't be resolved (likely circular) - return ANY
+                                // to avoid false TS2339 errors
+                                PropertyAccessResult::simple(TypeId::ANY)
+                            }
+                        }
+                    },
+                )
             }
 
             // Enum values inherit methods from their structural member type
@@ -1275,4 +1409,188 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     // Resolution helpers (mapped types, primitives, arrays, applications, etc.)
     // are in property_helpers.rs
+}
+
+#[cfg(test)]
+mod deferred_memo_tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use std::cell::Cell;
+
+    fn marker(id: u32) -> PropertyAccessResult {
+        // Use TypeId as an opaque marker so each test result is distinguishable.
+        PropertyAccessResult::simple(TypeId(id))
+    }
+
+    /// Miss then hit: `resolve` runs exactly once for a key, and the stored
+    /// result is returned verbatim on the second access.
+    #[test]
+    fn memo_hit_miss_resolves_once() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let prop = interner.intern_string("x");
+
+        let calls = Cell::new(0u32);
+        let run = || {
+            evaluator.memoize_deferred_property(
+                obj,
+                prop,
+                || panic!("cycle fallback must not run on the hot path"),
+                || {
+                    calls.set(calls.get() + 1);
+                    marker(7)
+                },
+            )
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(first.success_type(), Some(TypeId(7)));
+        assert_eq!(second.success_type(), Some(TypeId(7)));
+        assert_eq!(
+            calls.get(),
+            1,
+            "resolve should run once across two accesses"
+        );
+    }
+
+    /// Distinct property names (and distinct types) are independent keys.
+    #[test]
+    fn memo_keys_are_per_type_and_prop() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let other = TypeId(200);
+        let x = interner.intern_string("x");
+        let y = interner.intern_string("y");
+
+        let panic_cycle = || panic!("no cycle expected");
+        let rx = evaluator.memoize_deferred_property(obj, x, panic_cycle, || marker(1));
+        let ry = evaluator.memoize_deferred_property(obj, y, panic_cycle, || marker(2));
+        let rz = evaluator.memoize_deferred_property(other, x, panic_cycle, || marker(3));
+        assert_eq!(rx.success_type(), Some(TypeId(1)));
+        assert_eq!(ry.success_type(), Some(TypeId(2)));
+        assert_eq!(rz.success_type(), Some(TypeId(3)));
+    }
+
+    /// The two mutable flags participate in the key, so a result computed under
+    /// one flag configuration is never reused under another.
+    #[test]
+    fn memo_key_includes_flags() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let prop = interner.intern_string("x");
+        let panic_cycle = || panic!("no cycle expected");
+
+        evaluator.set_skip_this_binding(false);
+        let a = evaluator.memoize_deferred_property(obj, prop, panic_cycle, || marker(10));
+        evaluator.set_skip_this_binding(true);
+        let b = evaluator.memoize_deferred_property(obj, prop, panic_cycle, || marker(20));
+        evaluator.set_skip_this_binding(false);
+        let a_again = evaluator.memoize_deferred_property(obj, prop, panic_cycle, || {
+            panic!("flag=false entry must be cached")
+        });
+
+        assert_eq!(a.success_type(), Some(TypeId(10)));
+        assert_eq!(b.success_type(), Some(TypeId(20)));
+        assert_eq!(a_again.success_type(), Some(TypeId(10)));
+    }
+
+    /// Cycle-safety: a re-entry of the same key while it is in progress returns
+    /// the `on_cycle` fallback rather than re-running `resolve`, and the
+    /// outermost result is what gets memoized.
+    #[test]
+    fn memo_cycle_reentry_uses_fallback() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let prop = interner.intern_string("x");
+
+        let resolve_calls = Cell::new(0u32);
+        let cycle_calls = Cell::new(0u32);
+
+        let outer = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || {
+                cycle_calls.set(cycle_calls.get() + 1);
+                marker(999)
+            },
+            || {
+                resolve_calls.set(resolve_calls.get() + 1);
+                // Re-enter the same key: simulates a cyclic deferred base.
+                let inner = evaluator.memoize_deferred_property(
+                    obj,
+                    prop,
+                    || {
+                        cycle_calls.set(cycle_calls.get() + 1);
+                        marker(999)
+                    },
+                    || panic!("inner resolve must be short-circuited by InProgress marker"),
+                );
+                assert_eq!(
+                    inner.success_type(),
+                    Some(TypeId(999)),
+                    "re-entry should hit the cycle fallback"
+                );
+                marker(42)
+            },
+        );
+
+        assert_eq!(outer.success_type(), Some(TypeId(42)));
+        assert_eq!(resolve_calls.get(), 1, "outer resolve runs once");
+        assert_eq!(cycle_calls.get(), 1, "cycle fallback runs once on re-entry");
+
+        // After the cycle resolves, a fresh access returns the memoized
+        // outermost result without re-running resolve or the cycle fallback.
+        let again = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || panic!("no cycle on cached access"),
+            || panic!("no resolve on cached access"),
+        );
+        assert_eq!(again.success_type(), Some(TypeId(42)));
+    }
+
+    /// Truncation-safety: when the recursion guard reports truncation during a
+    /// resolution, the (depth-dependent) result is returned but NOT cached, so a
+    /// later un-truncated access recomputes the complete answer.
+    #[test]
+    fn memo_skips_caching_truncated_results() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let prop = interner.intern_string("x");
+
+        // First access trips the guard's exceeded flag during resolution.
+        let truncated = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || panic!("no cycle"),
+            || {
+                evaluator.guard.borrow_mut().mark_exceeded();
+                marker(1)
+            },
+        );
+        assert_eq!(truncated.success_type(), Some(TypeId(1)));
+
+        // The truncated result must not have been cached: a second access
+        // re-runs resolve. (The guard stays exceeded, so this is still treated
+        // as truncated and remains uncached, which is the conservative,
+        // behaviour-preserving choice.)
+        let calls = Cell::new(0u32);
+        let recomputed = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || panic!("no cycle"),
+            || {
+                calls.set(calls.get() + 1);
+                marker(2)
+            },
+        );
+        assert_eq!(calls.get(), 1, "truncated result must not be cached");
+        assert_eq!(recomputed.success_type(), Some(TypeId(2)));
+    }
 }
