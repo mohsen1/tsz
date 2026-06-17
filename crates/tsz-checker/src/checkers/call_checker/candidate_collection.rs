@@ -20,22 +20,15 @@ use tsz_solver::{TupleElement, TypeId};
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
-/// Whether a spread argument `...v` must be kept whole (as a single `[...A]`
-/// marker) rather than destructured through its constraint's tuple elements.
-///
-/// This is true only for a bare type parameter whose apparent tuple is
-/// *variadic* — it contains a rest element (e.g. `A extends readonly [L,
-/// ...ReadonlyArray<L>]`). Such a spread has an indeterminate length and its
-/// identity must be preserved so that a rest type parameter inferred from it
-/// (`f<A>(...v: A): A[number]`) infers the type parameter itself rather than a
-/// reconstructed concrete tuple.
-///
-/// A *fixed*-length tuple constraint (e.g. `V extends [number, number]`) is
-/// positionally expandable; expanding it element-wise is the historical
-/// behaviour and is required so multi-spread combinations like
-/// `f(...u, ...v)` still infer correctly. Array-constrained type parameters
-/// are not tuples, so `tuple_elements_for_type` returns `None` for them and
-/// they reach the dedicated type-parameter spread branch on their own.
+/// Whether a spread `...v` must be kept whole (single `[...A]` marker) rather
+/// than destructured through its constraint's tuple elements. True only for a
+/// type parameter whose apparent tuple is *variadic* (has a rest element, e.g.
+/// `A extends readonly [L, ...ReadonlyArray<L>]`): such spreads have
+/// indeterminate length and their identity must survive so `f<A>(...v: A):
+/// A[number]`-style rest inference infers `A` itself, not a reconstructed
+/// tuple. A *fixed*-length tuple constraint (`[number, number]`) stays
+/// positionally expandable, so multi-spread combos (`f(...u, ...v)`) keep
+/// inferring as before.
 fn type_param_variadic_tuple_spread(
     db: &dyn tsz_solver::construction::TypeDatabase,
     spread_type: TypeId,
