@@ -523,11 +523,11 @@ impl NarrowingCache {
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
             narrow_assignable_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                FxBuildHasher::default(),
+                FxBuildHasher,
             )),
             narrow_subtype_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                FxBuildHasher::default(),
+                FxBuildHasher,
             )),
         }
     }
