@@ -125,6 +125,7 @@ struct ProbeState {
     /// Structural-hash -> first distinct result `TypeId` of that hash, per
     /// kind. Detects the hash-cons gap in #2 above.
     result_structural_hash: [DashMap<u64, u32, FxBuildHasher>; PROBE_KIND_COUNT],
+    application_cache: ApplicationCacheTotals,
 }
 
 fn new_dashset() -> DashSet<u32, FxBuildHasher> {
@@ -145,7 +146,161 @@ fn state() -> &'static ProbeState {
         eager_conditional_inputs: new_dashset(),
         eager_conditional_computes: AtomicU64::new(0),
         result_structural_hash: [new_dashmap(), new_dashmap(), new_dashmap()],
+        application_cache: ApplicationCacheTotals::new(),
     })
+}
+
+struct ApplicationCacheTotals {
+    entries_with_def_id: AtomicU64,
+    entries_without_def_id: AtomicU64,
+    entries_without_query_db: AtomicU64,
+    raw_lookup_hits: AtomicU64,
+    raw_lookup_misses: AtomicU64,
+    expanded_lookup_hits: AtomicU64,
+    expanded_lookup_misses: AtomicU64,
+    body_known_params: AtomicU64,
+    body_extracted_params: AtomicU64,
+    body_value_call_return: AtomicU64,
+    body_typeof_specialized: AtomicU64,
+    body_opaque_unresolved_no_body: AtomicU64,
+    body_opaque_resolved_unknown: AtomicU64,
+    body_opaque_self_lazy: AtomicU64,
+    body_opaque_typequery_callable: AtomicU64,
+    body_opaque_extracted_mismatch: AtomicU64,
+    body_opaque_no_registered_body: AtomicU64,
+    cache_insert_eligible: AtomicU64,
+    cache_insert_skipped_limit: AtomicU64,
+    cache_insert_skipped_no_query_db: AtomicU64,
+}
+
+impl ApplicationCacheTotals {
+    const fn new() -> Self {
+        Self {
+            entries_with_def_id: AtomicU64::new(0),
+            entries_without_def_id: AtomicU64::new(0),
+            entries_without_query_db: AtomicU64::new(0),
+            raw_lookup_hits: AtomicU64::new(0),
+            raw_lookup_misses: AtomicU64::new(0),
+            expanded_lookup_hits: AtomicU64::new(0),
+            expanded_lookup_misses: AtomicU64::new(0),
+            body_known_params: AtomicU64::new(0),
+            body_extracted_params: AtomicU64::new(0),
+            body_value_call_return: AtomicU64::new(0),
+            body_typeof_specialized: AtomicU64::new(0),
+            body_opaque_unresolved_no_body: AtomicU64::new(0),
+            body_opaque_resolved_unknown: AtomicU64::new(0),
+            body_opaque_self_lazy: AtomicU64::new(0),
+            body_opaque_typequery_callable: AtomicU64::new(0),
+            body_opaque_extracted_mismatch: AtomicU64::new(0),
+            body_opaque_no_registered_body: AtomicU64::new(0),
+            cache_insert_eligible: AtomicU64::new(0),
+            cache_insert_skipped_limit: AtomicU64::new(0),
+            cache_insert_skipped_no_query_db: AtomicU64::new(0),
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum ApplicationLookupSite {
+    RawArgs,
+    ExpandedArgs,
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum ApplicationBodyPath {
+    KnownParams,
+    ExtractedParams,
+    ValueCallReturn,
+    TypeofSpecialized,
+    OpaqueUnresolvedNoBody,
+    OpaqueResolvedUnknown,
+    OpaqueSelfLazy,
+    OpaqueTypeQueryCallable,
+    OpaqueExtractedMismatch,
+    OpaqueNoRegisteredBody,
+}
+
+/// Record whether an application input has a `DefId` cache key and whether
+/// this evaluator may consult the authoritative query cache.
+#[inline]
+pub(crate) fn record_application_entry(has_def_id: bool, has_query_db: bool) {
+    if !gate_enabled() {
+        return;
+    }
+    let totals = &state().application_cache;
+    if has_def_id {
+        totals.entries_with_def_id.fetch_add(1, Ordering::Relaxed);
+        if !has_query_db {
+            totals
+                .entries_without_query_db
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
+        totals
+            .entries_without_def_id
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Record one `application_eval_cache` lookup and whether it short-circuited.
+#[inline]
+pub(crate) fn record_application_cache_lookup(site: ApplicationLookupSite, hit: bool) {
+    if !gate_enabled() {
+        return;
+    }
+    let totals = &state().application_cache;
+    let counter = match (site, hit) {
+        (ApplicationLookupSite::RawArgs, true) => &totals.raw_lookup_hits,
+        (ApplicationLookupSite::RawArgs, false) => &totals.raw_lookup_misses,
+        (ApplicationLookupSite::ExpandedArgs, true) => &totals.expanded_lookup_hits,
+        (ApplicationLookupSite::ExpandedArgs, false) => &totals.expanded_lookup_misses,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record which application body path the evaluator dispatched to after the
+/// raw-args lookup. Body-specific expanded-args lookups may still short-circuit
+/// inside the known/extracted path.
+#[inline]
+pub(crate) fn record_application_body_path(path: ApplicationBodyPath) {
+    if !gate_enabled() {
+        return;
+    }
+    let totals = &state().application_cache;
+    let counter = match path {
+        ApplicationBodyPath::KnownParams => &totals.body_known_params,
+        ApplicationBodyPath::ExtractedParams => &totals.body_extracted_params,
+        ApplicationBodyPath::ValueCallReturn => &totals.body_value_call_return,
+        ApplicationBodyPath::TypeofSpecialized => &totals.body_typeof_specialized,
+        ApplicationBodyPath::OpaqueUnresolvedNoBody => &totals.body_opaque_unresolved_no_body,
+        ApplicationBodyPath::OpaqueResolvedUnknown => &totals.body_opaque_resolved_unknown,
+        ApplicationBodyPath::OpaqueSelfLazy => &totals.body_opaque_self_lazy,
+        ApplicationBodyPath::OpaqueTypeQueryCallable => &totals.body_opaque_typequery_callable,
+        ApplicationBodyPath::OpaqueExtractedMismatch => &totals.body_opaque_extracted_mismatch,
+        ApplicationBodyPath::OpaqueNoRegisteredBody => &totals.body_opaque_no_registered_body,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record whether a computed application result was eligible to be written to
+/// the `(DefId, expanded_args, options)` cache.
+#[inline]
+pub(crate) fn record_application_cache_insert(cacheable: bool, has_query_db: bool) {
+    if !gate_enabled() {
+        return;
+    }
+    let totals = &state().application_cache;
+    if !cacheable {
+        totals
+            .cache_insert_skipped_limit
+            .fetch_add(1, Ordering::Relaxed);
+    } else if !has_query_db {
+        totals
+            .cache_insert_skipped_no_query_db
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        totals.cache_insert_eligible.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Classify an input `TypeData` into the eval-engine kind the lever targets.
@@ -243,6 +398,58 @@ fn snapshot_kind(idx: usize) -> KindRow {
     }
 }
 
+#[derive(Default)]
+struct ApplicationCacheRow {
+    entries_with_def_id: u64,
+    entries_without_def_id: u64,
+    entries_without_query_db: u64,
+    raw_lookup_hits: u64,
+    raw_lookup_misses: u64,
+    expanded_lookup_hits: u64,
+    expanded_lookup_misses: u64,
+    body_known_params: u64,
+    body_extracted_params: u64,
+    body_value_call_return: u64,
+    body_typeof_specialized: u64,
+    body_opaque_unresolved_no_body: u64,
+    body_opaque_resolved_unknown: u64,
+    body_opaque_self_lazy: u64,
+    body_opaque_typequery_callable: u64,
+    body_opaque_extracted_mismatch: u64,
+    body_opaque_no_registered_body: u64,
+    cache_insert_eligible: u64,
+    cache_insert_skipped_limit: u64,
+    cache_insert_skipped_no_query_db: u64,
+}
+
+fn snapshot_application_cache() -> ApplicationCacheRow {
+    let t = &state().application_cache;
+    ApplicationCacheRow {
+        entries_with_def_id: t.entries_with_def_id.load(Ordering::Relaxed),
+        entries_without_def_id: t.entries_without_def_id.load(Ordering::Relaxed),
+        entries_without_query_db: t.entries_without_query_db.load(Ordering::Relaxed),
+        raw_lookup_hits: t.raw_lookup_hits.load(Ordering::Relaxed),
+        raw_lookup_misses: t.raw_lookup_misses.load(Ordering::Relaxed),
+        expanded_lookup_hits: t.expanded_lookup_hits.load(Ordering::Relaxed),
+        expanded_lookup_misses: t.expanded_lookup_misses.load(Ordering::Relaxed),
+        body_known_params: t.body_known_params.load(Ordering::Relaxed),
+        body_extracted_params: t.body_extracted_params.load(Ordering::Relaxed),
+        body_value_call_return: t.body_value_call_return.load(Ordering::Relaxed),
+        body_typeof_specialized: t.body_typeof_specialized.load(Ordering::Relaxed),
+        body_opaque_unresolved_no_body: t.body_opaque_unresolved_no_body.load(Ordering::Relaxed),
+        body_opaque_resolved_unknown: t.body_opaque_resolved_unknown.load(Ordering::Relaxed),
+        body_opaque_self_lazy: t.body_opaque_self_lazy.load(Ordering::Relaxed),
+        body_opaque_typequery_callable: t.body_opaque_typequery_callable.load(Ordering::Relaxed),
+        body_opaque_extracted_mismatch: t.body_opaque_extracted_mismatch.load(Ordering::Relaxed),
+        body_opaque_no_registered_body: t.body_opaque_no_registered_body.load(Ordering::Relaxed),
+        cache_insert_eligible: t.cache_insert_eligible.load(Ordering::Relaxed),
+        cache_insert_skipped_limit: t.cache_insert_skipped_limit.load(Ordering::Relaxed),
+        cache_insert_skipped_no_query_db: t
+            .cache_insert_skipped_no_query_db
+            .load(Ordering::Relaxed),
+    }
+}
+
 /// Format the probe measurements as a multi-line report. Returns an empty
 /// string when counters are disabled, so callers can append it
 /// unconditionally next to the perf-counter dump.
@@ -312,6 +519,96 @@ pub fn dump_report() -> String {
         "  eager recompute headroom {eager_recompute:>12}  ({eager_pct:.1}% of eager computes)"
     );
 
+    let app_kind = snapshot_kind(ProbeKind::Application as usize);
+    let app_cache = snapshot_application_cache();
+    let app_recompute = app_kind.computes.saturating_sub(app_kind.distinct_inputs);
+    let app_cache_hits = app_cache.raw_lookup_hits + app_cache.expanded_lookup_hits;
+    let not_explained_by_def_args = app_recompute.saturating_sub(app_cache_hits);
+    let opaque_body_paths = app_cache.body_opaque_unresolved_no_body
+        + app_cache.body_opaque_resolved_unknown
+        + app_cache.body_opaque_self_lazy
+        + app_cache.body_opaque_typequery_callable
+        + app_cache.body_opaque_extracted_mismatch
+        + app_cache.body_opaque_no_registered_body;
+    let _ = writeln!(out, "[application cache eligibility]");
+    let _ = writeln!(out, "  application input recomputes {app_recompute:>12}");
+    let _ = writeln!(
+        out,
+        "  `(DefId,args)` cache hits     {app_cache_hits:>12}  (raw {}, expanded {})",
+        app_cache.raw_lookup_hits, app_cache.expanded_lookup_hits
+    );
+    let _ = writeln!(
+        out,
+        "  recomputes beyond cache hits {not_explained_by_def_args:>12}  (lower bound)"
+    );
+    let _ = writeln!(
+        out,
+        "  entries with DefId           {:>12}",
+        app_cache.entries_with_def_id
+    );
+    let _ = writeln!(
+        out,
+        "  entries without DefId        {:>12}",
+        app_cache.entries_without_def_id
+    );
+    let _ = writeln!(
+        out,
+        "  DefId entries without DB     {:>12}",
+        app_cache.entries_without_query_db
+    );
+    let _ = writeln!(
+        out,
+        "  raw lookups hit/miss         {:>12}/{:<12}",
+        app_cache.raw_lookup_hits, app_cache.raw_lookup_misses
+    );
+    let _ = writeln!(
+        out,
+        "  expanded lookups hit/miss    {:>12}/{:<12}",
+        app_cache.expanded_lookup_hits, app_cache.expanded_lookup_misses
+    );
+    let _ = writeln!(
+        out,
+        "  dispatch known/extracted     {:>12}/{:<12}",
+        app_cache.body_known_params, app_cache.body_extracted_params
+    );
+    let _ = writeln!(
+        out,
+        "  uncached special paths       {:>12}  (value-call {}, typeof {})",
+        app_cache.body_value_call_return + app_cache.body_typeof_specialized,
+        app_cache.body_value_call_return,
+        app_cache.body_typeof_specialized
+    );
+    let _ = writeln!(
+        out,
+        "  opaque body paths            {opaque_body_paths:>12}"
+    );
+    let _ = writeln!(
+        out,
+        "    unresolved/unknown/self    {:>12}/{:<12}/{:<12}",
+        app_cache.body_opaque_unresolved_no_body,
+        app_cache.body_opaque_resolved_unknown,
+        app_cache.body_opaque_self_lazy
+    );
+    let _ = writeln!(
+        out,
+        "    typequery/mismatch/nobody  {:>12}/{:<12}/{:<12}",
+        app_cache.body_opaque_typequery_callable,
+        app_cache.body_opaque_extracted_mismatch,
+        app_cache.body_opaque_no_registered_body
+    );
+    let _ = writeln!(
+        out,
+        "  cache inserts eligible       {:>12}",
+        app_cache.cache_insert_eligible
+    );
+    let _ = writeln!(
+        out,
+        "  cache inserts skipped        {:>12}  (limit {}, no-db {})",
+        app_cache.cache_insert_skipped_limit + app_cache.cache_insert_skipped_no_query_db,
+        app_cache.cache_insert_skipped_limit,
+        app_cache.cache_insert_skipped_no_query_db
+    );
+
     let overall_fanout = pct(
         total_computes.saturating_sub(total_distinct_results),
         total_computes.max(1),
@@ -345,6 +642,11 @@ fn kind_snapshot_for_tests(idx: usize) -> (u64, u64, u64, u64) {
         r.distinct_results,
         r.deferred_results,
     )
+}
+
+#[cfg(test)]
+fn application_cache_snapshot_for_tests() -> ApplicationCacheRow {
+    snapshot_application_cache()
 }
 
 #[cfg(test)]
@@ -434,6 +736,11 @@ mod tests {
         FORCE_PROBE_FOR_TESTS.store(true, Ordering::Relaxed);
         let app = TypeData::Application(TypeApplicationId(11));
         record_compute(TypeId(900), &app, TypeId(901), None);
+        record_application_entry(true, true);
+        record_application_cache_lookup(ApplicationLookupSite::RawArgs, false);
+        record_application_cache_lookup(ApplicationLookupSite::ExpandedArgs, true);
+        record_application_body_path(ApplicationBodyPath::KnownParams);
+        record_application_cache_insert(true, true);
         let report = dump_report();
         assert!(
             report.contains("eval-materialization probe"),
@@ -442,6 +749,62 @@ mod tests {
         assert!(
             report.contains("recompute headroom"),
             "report should expose recompute headroom"
+        );
+        assert!(
+            report.contains("application cache eligibility"),
+            "report should expose the application cache eligibility split"
+        );
+    }
+
+    /// Application cache counters split `(DefId,args)` eligibility from opaque
+    /// and tainted paths so #13250 follow-ups can tell whether the existing
+    /// application-eval cache key is the right reuse layer.
+    #[test]
+    fn application_cache_eligibility_counters_record_deltas() {
+        FORCE_PROBE_FOR_TESTS.store(true, Ordering::Relaxed);
+        let before = application_cache_snapshot_for_tests();
+
+        record_application_entry(true, false);
+        record_application_entry(false, false);
+        record_application_cache_lookup(ApplicationLookupSite::RawArgs, false);
+        record_application_cache_lookup(ApplicationLookupSite::ExpandedArgs, true);
+        record_application_body_path(ApplicationBodyPath::OpaqueResolvedUnknown);
+        record_application_body_path(ApplicationBodyPath::ExtractedParams);
+        record_application_cache_insert(false, true);
+        record_application_cache_insert(true, false);
+        record_application_cache_insert(true, true);
+
+        let after = application_cache_snapshot_for_tests();
+        assert_eq!(after.entries_with_def_id - before.entries_with_def_id, 1);
+        assert_eq!(
+            after.entries_without_def_id - before.entries_without_def_id,
+            1
+        );
+        assert_eq!(
+            after.entries_without_query_db - before.entries_without_query_db,
+            1
+        );
+        assert_eq!(after.raw_lookup_misses - before.raw_lookup_misses, 1);
+        assert_eq!(after.expanded_lookup_hits - before.expanded_lookup_hits, 1);
+        assert_eq!(
+            after.body_opaque_resolved_unknown - before.body_opaque_resolved_unknown,
+            1
+        );
+        assert_eq!(
+            after.body_extracted_params - before.body_extracted_params,
+            1
+        );
+        assert_eq!(
+            after.cache_insert_skipped_limit - before.cache_insert_skipped_limit,
+            1
+        );
+        assert_eq!(
+            after.cache_insert_skipped_no_query_db - before.cache_insert_skipped_no_query_db,
+            1
+        );
+        assert_eq!(
+            after.cache_insert_eligible - before.cache_insert_eligible,
+            1
         );
     }
 }
