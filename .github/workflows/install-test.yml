@@ -41,7 +41,7 @@ jobs:
     name: shellcheck + powershell parse
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: shellcheck install.sh
@@ -137,7 +137,7 @@ jobs:
             shell: pwsh
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # Dry-run: the installer should successfully resolve a target + version
       # and only fail at the actual download (because the tested branch may
