@@ -575,6 +575,27 @@ fn find_top_level_value_offset_in_source(source: &str, key: &str) -> u32 {
     }
 }
 
+/// Locate the source span of an `extends` specifier string (including its
+/// surrounding quotes) for anchoring TS6053 on an unresolved base config.
+///
+/// The search starts at the top-level `extends` key so an array element is
+/// anchored at its own position; when the literal cannot be located (e.g. the
+/// value was rewritten by JSONC stripping) it falls back to the `extends`
+/// value start with the specifier's quoted width, matching `tsc`'s anchor on
+/// the `extends` value.
+fn find_extends_specifier_span(source: &str, specifier: &str) -> (u32, u32) {
+    let quoted = format!("\"{specifier}\"");
+    let extends_pos = source.find("\"extends\"").unwrap_or(0);
+    if let Some(rel) = source[extends_pos..].find(&quoted) {
+        ((extends_pos + rel) as u32, quoted.len() as u32)
+    } else {
+        (
+            find_top_level_value_offset_in_source(source, "extends"),
+            specifier.len() as u32 + 2,
+        )
+    }
+}
+
 fn validate_top_level_array_option(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1248,7 +1269,13 @@ fn load_tsconfig_inner(
         // Each base is merged into the accumulated config.
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
-            let base_path = resolve_extends_path(path, extends_path_str)?;
+            // An unresolved `extends` is a recoverable condition (tsc reports
+            // TS6053 and continues with the local config). This diagnostic-free
+            // loader simply degrades: skip the missing base rather than aborting
+            // the whole config load.
+            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
+                continue;
+            };
             let base_config = load_tsconfig_inner(&base_path, visited, true, config_dir)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
@@ -1296,8 +1323,25 @@ fn load_tsconfig_inner_with_diagnostics(
         };
         let mut accumulated: Option<TsConfig> = None;
         let mut base_removed_options: Vec<String> = Vec::new();
+        let stripped = strip_jsonc(&source);
         for extends_path_str in &extends_paths {
-            let base_path = resolve_extends_path(path, extends_path_str)?;
+            // An `extends` specifier that names no existing config file is a
+            // recoverable error: tsc emits TS6053 anchored at the specifier and
+            // continues with the remaining (local) options. Emit the same and
+            // skip this base instead of failing the whole config load.
+            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
+                let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
+                let message =
+                    format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
+                parsed.diagnostics.push(Diagnostic::error(
+                    &file_display,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::FILE_NOT_FOUND,
+                ));
+                continue;
+            };
             // Collect removed options from base configs for TS5102 diagnostics.
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
@@ -1413,7 +1457,7 @@ fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
         .as_object()
         .and_then(|o| o.get("extends"))
         .and_then(|v| v.as_str())
-        && let Ok(base_path) = resolve_extends_path(path, extends)
+        && let Ok(Some(base_path)) = resolve_extends_path(path, extends)
     {
         collect_removed_options_from_config(&base_path, removed);
     }
