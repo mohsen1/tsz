@@ -1047,3 +1047,38 @@ fn test_wasm_language_service_primitive_excludes_constructor() {
         );
     }
 }
+
+/// A `TsProgram` built from the real lib `.d.ts` assets must resolve a lib
+/// interface (`Error`) as a *type*, with its value-space and type-space
+/// declarations merged.
+///
+/// This is the playground/wasm scenario from issue #13815. On `wasm32` the
+/// binder's stack guard used to trip after the first probe (because
+/// `stacker::remaining_stack()` is `None` there and `unwrap_or(0)` read as
+/// zero headroom), aborting the es5 statement pass so `interface Error` was
+/// never bound — only the hoisted `var Error` survived, yielding a false
+/// `TS2749`. The fix makes an unmeasurable headroom never trip the guard
+/// (see `headroom_below` / `measured_headroom_below`). On native the headroom
+/// is always measurable, so this asserts the always-correct path stays green.
+#[test]
+fn lib_interface_used_as_type_resolves_13815() {
+    use std::fs;
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../tsz-core/src/lib-assets");
+    let libs = ["es5", "es2015.core", "es2015.iterable", "dom"];
+    let mut p = TsProgram::new();
+    p.set_compiler_options("{\"strict\":true}").unwrap();
+    for l in libs {
+        let path = format!("{dir}/{l}.d.ts");
+        let src = fs::read_to_string(&path).unwrap();
+        p.add_lib_file(format!("lib.{l}.d.ts"), src);
+    }
+    p.add_source_file(
+        "input.ts".to_string(),
+        "type LogLine = string | Error;\nlet e: Error = new Error('x');".to_string(),
+    );
+    let diags = p.get_semantic_diagnostics_json(None);
+    assert!(
+        !diags.contains("2749") && !diags.contains("2304"),
+        "Error must resolve as a type, got diagnostics: {diags}"
+    );
+}
