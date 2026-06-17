@@ -791,7 +791,10 @@ jobs:
     name: project-compile-canary-aggregate
     needs: [gate, project-compile-canary]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.project-compile-canary.result != 'skipped' && needs.project-compile-canary.result != 'cancelled'
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Pure-IO aggregate: consumes ONLY the downloaded .canary-shards artifacts
+    # (project-compile-canary-aggregate.sh reads no GCS and no dist binary), so a
+    # free ubuntu-latest runner is sufficient and frees a scarce Cloud Run slot.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
     env:
