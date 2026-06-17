@@ -496,3 +496,33 @@ fn class_property_initializer_no_rename_when_no_shadow() {
         "Unshadowed let reference must remain unchanged.\nOutput:\n{output}"
     );
 }
+
+
+/// Regression (#13255): an `if` whose then-branch suspends (`yield`/`await`) and
+/// which has NO else branch must resolve its delayed merge ("end") label after
+/// the then branch consumes its yield-resume labels. Previously the end label was
+/// left unallocated, panicking with "end label must be available after if lowering"
+/// in `process_if_statement_in_async`. The lowered state machine must skip to the
+/// merge case on a false condition, suspend in the then case, and rejoin via
+/// `_a.label = <end>` so re-entry advances correctly — matching tsc.
+#[test]
+fn generator_if_then_yield_without_else_resolves_merge_label() {
+    let output = emit_es5("function* g() { if (cond()) { yield 1; } return 2; }\n");
+
+    assert!(
+        output.contains("if (!cond()) return [3 /*break*/, 2];"),
+        "false condition must break to the merge label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, 1];"),
+        "then-branch yield must suspend.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.label = 2;"),
+        "resume case must hint the merge label for re-entry (tsc parity).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/, 2];"),
+        "merge case must hold the post-if continuation.\nOutput:\n{output}"
+    );
+}
