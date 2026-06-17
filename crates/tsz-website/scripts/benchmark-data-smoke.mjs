@@ -357,7 +357,13 @@ try {
     getBenchmarkPages,
     getProjectCompatibilityDashboard,
   } = await import("../src/_data/benchmark_data.js");
-  assert.match(getBenchmarkEnvironmentSummary(), /sha 0123456789ab/);
+  const envSummary = getBenchmarkEnvironmentSummary();
+  // sha links to its GitHub commit; the generated timestamp is a <relative-time>.
+  assert.match(
+    envSummary,
+    /sha <a href="https:\/\/github\.com\/tsz-org\/tsz\/commit\/0123456789ab[0-9a-f]*"[^>]*><code>0123456789ab<\/code><\/a>/,
+  );
+  assert.match(envSummary, /Generated <relative-time datetime="[^"]+"[^>]*>/);
   const pages = getBenchmarkPages();
   const fixturePage = pages.find((page) => page.name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts");
   assert.ok(fixturePage, "expected TypeScript fixture benchmark page");
