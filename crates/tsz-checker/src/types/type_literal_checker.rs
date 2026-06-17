@@ -409,6 +409,40 @@ impl<'a> CheckerState<'a> {
                     return array_type;
                 }
 
+                // A reference whose name resolves to an import alias from a module
+                // that never resolved (TS2307 already emitted) must not bind to a
+                // stable `Lazy(DefId)` base here. `resolve_symbol_as_lazy_type_named`
+                // would yield `Application(Lazy(alias_def), args)`, a non-error shape
+                // that retains its type arguments for structural comparison; two
+                // instantiations differing only in an argument then fail to relate.
+                // tsc poisons such a reference to `any`, so the application relates
+                // freely. Route to `UnresolvedTypeName` (error-like for any args,
+                // display-preserving) to match tsc and prevent self-assignability
+                // cascades through generic interfaces parameterized by members of
+                // unresolved imports (e.g. `interface Decoder<I,A> extends
+                // K.Kleisli<E.URI, I, E, A>` where `E`/`Kind2` are unresolved).
+                if type_param.is_none() && self.is_unresolved_import_symbol(type_name_idx) {
+                    let lowered_args: Vec<TypeId> = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| {
+                                    self.get_type_from_type_node_in_type_literal(arg_idx)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let atom = self.ctx.types.intern_string(name);
+                    let base = self.ctx.types.unresolved_type_name(atom);
+                    return if lowered_args.is_empty() {
+                        base
+                    } else {
+                        self.ctx.types.application(base, lowered_args)
+                    };
+                }
+
                 // Validate type arguments against constraints (TS2344)
                 // This mirrors the check in get_type_from_type_reference for the
                 // normal type resolution path. Without this, type references inside
