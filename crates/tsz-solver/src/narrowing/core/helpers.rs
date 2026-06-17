@@ -921,13 +921,36 @@ impl<'a> NarrowingContext<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if let Some(resolver) = self.resolver {
+        // Memoize at this chokepoint: every narrowing subtype query (positive
+        // predicate branch and `is_assignable_to` alike) constructs a fresh
+        // `SubtypeChecker` here, and on a recursive-schema interface that walk
+        // re-materializes the property closure via `collect_properties_cached`.
+        // Caching the boolean by `(source, target, resolver_generation)` lets the
+        // same `(source, target)` pair — recurring across the many predicate
+        // guards over one `TSchema` — reuse the first walk (issue #13242 / #13250).
+        if source == target {
+            return true;
+        }
+        let key = NarrowExcludingKey {
+            source,
+            excluded: target,
+            resolver_generation: self.resolver_generation(),
+        };
+        if let Some(&cached) = self.cache.narrow_subtype_cache.borrow().get(&key) {
+            return cached;
+        }
+        let result = if let Some(resolver) = self.resolver {
             let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
                 .with_query_db(self.db);
             checker.is_subtype_of(source, target)
         } else {
             crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
-        }
+        };
+        self.cache
+            .narrow_subtype_cache
+            .borrow_mut()
+            .insert(key, result);
+        result
     }
 
     fn is_class_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
