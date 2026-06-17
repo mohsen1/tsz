@@ -327,31 +327,49 @@ fn parallel_file_session_reuse_requested() -> bool {
     )
 }
 
-/// Explicit bounded-checker-pool width requested via the `TSZ_CHECKER_POOL`
-/// env var, or `None` when the var is unset / `0` / empty / invalid.
+/// The user's explicit `TSZ_CHECKER_POOL` request, parsed once.
 ///
-/// `TSZ_CHECKER_POOL` checks files on a fixed pool of `N` long-lived
+/// The bounded checker pool checks files on a fixed pool of `N` long-lived
 /// `CheckerState`s (cost-balanced file assignment, each reused via
 /// `switch_to_file`) instead of the per-file fresh checker. This amortises the
 /// O(program) per-file setup over `files / N` files — the lever that unblocks
-/// large multi-file projects. `=auto` (or `=1`) sizes the pool to
-/// `available_parallelism`; `=N` sets an explicit width; unset / `0` / empty
-/// leaves the decision to [`resolve_checker_pool_size`] (which defaults the
-/// pool ON for the large non-DOM parallel lane).
-fn checker_pool_size() -> Option<usize> {
-    let raw = std::env::var("TSZ_CHECKER_POOL").ok()?;
+/// large multi-file projects.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CheckerPoolEnv {
+    /// `TSZ_CHECKER_POOL` unset or invalid: defer to the lane default.
+    Unset,
+    /// `TSZ_CHECKER_POOL=0` or empty: force the pool off on every lane,
+    /// overriding the large-lane default.
+    ForceOff,
+    /// `TSZ_CHECKER_POOL=N` explicit width (`auto`/`1` -> available
+    /// parallelism): use this width on any lane.
+    Width(usize),
+}
+
+/// Parse the explicit `TSZ_CHECKER_POOL` request. `=auto` (or `=1`) sizes the
+/// pool to `available_parallelism`; `=N` sets an explicit width; `0` / empty
+/// forces it off; unset / invalid defers to [`resolve_checker_pool_size`]
+/// (which defaults the pool ON for the large non-DOM parallel lane).
+fn checker_pool_env() -> CheckerPoolEnv {
+    let Ok(raw) = std::env::var("TSZ_CHECKER_POOL") else {
+        return CheckerPoolEnv::Unset;
+    };
     match raw.trim() {
-        "" | "0" => None,
-        "auto" | "1" => {
-            Some(std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
-        }
-        n => n.parse::<usize>().ok().filter(|&w| w >= 1),
+        "" | "0" => CheckerPoolEnv::ForceOff,
+        "auto" | "1" => CheckerPoolEnv::Width(
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+        ),
+        n => n
+            .parse::<usize>()
+            .ok()
+            .filter(|&w| w >= 1)
+            .map_or(CheckerPoolEnv::Unset, CheckerPoolEnv::Width),
     }
 }
 
 /// Whether the bounded checker pool is force-disabled via the
 /// `TSZ_DISABLE_CHECKER_POOL` kill switch. An explicit `TSZ_CHECKER_POOL=<n>`
-/// still wins over this switch; the switch only suppresses the default-on
+/// width still wins over this switch; the switch only suppresses the default-on
 /// behavior on the large non-DOM parallel lane.
 fn checker_pool_disabled() -> bool {
     std::env::var_os("TSZ_DISABLE_CHECKER_POOL").is_some()
@@ -362,7 +380,8 @@ fn checker_pool_disabled() -> bool {
 ///
 /// Precedence, highest first:
 ///   1. an explicit `TSZ_CHECKER_POOL=<n|auto>` width always wins, on any lane;
-///   2. the `TSZ_DISABLE_CHECKER_POOL` kill switch forces the pool off;
+///   2. an explicit `TSZ_CHECKER_POOL=0` / empty, or the
+///      `TSZ_DISABLE_CHECKER_POOL` kill switch, forces the pool off;
 ///   3. on the large non-DOM parallel lane (`default_eligible`) the pool
 ///      defaults ON, sized to `available_parallelism`;
 ///   4. otherwise the pool stays off and checking falls through to the
@@ -375,21 +394,25 @@ fn checker_pool_disabled() -> bool {
 /// diagnostics stay byte-identical to the fresh-checker arm regardless of
 /// partitioning.
 const fn resolve_checker_pool_size(
-    explicit: Option<usize>,
-    disabled: bool,
+    env: CheckerPoolEnv,
+    kill_switch: bool,
     default_eligible: bool,
     available_parallelism: usize,
 ) -> Option<usize> {
-    if let Some(width) = explicit {
-        return Some(width);
-    }
-    if disabled {
-        return None;
-    }
-    if default_eligible {
-        Some(available_parallelism)
-    } else {
-        None
+    match env {
+        // Explicit positive width wins on any lane, even over the kill switch.
+        CheckerPoolEnv::Width(width) => Some(width),
+        // Explicit `0`/empty forces off, overriding the large-lane default.
+        CheckerPoolEnv::ForceOff => None,
+        CheckerPoolEnv::Unset => {
+            if kill_switch {
+                None
+            } else if default_eligible {
+                Some(available_parallelism)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1424,7 +1447,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 && !has_parallel_order_sensitive_global_lib
                 && !parallel_reuse_requested;
             let checker_pool_size = resolve_checker_pool_size(
-                checker_pool_size(),
+                checker_pool_env(),
                 checker_pool_disabled(),
                 checker_pool_default_eligible,
                 std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
