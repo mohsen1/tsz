@@ -251,13 +251,13 @@ pub fn widen_type_for_mutable_binding(
     db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
+    use rustc_hash::FxHashMap;
     // Only top-level unions differ from `widen_type`; everything else (literals,
     // single arrays/tuples, objects) already widens identically, so defer to the
     // memoized general entry to keep the common path O(1).
     if !matches!(db.lookup(type_id), Some(crate::types::TypeData::Union(_))) {
         return widen_type(db, type_id);
     }
-    use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, true, true, false, false)
 }
