@@ -1427,7 +1427,141 @@ fn test_resolve_extends_path_uses_package_exports_mapping() {
     let resolved =
         resolve_extends_path(&project_dir.join("tsconfig.json"), "pkg/tsconfig.json").unwrap();
 
-    assert_eq!(resolved, expected);
+    assert_eq!(resolved, Some(expected));
+}
+
+#[test]
+fn extends_scoped_package_config_resolved_via_node_modules_from_nested_dir() {
+    // A workspace-internal config (the directus / rocketchat / cal-com shape):
+    // a nested app config `extends` a package-provided tsconfig that lives in
+    // the repo-root `node_modules`. The base must be loaded through Node module
+    // resolution (walking ancestors), not path-joined onto the config dir.
+    let temp = tempdir().expect("create temp dir");
+    let root = temp.path().join("repo");
+    let pkg = root.join("node_modules").join("@scope").join("tsconfig");
+    std::fs::create_dir_all(&pkg).expect("create package dir");
+    std::fs::write(
+        pkg.join("node22.json"),
+        r#"{ "compilerOptions": { "strict": true, "target": "ES2022" } }"#,
+    )
+    .expect("write base");
+
+    let app = root.join("apps").join("web");
+    std::fs::create_dir_all(&app).expect("create app dir");
+    let child_path = app.join("tsconfig.json");
+    std::fs::write(
+        &child_path,
+        r#"{ "extends": "@scope/tsconfig/node22.json", "compilerOptions": { "strict": false } }"#,
+    )
+    .expect("write child");
+
+    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+    assert!(
+        !parsed.diagnostics.iter().any(|d| d.code == 6053),
+        "an installed package config must resolve, no TS6053: {:?}",
+        parsed.diagnostics
+    );
+    let opts = parsed.config.compiler_options.expect("merged options");
+    assert_eq!(
+        opts.strict,
+        Some(false),
+        "child overrides the base's strict value"
+    );
+    assert_eq!(
+        opts.target.as_deref(),
+        Some("ES2022"),
+        "the base config's options must be inherited"
+    );
+}
+
+#[test]
+fn extends_unresolved_package_emits_ts6053_and_keeps_local_options() {
+    // The package providing the base config is not installed (the canary
+    // clone-without-deps shape). tsc emits TS6053 anchored at the `extends`
+    // specifier and keeps compiling with the local options; tsz must not abort
+    // the whole config load.
+    let temp = tempdir().expect("create temp dir");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    let child_path = project.join("tsconfig.json");
+    let child_source =
+        r#"{ "extends": "@scope/pkg/file.json", "compilerOptions": { "strict": true } }"#;
+    std::fs::write(&child_path, child_source).expect("write child");
+
+    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load must succeed, not abort");
+
+    let ts6053: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 6053)
+        .collect();
+    assert_eq!(
+        ts6053.len(),
+        1,
+        "exactly one TS6053 for the unresolved extends: {:?}",
+        parsed.diagnostics
+    );
+    assert!(
+        ts6053[0].message_text.contains("@scope/pkg/file.json"),
+        "TS6053 names the unresolved specifier: {}",
+        ts6053[0].message_text
+    );
+    let expected_start = child_source
+        .find("\"@scope/pkg/file.json\"")
+        .expect("specifier present in source") as u32;
+    assert_eq!(
+        ts6053[0].start, expected_start,
+        "TS6053 anchors at the extends specifier literal"
+    );
+
+    let opts = parsed
+        .config
+        .compiler_options
+        .expect("local options retained");
+    assert_eq!(
+        opts.strict,
+        Some(true),
+        "local options survive an unresolved extends"
+    );
+}
+
+#[test]
+fn extends_array_reports_each_unresolved_entry() {
+    // Array `extends` (TS 5.0): every entry that cannot be resolved gets its
+    // own TS6053, and resolvable entries still merge.
+    let temp = tempdir().expect("create temp dir");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project).expect("create project dir");
+    std::fs::write(
+        project.join("present.json"),
+        r#"{ "compilerOptions": { "target": "ES2021" } }"#,
+    )
+    .expect("write present base");
+    let child_path = project.join("tsconfig.json");
+    std::fs::write(
+        &child_path,
+        r#"{ "extends": ["./present.json", "./missing-a.json", "./missing-b.json"] }"#,
+    )
+    .expect("write child");
+
+    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load must succeed");
+    let ts6053: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 6053)
+        .collect();
+    assert_eq!(
+        ts6053.len(),
+        2,
+        "one TS6053 per unresolved array entry: {:?}",
+        parsed.diagnostics
+    );
+    let opts = parsed.config.compiler_options.expect("present base merged");
+    assert_eq!(
+        opts.target.as_deref(),
+        Some("ES2021"),
+        "the resolvable array entry is still applied"
+    );
 }
 
 #[test]
