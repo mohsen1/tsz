@@ -781,9 +781,8 @@ fn test_logical_nullish_coalescing_unknown_left_unions_right() {
     let eval = BinaryOpEvaluator::new(&interner);
     let empty_obj = interner.object(vec![]);
     let result = eval.evaluate(TypeId::UNKNOWN, TypeId::STRING, "??");
-    let result_id = match result {
-        BinaryOpResult::Success(t) => t,
-        _ => panic!("Expected Success"),
+    let BinaryOpResult::Success(result_id) = result else {
+        panic!("Expected Success")
     };
     // Result must contain the empty-object non-nullable part (not raw `unknown`).
     use crate::relations::subtype::SubtypeChecker;
