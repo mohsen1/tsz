@@ -551,22 +551,14 @@ jobs:
     if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CARGO_SHEAR_VERSION: "1.12.0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Install cargo-shear
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v cargo-shear >/dev/null 2>&1 \
-             && cargo install --list | grep -q "^cargo-shear v${CARGO_SHEAR_VERSION}:"; then
-            echo "cargo-shear ${CARGO_SHEAR_VERSION} already installed"
-            exit 0
-          fi
-          cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
+        uses: taiki-e/install-action@v2 # TODO(#13752): SHA-pin this action
+        with:
+          tool: cargo-shear@1.12.0
       - name: Run cargo shear
         shell: bash
         run: |
@@ -592,22 +584,14 @@ jobs:
     if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CARGO_DENY_VERSION: "0.19.6"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Install cargo-deny
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v cargo-deny >/dev/null 2>&1 \
-             && cargo install --list | grep -q "^cargo-deny v${CARGO_DENY_VERSION}:"; then
-            echo "cargo-deny ${CARGO_DENY_VERSION} already installed"
-            exit 0
-          fi
-          cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked
+        uses: taiki-e/install-action@v2 # TODO(#13752): SHA-pin this action
+        with:
+          tool: cargo-deny@0.19.6
       - name: Run cargo deny
         run: cargo deny check
 
@@ -804,6 +788,12 @@ jobs:
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_PROJECT_COMPILE_SET: canary
       TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
+      # Expected canary shard count (mirrors the project-compile-canary matrix
+      # `shard: [0..5]` / `_TSZ_CI_CANARY_SHARD_COUNT: 6`). The aggregate script
+      # records shards_seen vs this expected count and emits a distinct
+      # CANARY_SHARDS_INCOMPLETE signal when a shard is missing, so a dead runner
+      # cannot produce a silently-green required check over a partial set.
+      TSZ_CANARY_SHARDS_EXPECTED: "6"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1065,27 +1055,15 @@ jobs:
           fetch-depth: 1
       - name: Run wasm suite (nodejs + web targets)
         run: scripts/ci/github-suite.sh wasm-all
+      - name: Verify web WASM artifact
+        run: test -s pkg/web/tsz_wasm_bg.wasm
       - name: Upload web WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-web
           path: pkg/web/
           retention-days: 30
-
-  wasm-web:
-    name: wasm-web
-    needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Download web WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-web
-          path: pkg/web/
-      - name: Verify web WASM artifact
-        run: test -s pkg/web/tsz_wasm_bg.wasm
+          if-no-files-found: error
 
   node-harness-prep:
     name: node-harness-prep
@@ -1162,31 +1140,6 @@ jobs:
             --config=scripts/cloudbuild/cloudbuild-checker-integration.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             .
-
-  unit-cloudbuild:
-    # Compatibility status for dashboards and branch-protection rules that may
-    # still look for the old experimental Cloud Build context. The required
-    # Cloud Build checker integration slice is enforced by the required
-    # `unit-checker-integration` job above.
-    name: unit-cloudbuild
-    needs: [gate, unit-checker-integration]
-    if: always() && needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Report promoted unit path
-        env:
-          UNIT_RESULT: ${{ needs.unit-checker-integration.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$UNIT_RESULT" != "success" ]]; then
-            echo "Required Cloud Build checker integration job did not pass: ${UNIT_RESULT}"
-            exit 1
-          fi
-          echo "Cloud Build checker integration suite is enforced by the required unit-checker-integration job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -1487,7 +1440,6 @@ jobs:
       - project-compile-guard
       - project-compile-canary-aggregate
       - wasm
-      - wasm-web
       - node-harness-prep
       - unit
       - unit-checker-integration
@@ -1653,7 +1605,6 @@ jobs:
               })
               required.update({
                   "wasm",
-                  "wasm-web",
                   "lsp-e2e",
                   "node-harness-prep",
                   "conformance-aggregate",

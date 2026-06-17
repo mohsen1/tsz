@@ -214,4 +214,74 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(false)
         })
     }
+
+    /// True when a cross-file type alias `sym_id` (resolved in another arena)
+    /// has a declaration whose body is a conditional type whose `extends`
+    /// operand is a bare named type reference (no type arguments).
+    ///
+    /// This is the structural signature of the #13618 family: an exported
+    /// generic conditional alias `A<T> = T extends Ref ? X : Y` whose `extends`
+    /// operand (`Ref`) is a provider-private (non-exported) named type. Such a
+    /// body only binds correctly when lowered in its declaring arena, because
+    /// `Ref` is invisible in the consumer scope; it must be delegated
+    /// cross-arena rather than re-lowered in the consumer.
+    ///
+    /// The gate is deliberately tight, because the merged change widened
+    /// delegation for *all* imported aliases (#13618) and that regressed cross-
+    /// arena conditional helper aliases whose conditional depends on the
+    /// caller's type argument rather than a provider-private name — e.g. React's
+    /// `type PropsWithRef<P> = 'ref' extends keyof P ? ...` and
+    /// `type ElementType<P> = ... P extends JSX.IntrinsicElements[K] ? ...`,
+    /// which must keep instantiating `P` in the consumer arena. Those extends
+    /// operands are `keyof P`, an indexed access, a type literal, a keyword, or a
+    /// *parameterized* reference (`Validator<infer T>`) — never a bare named
+    /// reference — so requiring a bare `TYPE_REFERENCE` with no type arguments
+    /// admits the #13618 family and excludes the library JSX helpers. The lookup
+    /// mirrors `symbol_has_local_type_alias_declaration`: it reads the alias
+    /// declaration in its owning arena and inspects node kinds only.
+    pub(crate) fn cross_file_alias_body_is_private_extends_conditional(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(owner_file_idx) = self.ctx.resolve_symbol_file_index(sym_id) else {
+            return false;
+        };
+        let Some(owner_arena) = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(owner_file_idx))
+        else {
+            return false;
+        };
+        let Some(owner_binder) = self.ctx.get_binder_for_file(owner_file_idx) else {
+            return false;
+        };
+        let Some(symbol) = owner_binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl| {
+            let Some(type_alias) = owner_arena
+                .get(decl)
+                .filter(|node| node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                .and_then(|node| owner_arena.get_type_alias(node))
+            else {
+                return false;
+            };
+            let Some(body) = owner_arena.get(type_alias.type_node) else {
+                return false;
+            };
+            if body.kind != syntax_kind_ext::CONDITIONAL_TYPE {
+                return false;
+            }
+            let Some(conditional) = owner_arena.get_conditional_type(body) else {
+                return false;
+            };
+            owner_arena
+                .get(conditional.extends_type)
+                .filter(|extends| extends.kind == syntax_kind_ext::TYPE_REFERENCE)
+                .and_then(|extends| owner_arena.get_type_ref(extends))
+                .is_some_and(|type_ref| type_ref.type_arguments.is_none())
+        })
+    }
 }

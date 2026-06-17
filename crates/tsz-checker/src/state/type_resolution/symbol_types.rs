@@ -1654,6 +1654,19 @@ impl<'a> CheckerState<'a> {
                     };
                     merged = self.merge_lib_interface_heritage(merged, &name).0;
                 }
+                // The arena-local merges above read `extends` clauses through the
+                // current file's arena, so a *generic* interface imported from
+                // another module drops every member it inherits from a base
+                // declared in that module (or a lib/global base reached through
+                // it). The value/property-access path resolves this through
+                // `merge_cross_file_heritage`; mirror it here on the type-reference
+                // path so the inherited member set is present in relation/weak-type
+                // contexts too (otherwise `Derived<T>` looks like a bare `{ own?:
+                // .. }` weak type and mis-flags TS2559/TS2322 against a source that
+                // structurally satisfies the inherited base — #13232 line-12).
+                if has_declaration_arenas {
+                    merged = self.merge_cross_file_heritage(&symbol.declarations, sym_id, merged);
+                }
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     let canonical_params = self.get_type_params_for_symbol(sym_id);

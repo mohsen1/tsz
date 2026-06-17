@@ -1138,3 +1138,144 @@ interface Foo {
         "should have at least 3 declarations for merged interface"
     );
 }
+
+// =============================================================================
+// 27. NAMESPACE MEMBERS MUST NOT LEAK INTO TOP-LEVEL MODULE EXPORTS
+// =============================================================================
+//
+// Regression for the "namespace-export leak": a member declared inside
+// `export declare namespace X { export type Result = ... }` is a NAMESPACE
+// MEMBER (its `parent` is the namespace symbol). tsc exposes only the namespace
+// `X` at the file's top level — member access is qualified as `X.Result`, never
+// the bare `Result`. When the file is consumed through a barrel `export *`, a
+// leaked bare `Result` collided with another file's top-level `export type
+// Result`, producing a phantom TS2308 and a TS2339 cascade on the wrongly
+// resolved binding.
+
+#[test]
+fn namespace_member_does_not_leak_into_module_exports() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+export declare namespace StandardSchemaV1 {
+    export type Result<O> = { value: O };
+    export const tag: number;
+}
+",
+    );
+
+    let exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("module_exports should have an entry for test.ts");
+
+    assert!(
+        exports.has("StandardSchemaV1"),
+        "the namespace symbol itself must be exposed at the top level"
+    );
+    assert!(
+        !exports.has("Result"),
+        "namespace member type `Result` must NOT leak into top-level module exports"
+    );
+    assert!(
+        !exports.has("tag"),
+        "namespace member value `tag` must NOT leak into top-level module exports"
+    );
+}
+
+#[test]
+fn top_level_export_type_and_const_still_hoist() {
+    // Adjacent case: genuine top-level `export type` / `export const` must still
+    // appear in module_exports (the fix must not over-suppress).
+    let (binder, _parser) = parse_and_bind(
+        r"
+export type Result<T, E = unknown> =
+    | { ok: true; value: T }
+    | { ok: false; error: E };
+export const answer = 42;
+",
+    );
+
+    let exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("module_exports should have an entry for test.ts");
+
+    assert!(
+        exports.has("Result"),
+        "top-level `export type Result` must be hoisted to module exports"
+    );
+    assert!(
+        exports.has("answer"),
+        "top-level `export const answer` must be hoisted to module exports"
+    );
+}
+
+#[test]
+fn nested_namespace_members_do_not_leak() {
+    // Adjacent case: deeply nested namespace members must not leak either; only
+    // the outermost namespace symbol is exposed at the top level.
+    let (binder, _parser) = parse_and_bind(
+        r"
+export namespace Outer {
+    export namespace Inner {
+        export const deep = 1;
+    }
+    export const mid = 2;
+}
+",
+    );
+
+    let exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("module_exports should have an entry for test.ts");
+
+    assert!(
+        exports.has("Outer"),
+        "outer namespace symbol must be exposed at the top level"
+    );
+    assert!(
+        !exports.has("Inner"),
+        "nested namespace `Inner` must NOT leak to top-level module exports"
+    );
+    assert!(
+        !exports.has("mid"),
+        "namespace member `mid` must NOT leak to top-level module exports"
+    );
+    assert!(
+        !exports.has("deep"),
+        "deeply nested member `deep` must NOT leak to top-level module exports"
+    );
+}
+
+#[test]
+fn value_namespace_members_do_not_leak() {
+    // Adjacent case: a VALUE namespace (`export namespace N { export const x }`)
+    // exposes only `N` (consumed as `N.x`), never the bare member `x`.
+    let (binder, _parser) = parse_and_bind(
+        r"
+export namespace N {
+    export const x = 1;
+    export type T = string;
+}
+",
+    );
+
+    let exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("module_exports should have an entry for test.ts");
+
+    assert!(
+        exports.has("N"),
+        "value namespace symbol `N` must be exposed at the top level"
+    );
+    assert!(
+        !exports.has("x"),
+        "value namespace member `x` must NOT leak to top-level module exports"
+    );
+    assert!(
+        !exports.has("T"),
+        "value namespace member type `T` must NOT leak to top-level module exports"
+    );
+}

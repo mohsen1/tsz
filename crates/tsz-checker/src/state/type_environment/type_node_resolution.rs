@@ -62,6 +62,27 @@ impl<'a> CheckerState<'a> {
     /// // Type literals
     /// let c: { x: number };    // → Object type with property x: number
     /// ```
+    /// If `idx` is a `PARENTHESIZED_TYPE` wrapping (through any number of
+    /// nested parentheses) a `TYPE_QUERY` (`typeof ...`), return the inner
+    /// `TYPE_QUERY` node index; otherwise `None`. Used to resolve a parenthesized
+    /// `typeof` array element directly through the binder-aware path instead of
+    /// the leaner parenthesized-type lowering.
+    fn unwrap_parenthesized_type_query(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        let mut unwrapped_paren = false;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                current = self.ctx.arena.get_wrapped_type(node)?.type_node;
+                unwrapped_paren = true;
+                continue;
+            }
+            return (unwrapped_paren && node.kind == syntax_kind_ext::TYPE_QUERY)
+                .then_some(current);
+        }
+        None
+    }
+
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
         #[cfg(test)]
         self.ctx.record_type_node_resolution_for_test(idx);
@@ -435,7 +456,24 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let elem_type = self.get_type_from_type_node(array_type.element_type);
+                    // When the element is a parenthesized `typeof` (`(typeof X.y)[]`),
+                    // resolve the `typeof` operand directly through the rich,
+                    // binder-aware path. A parenthesized element otherwise routes
+                    // through the leaner `TypeNodeChecker::check` lowering (via the
+                    // delegated PARENTHESIZED_TYPE node), leaving the `typeof`
+                    // operand in an under-evaluated deferred form; when its apparent
+                    // type is a deeply-nested generic application the subtype
+                    // relation then mis-accepts it against a structurally-equal
+                    // target via the `isDeeplyNestedType` one-sided expansion
+                    // bailout, dropping an expected diagnostic. Unwrapping here
+                    // makes `(typeof X.y)[]` relate like `Array<typeof X.y>` and a
+                    // `type E = typeof X.y; E[]` alias. Scoped to a `typeof` element
+                    // of an array so every other parenthesized/element type keeps
+                    // its existing lowering and diagnostics.
+                    let element_node = self
+                        .unwrap_parenthesized_type_query(array_type.element_type)
+                        .unwrap_or(array_type.element_type);
+                    let elem_type = self.get_type_from_type_node(element_node);
                     let result = self.ctx.types.factory().array(elem_type);
                     self.ctx.node_types.insert(idx.0, result);
                     return result;

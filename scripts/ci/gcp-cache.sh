@@ -35,6 +35,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source scripts/ci/suite-metadata.sh
+source scripts/ci/ci-resources.sh
 
 CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:?_TSZ_CI_CACHE_BUCKET is required}"
 CACHE_BUCKET="${CACHE_BUCKET%/}"
@@ -203,7 +204,19 @@ tmp_archive() {
 create_archive() {
   local archive="$1" base="$2"
   shift 2
-  COPYFILE_DISABLE=1 tar --exclude='._*' -czf "$archive" -C "$base" "$@"
+  # Cut the in-process compression peak at tar time. The default tar `-z`
+  # uses gzip level 6, whose deflate path keeps large hash chains/window
+  # buffers; gzip levels 1-3 use the lighter `deflate_fast` algorithm with
+  # smaller tables and far less CPU. Since the save-path tar runs at
+  # post-build memory peak (#13733/#13748), pipe tar -> gzip with an explicit,
+  # tunable level so the compressor never inflates RSS at the worst moment.
+  # TSZ_CI_CACHE_GZIP_LEVEL tunes the size/speed tradeoff (default 1; raise it
+  # to trade CPU/RSS for a smaller blob). Note: this only lowers the
+  # compression level — it does NOT switch codecs (zstd is tracked separately
+  # in #13605 item 4).
+  local level="${TSZ_CI_CACHE_GZIP_LEVEL:-1}"
+  COPYFILE_DISABLE=1 tar --exclude='._*' -cf - -C "$base" "$@" \
+    | gzip -n -"${level}" > "$archive"
 }
 
 validate_typescript_cache_tree() {
@@ -561,6 +574,17 @@ restore_caches() {
 }
 
 save_caches() {
+  # Preflight: refuse the multi-GB save tar when MemAvailable is below the
+  # floor (default 2048 MiB, TSZ_CI_CACHE_SAVE_MIN_FREE_MB; 0 disables). The
+  # save is best-effort, so deferring it is always safe and avoids a kernel
+  # OOM SIGKILL that no `|| echo warning` can catch (#13733/#13748). This is a
+  # defense-in-depth gate; github-suite.sh also checks before invoking save.
+  if ! ci_cache_save_memory_ok; then
+    ci_report_memory "cache-save-skip"
+    echo "warning: CI cache save skipped — MemAvailable below floor (${TSZ_CI_CACHE_SAVE_MIN_FREE_MB:-2048}MB); deferring the cache-save tar to avoid an OOM SIGKILL at post-build memory peak (see #13733/#13748)" >&2
+    return 0
+  fi
+
   local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key wasm_pack_key
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
