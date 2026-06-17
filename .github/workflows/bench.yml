@@ -1880,11 +1880,13 @@ jobs:
           max_active_minutes=180
           max_active_seconds=$((max_active_minutes * 60))
           echo "Waiting for active Bench run ${ACTIVE_RUN_ID} (${ACTIVE_RUN_SHA}) before deciding catch-up: ${ACTIVE_RUN_URL}"
+          active_break_reason=completed
           while true; do
             active_json="$(gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json status,createdAt --jq '{status,createdAt}' 2>/dev/null || true)"
             active_status="$(jq -r '.status // empty' <<<"${active_json}" 2>/dev/null || true)"
             active_created_at="$(jq -r '.createdAt // empty' <<<"${active_json}" 2>/dev/null || true)"
             if [[ "${active_status}" == "completed" ]]; then
+              active_break_reason=completed
               break
             fi
             active_created_epoch="$(date -u -d "${active_created_at}" +%s 2>/dev/null || true)"
@@ -1892,11 +1894,32 @@ jobs:
             if [[ "${active_created_epoch}" =~ ^[0-9]+$ &&
                   $((now_epoch - active_created_epoch)) -ge "${max_active_seconds}" ]]; then
               echo "Active Bench run ${ACTIVE_RUN_ID} is still ${active_status:-unknown} after at least ${max_active_minutes} minutes; treating it as stale for catch-up."
+              active_break_reason=stale
               break
             fi
             echo "Active Bench run ${ACTIVE_RUN_ID} is still ${active_status:-unknown}; waiting..."
             sleep 60
           done
+
+          # Gap #3 (#13306): the 180-minute stale-break above can release this job
+          # while the original workflow_run active run is still in_progress. The
+          # later duplicate-dispatch guard only filters other workflow_dispatch
+          # runs and excludes ACTIVE_RUN_ID, so without this re-check a stale-but-
+          # still-running active run plus target_sha == main would dispatch a
+          # second concurrent bench, violating the one-active-run invariant. Re-
+          # read the active run's status and skip dispatch (fail closed) if it has
+          # not reached a terminal state; the next main Bench event re-evaluates.
+          if [[ "${active_break_reason}" == "stale" ]]; then
+            if ! active_recheck_status="$(gh_retry gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json status --jq '.status')"; then
+              echo "Could not re-read stale active Bench run ${ACTIVE_RUN_ID} status after retries; skipping catch-up dispatch (fail closed) to avoid two concurrent benches."
+              exit 0
+            fi
+            if [[ "${active_recheck_status}" != "completed" ]]; then
+              echo "Active Bench run ${ACTIVE_RUN_ID} is still ${active_recheck_status:-unknown} after the stale-break; skipping catch-up dispatch (fail closed) to avoid two concurrent benches. The next main Bench event will re-evaluate catch-up."
+              exit 0
+            fi
+            echo "Active Bench run ${ACTIVE_RUN_ID} reached ${active_recheck_status} after the stale-break; proceeding with catch-up evaluation."
+          fi
 
           # This query (gh run view --json jobs) hit an HTTP 502 on 2026-06-14 and,
           # being unguarded under set -euo pipefail, failed the whole job so no
