@@ -556,7 +556,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install cargo-shear
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2
+        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
         with:
           tool: cargo-shear@1.12.0
       - name: Run cargo shear
@@ -589,7 +589,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install cargo-deny
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2
+        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
         with:
           tool: cargo-deny@0.19.6
       - name: Run cargo deny
