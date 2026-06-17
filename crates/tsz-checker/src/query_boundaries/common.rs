@@ -693,18 +693,6 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     widening::widen_literal_type(db, type_id)
 }
 
-/// Rebuild an object type from `original` with `new_props`, preserving index
-/// signatures, flags (including `FRESH_LITERAL`), declaring symbol, and display
-/// provenance. Returns `original` unchanged when the properties are unchanged.
-pub(crate) fn rebuild_object_with_shape_metadata(
-    db: &dyn TypeDatabase,
-    original: TypeId,
-    shape: &ObjectShape,
-    new_props: Vec<tsz_solver::PropertyInfo>,
-) -> TypeId {
-    widening::rebuild_object_with_shape_metadata(db, original, shape, new_props)
-}
-
 /// Check if a type is a template literal type.
 pub(crate) fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_template_literal_type(db, type_id)

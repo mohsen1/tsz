@@ -489,7 +489,7 @@ impl<'a> CheckerState<'a> {
             return self.widen_literal_type(type_id);
         };
         let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            crate::query_boundaries::widening::object_shape_for_type(self.ctx.types, type_id)
         else {
             return self.widen_literal_type(type_id);
         };
@@ -539,7 +539,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        crate::query_boundaries::common::rebuild_object_with_shape_metadata(
+        crate::query_boundaries::widening::rebuild_object_with_shape_metadata(
             self.ctx.types,
             type_id,
             &shape,
