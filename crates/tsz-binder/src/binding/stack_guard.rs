@@ -58,6 +58,28 @@ pub(crate) fn trip_stack_overflow() {
     BINDER_STACK_STATE.set(BINDER_STACK_STATE.get() | BINDER_STACK_TRIPPED_BIT);
 }
 
+/// Decide whether measured stack headroom is below `min_bytes`.
+///
+/// Split out as a pure function of the measurement so the `None` case can be
+/// unit-tested without controlling the real stack: `stacker::remaining_stack()`
+/// returns `None` on targets whose stack bounds are unknown (notably `wasm32`).
+/// Treating that unknown as "critically low" (an `unwrap_or(0)`) would trip the
+/// breaker on the first probe and abort the recursive walk mid-input, silently
+/// dropping every node bound after the trip point. With no measurement there is
+/// no evidence of exhaustion, so we report "not low" and let the walk proceed.
+#[inline]
+#[must_use]
+pub(crate) const fn measured_headroom_below(remaining: Option<usize>, min_bytes: usize) -> bool {
+    matches!(remaining, Some(r) if r < min_bytes)
+}
+
+/// `true` only when the remaining stack can be measured AND is below `min_bytes`.
+#[inline]
+#[must_use]
+pub(crate) fn headroom_below(min_bytes: usize) -> bool {
+    measured_headroom_below(stacker::remaining_stack(), min_bytes)
+}
+
 /// Reset the stack overflow breaker for this thread.
 ///
 /// Must be called at the start of each file's `bind_source_file` so that a
@@ -65,4 +87,24 @@ pub(crate) fn trip_stack_overflow() {
 /// subsequent files processed on the same thread.
 pub(crate) fn reset_stack_overflow_flag() {
     BINDER_STACK_STATE.set(BINDER_STACK_STATE.get() & !BINDER_STACK_TRIPPED_BIT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::measured_headroom_below;
+
+    #[test]
+    fn unmeasurable_headroom_never_trips() {
+        // `wasm32` reports `None`; that must not count as critically low, or the
+        // binder aborts mid-file and drops later declarations (issue #13815).
+        assert!(!measured_headroom_below(None, 1024 * 1024));
+        assert!(!measured_headroom_below(None, usize::MAX));
+    }
+
+    #[test]
+    fn measured_headroom_compares_against_threshold() {
+        assert!(measured_headroom_below(Some(512 * 1024), 1024 * 1024));
+        assert!(!measured_headroom_below(Some(2 * 1024 * 1024), 1024 * 1024));
+        assert!(!measured_headroom_below(Some(1024 * 1024), 1024 * 1024));
+    }
 }

@@ -21,66 +21,84 @@ use crate::module_resolver_helpers::{
 
 use super::{CompilerOptions, TsConfig};
 
-/// Resolve `extends` to an absolute path on disk.
+/// Resolve a tsconfig `extends` specifier to the config file it names on disk.
 ///
-/// Handles four cases in order:
-/// 1. relative or absolute paths (`./base.json`, `/abs/base.json`);
-/// 2. package specifiers whose `package.json` exports map points to a
-///    config file (`pkg/tsconfig.json` -> `node_modules/pkg/configs/...`);
-/// 3. package-name extends that walk `node_modules` upward;
-/// 4. a final fallback that treats the value as a relative path.
-pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
+/// Returns `Ok(Some(path))` for a successfully located, existing config file,
+/// `Ok(None)` when the specifier cannot be resolved to an existing file (the
+/// caller then reports TS6053 and continues, matching `tsc`'s
+/// `getExtendsConfigPath`), and `Err` only for a malformed `current_path`.
+///
+/// Resolution mirrors `tsc`:
+/// - **Relative / absolute** specifiers (`./base`, `../base.json`, `/abs`)
+///   resolve against the declaring config's directory, appending `.json` when
+///   the specifier carries no extension. No directory lookup is attempted (a
+///   relative `extends` must name a file, like `tsc`).
+/// - **Non-relative** specifiers go through Node module resolution: first the
+///   package's `package.json` `"exports"` map, then a `node_modules` walk that
+///   honors an explicit file subpath (`pkg/base.json`), an extensionless
+///   subpath (`pkg/recommended` -> `recommended.json`), and a bare package
+///   whose root holds a `tsconfig.json`.
+pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<Option<PathBuf>> {
     let base_dir = current_path
         .parent()
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
 
-    // Check if this is a relative or absolute path
+    // Relative or absolute path: resolve against the declaring config's dir.
     if extends.starts_with('.') || extends.starts_with('/') {
-        let mut candidate = PathBuf::from(extends);
-        if candidate.extension().is_none() {
-            candidate.set_extension("json");
-        }
-
-        if candidate.is_absolute() {
-            return Ok(candidate);
-        }
-        return Ok(base_dir.join(candidate));
+        let candidate = if Path::new(extends).is_absolute() {
+            PathBuf::from(extends)
+        } else {
+            base_dir.join(extends)
+        };
+        return Ok(probe_extends_candidate(&candidate, false));
     }
 
+    // Non-relative: Node module resolution. `package.json` exports first.
     if let Some(resolved) = resolve_package_extends_path(current_path, extends) {
-        return Ok(resolved);
+        return Ok(Some(resolved));
     }
 
-    // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json")
-    // Resolve through node_modules, walking up directory ancestors.
+    // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json").
+    // Walk `node_modules` upward through directory ancestors.
     let mut search_dir = base_dir.to_path_buf();
     loop {
-        let mut candidate = search_dir.join("node_modules").join(extends);
-        if candidate.extension().is_none() {
-            candidate.set_extension("json");
-        }
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-        // Also try the package's tsconfig.json if extends points to a directory
-        let dir_candidate = search_dir.join("node_modules").join(extends);
-        if dir_candidate.is_dir() {
-            let tsconfig_in_dir = dir_candidate.join("tsconfig.json");
-            if tsconfig_in_dir.exists() {
-                return Ok(tsconfig_in_dir);
-            }
+        let candidate = search_dir.join("node_modules").join(extends);
+        if let Some(resolved) = probe_extends_candidate(&candidate, true) {
+            return Ok(Some(resolved));
         }
         if !search_dir.pop() {
             break;
         }
     }
 
-    // Fallback: treat as relative path (original behavior)
-    let mut candidate = PathBuf::from(extends);
-    if candidate.extension().is_none() {
-        candidate.set_extension("json");
+    Ok(None)
+}
+
+/// Probe a single candidate path for an `extends` target, returning the
+/// existing config file it names or `None`.
+///
+/// Tries, in order: the candidate as written, the candidate with a `.json`
+/// extension appended when it has none, and — only when `allow_dir_tsconfig`
+/// is set (the `node_modules` package-root case) — a `tsconfig.json` inside the
+/// candidate directory. Existence is checked at every step so a miss is
+/// reported as `None` rather than a path that does not exist.
+fn probe_extends_candidate(candidate: &Path, allow_dir_tsconfig: bool) -> Option<PathBuf> {
+    if candidate.is_file() {
+        return Some(candidate.to_path_buf());
     }
-    Ok(base_dir.join(candidate))
+    if candidate.extension().is_none() {
+        let with_json = candidate.with_extension("json");
+        if with_json.is_file() {
+            return Some(with_json);
+        }
+    }
+    if allow_dir_tsconfig && candidate.is_dir() {
+        let nested = candidate.join("tsconfig.json");
+        if nested.is_file() {
+            return Some(nested);
+        }
+    }
+    None
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -230,23 +248,11 @@ fn resolve_package_extends_export_value(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_config_export_target(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    // A package `"exports"` target names a package-relative path; probe it the
+    // same way as a `node_modules` extends candidate (exact file, `.json`
+    // append, or directory `tsconfig.json`).
     let resolved = package_dir.join(target.trim_start_matches("./"));
-    if resolved.is_file() {
-        return Some(resolved);
-    }
-    if resolved.extension().is_none() {
-        let json_path = resolved.with_extension("json");
-        if json_path.is_file() {
-            return Some(json_path);
-        }
-    }
-    if resolved.is_dir() {
-        let tsconfig_path = resolved.join("tsconfig.json");
-        if tsconfig_path.is_file() {
-            return Some(tsconfig_path);
-        }
-    }
-    None
+    probe_extends_candidate(&resolved, true)
 }
 
 /// Anchor relative path-like compiler options at the directory of the
@@ -968,22 +974,38 @@ mod tests {
         let temp = tempdir().unwrap();
         let project = temp.path().join("p");
         std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("base.json"), "{}").unwrap();
         let child = project.join("tsconfig.json");
 
+        // Extensionless relative specifier resolves by appending `.json`.
         let resolved = resolve_extends_path(&child, "./base").unwrap();
-        assert_eq!(resolved, project.join("base.json"));
+        assert_eq!(resolved, Some(project.join("base.json")));
+    }
+
+    #[test]
+    fn resolve_extends_path_relative_missing_is_none() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        // A relative specifier that names no existing file is reported as a
+        // miss (the caller then emits TS6053) rather than a bogus path.
+        let resolved = resolve_extends_path(&child, "./missing").unwrap();
+        assert_eq!(resolved, None);
     }
 
     #[test]
     fn resolve_extends_path_absolute() {
         let temp = tempdir().unwrap();
         let abs = temp.path().join("abs.json");
+        std::fs::write(&abs, "{}").unwrap();
         let project = temp.path().join("p");
         std::fs::create_dir_all(&project).unwrap();
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, abs.to_string_lossy().as_ref()).unwrap();
-        assert_eq!(resolved, abs);
+        assert_eq!(resolved, Some(abs));
     }
 
     #[test]
@@ -997,7 +1019,7 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/recommended").unwrap();
-        assert_eq!(resolved, base);
+        assert_eq!(resolved, Some(base));
     }
 
     #[test]
@@ -1011,6 +1033,53 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/tsconfig.base.json").unwrap();
-        assert_eq!(resolved, base);
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_node_modules_walk_from_nested_dir() {
+        // The package config lives in the workspace-root `node_modules`, while
+        // the consuming config is several directories down (the directus /
+        // rocketchat / cal-com monorepo shape). The walk must climb ancestors.
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let pkg = root.join("node_modules").join("@scope").join("tsconfig");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let base = pkg.join("node22.json");
+        std::fs::write(&base, "{}").unwrap();
+        let nested = root.join("apps").join("web");
+        std::fs::create_dir_all(&nested).unwrap();
+        let child = nested.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "@scope/tsconfig/node22.json").unwrap();
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_bare_package_uses_root_tsconfig() {
+        // A bare package specifier resolves to the package root's tsconfig.json.
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        let pkg = project.join("node_modules").join("shared-config");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let base = pkg.join("tsconfig.json");
+        std::fs::write(&base, "{}").unwrap();
+        let child = project.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "shared-config").unwrap();
+        assert_eq!(resolved, Some(base));
+    }
+
+    #[test]
+    fn resolve_extends_path_missing_package_is_none() {
+        // A non-relative specifier whose package is not installed resolves to a
+        // miss (caller emits TS6053), never to a literal config-dir path-join.
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        let resolved = resolve_extends_path(&child, "@scope/pkg/file.json").unwrap();
+        assert_eq!(resolved, None);
     }
 }

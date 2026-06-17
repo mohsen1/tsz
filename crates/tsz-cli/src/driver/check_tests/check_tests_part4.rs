@@ -596,3 +596,136 @@ function viaArrayGeneric(xs: Array<typeof Alpha.resolved>): Beta[] { return xs; 
         );
     }
 
+    // ------------------------------------------------------------------
+    // #13232 (line-16 facet): resolver-less evaluation must not distribute a
+    // still-generic conditional during relation pre-evaluation / flow read.
+    //
+    // A generic async function expression contextually typed by an interface
+    // member signature whose return type embeds a still-generic conditional
+    // alias (`MappedResponseType<R, T>` with `R`/`T` free type parameters) must
+    // NOT false-fail TS2322. tsc keeps `R extends keyof ResponseMap ? ... : ...`
+    // deferred while `R` is generic, so the flow-narrowed `context.response`
+    // (source) and the contextual return element (target) are the *same*
+    // deferred type and relate by identity.
+    //
+    // tsz degrades the source: the flow-narrowed read evaluates the conditional
+    // through a relation-internal evaluator whose resolver cannot expand the
+    // cross-file `Lazy(def)` (`resolver_generation() == 0`), so it evaluates the
+    // operands — `keyof ResponseMap` -> the key-literal union and the true
+    // branch `ResponseMap[R]` -> the value-type union — instead of keeping them
+    // as the deferred alias the target carries. The two structurally-identical
+    // `FetchResponse<MappedResponseType<R, T>>` types then fail to relate, so a
+    // self-assignment reports the canonical false
+    //   `'FetchResponse<MappedResponseType<R, T>>' is not assignable to
+    //    'FetchResponse<MappedResponseType<R, T>>'`.
+    //
+    // Binder names vary from the original ofetch witness so the behavior follows
+    // the type shape, not a spelling. Both returns and the flow narrowing are
+    // required: a single direct return passes (the issue's "both returns are
+    // needed" note).
+    //
+    // The durable fix is the #13232 resolver-threading work (thread the
+    // checker's def-resolving resolver into the relation-internal evaluator so
+    // the cross-file `keyof`/alias expands, OR refuse to serve resolver-less
+    // results so a resolved pass recomputes them). That is architectural and
+    // validated by the full conformance/canary suite, so this is committed as an
+    // `#[ignore]`d synthetic witness that pins the bug deterministically in ~1s
+    // (the prior reproductions were project-corpus-only). Un-ignore when the
+    // resolver-less deferred-conditional relation is fixed.
+    // ------------------------------------------------------------------
+    #[test]
+    #[ignore = "#13232 line-16: resolver-less relation distributes a still-generic \
+                deferred conditional; un-ignore when resolver threading lands"]
+    fn program_mode_generic_conditional_in_contextual_return_stays_deferred() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&[
+            "es5.d.ts",
+            "es2015.d.ts",
+            "es2015.promise.d.ts",
+            "es2015.iterable.d.ts",
+            "dom.d.ts",
+        ]);
+        assert!(
+            lib_files.len() >= 3,
+            "es5.d.ts + es2015 + dom.d.ts must be available (Promise, Response, fetch)"
+        );
+        let options = project_mode_es2015_strict_options();
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/types.ts",
+                    r#"
+export interface ResponseMap {
+  blob: Blob;
+  text: string;
+  arrayBuffer: ArrayBuffer;
+  stream: ReadableStream;
+}
+export type ResponseType = keyof ResponseMap | "json";
+export type MappedResponseType<
+  R extends ResponseType,
+  JsonType = any,
+> = R extends keyof ResponseMap ? ResponseMap[R] : JsonType;
+export interface FetchResponse<T> extends Response {
+  _data?: T;
+}
+export interface FetchContext<T = any, R extends ResponseType = ResponseType> {
+  request: string;
+  options: unknown;
+  response?: FetchResponse<MappedResponseType<R, T>>;
+  error?: Error;
+}
+export interface $Fetch {
+  raw<T = any, R extends ResponseType = "json">(
+    request: string,
+    options?: unknown,
+  ): Promise<FetchResponse<MappedResponseType<R, T>>>;
+}
+"#,
+                ),
+                (
+                    "/p/main.ts",
+                    r#"
+import type {
+  FetchResponse,
+  ResponseType,
+  MappedResponseType,
+  FetchContext,
+  $Fetch,
+} from "./types";
+
+async function onError<T, R extends ResponseType>(
+  context: FetchContext<T, R>,
+): Promise<FetchResponse<MappedResponseType<R, T>>> {
+  throw new Error("x");
+}
+
+export const $fetchRaw: $Fetch["raw"] = async function $fetchRaw<
+  T = any,
+  R extends ResponseType = "json",
+>(_request: string, _options: unknown = {}) {
+  const context: FetchContext<T, R> = undefined as any;
+  context.response = (await fetch(context.request)) as FetchResponse<
+    MappedResponseType<R, T>
+  >;
+  if (context.response.status >= 400) {
+    return await onError(context);
+  }
+  return context.response;
+};
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+        let bogus: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 2322)
+            .collect();
+        assert!(
+            bogus.is_empty(),
+            "a still-generic conditional alias in the contextual return type must \
+             stay deferred (no false TS2322): {bogus:?}; all: {diagnostics:?}"
+        );
+    }
+

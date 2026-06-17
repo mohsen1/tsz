@@ -261,6 +261,65 @@ pub struct PerfCounters {
     /// and the histogram stays at all-zero.
     pub interner_lock_wait_histogram_ns: [AtomicU64; LOCK_WAIT_BUCKET_COUNT],
 
+    // ─── interner locality (issue #13246, Tier-1 memory-locality tax) ────
+    // The fixed-size TLS direct-mapped caches in
+    // `crates/tsz-solver/src/intern/core/interner/cache.rs` thrash once a
+    // file's live working set exceeds their slot count, falling back to the
+    // sharded `RwLock<Vec<TypeData>>` cold path. These counters quantify
+    // that thrash directly so the `O(files^1.7)` per-file check-time slope
+    // can be attributed to (or ruled out as) cache-locality decay.
+    //
+    // Hit-rate denominators:
+    //   intern: `interner_intern_calls`
+    //   lookup: `interner_lookup_calls`
+    /// `lookup()` entries that reached the TLS/shard probe (intrinsics and
+    /// error ids short-circuit before this and are not counted).
+    pub interner_lookup_calls: AtomicU64,
+    /// `lookup()` calls served from the TLS direct-mapped lookup cache.
+    pub interner_lookup_tls_hits: AtomicU64,
+    /// `lookup()` calls that missed the TLS cache and fell through to the
+    /// cold sharded `RwLock<Vec<TypeData>>` (the 15-25 ns/lookup path).
+    pub interner_lookup_cold_vec_fallbacks: AtomicU64,
+    /// TLS lookup-cache inserts that overwrote a live entry whose tag
+    /// belonged to a *different* `TypeId` (a direct-mapped collision). A
+    /// rising eviction rate is the working-set-exceeds-cache thrash signal.
+    pub interner_lookup_tls_evictions: AtomicU64,
+    /// `intern()` calls served from the TLS direct-mapped intern cache.
+    /// Subset of `interner_intern_hits`; isolates TLS hits from intrinsic
+    /// and shard-read hits, which the aggregate `interner_intern_hits`
+    /// lumps together.
+    pub interner_intern_tls_hits: AtomicU64,
+    /// `intern()` calls that missed the TLS intern cache and ran the
+    /// `DashMap`/shard slow path (`intern_slow`).
+    pub interner_intern_cold_fallbacks: AtomicU64,
+    /// TLS intern-cache inserts that overwrote a live entry for a different
+    /// hash (direct-mapped collision). The intern-side thrash signal.
+    pub interner_intern_tls_evictions: AtomicU64,
+    /// Per-file distinct-`TypeId` working-set high-water mark across the
+    /// run (max over files of distinct ids touched by `lookup`/`intern`).
+    /// When this exceeds `LOOKUP_CACHE_SIZE` (1024) the TLS cache cannot
+    /// hold a file's live set and thrash is structurally forced.
+    pub interner_working_set_distinct_max: AtomicU64,
+    /// Number of files whose distinct working set exceeded the TLS lookup
+    /// cache slot count. The over-capacity file fraction along the scale
+    /// ladder is the locality-decay signal.
+    pub interner_working_set_files_over_cache: AtomicU64,
+    /// Files sampled for the working-set metric (denominator for the
+    /// over-cache fraction).
+    pub interner_working_set_files_sampled: AtomicU64,
+    /// Sum of per-file distinct working sets (for a mean alongside the max).
+    pub interner_working_set_distinct_total: AtomicU64,
+    /// Probe accounting (`TSZ_PROMOTE_FIRST`, opt-in, default OFF): times a
+    /// `lookup`/`intern` was served from the promoted/global hot tier before
+    /// the per-instance TLS cache was consulted. Measurement-only; zero when
+    /// the probe is off. See [`promote_first_enabled`].
+    pub interner_promote_tier_hits: AtomicU64,
+    /// Probe accounting: times the promoted tier was consulted but missed
+    /// (the id/key was not in the stable hot set), falling through to the
+    /// normal TLS + shard path. Sum with `interner_promote_tier_hits` is the
+    /// number of probe consultations.
+    pub interner_promote_tier_misses: AtomicU64,
+
     // ─── compute_type_of_symbol ──────────────────────────────────────────
     pub compute_type_of_symbol_calls: AtomicU64,
     pub compute_type_of_symbol_cache_hits: AtomicU64,
@@ -428,6 +487,19 @@ impl PerfCounters {
             interner_conditional_intern_calls: AtomicU64::new(0),
             interner_mapped_intern_calls: AtomicU64::new(0),
             interner_lock_wait_histogram_ns: [const { AtomicU64::new(0) }; LOCK_WAIT_BUCKET_COUNT],
+            interner_lookup_calls: AtomicU64::new(0),
+            interner_lookup_tls_hits: AtomicU64::new(0),
+            interner_lookup_cold_vec_fallbacks: AtomicU64::new(0),
+            interner_lookup_tls_evictions: AtomicU64::new(0),
+            interner_intern_tls_hits: AtomicU64::new(0),
+            interner_intern_cold_fallbacks: AtomicU64::new(0),
+            interner_intern_tls_evictions: AtomicU64::new(0),
+            interner_working_set_distinct_max: AtomicU64::new(0),
+            interner_working_set_files_over_cache: AtomicU64::new(0),
+            interner_working_set_files_sampled: AtomicU64::new(0),
+            interner_working_set_distinct_total: AtomicU64::new(0),
+            interner_promote_tier_hits: AtomicU64::new(0),
+            interner_promote_tier_misses: AtomicU64::new(0),
             compute_type_of_symbol_calls: AtomicU64::new(0),
             compute_type_of_symbol_cache_hits: AtomicU64::new(0),
             compute_type_of_symbol_interface_simple_object_fastpath_hits: AtomicU64::new(0),

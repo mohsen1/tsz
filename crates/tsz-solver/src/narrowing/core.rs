@@ -412,6 +412,15 @@ pub struct NarrowingCache {
     /// paths because their results depend on structural lookups that are already
     /// cached at narrower query boundaries.
     pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
+    /// Result memo for [`NarrowingContext::narrow_excluding_type`].
+    ///
+    /// Keyed by `(source, excluded, resolver_generation)`. The narrowing-by-
+    /// exclusion algorithm is a pure structural transform that re-derives the
+    /// same `(source, excluded)` pairs repeatedly during constraint /
+    /// union-member descent; this memo eliminates that redundant recomputation.
+    /// `resolver_generation` is folded into the key (mirroring
+    /// `narrow_type_cache`) so a lazy alias change cannot serve a stale result.
+    pub(crate) narrow_excluding_cache: RefCell<FxHashMap<(TypeId, TypeId, u64), TypeId>>,
 }
 
 impl NarrowingCache {
@@ -452,6 +461,10 @@ impl NarrowingCache {
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
             narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                1024,
+                Default::default(),
+            )),
+            narrow_excluding_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
                 Default::default(),
             )),
@@ -1310,7 +1323,40 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Narrow a type to exclude members assignable to target.
+    /// Narrow `source_type` by excluding `excluded_type`.
+    ///
+    /// Thin memoizing wrapper over [`Self::narrow_excluding_type_uncached`].
+    /// The uncached body is a pure structural transform of
+    /// `(source_type, excluded_type)` over the type database (it deliberately
+    /// does not resolve `Lazy`/`Application` types, and its only `self`-state
+    /// reads are other content caches), so the result is stable for a fixed
+    /// resolver generation. Recursive descent through type-parameter constraints
+    /// and union/intersection members re-derives the same `(source, excluded)`
+    /// pairs hundreds of times on deeply generic corpora (measured ~220:1
+    /// call-to-distinct-pair ratio on `TypeBox`); the `(source, excluded,
+    /// resolver_generation)` memo collapses that redundancy. The
+    /// `resolver_generation` component mirrors `narrow_type_cache` so a lazy
+    /// alias change cannot reuse a stale result.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
+        let key = (source_type, excluded_type, self.resolver_generation());
+        if let Some(cached) = self
+            .cache
+            .narrow_excluding_cache
+            .borrow()
+            .get(&key)
+            .copied()
+        {
+            return cached;
+        }
+        let result = self.narrow_excluding_type_uncached(source_type, excluded_type);
+        self.cache
+            .narrow_excluding_cache
+            .borrow_mut()
+            .insert(key, result);
+        result
+    }
+
+    fn narrow_excluding_type_uncached(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
         // `any` cannot be narrowed by exclusion — it remains `any` in all branches.
         // Without this guard, the `is_assignable_to(any, X)` check below would always
         // succeed (any is assignable to everything), incorrectly producing `never`.

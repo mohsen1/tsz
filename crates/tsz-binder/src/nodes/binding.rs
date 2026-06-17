@@ -632,7 +632,7 @@ impl BinderState {
             return;
         }
         if crate::binding::stack_guard::should_probe_stack()
-            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+            && crate::binding::stack_guard::headroom_below(1024 * 1024)
         {
             crate::binding::stack_guard::trip_stack_overflow();
             return;
