@@ -91,13 +91,79 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Pull the per-run timing JSON documents this job persisted on previous
+      # firings so the compare step has a trailing baseline. Each prior run's
+      # artifact is named `ci-timing`; older runs that predate this artifact are
+      # simply absent (continue-on-error), which the script treats as "no
+      # baseline yet".
+      - name: Download prior timing baselines
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          mkdir -p timing-baseline
+          # Most recent completed ci-health runs (this workflow), newest first.
+          run_ids="$(
+            gh run list --repo "${REPOSITORY}" --workflow ci-health.yml \
+              --status completed --limit 12 --json databaseId \
+              --jq '.[].databaseId' 2>/dev/null || true
+          )"
+          for rid in ${run_ids}; do
+            gh run download "${rid}" --repo "${REPOSITORY}" \
+              --name ci-timing --dir "timing-baseline/${rid}" 2>/dev/null || true
+          done
+          echo "baseline docs: $(find timing-baseline -name '*.json' | wc -l | tr -d ' ')"
+
       - name: Record per-job CI timing baseline
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          mkdir -p ci-timing
           node scripts/ci/check-ci-job-timing.mjs --workflow ci.yml --branch main --max-runs 15 \
+            --json ci-timing/timing.json \
+            --baseline-dir timing-baseline \
+            --regress-threshold 30 --regress-min-seconds 60 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      # Persist this run's timing document so future firings can diff against it.
+      - name: Upload timing baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-timing
+          path: ci-timing/timing.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+  ci-flaky-rate:
+    name: ci-flaky-rate
+    runs-on: ubuntu-latest
+    # Pure advisory probe — a transient gh API error must not red the health
+    # workflow (matches ci-job-timing/bench-artifact-readiness). The script also
+    # retries transient transport; this is belt-and-suspenders.
+    continue-on-error: true
+    # Advisory: counts per-job pass<->fail conclusion flips across recent main CI
+    # runs and run_attempt re-runs, surfacing a standing flaky-rate signal so the
+    # determinism work (#13368/#13255) can be prioritized by impact. A flaky job
+    # wedges the merge queue both ways (flaky-pass lands a regression; flaky-fail
+    # ejects a good PR). No wall-clock change.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Report per-job flaky rate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/check-flaky-rate.mjs --workflow CI --branch main \
+            --max-runs 40 --threshold 0.15 --min-samples 4 \
             | tee -a "${GITHUB_STEP_SUMMARY}"
 
   health:

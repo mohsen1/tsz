@@ -6,9 +6,14 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  baselineMedianP50,
+  buildJsonDocument,
   collectRunsWithJobs,
+  compareToBaseline,
+  formatComparison,
   formatReport,
   jobTimingFindings,
+  loadBaselineDocs,
   parseArgs,
   readWorkflowRuns,
 } from "./check-ci-job-timing.mjs";
@@ -125,6 +130,123 @@ function job(overrides = {}) {
 
 assert.throws(() => parseArgs(["--max-runs", "0"]), /positive integer/);
 assert.throws(() => parseArgs(["--bogus"]), /unknown argument/);
+
+{
+  const options = parseArgs(["--json", "out.json", "--baseline-dir", "base", "--regress-threshold", "25", "--regress-min-seconds", "90"]);
+  assert.equal(options.jsonPath, "out.json");
+  assert.equal(options.baselineDir, "base");
+  assert.equal(options.regressThreshold, 25);
+  assert.equal(options.regressMinSeconds, 90);
+}
+
+assert.throws(() => parseArgs(["--json"]), /--json requires a path/);
+assert.throws(() => parseArgs(["--baseline-dir"]), /--baseline-dir requires a path/);
+assert.throws(() => parseArgs(["--regress-threshold", "-1"]), /non-negative/);
+
+// --- buildJsonDocument / baseline / compareToBaseline ----------------------
+
+{
+  const findings = jobTimingFindings([{ id: 1, jobs: [job()] }]);
+  const doc = buildJsonDocument(findings, { workflow: "ci.yml", branch: "main", runCount: 1, generatedAt: "2026-06-17T00:00:00Z" });
+  assert.equal(doc.schemaVersion, 1);
+  assert.equal(doc.workflow, "ci.yml");
+  assert.equal(doc.runCount, 1);
+  assert.equal(doc.findings.length, 1);
+  assert.equal(doc.findings[0].name, "conformance-0");
+}
+
+// baselineMedianP50: per-job median over prior docs; non-numeric p50 skipped.
+{
+  const docs = [
+    { findings: [{ name: "unit", runP50: 100 }, { name: "lint", runP50: 50 }] },
+    { findings: [{ name: "unit", runP50: 120 }, { name: "lint", runP50: null }] },
+    { findings: [{ name: "unit", runP50: 140 }] },
+  ];
+  const baseline = baselineMedianP50(docs);
+  assert.equal(baseline.get("unit").median, 120); // median of [100,120,140]
+  assert.equal(baseline.get("unit").samples, 3);
+  assert.equal(baseline.get("lint").median, 50); // only one numeric sample
+  assert.equal(baseline.get("lint").samples, 1);
+}
+
+// compareToBaseline: flags only jobs over threshold whose baseline >= minSeconds.
+{
+  const findings = [
+    { name: "unit", runP50: 200 }, // baseline 120 -> +66% -> regression
+    { name: "lint", runP50: 70 }, // baseline 50 (< minSeconds 60) -> skipped
+    { name: "stable", runP50: 130 }, // baseline 120 -> +8% -> ok
+    { name: "novel", runP50: 999 }, // no baseline -> skipped
+  ];
+  const baseline = baselineMedianP50([
+    { findings: [{ name: "unit", runP50: 120 }, { name: "lint", runP50: 50 }, { name: "stable", runP50: 120 }] },
+  ]);
+  const comparison = compareToBaseline(findings, baseline, { thresholdPct: 30, minSeconds: 60 });
+  assert.deepEqual(comparison.regressions.map((r) => r.name), ["unit"]);
+  assert.equal(comparison.compared, 2); // unit + stable (lint skipped by minSeconds, novel by no baseline)
+  assert.equal(Math.round(comparison.regressions[0].deltaPct), 67);
+}
+
+// formatComparison rendering across the three states.
+{
+  assert.match(formatComparison({ regressions: [], compared: 0, thresholdPct: 30, minSeconds: 60 }, 0), /first baseline/);
+  assert.match(formatComparison({ regressions: [], compared: 3, thresholdPct: 30, minSeconds: 60 }, 4), /No job's run p50 exceeded/);
+  const warn = formatComparison({
+    regressions: [{ name: "unit", current: 200, baseline: 120, deltaPct: 66.7 }],
+    compared: 2,
+    thresholdPct: 30,
+    minSeconds: 60,
+  }, 4);
+  assert.match(warn, /1 job\(s\) regressed/);
+  assert.match(warn, /unit/);
+  assert.match(warn, /\+67%/);
+}
+
+// loadBaselineDocs: reads *.json, skips unparseable/wrong-shape, missing dir ok.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-ci-timing-baseline-"));
+  try {
+    fs.writeFileSync(path.join(dir, "a.json"), JSON.stringify({ findings: [{ name: "unit", runP50: 100 }] }));
+    fs.writeFileSync(path.join(dir, "b.json"), "{not valid json");
+    fs.writeFileSync(path.join(dir, "c.json"), JSON.stringify({ noFindings: true }));
+    fs.writeFileSync(path.join(dir, "d.txt"), "ignored");
+    const docs = loadBaselineDocs(dir);
+    assert.equal(docs.length, 1);
+    assert.equal(docs[0].findings[0].name, "unit");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.deepEqual(loadBaselineDocs(path.join(os.tmpdir(), "tsz-does-not-exist-xyz")), []);
+}
+
+// --- CLI: --json writes the document; --baseline-dir warns on regression ----
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-ci-timing-json-"));
+  try {
+    const baselineDir = path.join(dir, "baseline");
+    fs.mkdirSync(baselineDir);
+    // Prior baseline: conformance-0 ran ~100s typically.
+    fs.writeFileSync(
+      path.join(baselineDir, "prior.json"),
+      JSON.stringify({ findings: [{ name: "conformance-0", runP50: 100 }] }),
+    );
+    const outJson = path.join(dir, "out.json");
+    // Current fixture: conformance-0 took 300s (job() default) -> +200% regression.
+    const fixture = path.join(dir, "runs.json");
+    fs.writeFileSync(fixture, JSON.stringify({ runs: [{ id: 1, jobs: [job()] }] }));
+    const result = spawnSync(process.execPath, [
+      SCRIPT, "--fixture", fixture, "--json", outJson, "--baseline-dir", baselineDir,
+    ], { cwd: ROOT, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /::warning::ci-job-timing: job "conformance-0"/);
+    assert.match(result.stdout, /Timing Regression Check/);
+    const doc = JSON.parse(fs.readFileSync(outJson, "utf8"));
+    assert.equal(doc.schemaVersion, 1);
+    assert.equal(doc.findings[0].name, "conformance-0");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 // --- readWorkflowRuns: URL shape against an injected fetcher ----------------
 

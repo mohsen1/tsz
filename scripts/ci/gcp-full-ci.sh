@@ -1224,6 +1224,70 @@ show_sccache_stats() {
   fi
 }
 
+# Advisory sccache hit-rate floor. Reads the JSON stats sccache accumulated for
+# this suite's compiles, records the cache-hit ratio as a published metric, and
+# emits a ::warning:: when the ratio falls below SCCACHE_HIT_RATE_FLOOR. This
+# makes a silent cold-cache regression (key-namespace bump, GCS download failure)
+# visible fleet-wide instead of only surfacing as wall-clock drift (#13605 items
+# 3-4). Guarded on RUSTC_WRAPPER: dist-binaries disables sccache by design, so it
+# has no stats and is skipped. Never fails the suite.
+record_sccache_metric() {
+  local suite="${1:-unit}"
+  # No sccache, or sccache not actually wired as the rustc wrapper: nothing to do.
+  if ! command -v sccache >/dev/null 2>&1 || [[ -z "${RUSTC_WRAPPER:-}" ]]; then
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local stats_json
+  stats_json="$(sccache --show-stats --stats-format=json 2>/dev/null || true)"
+  if [[ -z "$stats_json" ]]; then
+    echo "sccache: no JSON stats available for ${suite} (non-fatal)"
+    return 0
+  fi
+
+  # cache_hits/cache_misses are objects of per-language counters; sum the values.
+  # compile_requests is the total work seen. Fall back to 0 on any parse miss so
+  # an sccache version change never breaks the suite.
+  local hits misses requests
+  hits="$(printf '%s' "$stats_json" | jq -r '[.stats.cache_hits.counts // {} | .[]] | add // 0' 2>/dev/null || echo 0)"
+  misses="$(printf '%s' "$stats_json" | jq -r '[.stats.cache_misses.counts // {} | .[]] | add // 0' 2>/dev/null || echo 0)"
+  requests="$(printf '%s' "$stats_json" | jq -r '.stats.compile_requests // 0' 2>/dev/null || echo 0)"
+  hits="$(num_or_zero "$hits")"
+  misses="$(num_or_zero "$misses")"
+  requests="$(num_or_zero "$requests")"
+
+  local total=$((hits + misses))
+  local hit_rate
+  hit_rate="$(awk -v h="$hits" -v t="$total" 'BEGIN { if (t > 0) printf "%.1f", (h / t) * 100; else print "0.0" }')"
+
+  local out="$METRICS_DIR/sccache-${suite}.json"
+  jq -n \
+    --arg suite "sccache-${suite}" \
+    --arg hit_rate "$hit_rate" \
+    --argjson hits "$hits" \
+    --argjson misses "$misses" \
+    --argjson requests "$requests" \
+    '{suite:$suite, hit_rate:$hit_rate, hits:$hits, misses:$misses, requests:$requests}' \
+    > "$out"
+  publish_latest_metric "sccache-${suite}" "$out"
+  echo "sccache ${suite}: hit_rate=${hit_rate}% hits=${hits} misses=${misses} requests=${requests}"
+
+  # Floor check is advisory and only meaningful once enough compiles ran — a
+  # near-empty suite (everything no-op) would otherwise trip on tiny denominators.
+  local floor="${SCCACHE_HIT_RATE_FLOOR:-40}"
+  local min_total="${SCCACHE_HIT_RATE_MIN_TOTAL:-50}"
+  if [[ "$total" -ge "$min_total" ]]; then
+    local below
+    below="$(awk -v r="$hit_rate" -v f="$floor" 'BEGIN { print (r + 0 < f + 0) ? 1 : 0 }')"
+    if [[ "$below" == "1" ]]; then
+      echo "::warning::sccache ${suite} hit-rate ${hit_rate}% is below the ${floor}% floor (hits=${hits} misses=${misses}); cache may be cold (key-namespace bump or GCS download failure)"
+    fi
+  fi
+}
+
 run_node_harness_prep() {
   ci_section "Prep node harnesses (emit + fourslash)"
   timed prep_node_artifacts prep_node_artifacts
@@ -1296,6 +1360,7 @@ main() {
       ;;
     unit)
       timed run_unit_tests run_unit_tests
+      record_sccache_metric unit
       ;;
     checker-integration)
       timed run_checker_integration_tests run_checker_integration_tests
@@ -1306,6 +1371,7 @@ main() {
     wasm-all)
       timed build_wasm_all build_wasm_all
       show_sccache_stats
+      record_sccache_metric wasm
       ;;
     conformance)
       timed build_test_binaries build_test_binaries
