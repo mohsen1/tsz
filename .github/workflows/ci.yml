@@ -1556,7 +1556,13 @@ jobs:
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
-      - project-compile-canary-aggregate
+      # project-compile-canary-aggregate is intentionally NOT a dependency here.
+      # It is an advisory, continue-on-error suite (ALLOW_FAILURES=1) that now
+      # installs deps for ~20 real applications, so it runs for tens of minutes
+      # and queues on a busy pool. Keeping it in `needs` made the required
+      # CI Summary wait on it indefinitely ("expected — waiting for status to be
+      # reported") even though it never gates correctness. It still runs and
+      # records results out of band.
       - wasm
       - node-harness-prep
       - unit
@@ -1718,7 +1724,9 @@ jobs:
           if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
-                  "project-compile-canary-aggregate",
+                  # project-compile-canary-aggregate is advisory (continue-on-error,
+                  # ALLOW_FAILURES=1) and no longer a CI Summary dependency, so it is
+                  # not required to pass; it must not block/delay the merge gate.
                   "conformance-snapshot-gate",
               })
               required.update({
