@@ -31,17 +31,15 @@ pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// Check if a type contains free type parameters, excluding those bound by
 /// enclosing function/callable signatures. See `contains_free_type_parameters_db`
 /// in `content_predicates` for the full doc.
+///
+/// The deep FREE-policy walk is memoized per node in the project-wide
+/// free-type-parameter cache (the answer is immutable per `TypeId` within one
+/// interner), so repeated checks over shared closed subtrees stay O(1). This
+/// mirrors how `contains_type_parameters` delegates to the cached
+/// `contains_param_or_infer_db`; the hot `resolve_operands` conditional gate
+/// asks this twice per node (#13250).
 pub fn contains_free_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, ChildPolicy::FREE_TYPE_PARAMS, |key| {
-        matches!(
-            key,
-            TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-        )
-    })
-    .check_from_root(type_id)
+    crate::type_queries::contains_free_type_parameters_db(types, type_id)
 }
 
 /// Check if a type contains any `infer` types.

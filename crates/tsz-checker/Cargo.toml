@@ -1121,6 +1121,9 @@ path = "tests/cross_module_unimported_name_resolution_tests.rs"
 name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 [[test]]
+name = "cross_file_function_node_index_collision_tests"
+path = "tests/cross_file_function_node_index_collision_tests.rs"
+[[test]]
 name = "cross_file_type_params_cache_tests"
 path = "tests/cross_file_type_params_cache_tests.rs"
 [[test]]

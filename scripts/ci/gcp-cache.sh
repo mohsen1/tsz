@@ -201,22 +201,68 @@ tmp_archive() {
   printf '/tmp/tsz-cache-%s-%s.tar.gz\n' "$label" "$$"
 }
 
+# Emit a tar.gz byte stream of <base>/<path...> on stdout.
+#
+# Shared producer for both the staged-file (create_archive) and the
+# stream-to-GCS (stream_archive_to_uri) save paths. Keeping a single
+# producer guarantees both paths pack BYTE-IDENTICAL blobs — same `tar`
+# selection/flags, same `gzip -n` (no timestamp/name header) at the same
+# level — so switching staging strategy never changes blob contents or the
+# downstream cache hit.
+#
+# Cut the in-process compression peak at tar time. The default tar `-z`
+# uses gzip level 6, whose deflate path keeps large hash chains/window
+# buffers; gzip levels 1-3 use the lighter `deflate_fast` algorithm with
+# smaller tables and far less CPU. Since the save-path tar runs at
+# post-build memory peak (#13733/#13748), pipe tar -> gzip with an explicit,
+# tunable level so the compressor never inflates RSS at the worst moment.
+# TSZ_CI_CACHE_GZIP_LEVEL tunes the size/speed tradeoff (default 1; raise it
+# to trade CPU/RSS for a smaller blob). Note: this only lowers the
+# compression level — it does NOT switch codecs (zstd is tracked separately
+# in #13605 item 4).
+emit_archive_stream() {
+  local base="$1"
+  shift
+  local level="${TSZ_CI_CACHE_GZIP_LEVEL:-1}"
+  COPYFILE_DISABLE=1 tar --exclude='._*' -cf - -C "$base" "$@" \
+    | gzip -n -"${level}"
+}
+
 create_archive() {
   local archive="$1" base="$2"
   shift 2
-  # Cut the in-process compression peak at tar time. The default tar `-z`
-  # uses gzip level 6, whose deflate path keeps large hash chains/window
-  # buffers; gzip levels 1-3 use the lighter `deflate_fast` algorithm with
-  # smaller tables and far less CPU. Since the save-path tar runs at
-  # post-build memory peak (#13733/#13748), pipe tar -> gzip with an explicit,
-  # tunable level so the compressor never inflates RSS at the worst moment.
-  # TSZ_CI_CACHE_GZIP_LEVEL tunes the size/speed tradeoff (default 1; raise it
-  # to trade CPU/RSS for a smaller blob). Note: this only lowers the
-  # compression level — it does NOT switch codecs (zstd is tracked separately
-  # in #13605 item 4).
-  local level="${TSZ_CI_CACHE_GZIP_LEVEL:-1}"
-  COPYFILE_DISABLE=1 tar --exclude='._*' -cf - -C "$base" "$@" \
-    | gzip -n -"${level}" > "$archive"
+  emit_archive_stream "$base" "$@" > "$archive"
+}
+
+# Stream tar -> gzip -> gsutil cp - DIRECTLY to GCS, never staging the full
+# blob on the local filesystem (#13733/#13748).
+#
+# Why this is the real OOM lever: dist-binaries runs on Cloud Run, whose
+# `/tmp` (and the rest of the writable tree) is a RAM-backed tmpfs that
+# counts against the container memory limit. The previous save_archive
+# staged a multi-GB `.target/dist-fast` tar.gz under /tmp via create_archive
+# and only then ran `gsutil cp <file>`, so the whole compressed blob became
+# resident at the post-build memory peak — exactly when MemAvailable is
+# lowest — and the kernel OOM-killer SIGKILL'd the container (exit 137),
+# wedging the merge queue. Streaming the producer straight into
+# `gsutil cp -` keeps only the pipe buffers (a few MiB) resident regardless
+# of blob size, which is what lets the bounded #13747 workspace-rlib refresh
+# run on every green main build without re-triggering the OOM.
+#
+# Correctness: byte-identical to the staged path (same emit_archive_stream
+# producer, same destination URI/key). `gsutil cp -` performs a single
+# resumable streaming upload whose object only becomes visible after the
+# stream completes, so a mid-pipe failure (caught by `pipefail`) leaves no
+# partial object — same atomicity the staged path had via a complete temp
+# file. Upload size logging becomes a best-effort post-upload `gsutil du`
+# (diagnostic only; never gates the save).
+stream_archive_to_uri() {
+  local uri="$1" base="$2"
+  shift 2
+  if emit_archive_stream "$base" "$@" | gsutil -q cp - "$uri"; then
+    return 0
+  fi
+  return 1
 }
 
 validate_typescript_cache_tree() {
@@ -331,6 +377,33 @@ refresh_rust_source_mtimes_after_target_restore() {
   echo "Refreshed Rust source mtimes after Cargo target cache restore"
 }
 
+# Observability for #13747: how stale is the restored workspace-rlib baseline?
+#
+# The cargo-target-deps (dist-fast) blob is the only cross-commit reuse the
+# sccache-disabled dist-binaries job gets. Its refresh is gated on
+# rust_cache_refresh (Cargo.lock/Cargo.toml/.cargo/config.toml changes only),
+# so on a long run of source-only main pushes the workspace .rlibs inside it
+# drift many commits behind HEAD and Cargo recompiles the hot crates against an
+# old baseline every PR. We pack a tiny `.tsz-cache-commit` marker into the
+# blob at save time (no extra GCS object) and read it back here so the staleness
+# is measurable before we decide whether to broaden the save trigger.
+#
+# Best-effort: never fails the build. dist-binaries checks out fetch-depth:1, so
+# `git rev-list` usually cannot resolve the blob commit — in that case we still
+# log both SHAs and report distance as unknown.
+log_cargo_target_deps_staleness() {
+  local marker=".target/dist-fast/.tsz-cache-commit"
+  if [[ ! -f "$marker" ]]; then
+    echo "cargo-target-deps staleness: no commit marker in restored blob (pre-#13747 blob or cache miss)"
+    return 0
+  fi
+  local blob_commit head_commit distance
+  blob_commit="$(tr -d '[:space:]' < "$marker" 2>/dev/null || true)"
+  head_commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  distance="$(git rev-list --count "${blob_commit}..HEAD" 2>/dev/null || echo unknown)"
+  echo "cargo-target-deps staleness: blob built at ${blob_commit:-unknown}; HEAD ${head_commit}; workspace-rlib baseline is ${distance} commit(s) behind (#13747)"
+}
+
 # save_archive <label> <gs://...> <base> <path...>
 #
 # Cache write policy: only push-on-main runs publish blobs. PRs and
@@ -363,22 +436,21 @@ save_archive() {
     return 0
   fi
 
-  local archive
-  archive="$(tmp_archive "$label")"
+  # Stream pack+upload directly to GCS — never stage the blob on the local
+  # (Cloud Run tmpfs / RAM-backed) filesystem, which is the residual OOM hog
+  # at post-build memory peak (#13733/#13748). See stream_archive_to_uri.
   local t0=$SECONDS
-  create_archive "$archive" "$base" "${existing[@]}"
-  local pack_secs=$((SECONDS - t0))
-  local size_h
-  size_h="$(du -h "$archive" 2>/dev/null | awk '{print $1}')"
-
-  local t1=$SECONDS
-  if gsutil -q cp "$archive" "$uri"; then
-    local upload_secs=$((SECONDS - t1))
-    echo "Cache saved: ${label} (size=${size_h:-?}, pack=${pack_secs}s, upload=${upload_secs}s)"
+  if stream_archive_to_uri "$uri" "$base" "${existing[@]}"; then
+    local total_secs=$((SECONDS - t0))
+    # Best-effort, post-upload size for diagnostics only. `gsutil du` reads
+    # the object's stored size from GCS metadata (no local re-read), so it
+    # adds no memory pressure to the save path.
+    local size_h
+    size_h="$(gsutil du -h "$uri" 2>/dev/null | awk '{print $1 $2}')"
+    echo "Cache saved: ${label} (size=${size_h:-?}, pack+upload=${total_secs}s, streamed)"
   else
-    echo "warning: failed to upload cache ${label}" >&2
+    echo "warning: failed to pack/upload cache ${label}" >&2
   fi
-  rm -f "$archive"
 }
 
 suite_needs_rust_compile() {
@@ -500,6 +572,7 @@ restore_caches() {
     # accepting stale workspace test binaries from the cache. This is the
     # inverse of the old backdating trick: correctness first, sccache for reuse.
     refresh_rust_source_mtimes_after_target_restore
+    log_cargo_target_deps_staleness
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi
@@ -609,12 +682,46 @@ save_caches() {
     # blob; new write policy (main-only) plus profile isolation makes
     # the dedicated lint cache redundant.
     cargo_target_key="$(cargo_target_cache_key)"
-    if [[ "${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}" == "1" ]]; then
+
+    # Lock-gated trigger (set from gate.outputs.rust_cache_refresh in ci.yml):
+    # save every profile blob when the dep graph changed.
+    local save_cargo_targets="${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}"
+
+    # Opt-in, default-off broader-refresh path for #13747. When enabled, the
+    # workspace-rlib (dist-fast) blob is republished on EVERY green main build,
+    # not only on Cargo.lock/profile changes, so PR dist-binaries restores a
+    # fresher incremental base instead of a many-commits-stale one.
+    #
+    # Bounded by construction, so it cannot reintroduce the #13733/#13748 OOM:
+    #   * default off — main-push behavior is unchanged until an operator reads
+    #     the staleness marker (log_cargo_target_deps_staleness) and flips the
+    #     repo variable, so this ships measured rather than as a blind change;
+    #   * gated by the MemAvailable preflight at the top of save_caches (and the
+    #     duplicate gate in github-suite.sh run_cache_save) — the save defers
+    #     instead of risking a kernel SIGKILL at post-build memory peak;
+    #   * scoped to the dist-fast blob only — the unit/wasm profile blobs stay
+    #     lock-gated, so this does not broaden the whole target tree;
+    #   * reuses the existing cargo-target-deps key — no namespace bump, so
+    #     existing blobs remain valid and are simply overwritten by a fresher
+    #     green main build.
+    local refresh_workspace_rlibs="${TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS:-0}"
+
+    if [[ "$save_cargo_targets" == "1" || "$refresh_workspace_rlibs" == "1" ]]; then
+      # Pack a tiny provenance marker into the blob so the next restore can
+      # measure how stale this workspace-rlib baseline is (#13747). Best-effort.
+      if [[ -d .target/dist-fast ]]; then
+        printf '%s\n' "$commit" > .target/dist-fast/.tsz-cache-commit 2>/dev/null || true
+      fi
       save_archive \
         "cargo-target-deps-${cargo_target_key}" \
         "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
         "." \
         .target/dist-fast
+    else
+      echo "Cache save skipped: cargo-target-deps (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0, TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS=0)"
+    fi
+
+    if [[ "$save_cargo_targets" == "1" ]]; then
       save_archive \
         "cargo-target-unit-${cargo_target_key}" \
         "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
@@ -626,7 +733,7 @@ save_caches() {
         "." \
         .target/wasm32-unknown-unknown
     else
-      echo "Cache save skipped: cargo-target-* (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
+      echo "Cache save skipped: cargo-target-unit/wasm (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
     fi
   fi
 

@@ -1626,6 +1626,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .match_infer_pattern_union_members(&members, pattern, bindings, visited, checker);
         }
 
+        // Intersection sources match the pattern through whichever constituent
+        // structurally matches it: e.g. `((g: () => T) => U) & { z?: 1 }` matched
+        // against `(...args: any) => infer R` extracts `R = U` from the callable
+        // member. Without this, `ReturnType<X>`/`Parameters<X>` over an
+        // intersection-of-callable carrying a free type parameter fails to reduce
+        // and the conditional stays deferred (a false `ReturnType<...>` residue).
+        // Mirrors how `tsc` evaluates conditional `infer` extraction against an
+        // intersection by inspecting each constituent. Try members in declaration
+        // order and accept the first that binds the pattern; later members that do
+        // not match the pattern shape (e.g. the `{ z?: 1 }` brand) are simply not
+        // the constituent the pattern targets.
+        if let Some(TypeData::Intersection(members)) = self.interner().lookup(source) {
+            let members = self.interner().type_list(members);
+            for &member in members.iter() {
+                if member == source {
+                    continue;
+                }
+                let mut local = bindings.clone();
+                if self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
+                    *bindings = local;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         let Some(pattern_key) = self.interner().lookup(pattern) else {
             return false;
         };

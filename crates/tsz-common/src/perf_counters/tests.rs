@@ -292,6 +292,61 @@ mod json_tests {
     }
 
     #[test]
+    fn interner_locality_counters_serialize_as_numbers() {
+        // #13246 Tier-1 locality instrumentation: the per-file working-set /
+        // TLS hit-miss-eviction / cold-Vec-fallback / promote-tier counters
+        // must surface as numbers (zero is fine when the test process has not
+        // interned user types) so the scale-cliff bench harness can parse them.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        for key in [
+            "lookup_calls",
+            "lookup_tls_hits",
+            "lookup_cold_vec_fallbacks",
+            "lookup_tls_evictions",
+            "intern_tls_hits",
+            "intern_cold_fallbacks",
+            "intern_tls_evictions",
+            "working_set_distinct_max",
+            "working_set_files_over_cache",
+            "working_set_files_sampled",
+            "working_set_distinct_total",
+            "promote_tier_hits",
+            "promote_tier_misses",
+        ] {
+            assert!(
+                json["interner"][key].is_number(),
+                "interner locality counter `{key}` should serialize as a number, got: {}",
+                json["interner"][key]
+            );
+        }
+    }
+
+    #[test]
+    fn interner_working_set_records_distinct_high_water() {
+        // Drive the per-file working-set sampler directly: noting two distinct
+        // ids then closing the file must record a distinct count of 2 and feed
+        // the run-wide total/max. Below the over-cache threshold, so the
+        // over-cache bucket stays untouched.
+        force_enable_perf_counters_for_tests();
+        let c = counters();
+        let before_total = c
+            .interner_working_set_distinct_total
+            .load(Ordering::Relaxed);
+        note_interner_working_set_id(7);
+        note_interner_working_set_id(9);
+        note_interner_working_set_id(7); // duplicate, must not double-count
+        let distinct = record_interner_working_set_for_file();
+        assert_eq!(distinct, 2, "two distinct ids noted");
+        let after_total = c
+            .interner_working_set_distinct_total
+            .load(Ordering::Relaxed);
+        assert_eq!(after_total - before_total, 2);
+        // A second close with no notes records nothing (set was cleared).
+        assert_eq!(record_interner_working_set_for_file(), 0);
+    }
+
+    #[test]
     fn file_session_resets_serializes_as_number() {
         // The T2.1 file-session reset counter rides inside the existing
         // `checker_construction` wired group, so adding it must not

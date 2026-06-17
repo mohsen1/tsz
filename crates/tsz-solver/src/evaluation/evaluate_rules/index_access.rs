@@ -1841,6 +1841,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(TypeData::UniqueSymbol(sym)) = self.interner().lookup(index_type) {
             return Some(self.symbol_named_atom_from_unique_symbol_ref(sym));
         }
+        // A `typeof <uniqueSymbolConst>` index via a same-named `type X = typeof X`
+        // alias stays a self-referential `TypeQuery(sym)` (never rewritten to
+        // `UniqueSymbol(sym)`); its member is stored under the same `__unique_<sym>`/
+        // well-known atom, so map a symbol-denoting query to that key.
+        if let Some(TypeData::TypeQuery(sym)) = self.interner().lookup(index_type)
+            && self.type_query_denotes_symbol(sym)
+        {
+            return Some(self.symbol_named_atom_from_unique_symbol_ref(sym));
+        }
         crate::type_queries::get_literal_property_name(self.interner(), index_type)
     }
 
@@ -1925,10 +1934,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If index is a literal string or unique symbol, look up the property first,
         // then fallback to string index.
         if let Some(name) = self.literal_property_lookup_atom(index_type) {
-            let is_symbol_key = matches!(
-                self.interner().lookup(index_type),
-                Some(TypeData::UniqueSymbol(_))
-            );
+            let is_symbol_key = self.index_type_is_symbol_key(index_type);
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);

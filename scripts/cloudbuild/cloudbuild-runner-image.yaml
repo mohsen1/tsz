@@ -1,0 +1,37 @@
+# Cloud Build config that rebuilds and pushes the self-hosted GitHub Actions
+# runner image from scripts/infra/cloud-run-gh-runner/Dockerfile.
+#
+# Invoked by .github/workflows/runner-image.yml via `gcloud builds submit`. The
+# workflow passes the destination image path and the commit SHA as
+# substitutions so every build is SHA-tagged for provenance. The `latest` tag
+# is updated alongside the SHA tag so the Cloud Run service can track the most
+# recent build when a maintainer chooses not to pin a specific SHA.
+#
+# Substitutions (all required, supplied by the workflow):
+#   _IMAGE  fully-qualified image repository, e.g.
+#           us-central1-docker.pkg.dev/<project>/<repo>/tsz-cloud-run-runner
+#   _SHA    git commit SHA the image is built from (provenance tag)
+
+steps:
+  - id: build-runner-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - '${_IMAGE}:${_SHA}'
+      - --tag
+      - '${_IMAGE}:latest'
+      - --file
+      - scripts/infra/cloud-run-gh-runner/Dockerfile
+      - scripts/infra/cloud-run-gh-runner
+
+images:
+  - '${_IMAGE}:${_SHA}'
+  - '${_IMAGE}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# The base image install (rust toolchain, nextest, wasm-pack, gcloud SDK, apt
+# packages) is heavy; allow generous headroom.
+timeout: 2400s

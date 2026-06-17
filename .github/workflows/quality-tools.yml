@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install nightly Miri
         run: |
           rustup toolchain install nightly --component miri
@@ -57,7 +57,7 @@ jobs:
     env:
       CARGO_LLVM_COV_VERSION: "0.8.7"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install cargo-llvm-cov
         run: |
           if command -v cargo-llvm-cov >/dev/null 2>&1 \
@@ -71,7 +71,7 @@ jobs:
       - name: Run focused coverage report
         run: scripts/quality/run-coverage.sh
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: quality-tools-lcov
           path: target/llvm-cov/quality-tools.lcov
@@ -86,7 +86,7 @@ jobs:
     env:
       CARGO_MUTANTS_VERSION: "27.0.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install cargo-mutants
         run: |
           if command -v cargo-mutants >/dev/null 2>&1 \
@@ -107,7 +107,7 @@ jobs:
       CARGO_SEMVER_CHECKS_VERSION: "0.47.0"
       TSZ_SEMVER_BASELINE_REV: ${{ inputs.semver_baseline_rev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
       - name: Install cargo-semver-checks
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install nightly rust-src
         run: rustup toolchain install nightly --component rust-src
       - name: Run address sanitizer smoke
@@ -141,7 +141,7 @@ jobs:
     env:
       CARGO_BLOAT_VERSION: "0.12.1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install cargo-bloat
         run: |
           if command -v cargo-bloat >/dev/null 2>&1 \

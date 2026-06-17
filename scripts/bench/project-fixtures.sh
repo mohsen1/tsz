@@ -759,6 +759,8 @@ ${extra_compiler_options}    "resolveJsonModule": true
   "exclude": [
     "**/*.test.ts",
     "**/*.test.tsx",
+    "**/*.test-d.ts",
+    "**/*.test-d.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
     "**/__tests__/**",
@@ -843,7 +845,21 @@ tsz_write_trpc_config() {
     ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_query_config() {
-  tsz_write_basic_external_project_config "$1" "packages/query-core/src"
+  # tanstack-query's real root tsconfig pins `"types": ["node"]`, so its build
+  # sees the `process` global via @types/node; several query-core sources read
+  # `process.env.NODE_ENV` (timeoutManager.ts, query.ts, utils.ts, etc.). The
+  # fixture clone runs no npm install and the bench baseline pins `"types": []`,
+  # so without a stub tsc emits spurious TS2591 "Cannot find name 'process'" and
+  # tsz matches that. A single ambient `process` stub reproduces what tsc sees
+  # when @types/node is present, leaving query-core's own source fully
+  # type-checked (matching the immer fixture's treatment of the same global).
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare const process: any;
+TYPES
+  tsz_write_basic_external_project_config "$1" "packages/query-core/src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_router_config() {
   tsz_write_basic_external_project_config "$1" "packages/router-core/src"
@@ -862,7 +878,17 @@ tsz_write_fp_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_io_ts_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # io-ts imports the `fp-ts` peer dependency via deep `/lib/*` subpaths that the
+  # clone-only fixture (no npm install) cannot resolve; map them onto a single
+  # `any` external-module stub so fp-ts-typed positions resolve like a bare-`any`
+  # install would, matching what tsc sees instead of a spurious TS2307 wall.
+  tsz_write_io_ts_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "baseUrl": ".",
+    "paths": {
+      "fp-ts/lib/*": ["tsz-bench-external-module.d.ts"]
+    },
+'
 }
 tsz_write_immer_config() {
   # immer imports sibling modules with explicit `.ts` extensions; its real

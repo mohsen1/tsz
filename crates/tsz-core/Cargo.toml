@@ -115,5 +115,13 @@ harness = false
 name = "phase_timing_bench"
 harness = false
 
+[[bench]]
+name = "conditional_mapped_eval_bench"
+harness = false
+
+[[bench]]
+name = "contextual_callback_reentry_bench"
+harness = false
+
 [lints]
 workspace = true

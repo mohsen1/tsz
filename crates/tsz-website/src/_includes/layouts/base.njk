@@ -27,6 +27,9 @@
   {% if build.sha %}<meta name="tsz-build-sha" content="{{ build.sha }}">{% endif %}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
+  <!-- GitHub <relative-time> web component: renders timestamps as relative time.
+       Degrades gracefully to the absolute ISO fallback text if it fails to load. -->
+  <script type="module">import "https://cdn.jsdelivr.net/npm/@github/relative-time-element@4/+esm";</script>
   {{ extra_head | safe }}
 </head>
 <body>

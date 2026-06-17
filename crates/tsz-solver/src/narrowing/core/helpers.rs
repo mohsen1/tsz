@@ -170,7 +170,10 @@ impl<'a> NarrowingContext<'a> {
             return false;
         };
 
-        left_parent == right_parent
+        // Cross-module import barrels can give the same enum two `DefId`s;
+        // compare parents through `defs_are_equivalent` (alias-forward /
+        // `SymbolId` aware) rather than raw equality.
+        resolver.defs_are_equivalent(left_parent, right_parent)
             && self.literal_values_equivalent_for_narrowing(left_inner, right_inner)
     }
 
@@ -229,17 +232,43 @@ impl<'a> NarrowingContext<'a> {
         union_or_single(self.db, parts)
     }
 
+    /// Resolve a `typeof === "function"` filter source to a union when the
+    /// source is a non-union alias whose body distributes into a union (an
+    /// instantiated generic alias `F<string>`). Returns the original source
+    /// otherwise — notably a Lazy reference to the boxed global `Function`
+    /// interface, whose resolved object shape would defeat the boxed-`Function`
+    /// identity check in `is_function_type`.
+    fn resolve_source_for_function_filter(&self, source_type: TypeId) -> TypeId {
+        if union_list_id(self.db, source_type).is_some() {
+            return source_type;
+        }
+        let resolved = self.resolve_type(source_type);
+        if resolved != source_type && union_list_id(self.db, resolved).is_some() {
+            resolved
+        } else {
+            source_type
+        }
+    }
+
     /// Narrow to function types only.
     pub(super) fn narrow_to_function(&self, source_type: TypeId) -> TypeId {
+        // Resolve a non-union Lazy/Application source only when it expands to a
+        // union (e.g. an instantiated generic alias `F<string>` whose body is
+        // `number | 'static' | ((q) => number)`). Without this the `typeof x
+        // === "function"` guard sees an opaque `Application` instead of the
+        // union, `union_list_id` returns `None`, and the callable constituent
+        // is never selected. Resolution is *only* adopted when the result is a
+        // union: a Lazy reference to the boxed global `Function` interface
+        // resolves to its object shape (with `call`/`apply`/… properties),
+        // which `is_function_type`'s boxed-`Function` identity check would no
+        // longer recognise, so the original is kept for the non-union path.
+        let source_type = self.resolve_source_for_function_filter(source_type);
+
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut functions: Option<Vec<TypeId>> = None;
             for (index, &member) in members.iter().enumerate() {
-                let narrowed = if let Some(narrowed) = self.narrow_type_param_to_function(member) {
-                    narrowed.non_never()
-                } else {
-                    self.is_function_type(member).then_some(member)
-                };
+                let narrowed = self.narrow_union_member_to_function(member);
 
                 match (narrowed, &mut functions) {
                     (Some(result), Some(functions)) => functions.push(result),
@@ -307,20 +336,108 @@ impl<'a> NarrowingContext<'a> {
         is_function_type_through_type_constraints(self.db, type_id)
     }
 
+    /// Narrow a single union member for the `typeof === "function"` guard.
+    ///
+    /// Returns the constituent to keep (`Some`), or `None` to drop the member.
+    /// Handles three cases the raw structural visitor cannot:
+    /// - type parameters (`narrow_type_param_to_function`);
+    /// - a member that is directly callable (kept as-is to preserve identity);
+    /// - a member that is a `Lazy`/`Application` alias which resolves to a
+    ///   callable type or to a nested union with callable constituents.
+    ///
+    /// The structural `is_function_type` visitor runs over raw `TypeData` and
+    /// cannot see through an unresolved alias reference (e.g. a union member that
+    /// is itself a callable type alias, or one produced by an instantiated
+    /// generic alias whose body has not yet been collapsed). The narrowing
+    /// context owns a resolver, so resolve before classifying. When the member
+    /// is itself directly callable the original member is kept so display and
+    /// identity are unchanged; only members hidden behind an alias are replaced
+    /// by their resolved/recursively-narrowed callable form.
+    fn narrow_union_member_to_function(&self, member: TypeId) -> Option<TypeId> {
+        if let Some(narrowed) = self.narrow_type_param_to_function(member) {
+            return narrowed.non_never();
+        }
+
+        if self.is_function_type(member) {
+            return Some(member);
+        }
+
+        let resolved = self.resolve_type(member);
+        if resolved == member {
+            return None;
+        }
+
+        if self.is_function_type(resolved) {
+            return Some(resolved);
+        }
+
+        // The alias resolved to a nested union (e.g. `Inner<T>` ->
+        // `((q: T) => number) | string`). Recurse so its callable constituents
+        // are selected and non-callable ones dropped.
+        if union_list_id(self.db, resolved).is_some() {
+            let narrowed = self.narrow_to_function(resolved);
+            return (narrowed != TypeId::NEVER).then_some(narrowed);
+        }
+
+        None
+    }
+
+    /// Exclude a single union member's function constituents (typeof !==
+    /// "function"). Returns the constituent to keep (`Some`) or `None` to drop
+    /// the whole member.
+    ///
+    /// Symmetric to `narrow_union_member_to_function`: it resolves `Lazy` /
+    /// `Application` alias members so a callable constituent hidden behind an
+    /// instantiated generic alias (e.g. `StaleTime<TData>` inside
+    /// `StaleTime<TData> | undefined`) is stripped instead of preserved whole.
+    /// Members with no function constituent are kept as the original member so
+    /// display and identity are unchanged.
+    fn narrow_union_member_excluding_function(&self, member: TypeId) -> Option<TypeId> {
+        if let Some(narrowed) = self.narrow_type_param_excluding_function(member) {
+            return narrowed.non_never();
+        }
+
+        if self.is_function_type(member) {
+            return None;
+        }
+
+        let resolved = self.resolve_type(member);
+        if resolved == member {
+            return Some(member);
+        }
+
+        if self.is_function_type(resolved) {
+            return None;
+        }
+
+        // The alias resolved to a nested union (e.g. `StaleTime<T>` ->
+        // `number | 'static' | ((q: T) => number)`). Recurse to strip its
+        // callable constituents; if nothing callable was present, keep the
+        // original member to preserve identity.
+        if union_list_id(self.db, resolved).is_some() {
+            let stripped = self.narrow_excluding_function(resolved);
+            if stripped == resolved {
+                return Some(member);
+            }
+            return (stripped != TypeId::NEVER).then_some(stripped);
+        }
+
+        Some(member)
+    }
+
     /// Narrow a type to exclude function-like members (typeof !== "function").
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
+        // Resolve a non-union Lazy/Application source so an instantiated generic
+        // alias whose body is a callable union is decomposed before exclusion
+        // (the dual of `narrow_to_function`). Resolution is only adopted when it
+        // expands to a union; see `resolve_source_for_function_filter`.
+        let source_type = self.resolve_source_for_function_filter(source_type);
+
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut remaining: Option<Vec<TypeId>> = None;
             for (index, &member) in members.iter().enumerate() {
-                let narrowed =
-                    if let Some(narrowed) = self.narrow_type_param_excluding_function(member) {
-                        narrowed.non_never()
-                    } else if self.is_function_type(member) {
-                        None
-                    } else {
-                        Some(member)
-                    };
+                let narrowed = self.narrow_union_member_excluding_function(member);
 
                 match (narrowed, &mut remaining) {
                     (Some(result), Some(remaining)) => remaining.push(result),
@@ -762,7 +879,11 @@ impl<'a> NarrowingContext<'a> {
         self.is_structurally_assignable_to_object(resolved_source, resolved_target)
     }
 
-    pub(super) fn is_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
+    pub(in crate::narrowing) fn is_subtype_for_narrowing(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         if let Some(resolver) = self.resolver {
             let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
                 .with_query_db(self.db);

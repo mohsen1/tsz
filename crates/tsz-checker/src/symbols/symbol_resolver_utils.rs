@@ -652,6 +652,69 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// For an indexed-access type annotation `T[K]`, return `true` when the
+    /// object operand `T` is a type reference rooted in an unresolved module
+    /// import (TS2307 already emitted).
+    ///
+    /// `tsc` poisons a reference to a generic interface from an unresolved
+    /// module to `any`, so the indexed access `T[K]` collapses to `any[K] =
+    /// any` rather than a deferred `T[K]`. Without this signal the lowering
+    /// keeps the access stuck on `Application(UnresolvedTypeName, …)`, which
+    /// (1) false-fails assignability (`TS2322`) against an arrow initializer
+    /// and (2) is treated as a valid contextual type that wrongly suppresses
+    /// the implicit-`any` parameter diagnostics (`TS7006`) `tsc` reports.
+    ///
+    /// The root identifier is resolved structurally via
+    /// `is_unresolved_import_symbol_id` (the same helper #13755/#13780 use);
+    /// no identifier/file-name string is inspected. Qualified object names
+    /// (`ns.Iface[K]`) walk to the leftmost identifier before the check.
+    pub(crate) fn indexed_access_object_is_unresolved_import(
+        &self,
+        indexed_access_node: &Node,
+    ) -> bool {
+        let Some(indexed) = self.ctx.arena.get_indexed_access_type(indexed_access_node) else {
+            return false;
+        };
+        let Some(object_node) = self.ctx.arena.get(indexed.object_type) else {
+            return false;
+        };
+        if object_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(object_node) else {
+            return false;
+        };
+        self.type_reference_root_is_unresolved_import(type_ref.type_name)
+    }
+
+    /// Walk an entity name (`E`, `E.M`, `E.M.N`, …) to its leftmost identifier
+    /// and report whether that root resolves to an unresolved module import.
+    /// Shared root-walk for the indexed-access poison check above.
+    fn type_reference_root_is_unresolved_import(&self, entity_name_idx: NodeIndex) -> bool {
+        let mut current = entity_name_idx;
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                    return false;
+                };
+                current = qn.left;
+                continue;
+            }
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return matches!(
+                    self.resolve_identifier_symbol_in_type_position_without_tracking(current),
+                    crate::symbol_resolver::TypeSymbolResolution::Type(sym_id)
+                        if self.is_unresolved_import_symbol_id(sym_id)
+                );
+            }
+            return false;
+        }
+        false
+    }
+
     /// Check if a module specifier matches a declared or shorthand ambient module pattern.
     ///
     /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").

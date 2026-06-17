@@ -903,8 +903,15 @@ pub(crate) fn extract_rest_param_type_at(
             // Return the rest param's type directly (it's already a tuple or array type).
             return Some(normalized.type_id);
         }
-        // Past the end with no rest param — no contextual type.
-        return None;
+        // The callback declares a rest parameter (`...args`) at a position past the
+        // end of a fixed-arity contextual signature that has no rest parameter. The
+        // contextual type for that rest is the empty tuple `[]`: there are no
+        // further parameters for it to capture. Typing it as `[]` (rather than
+        // leaving it un-contextual, which defaults to `any[]`) matches `tsc` and
+        // lets the rest be spread back into another fixed-arity callee without a
+        // spurious TS2556 (`A spread argument must either have a tuple type or be
+        // passed to a rest parameter`).
+        return Some(db.tuple(vec![]));
     }
 
     // The callback rest param starts before the contextual function's rest param.
