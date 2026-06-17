@@ -33,6 +33,16 @@ pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> T
     tsz_solver::operations::widening::apply_const_assertion(db, type_id)
 }
 
+/// Widen a fresh `let`/`var` initializer type, recursing into union members.
+///
+/// Like a plain `widen_type` but also widens fresh object/array constituents
+/// nested inside a top-level union (e.g. `(1 | 2 | 3)[] | (4 | 5)[]` →
+/// `number[]`), matching tsc's `getWidenedType`. Object freshness is respected,
+/// so non-fresh alias unions are left untouched.
+pub(crate) fn widen_type_for_mutable_binding(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::widen_type_for_mutable_binding(db, type_id)
+}
+
 /// Whether `type_id` is a *plain* object/array shape: `Object`,
 /// `ObjectWithIndex`, `Array`, or `Tuple` only. Excludes `Function`,
 /// `Callable`, `Mapped`, `Intersection`, `TypeParameter`, and `Lazy`.

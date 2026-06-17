@@ -485,16 +485,6 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widening::widen_type(db, type_id)
 }
 
-/// Widen a fresh `let`/`var` initializer type, recursing into union members.
-///
-/// Like [`widen_type`] but also widens fresh object/array constituents nested
-/// inside a top-level union (e.g. `(1 | 2 | 3)[] | (4 | 5)[]` → `number[]`),
-/// matching tsc's `getWidenedType`. Object freshness is respected, so non-fresh
-/// alias unions are left untouched.
-pub(crate) fn widen_type_for_mutable_binding(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    widening::widen_type_for_mutable_binding(db, type_id)
-}
-
 /// Widen a type for diagnostic display, preserving boolean literal intrinsics.
 ///
 /// Like `widen_type` but keeps `true`/`false` literals so narrowed types

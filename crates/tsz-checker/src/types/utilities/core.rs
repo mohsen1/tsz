@@ -530,7 +530,7 @@ impl<'a> CheckerState<'a> {
         // over array literals (`cond ? [1, 2, 3] : [4, 5]`) to `number[]`; the
         // plain literal-widening path would keep `(1 | 2 | 3)[] | (4 | 5)[]`,
         // whose later `.push` parameter contravariantly intersects to `never`.
-        crate::query_boundaries::common::widen_type_for_mutable_binding(self.ctx.types, type_id)
+        crate::query_boundaries::widening::widen_type_for_mutable_binding(self.ctx.types, type_id)
     }
 
     /// Widen only enum member types to their parent enum type.
