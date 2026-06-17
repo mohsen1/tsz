@@ -9,8 +9,8 @@ use crate::def::DefId;
 use crate::intern::type_factory::TypeFactory;
 use crate::intern::{PredicateCacheKind, TypeInterner};
 use crate::narrowing;
-use crate::objects::ObjectLiteralBuilder;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::objects::{CollectPropertiesResultCache, ObjectLiteralBuilder};
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
@@ -1374,26 +1374,7 @@ impl TypeResolver for TypeInterner {
 ///
 /// This is the incremental boundary where caching and (future) salsa hooks live.
 /// Inherits from `TypeResolver` to enable Lazy/Ref type resolution through `evaluate_type()`.
-pub trait QueryDatabase: TypeDatabase + TypeResolver {
-    /// Look up a cached top-level `collect_properties_cached(type_id)` result.
-    /// Default `None`. Only completed top-level collections are stored (see the
-    /// soundness note in `objects::collect::collect_properties_cached`).
-    fn collect_properties_result_cached(
-        &self,
-        _type_id: TypeId,
-    ) -> Option<crate::objects::PropertyCollectionResult> {
-        None
-    }
-
-    /// Record a completed top-level `collect_properties_cached` result. Default
-    /// no-op.
-    fn set_collect_properties_result_cache(
-        &self,
-        _type_id: TypeId,
-        _result: crate::objects::PropertyCollectionResult,
-    ) {
-    }
-
+pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCache {
     /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 

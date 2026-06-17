@@ -19,6 +19,7 @@ use crate::def::DefId;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
+use crate::objects::{CollectPropertiesResultCache, PropertyCollectionResult};
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
@@ -1298,6 +1299,32 @@ impl TypeResolver for QueryCache<'_> {
     }
 }
 
+impl CollectPropertiesResultCache for QueryCache<'_> {
+    fn collect_properties_result_cached(
+        &self,
+        type_id: TypeId,
+    ) -> Option<PropertyCollectionResult> {
+        self.collect_properties_result_cache
+            .borrow()
+            .get(&type_id)
+            .cloned()
+    }
+
+    fn set_collect_properties_result_cache(
+        &self,
+        type_id: TypeId,
+        result: PropertyCollectionResult,
+    ) {
+        self.collect_properties_result_cache
+            .borrow_mut()
+            .insert(type_id, result);
+    }
+}
+
+// `TypeInterner` is the other `QueryDatabase` implementor; it has no query
+// cache, so it keeps the no-op defaults (no collect-properties memoization).
+impl CollectPropertiesResultCache for TypeInterner {}
+
 impl QueryDatabase for QueryCache<'_> {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
@@ -1785,26 +1812,6 @@ impl QueryDatabase for QueryCache<'_> {
         let result = self.collect_object_spread_properties_inner(spread_type, &mut visited);
         self.insert_object_spread_properties_cache(spread_type, result.clone());
         result
-    }
-
-    fn collect_properties_result_cached(
-        &self,
-        type_id: TypeId,
-    ) -> Option<crate::objects::PropertyCollectionResult> {
-        self.collect_properties_result_cache
-            .borrow()
-            .get(&type_id)
-            .cloned()
-    }
-
-    fn set_collect_properties_result_cache(
-        &self,
-        type_id: TypeId,
-        result: crate::objects::PropertyCollectionResult,
-    ) {
-        self.collect_properties_result_cache
-            .borrow_mut()
-            .insert(type_id, result);
     }
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {

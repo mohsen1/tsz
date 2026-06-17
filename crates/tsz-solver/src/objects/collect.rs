@@ -79,6 +79,32 @@ pub enum PropertyCollectionResult {
     },
 }
 
+/// Cross-call memo surface for top-level `collect_properties_cached` results.
+///
+/// A supertrait of `QueryDatabase` so the result memo can be reached through a
+/// `&dyn QueryDatabase` without growing the (already at-cap) `caches::db`
+/// module. The real storage lives in `QueryCache`; every other implementor
+/// keeps the no-op defaults (no caching).
+pub trait CollectPropertiesResultCache {
+    /// Look up a cached top-level `collect_properties_cached(type_id)` result.
+    /// Default `None`. Only completed top-level collections are stored (see the
+    /// soundness note in `collect_properties_cached`).
+    fn collect_properties_result_cached(
+        &self,
+        _type_id: TypeId,
+    ) -> Option<PropertyCollectionResult> {
+        None
+    }
+
+    /// Record a completed top-level `collect_properties_cached` result. Default no-op.
+    fn set_collect_properties_result_cache(
+        &self,
+        _type_id: TypeId,
+        _result: PropertyCollectionResult,
+    ) {
+    }
+}
+
 /// Collect properties from an intersection type, recursively merging all members.
 ///
 /// This function handles:
@@ -141,7 +167,7 @@ where
     // can be on the stack, so the computed result is complete. The cache lives in
     // `QueryCache` and shares its lifecycle/`clear()` envelope (same as
     // `object_spread_properties_cache`), so a resolver/program change rebuilds it.
-    let is_top_level = COLLECT_PROPERTIES_STACK.with_borrow(|s| s.is_empty());
+    let is_top_level = COLLECT_PROPERTIES_STACK.with_borrow(Vec::is_empty);
     if is_top_level
         && let Some(qdb) = query_db
         && let Some(cached) = qdb.collect_properties_result_cached(type_id)
