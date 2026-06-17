@@ -597,6 +597,20 @@ pub struct InternerCounters {
     /// Lock-wait histogram. `None` because the timing path is gated on
     /// the `perf-counters-timing` feature (`PERFORMANCE_PLAN.md` §4.T0.3).
     pub lock_wait_histogram_ns: Option<Vec<u64>>,
+    // ─── interner locality (issue #13246) ────────────────────────────────
+    pub lookup_calls: u64,
+    pub lookup_tls_hits: u64,
+    pub lookup_cold_vec_fallbacks: u64,
+    pub lookup_tls_evictions: u64,
+    pub intern_tls_hits: u64,
+    pub intern_cold_fallbacks: u64,
+    pub intern_tls_evictions: u64,
+    pub working_set_distinct_max: u64,
+    pub working_set_files_over_cache: u64,
+    pub working_set_files_sampled: u64,
+    pub working_set_distinct_total: u64,
+    pub promote_tier_hits: u64,
+    pub promote_tier_misses: u64,
 }
 
 impl PerfCounters {
@@ -757,6 +771,19 @@ impl PerfCounters {
                 } else {
                     None
                 },
+                lookup_calls: load(&c.interner_lookup_calls),
+                lookup_tls_hits: load(&c.interner_lookup_tls_hits),
+                lookup_cold_vec_fallbacks: load(&c.interner_lookup_cold_vec_fallbacks),
+                lookup_tls_evictions: load(&c.interner_lookup_tls_evictions),
+                intern_tls_hits: load(&c.interner_intern_tls_hits),
+                intern_cold_fallbacks: load(&c.interner_intern_cold_fallbacks),
+                intern_tls_evictions: load(&c.interner_intern_tls_evictions),
+                working_set_distinct_max: load(&c.interner_working_set_distinct_max),
+                working_set_files_over_cache: load(&c.interner_working_set_files_over_cache),
+                working_set_files_sampled: load(&c.interner_working_set_files_sampled),
+                working_set_distinct_total: load(&c.interner_working_set_distinct_total),
+                promote_tier_hits: load(&c.interner_promote_tier_hits),
+                promote_tier_misses: load(&c.interner_promote_tier_misses),
             },
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
