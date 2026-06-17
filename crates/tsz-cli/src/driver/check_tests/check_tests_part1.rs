@@ -813,6 +813,48 @@ fn checker_pool_refuses_order_sensitive_global_lib_by_default() {
     );
 }
 
+/// Asserts the Stage-B default-on policy for the bounded checker pool: the
+/// pool turns ON by default for the large non-DOM parallel lane, while the
+/// explicit env width and the kill switch keep their precedence.
+#[test]
+fn checker_pool_defaults_on_for_large_non_dom_parallel_lane() {
+    const AP: usize = 8;
+
+    // Default-on: large non-DOM parallel lane (eligible) with no env knobs.
+    assert_eq!(
+        resolve_checker_pool_size(None, false, true, AP),
+        Some(AP),
+        "large non-DOM parallel lane must default the pool on, sized to available parallelism"
+    );
+
+    // Ineligible lanes (small project / DOM / explicit file-session reuse)
+    // keep the pool off by default.
+    assert_eq!(
+        resolve_checker_pool_size(None, false, false, AP),
+        None,
+        "ineligible lanes (small/DOM/reuse-opt-in) keep the pool off by default"
+    );
+
+    // Explicit width wins on any lane, eligible or not.
+    assert_eq!(
+        resolve_checker_pool_size(Some(4), false, false, AP),
+        Some(4),
+        "explicit TSZ_CHECKER_POOL=<n> must win even on an ineligible lane"
+    );
+    assert_eq!(
+        resolve_checker_pool_size(Some(4), true, true, AP),
+        Some(4),
+        "explicit TSZ_CHECKER_POOL=<n> must win over the kill switch and the default"
+    );
+
+    // Kill switch suppresses the default-on behavior.
+    assert_eq!(
+        resolve_checker_pool_size(None, true, true, AP),
+        None,
+        "TSZ_DISABLE_CHECKER_POOL must override the eligible-lane default"
+    );
+}
+
     #[test]
     fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
         assert!(

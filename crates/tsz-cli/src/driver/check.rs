@@ -327,16 +327,17 @@ fn parallel_file_session_reuse_requested() -> bool {
     )
 }
 
-/// Bounded long-lived checker-pool width, or `None` when the pool scheduler is
-/// off (the default).
+/// Explicit bounded-checker-pool width requested via the `TSZ_CHECKER_POOL`
+/// env var, or `None` when the var is unset / `0` / empty / invalid.
 ///
-/// `TSZ_CHECKER_POOL` opts into checking files on a fixed pool of `N`
-/// long-lived `CheckerState`s (round-robin file assignment, each reused via
-/// `switch_to_file`) instead of the default per-file fresh checker. This
-/// amortises the O(program) per-file setup over `files / N` files — the lever
-/// that unblocks large multi-file projects. `=auto` (or `=1`) sizes the pool
-/// to `available_parallelism`; `=N` sets an explicit width; unset / `0` / empty
-/// disables it.
+/// `TSZ_CHECKER_POOL` checks files on a fixed pool of `N` long-lived
+/// `CheckerState`s (cost-balanced file assignment, each reused via
+/// `switch_to_file`) instead of the per-file fresh checker. This amortises the
+/// O(program) per-file setup over `files / N` files — the lever that unblocks
+/// large multi-file projects. `=auto` (or `=1`) sizes the pool to
+/// `available_parallelism`; `=N` sets an explicit width; unset / `0` / empty
+/// leaves the decision to [`resolve_checker_pool_size`] (which defaults the
+/// pool ON for the large non-DOM parallel lane).
 fn checker_pool_size() -> Option<usize> {
     let raw = std::env::var("TSZ_CHECKER_POOL").ok()?;
     match raw.trim() {
@@ -345,6 +346,50 @@ fn checker_pool_size() -> Option<usize> {
             Some(std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
         }
         n => n.parse::<usize>().ok().filter(|&w| w >= 1),
+    }
+}
+
+/// Whether the bounded checker pool is force-disabled via the
+/// `TSZ_DISABLE_CHECKER_POOL` kill switch. An explicit `TSZ_CHECKER_POOL=<n>`
+/// still wins over this switch; the switch only suppresses the default-on
+/// behavior on the large non-DOM parallel lane.
+fn checker_pool_disabled() -> bool {
+    std::env::var_os("TSZ_DISABLE_CHECKER_POOL").is_some()
+}
+
+/// Resolve the effective bounded-checker-pool width, folding the explicit env
+/// request, the kill switch, and the default-on lane policy into one decision.
+///
+/// Precedence, highest first:
+///   1. an explicit `TSZ_CHECKER_POOL=<n|auto>` width always wins, on any lane;
+///   2. the `TSZ_DISABLE_CHECKER_POOL` kill switch forces the pool off;
+///   3. on the large non-DOM parallel lane (`default_eligible`) the pool
+///      defaults ON, sized to `available_parallelism`;
+///   4. otherwise the pool stays off and checking falls through to the
+///      fresh-checker / sequential-reuse arms.
+///
+/// `default_eligible` is the large non-DOM parallel lane: more files than the
+/// small-project boundary, no order-sensitive global lib (DOM/webworker), and
+/// no explicit `TSZ_FILE_SESSION_REUSE` opt-in (which selects its own reuse
+/// arm). The per-partition body is the proven sequential-reuse path, so
+/// diagnostics stay byte-identical to the fresh-checker arm regardless of
+/// partitioning.
+const fn resolve_checker_pool_size(
+    explicit: Option<usize>,
+    disabled: bool,
+    default_eligible: bool,
+    available_parallelism: usize,
+) -> Option<usize> {
+    if let Some(width) = explicit {
+        return Some(width);
+    }
+    if disabled {
+        return None;
+    }
+    if default_eligible {
+        Some(available_parallelism)
+    } else {
+        None
     }
 }
 
@@ -1362,35 +1407,44 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // than narrowing it.
             let use_file_session_reuse =
                 use_sequential_checking && !extract_type_cache && reuse_requested;
-            // The bounded checker pool runs `pool_size` long-lived checkers in
-            // parallel over the *same* shared `DefinitionStore`, so it carries
-            // the identical schedule-dependent lib-interface materialization
-            // hazard as the fresh-parallel lane (DOM/webworker globals; see
-            // `should_use_sequential_fresh_checking`). The pool branch is
-            // evaluated before the `use_sequential_checking` gate, so without
-            // this refusal an explicit `TSZ_CHECKER_POOL=N` — or a future
-            // default-on pool — would route a DOM project onto the pool and
-            // produce non-deterministic diagnostics (proven: `keyof`/indexed
-            // access over DOM element-tag-name maps yields distinct output per
-            // schedule). Refuse the pool for those programs so they take the
-            // deterministic sequential path regardless of how the pool was
-            // requested; the `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` diagnosis
-            // override lifts the refusal for byte-diff testing only.
-            let pool_size = checker_pool_size().filter(|_| {
+            // Default the bounded pool ON for the large non-DOM parallel lane:
+            // more files than the small-project boundary, no order-sensitive
+            // global lib (DOM/webworker keep their deterministic sequential
+            // gate — lifted separately), and no explicit
+            // `TSZ_FILE_SESSION_REUSE` opt-in (which selects its own reuse
+            // arm). This is exactly the lane that otherwise falls through to
+            // the fresh-checker `else` arm below, so default-on swaps one
+            // `CheckerState` per file for a bounded pool without changing which
+            // files run in parallel. An explicit `TSZ_CHECKER_POOL=<n>` still
+            // wins inside the resolver; the DOM/webworker refusal below is a
+            // separate correctness gate. `TSZ_DISABLE_CHECKER_POOL` forces the
+            // default off.
+            let checker_pool_default_eligible = work_items.len()
+                > FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+                && !has_parallel_order_sensitive_global_lib
+                && !parallel_reuse_requested;
+            let checker_pool_size = resolve_checker_pool_size(
+                checker_pool_size(),
+                checker_pool_disabled(),
+                checker_pool_default_eligible,
+                std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+            )
+            .filter(|_| {
                 !extract_type_cache
                     && !pool_refused_for_order_sensitive_global_lib(
                         has_parallel_order_sensitive_global_lib,
                         force_parallel_order_sensitive_global_lib,
                     )
             });
-            if let Some(pool_size) = pool_size {
-                // Bounded long-lived checker pool (`TSZ_CHECKER_POOL`): N
-                // round-robin partitions, each a long-lived `CheckerState`
-                // reused via `switch_to_file`, amortising the O(program)
-                // per-file setup over `files / N` files — the lever that
-                // unblocks large multi-file projects. Gated default-off; the
-                // per-partition body is the proven sequential-reuse path, so
-                // diagnostics are byte-identical to the fresh-checker arm.
+            if let Some(pool_size) = checker_pool_size {
+                // Bounded long-lived checker pool: N round-robin partitions,
+                // each a long-lived `CheckerState` reused via `switch_to_file`,
+                // amortising the O(program) per-file setup over `files / N`
+                // files — the lever that unblocks large multi-file projects.
+                // DOM/webworker programs are refused above so they keep the
+                // deterministic sequential gate. The per-partition body is the
+                // proven sequential-reuse path, so diagnostics are
+                // byte-identical to the fresh-checker arm.
                 tsz::parallel::ensure_rayon_global_pool();
                 let reuse_ctx = CheckFilesReuseCtx {
                     program,
