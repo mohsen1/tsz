@@ -59,6 +59,17 @@ impl<'a> CheckerState<'a> {
         // One entry per distinct symbol name; bounded by the symbol set (#11617).
         let mut global_scope_conflict_cache: FxHashMap<String, DuplicateDeclList> =
             FxHashMap::with_capacity_and_hasher(symbol_ids.len(), Default::default());
+        // Symbols that survive pass 1's conflict-free skip (declarations <= 1 with
+        // no cross-file / augmentation / global-scope / jsx-runtime / default-import
+        // / module-block conflicts). Pass 2 re-derives the same per-symbol conflict
+        // helpers + declaration scan; for a typical file ~all symbols are
+        // conflict-free, so re-running pass 2 over the full set only to re-hit the
+        // identical skip is pure duplicate work (two identical hot scans in the
+        // profile). Recording the survivors here lets pass 2 iterate just them.
+        // `symbol_ids` is an `FxHashSet`; pass 1 (`iter`) and pass 2 (`into_iter`)
+        // visit it in the same internal-table order, so pushing in pass-1 order
+        // preserves pass 2's original relative order — byte-identical diagnostics.
+        let mut pass2_symbol_ids: Vec<tsz_binder::SymbolId> = Vec::with_capacity(symbol_ids.len());
         let may_have_default_import_alias_conflicts = !is_external_module
             && self.ctx.all_arenas.is_some()
             && self.current_file_has_named_default_export_identifier();
@@ -123,6 +134,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
+
+            // Survived the conflict-free skip: pass 2 must re-examine this symbol.
+            // Record it so pass 2 iterates only survivors instead of the full set.
+            pass2_symbol_ids.push(sym_id);
 
             let mut has_local = false;
             let mut has_remote = false;
@@ -230,7 +245,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        for sym_id in symbol_ids {
+        for sym_id in pass2_symbol_ids {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
