@@ -286,6 +286,29 @@ impl<'a> CheckerState<'a> {
         // TypeEnvironment to get a concrete key union (e.g., "a" | "b").
         let object_type = self.resolve_mapped_constraint_for_property_access(object_type);
 
+        // An `Application(UnresolvedTypeName(name), args)` receiver — produced
+        // when a `"prop" in x` narrowing captures a receiver typed through an
+        // import alias — is opaque to both `resolve_lazy_type` (which only
+        // resolves bare `Lazy(DefId)`) and the boundary's noop resolver, so its
+        // member lookup reports false `TS2339`. Route it through
+        // `evaluate_type_with_env`, whose `CheckerContext` resolver recovers the
+        // declaring `DefId` by name and (via `resolve_unresolved_application_bodies`)
+        // cross-arena registers the interface body, so the application
+        // instantiates its heritage and own members before lookup.
+        let object_type = if crate::query_boundaries::spread::contains_unresolved_application(
+            self.ctx.types,
+            object_type,
+        ) {
+            let evaluated = self.evaluate_type_with_env(object_type);
+            if evaluated != TypeId::ERROR && evaluated != TypeId::UNKNOWN {
+                evaluated
+            } else {
+                object_type
+            }
+        } else {
+            object_type
+        };
+
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.

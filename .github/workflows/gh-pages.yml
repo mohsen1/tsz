@@ -41,7 +41,7 @@ jobs:
     outputs:
       should_deploy: ${{ steps.diff.outputs.should_deploy }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -125,7 +125,7 @@ jobs:
     if: needs.check.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: true
 
@@ -152,15 +152,15 @@ jobs:
       - name: Cache built WASM output
         id: wasm-cache
         if: steps.wasm-ci-download.outputs.downloaded != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: pkg/web/
           key: wasm-web-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/*/src/**', 'crates/*/build.rs') }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           cache-on-failure: true
@@ -182,7 +182,7 @@ jobs:
           wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wasm-web
           path: pkg/web/
@@ -193,9 +193,9 @@ jobs:
     if: ${{ always() && needs.check.outputs.should_deploy == 'true' && !cancelled() && needs.wasm.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -226,7 +226,7 @@ jobs:
 
       - name: Download latest benchmark data from GitHub artifact
         if: ${{ steps.latest-benchmark.outputs.run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: bench-results-merged
           path: artifacts
@@ -386,7 +386,7 @@ jobs:
         continue-on-error: true
 
       - name: Download WASM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: wasm-web
           path: pkg/web
@@ -399,7 +399,7 @@ jobs:
         run: cd crates/tsz-website && npm run build
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: crates/tsz-website/dist
 
@@ -413,4 +413,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

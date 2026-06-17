@@ -759,6 +759,8 @@ ${extra_compiler_options}    "resolveJsonModule": true
   "exclude": [
     "**/*.test.ts",
     "**/*.test.tsx",
+    "**/*.test-d.ts",
+    "**/*.test-d.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
     "**/__tests__/**",
@@ -876,7 +878,17 @@ tsz_write_fp_ts_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_io_ts_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # io-ts imports the `fp-ts` peer dependency via deep `/lib/*` subpaths that the
+  # clone-only fixture (no npm install) cannot resolve; map them onto a single
+  # `any` external-module stub so fp-ts-typed positions resolve like a bare-`any`
+  # install would, matching what tsc sees instead of a spurious TS2307 wall.
+  tsz_write_io_ts_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "baseUrl": ".",
+    "paths": {
+      "fp-ts/lib/*": ["tsz-bench-external-module.d.ts"]
+    },
+'
 }
 tsz_write_immer_config() {
   # immer imports sibling modules with explicit `.ts` extensions; its real
