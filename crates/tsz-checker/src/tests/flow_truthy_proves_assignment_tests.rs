@@ -100,6 +100,73 @@ if (y) { } else { y.toFixed(); }
 }
 
 #[test]
+fn short_circuit_operand_does_not_falsely_prove_assignment() {
+    // Regression guard for the narrowed bare-ref rule: a bare reference reached
+    // through a short-circuit operand position (here `!x` as the right operand
+    // of `&&`, evaluated in the `&&`'s false sense because it sits under the
+    // `||`'s true branch) is NOT guaranteed evaluated/truthy, so the unassigned
+    // marker survives and tsc still reports the truthy-branch read.
+    //
+    // `(typeof x === 'boolean' && !x) || typeof x === 'string'`: tsc reports
+    // TS2454 at the first `typeof x` (col 13) and the `||`-right `typeof x`
+    // (col 62), but NOT at the `&&`-right `!x`. Two condition reads in total.
+    let codes = check_strict(
+        r#"
+let strOrBool: string | boolean;
+if ((typeof strOrBool === 'boolean' && !strOrBool) || typeof strOrBool === 'string') {
+}
+"#,
+    );
+
+    assert_eq!(
+        count(&codes, 2454),
+        2,
+        "both guaranteed condition reads must report; the short-circuit `!x` operand must not falsely prove assignment, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn or_true_branch_does_not_prove_assignment() {
+    // `if (x || foo()) { x }` — the truthy branch of `||` does not narrow the
+    // unassigned marker away from `x` (it could be the `foo()` path), so the
+    // body read still reports. Two TS2454 total (condition read + body read).
+    let codes = check_strict(
+        r#"
+declare function foo(): boolean;
+let x: number;
+if (x || foo()) { x.toFixed(); }
+"#,
+    );
+
+    assert_eq!(
+        count(&codes, 2454),
+        2,
+        "the `||` true branch must not prove assignment for a bare reference, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn and_true_branch_still_proves_assignment() {
+    // `if (x && foo()) { x }` — the truthy branch of `&&` DOES narrow `x` to
+    // truthy (x is always evaluated and must be truthy), so the body read is
+    // suppressed. Exactly one TS2454 at the condition read. This keeps the
+    // zustand-style suppression intact for guaranteed-truthy operands.
+    let codes = check_strict(
+        r#"
+declare function foo(): boolean;
+let x: number;
+if (x && foo()) { x.toFixed(); }
+"#,
+    );
+
+    assert_eq!(
+        count(&codes, 2454),
+        1,
+        "the `&&` true branch must still prove assignment for the guaranteed-truthy left operand, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn plain_reads_without_condition_still_report_each_use() {
     // Negative control: without an intervening condition, every read of a
     // possibly-unassigned variable reports TS2454 (tsc does not dedup here).

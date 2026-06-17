@@ -498,17 +498,37 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         }
 
-        self.expr_proves_assignment(flow.node, is_true_condition, is_false_condition, reference)
+        // At the condition root a bare truthy reference's truthiness decides the
+        // branch outright, so it may prove assignment. Short-circuit operand
+        // positions (`||` either sense, `&&` false sense) demote this.
+        self.expr_proves_assignment(
+            flow.node,
+            is_true_condition,
+            is_false_condition,
+            reference,
+            true,
+        )
     }
 
     /// Check if an expression node (possibly compound via `&&`/`||`) proves
     /// that `reference` has been assigned a value.
+    ///
+    /// `bare_ref_decisive` tracks whether, at this position, a bare truthy
+    /// reference is *guaranteed evaluated and truthy* on the branch. It holds at
+    /// the condition root, through `!`/parentheses, and through `&&` operands in
+    /// the true sense (both are guaranteed evaluated and truthy). It is cleared
+    /// for `||` operands (either sense) and `&&` operands in the false sense,
+    /// because short-circuiting means the operand may not be evaluated and its
+    /// truthiness does not decide the branch. Without this gate a bare reference
+    /// inside such a position would falsely "prove" assignment (the unassigned
+    /// marker survives those branches).
     fn expr_proves_assignment(
         &self,
         condition: NodeIndex,
         is_true_condition: bool,
         is_false_condition: bool,
         reference: NodeIndex,
+        bare_ref_decisive: bool,
     ) -> bool {
         let Some(node_data) = self.arena.get(condition) else {
             return false;
@@ -521,11 +541,14 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(unary) = self.arena.get_unary_expr(node_data)
                 && unary.operator == SyntaxKind::ExclamationToken as u16
             {
+                // Negation only flips the sense; the operand remains as
+                // decisive for a bare reference as the negated whole was.
                 return self.expr_proves_assignment(
                     unary.operand,
                     is_false_condition, // flip: outer false = inner true
                     is_true_condition,  // flip: outer true = inner false
                     reference,
+                    bare_ref_decisive,
                 );
             }
             return false;
@@ -539,6 +562,7 @@ impl<'a> FlowAnalyzer<'a> {
                     is_true_condition,
                     is_false_condition,
                     reference,
+                    bare_ref_decisive,
                 );
             }
             return false;
@@ -568,7 +592,16 @@ impl<'a> FlowAnalyzer<'a> {
         // sentinel — so it does NOT prove assignment. This mirrors tsc, which
         // suppresses the downstream truthy-branch TS2454 (the condition read
         // itself still reports) even when the variable was never assigned.
-        if is_true_condition && self.is_matching_reference(condition, reference) {
+        //
+        // `bare_ref_decisive` guards against short-circuit positions: in
+        // `(typeof x === 'boolean' && !x) || typeof x === 'string'`, the right
+        // `||` operand runs with the left `&&` in its false sense, where `!x`
+        // is not guaranteed evaluated and `x`'s truthiness does not decide the
+        // branch — the unassigned marker survives, so tsc still reports.
+        if is_true_condition
+            && bare_ref_decisive
+            && self.is_matching_reference(condition, reference)
+        {
             return true;
         }
 
@@ -580,32 +613,50 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        // `&&`: TRUE_CONDITION means both operands are true, so either
-        // proving assignment is sufficient.
+        // `&&`: TRUE_CONDITION means both operands are true (and both evaluated),
+        // so either proving assignment is sufficient. Both operands are
+        // guaranteed evaluated and truthy here, so a bare reference stays
+        // decisive.
         if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 && is_true_condition {
-            return self.expr_proves_assignment(bin.left, true, false, reference)
-                || self.expr_proves_assignment(bin.right, true, false, reference);
+            return self.expr_proves_assignment(
+                bin.left,
+                true,
+                false,
+                reference,
+                bare_ref_decisive,
+            ) || self.expr_proves_assignment(
+                bin.right,
+                true,
+                false,
+                reference,
+                bare_ref_decisive,
+            );
         }
 
         // `&&`: FALSE_CONDITION means at least one operand is false (!A || !B),
         // so either side proving assignment in the negative sense is sufficient.
+        // The operands are not guaranteed truthy (and the right is not even
+        // guaranteed evaluated), so a bare reference is no longer decisive.
         if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 && is_false_condition {
-            return self.expr_proves_assignment(bin.left, false, true, reference)
-                || self.expr_proves_assignment(bin.right, false, true, reference);
+            return self.expr_proves_assignment(bin.left, false, true, reference, false)
+                || self.expr_proves_assignment(bin.right, false, true, reference, false);
         }
 
         // `||`: TRUE_CONDITION means at least one operand is true, so either
-        // side proving assignment in the positive sense is sufficient.
+        // side proving assignment in the positive sense is sufficient. Short
+        // circuiting means neither operand is guaranteed truthy, so a bare
+        // reference is no longer decisive.
         if bin.operator_token == SyntaxKind::BarBarToken as u16 && is_true_condition {
-            return self.expr_proves_assignment(bin.left, true, false, reference)
-                || self.expr_proves_assignment(bin.right, true, false, reference);
+            return self.expr_proves_assignment(bin.left, true, false, reference, false)
+                || self.expr_proves_assignment(bin.right, true, false, reference, false);
         }
 
         // `||`: FALSE_CONDITION means both operands are false, so either
-        // proving assignment (in negative sense) is sufficient.
+        // proving assignment (in negative sense) is sufficient. Both operands
+        // are falsy here, so a bare reference is not decisive.
         if bin.operator_token == SyntaxKind::BarBarToken as u16 && is_false_condition {
-            return self.expr_proves_assignment(bin.left, false, true, reference)
-                || self.expr_proves_assignment(bin.right, false, true, reference);
+            return self.expr_proves_assignment(bin.left, false, true, reference, false)
+                || self.expr_proves_assignment(bin.right, false, true, reference, false);
         }
 
         // instanceof: `x instanceof C` → TRUE_CONDITION proves assignment
