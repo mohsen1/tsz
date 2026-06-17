@@ -302,6 +302,14 @@ fn clear_batch_iteration_state() {
     tsz_solver::construction::clear_thread_local_cache();
     tsz_solver::relations::subtype::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
+    // Drop the resolver's thread-local filesystem-existence caches too. They
+    // live in a `thread_local!` (not on the resolver instance), so a fresh
+    // resolver per compilation never clears them; without this a later
+    // compilation on the reused worker could read a stale `is_file`/`is_dir`
+    // answer for a path whose on-disk state changed between compilations
+    // (emit-then-recheck, watch rebuild, reused temp path). Same worker-reuse
+    // isolation contract as the three resets above (#13368 / #13255 family).
+    tsz::module_resolver::reset_path_existence_caches();
 }
 
 fn write_batch_residency_report(
