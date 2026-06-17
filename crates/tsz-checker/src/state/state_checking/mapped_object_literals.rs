@@ -294,6 +294,32 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Literal-surface recovery (#13212 F1): the caller's `source_prop_type`
+        // can be the *widened* primitive of a contextually-typed literal property
+        // (e.g. `kind: 'schema'` in an object literal contextually typed by a
+        // cross-arena generic interface gets widened to `string` in the source
+        // shape used for excess-property checking). When the widened source fails
+        // against a literal target but the property's actual literal surface is
+        // assignable, tsc keeps the contextual literal and reports nothing; the
+        // diagnostic display role then re-renders the widened source by its
+        // literal surface, producing a display-identical false positive
+        // (`'schema' ≰ 'schema'`, `false ≰ false`). Recover the literal from the
+        // initializer and suppress when it relates. Structural — keyed on the
+        // widened-primitive-vs-literal-target shape, not on any name.
+        if !self
+            .call_arg_relation_outcome(source_prop_type, target_prop_type)
+            .related
+            && let Some((_, value_idx)) =
+                self.object_literal_property_name_and_value(obj_literal_idx, prop_name)
+            && let Some(literal_type) = self.literal_type_from_initializer(value_idx)
+            && literal_type != source_prop_type
+            && self
+                .call_arg_relation_outcome(literal_type, target_prop_type)
+                .related
+        {
+            return;
+        }
+
         let target_prop_type_for_message =
             self.object_literal_property_value_diagnostic_target_type(target_prop_type);
         let report_idx = self
