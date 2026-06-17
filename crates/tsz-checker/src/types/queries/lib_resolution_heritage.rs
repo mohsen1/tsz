@@ -156,6 +156,20 @@ impl<'a> CheckerState<'a> {
                 // to a direct lib-context scan so the lib base's own transitive
                 // heritage (`Response extends Body`) is still merged instead of
                 // dropped.
+                //
+                // Scope this to the resolution of a class's directly-named
+                // `extends` base (and its transitive lib heritage, resolved
+                // while still in that scope). Without the gate the fallback also
+                // fires when a delegation child lowers the base's member
+                // signatures, eagerly pulling an entire global graph it does not
+                // own (e.g. the DOM graph reached through `React.Component`'s
+                // members). Re-merging those base members the top-level checker
+                // already resolves produces duplicated intersections and false
+                // JSX-inference diagnostics; the member types resolve correctly
+                // in the top-level checker whose binder carries the globals.
+                if !Self::is_resolving_class_heritage_base() {
+                    return None;
+                }
                 select_global_lib_interface(
                     name,
                     self.ctx.actual_lib_file_count,
