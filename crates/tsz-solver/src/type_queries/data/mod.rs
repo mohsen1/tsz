@@ -6,6 +6,8 @@
 
 mod accessors;
 mod content_predicates;
+#[cfg(test)]
+mod free_param_cache_tests;
 mod signatures_and_advanced;
 #[cfg(test)]
 mod tests;

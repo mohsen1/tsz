@@ -154,6 +154,21 @@ pub(crate) enum PredicateCacheKind {
     /// [`ChildPolicy::CONTENT_PREDICATE`]:
     ///     crate::visitors::child_policy::ChildPolicy::CONTENT_PREDICATE
     ContainsNever = 16,
+    /// `type_id` contains a *free* type parameter anywhere on its
+    /// [`ChildPolicy::FREE_TYPE_PARAMS`] surface — i.e. a `TypeParameter`/
+    /// `Infer`/`ThisType`/`BoundParameter` not bound by an enclosing generic
+    /// function/callable signature (those signature bodies are skipped
+    /// wholesale). Freeness is a purely structural, resolver-independent
+    /// property of the `TypeId` within one interner, so the deep walk is
+    /// memoized per node like the sibling `Contains*` predicates. Asked twice
+    /// per conditional node by `resolve_operands` (`extends_type` and the raw
+    /// `cond.extends_type`); without this memo the predicate re-walks the entire
+    /// extends-side subtree on every deferred conditional re-evaluation
+    /// (#13250 deep conditional/mapped recursion).
+    ///
+    /// [`ChildPolicy::FREE_TYPE_PARAMS`]:
+    ///     crate::visitors::child_policy::ChildPolicy::FREE_TYPE_PARAMS
+    ContainsFreeTypeParams = 17,
 }
 
 impl PredicateCacheKind {
