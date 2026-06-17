@@ -176,7 +176,7 @@ fn bench_mixed_kind(c: &mut Criterion, count: usize) {
                 (interner, members)
             },
             |(interner, members)| black_box(interner.union(black_box(members))),
-        )
+        );
     });
 }
 
@@ -212,7 +212,7 @@ fn bench_inert_keyof(c: &mut Criterion, count: usize) {
                 (interner, members)
             },
             |(interner, members)| black_box(interner.union(black_box(members))),
-        )
+        );
     });
 }
 
