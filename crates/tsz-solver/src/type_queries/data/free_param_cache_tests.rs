@@ -8,6 +8,7 @@
 //! semantics — generic signature bodies bind their own parameters and so do not
 //! count as free — survive the cache.
 
+use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::type_queries::contains_free_type_parameters_db;
 use crate::types::{
@@ -96,6 +97,27 @@ fn build_corpus(interner: &TypeInterner) -> Vec<TypeId> {
         let nested = interner.array(interner.union(vec![leaf, interner.array(leaf)]));
         corpus.push(nested);
     }
+
+    // Node kinds that `contains_free_type_parameters_db` short-circuits to
+    // `false` at the *root* before the deep FREE-policy walk (`Enum`,
+    // `Recursive`, `ModuleNamespace`, `UniqueSymbol`). For these the reference
+    // oracle below takes a structurally different path: `has_policy_children`
+    // reports no FREE children for the latter three (so the walk also yields
+    // `false`), while `Enum` *does* expose its closed structural member type as
+    // a child, so the oracle walks it. Real enums are nominal — their structural
+    // member type is a closed union of literal members and can never embed a
+    // free type parameter — so both paths must agree on `false`. Pinning these
+    // here proves the root short-circuit is byte-identical to the deep walk for
+    // exactly the shapes the structural corpus above omits (#13250).
+    let enum_members = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    corpus.push(interner.enum_type(DefId(4242), enum_members));
+    // Enum nested inside other shapes still resolves through the (non-root)
+    // policy walk; assert the answer matches the oracle there too.
+    let enum_ty = interner.enum_type(DefId(4243), enum_members);
+    corpus.push(interner.array(enum_ty));
+    corpus.push(interner.union(vec![enum_ty, t]));
+    corpus.push(interner.recursive(0));
+    corpus.push(interner.array(interner.recursive(1)));
     corpus
 }
 

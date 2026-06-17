@@ -125,7 +125,7 @@ fn bench_contains_free_predicate(c: &mut Criterion) {
                     }
                 }
                 black_box(acc)
-            })
+            });
         });
     }
     group.finish();
@@ -145,7 +145,7 @@ fn bench_evaluate_deep_conditional(c: &mut Criterion) {
                 },
                 |(interner, cond)| black_box(evaluate_type(&interner, cond)),
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
     group.finish();
