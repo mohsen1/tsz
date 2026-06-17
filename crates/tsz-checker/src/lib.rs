@@ -502,6 +502,9 @@ mod ts2498_tests;
 #[path = "tests/ts2536_deferred_conditional_indexed_access_tests.rs"]
 mod ts2536_deferred_conditional_indexed_access_tests;
 #[cfg(test)]
+#[path = "tests/ts2536_error_type_contagion_tests.rs"]
+mod ts2536_error_type_contagion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
