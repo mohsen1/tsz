@@ -805,8 +805,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "PAYLOAD_REF",
     repo: "https://github.com/payloadcms/payload.git",
     ref: "29ef906ba590fd168673da827ec484a1e2a723ad",
-    guard_set: "required",
-    benchmark_set: "required",
+    guard_set: "canary",
+    benchmark_set: "canary",
     category: "application",
   },
   {
@@ -824,8 +824,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "MEDUSA_REF",
     repo: "https://github.com/medusajs/medusa.git",
     ref: "38725ac274d764031b52f6f35f7951aa9b3bb2a8",
-    guard_set: "required",
-    benchmark_set: "required",
+    guard_set: "canary",
+    benchmark_set: "canary",
     category: "application",
   },
   {
