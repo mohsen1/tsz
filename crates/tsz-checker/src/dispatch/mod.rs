@@ -65,7 +65,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // This prevents unbounded stack growth from stacker::maybe_grow
         // which would eventually hit the OS stack limit and crash.
         if crate::checkers_domain::should_probe_stack()
-            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+            && crate::checkers_domain::headroom_below(1024 * 1024)
         {
             crate::checkers_domain::trip_stack_overflow();
             return TypeId::ERROR;
