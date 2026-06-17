@@ -768,7 +768,44 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Simple assignability check for narrowing purposes.
+    ///
+    /// Memoizing entry point. The structural fallback
+    /// ([`Self::is_subtype_for_narrowing`]) compares recursive-schema interfaces
+    /// by re-materializing their property closure via `collect_properties_cached`
+    /// at each depth, so the same `(source, target)` pair — recurring across the
+    /// many predicate guards a typebox/ts-morph file runs over one recursive
+    /// `TSchema` — would redo that deep walk every time. The shared memo (keyed
+    /// by `(source, target, resolver_generation)`) collapses it to one walk
+    /// (issue #13242 / #13250).
     pub(in crate::narrowing) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Trivial answers are cheaper than a memo probe; keep them inline so the
+        // common shallow path stays borrow-free.
+        if source == target || source == TypeId::NEVER || target.is_any_or_unknown() {
+            return true;
+        }
+        // Only memoize non-intrinsic pairs: intrinsic vs intrinsic is resolved by
+        // the fast-path arms below without any recursive structural walk.
+        if source.is_intrinsic() && target.is_intrinsic() {
+            return self.is_assignable_to_uncached(source, target);
+        }
+
+        let key = NarrowExcludingKey {
+            source,
+            excluded: target,
+            resolver_generation: self.resolver_generation(),
+        };
+        if let Some(&cached) = self.cache.narrow_assignable_cache.borrow().get(&key) {
+            return cached;
+        }
+        let result = self.is_assignable_to_uncached(source, target);
+        self.cache
+            .narrow_assignable_cache
+            .borrow_mut()
+            .insert(key, result);
+        result
+    }
+
+    fn is_assignable_to_uncached(&self, source: TypeId, target: TypeId) -> bool {
         if source == target {
             return true;
         }
