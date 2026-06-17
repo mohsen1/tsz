@@ -597,6 +597,15 @@ impl BindResultReducer {
                 }
                 // Copy symbols from this file to global arena, getting new IDs
                 let mut id_remap: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
+                // A user file may augment a lib symbol with its own exports (e.g.
+                // `declare namespace Reflect { function getMetadata(...) }` merges
+                // into the lib `Reflect` namespace during the per-file lib merge).
+                // The lib-symbol fast path below reuses the Phase 1 global id and
+                // propagates flags/declarations, but the user-contributed export
+                // entries reference this file's local SymbolIds, so they can only be
+                // remapped once `id_remap` is fully built. Defer them here as
+                // `(global_id, this-file lib SymbolId)` pairs.
+                let mut deferred_lib_export_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
                 for i in 0..result.symbols.len() {
                     let old_id = SymbolId(i as u32);
                     if let Some(sym) = result.symbols.get(old_id) {
@@ -631,6 +640,15 @@ impl BindResultReducer {
                                 }
                             }
                             if let Some(global_id) = resolved_global_id {
+                                // Capture the lib symbol's ORIGINAL flags before the
+                                // user augmentation below folds in extra flags. The
+                                // namespace-merge gate must judge what the lib actually
+                                // declared (a pure namespace vs a `var`/`interface`),
+                                // not the post-merge union.
+                                let lib_original_flags = self
+                                    .global_symbols
+                                    .get(global_id)
+                                    .map_or(0, |g| g.flags);
                                 // The user binder may have merged additional flags and declarations
                                 // into this lib symbol (e.g., user `interface Event<T>` augments
                                 // lib's non-generic `Event`, or user `type Proxy<T>` adds TYPE_ALIAS
@@ -650,6 +668,40 @@ impl BindResultReducer {
                                         &mut global_sym.declarations,
                                         &sym.declarations,
                                     );
+                                }
+                                // The user file may have merged its own exports into
+                                // this lib symbol (e.g. a user `declare namespace
+                                // Reflect { ... }` augmenting the lib `Reflect`).
+                                // Defer the export/member merge until `id_remap` is
+                                // complete so the user export SymbolIds remap correctly.
+                                //
+                                // Restrict to the genuine namespace/namespace merge:
+                                // both the user symbol and the LIB-ORIGINAL symbol must
+                                // be PURE namespaces — `MODULE`
+                                // (`VALUE_MODULE | NAMESPACE_MODULE`) set and no
+                                // conflicting value/type meaning. A user
+                                // `declare namespace Object` colliding with the lib's
+                                // `var Object` / `interface Object` is a genuine
+                                // duplicate-identifier conflict (`TS2300`); its members
+                                // must not be silently merged in.
+                                use crate::binder::symbol_flags;
+                                let conflicting =
+                                    symbol_flags::VARIABLE
+                                        | symbol_flags::FUNCTION
+                                        | symbol_flags::CLASS
+                                        | symbol_flags::INTERFACE
+                                        | symbol_flags::TYPE_ALIAS
+                                        | symbol_flags::ENUM;
+                                let user_is_pure_namespace = sym.flags & symbol_flags::MODULE != 0
+                                    && sym.flags & conflicting == 0;
+                                let lib_is_pure_namespace =
+                                    lib_original_flags & symbol_flags::MODULE != 0
+                                        && lib_original_flags & conflicting == 0;
+                                if user_is_pure_namespace
+                                    && lib_is_pure_namespace
+                                    && (sym.exports.is_some() || sym.members.is_some())
+                                {
+                                    deferred_lib_export_merges.push((global_id, old_id));
                                 }
                                 id_remap.insert(old_id, global_id);
                                 continue;
@@ -726,6 +778,44 @@ impl BindResultReducer {
                             new_id
                         };
                         id_remap.insert(old_id, new_id);
+                    }
+                }
+
+                // Merge user-contributed exports/members into lib symbols that this
+                // file augmented (deferred from the lib-symbol fast path so the user
+                // export SymbolIds can be remapped via the now-complete `id_remap`).
+                // Only ADD names missing from the global symbol — lib-origin entries
+                // were already remapped in Phase 1.5; this recovers user members such
+                // as `Reflect.getMetadata` that would otherwise be dropped, matching
+                // tsc's merge of a user namespace into a same-named lib namespace.
+                for &(global_id, this_file_lib_id) in &deferred_lib_export_merges {
+                    let (src_exports, src_members) = match result.symbols.get(this_file_lib_id) {
+                        Some(src) => (src.exports.clone(), src.members.clone()),
+                        None => continue,
+                    };
+                    if let Some(src_exports) = src_exports
+                        && let Some(global_sym) = self.global_symbols.get_mut(global_id)
+                    {
+                        let target = global_sym.exports.get_or_insert_with(Default::default);
+                        for (name, export_id) in src_exports.iter() {
+                            if !target.has(name)
+                                && let Some(&remapped) = id_remap.get(export_id)
+                            {
+                                target.set(name.clone(), remapped);
+                            }
+                        }
+                    }
+                    if let Some(src_members) = src_members
+                        && let Some(global_sym) = self.global_symbols.get_mut(global_id)
+                    {
+                        let target = global_sym.members.get_or_insert_with(Default::default);
+                        for (name, member_id) in src_members.iter() {
+                            if !target.has(name)
+                                && let Some(&remapped) = id_remap.get(member_id)
+                            {
+                                target.set(name.clone(), remapped);
+                            }
+                        }
                     }
                 }
 
