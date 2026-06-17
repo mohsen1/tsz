@@ -1429,3 +1429,98 @@ fn test_resolve_extends_path_uses_package_exports_mapping() {
 
     assert_eq!(resolved, expected);
 }
+
+#[test]
+fn config_dir_template_expands_against_leaf_config_dir() {
+    // TS 5.5 `${configDir}`: a root config's template resolves to its own
+    // directory and produces absolute selectors/paths.
+    let temp = tempdir().expect("create temp dir");
+    let project_dir = temp.path().join("project");
+    std::fs::create_dir_all(project_dir.join("src")).expect("create src dir");
+
+    let config_path = project_dir.join("tsconfig.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+"compilerOptions": { "noEmit": true, "outDir": "${configDir}/dist" },
+"include": ["${configDir}/src"]
+}"#,
+    )
+    .expect("write config");
+
+    let merged = load_tsconfig(&config_path).expect("load config");
+    let canonical_project = std::fs::canonicalize(&project_dir).unwrap_or(project_dir);
+    let expected_src = canonical_project.join("src").to_string_lossy().into_owned();
+    let expected_dist = canonical_project
+        .join("dist")
+        .to_string_lossy()
+        .into_owned();
+
+    assert_eq!(
+        merged.include.as_deref(),
+        Some(&[expected_src][..]),
+        "${{configDir}}/src must expand to the config's own directory"
+    );
+    assert_eq!(
+        merged
+            .compiler_options
+            .as_ref()
+            .and_then(|o| o.out_dir.as_deref()),
+        Some(expected_dist.as_str()),
+    );
+}
+
+#[test]
+fn config_dir_template_in_base_resolves_to_inheriting_config_dir() {
+    // The defining behavior of `${configDir}`: a shared base config can write
+    // `${configDir}/...` and every consumer resolves it against the consumer's
+    // (leaf) directory, NOT the base config's own directory.
+    let temp = tempdir().expect("create temp dir");
+    let base_dir = temp.path().join("shared");
+    let app_dir = temp.path().join("app");
+    std::fs::create_dir_all(app_dir.join("src")).expect("create app src");
+    std::fs::create_dir_all(&base_dir).expect("create base dir");
+
+    let base_path = base_dir.join("tsconfig.base.json");
+    std::fs::write(
+        &base_path,
+        r#"{
+"compilerOptions": { "outDir": "${configDir}/dist", "baseUrl": "${configDir}" },
+"include": ["${configDir}/src"]
+}"#,
+    )
+    .expect("write base");
+
+    let child_path = app_dir.join("tsconfig.json");
+    std::fs::write(
+        &child_path,
+        r#"{ "extends": "../shared/tsconfig.base.json", "compilerOptions": { "noEmit": true } }"#,
+    )
+    .expect("write child");
+
+    let merged = load_tsconfig(&child_path).expect("load child");
+    let canonical_app = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
+    let canonical_base = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+
+    let include = merged.include.expect("inherited include present");
+    assert_eq!(
+        include[0],
+        canonical_app.join("src").to_string_lossy(),
+        "${{configDir}} in the base must resolve to the inheriting config's dir"
+    );
+    assert!(
+        !include[0].starts_with(canonical_base.to_string_lossy().as_ref()),
+        "${{configDir}} must not anchor at the base config's own directory: {:?}",
+        include[0]
+    );
+
+    let opts = merged.compiler_options.expect("compiler options merged");
+    assert_eq!(
+        opts.out_dir.as_deref(),
+        Some(canonical_app.join("dist").to_string_lossy().as_ref()),
+    );
+    assert_eq!(
+        opts.base_url.as_deref(),
+        Some(canonical_app.to_string_lossy().as_ref()),
+    );
+}
