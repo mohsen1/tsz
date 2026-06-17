@@ -234,7 +234,7 @@ fn build_diagnostics_report(
     // when `TSZ_PERF_COUNTERS` is set (both helpers return "" otherwise).
     report
         .perf_counter_dump
-        .push_str(&tsz_solver::eval_materialization_probe_report());
+        .push_str(&tsz_solver::observability::eval_materialization_probe_report());
 
     report
 }
