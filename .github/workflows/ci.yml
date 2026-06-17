@@ -1206,13 +1206,7 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    # Artifact-driven aggregate: run_conformance_aggregate prefers the downloaded
-    # .conformance-shards dir and the per-shard failure lists travel inside those
-    # artifacts, so the gate is computed without gsutil. The remaining GCS calls
-    # are guarded fallbacks (publish_latest_metric gates on `command -v gsutil`;
-    # the timings publish + total-artifact-loss recovery degrade non-fatally), so
-    # a free ubuntu-latest runner is sufficient and frees a scarce Cloud Run slot.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
