@@ -121,7 +121,11 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
         )
         self.assertEqual(result_int(r), 1)
 
-    def test_dist_suite_cloud_run_shape_gets_four_jobs(self):
+    def test_dist_suite_cloud_run_shape_gets_eight_jobs(self):
+        # dist-binaries on the 8 vCPU / 32 GiB Cloud Run shape builds at -j8.
+        # The dist budget is 3584 MiB/job: floor(32097 / 3584) = 8, capped by
+        # the 8 host CPUs. Measurement (dist-fast workspace recompile) showed
+        # peak RSS ~7.9 GiB flat across -j4/-j8/-j16, so -j8 is RSS-safe here.
         env = os.environ.copy()
         env["HOST_CPUS"] = "8"
         env["TSZ_CI_SUITE"] = "dist-binaries"
@@ -137,7 +141,7 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
             env=env,
             check=False,
         )
-        self.assertEqual(result_int(r), 4)
+        self.assertEqual(result_int(r), 8)
 
     def test_does_not_exceed_host_cpus(self):
         r = call_function("default_cargo_build_jobs", host_cpus=4,
