@@ -762,6 +762,43 @@ fn test_logical_nullish_coalescing_undefined() {
 }
 
 #[test]
+fn test_logical_nullish_coalescing_unknown_left_yields_empty_object() {
+    // `unknown ?? {}` is `{}` (not `unknown`): tsc's getNonNullableType(unknown)
+    // is the empty object, and `{} | {}` subtype-reduces to `{}`. Witnessed by
+    // ts-rest `standard-schema-utils.ts`: `Object.entries(data ?? {})` with
+    // `data: unknown` must type-check against `Object.entries`'s `{}` parameter.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let empty_obj = interner.object(vec![]);
+    let result = eval.evaluate(TypeId::UNKNOWN, empty_obj, "??");
+    assert_success(&result, empty_obj);
+}
+
+#[test]
+fn test_logical_nullish_coalescing_unknown_left_unions_right() {
+    // `unknown ?? X` is `{} | X` for a non-`{}` right operand.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let empty_obj = interner.object(vec![]);
+    let result = eval.evaluate(TypeId::UNKNOWN, TypeId::STRING, "??");
+    let BinaryOpResult::Success(result_id) = result else {
+        panic!("Expected Success")
+    };
+    // Result must contain the empty-object non-nullable part (not raw `unknown`).
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert_ne!(result_id, TypeId::UNKNOWN, "result must not stay `unknown`");
+    assert!(
+        checker.is_subtype_of(empty_obj, result_id),
+        "result {result_id:?} must admit the empty-object non-nullable part"
+    );
+    assert!(
+        checker.is_subtype_of(TypeId::STRING, result_id),
+        "result {result_id:?} must admit the right operand `string`"
+    );
+}
+
+#[test]
 fn test_logical_nullish_coalescing_non_nullable() {
     let interner = TypeInterner::new();
     let eval = BinaryOpEvaluator::new(&interner);
