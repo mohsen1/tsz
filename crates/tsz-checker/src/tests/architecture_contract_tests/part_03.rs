@@ -247,7 +247,7 @@ fn test_evaluate_type_with_cache_can_skip_cache_entry_collection() {
     let seed = std::iter::empty::<(TypeId, TypeId)>();
     let has_seed = false;
     let expand_application_display_alias_args = false;
-    let query_db = None;
+    let query_cache = crate::query_boundaries::state::type_environment::QueryCacheMode::Disabled;
     let cache_entry_collection =
         crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip;
     let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
@@ -257,7 +257,7 @@ fn test_evaluate_type_with_cache_can_skip_cache_entry_collection() {
         seed,
         has_seed,
         expand_application_display_alias_args,
-        query_db,
+        query_cache,
         cache_entry_collection,
     );
 

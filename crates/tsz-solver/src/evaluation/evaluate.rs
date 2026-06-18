@@ -177,6 +177,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// `(TypeId, no_unchecked)` key does not capture. All evaluators may still
     /// *read* (the stored value is a definite context-free answer).
     closed_eval_writes_allowed: bool,
+    /// Whether this evaluator may write the resolver-independent
+    /// `application_eval_cache`. Limited resolvers may read through an explicit
+    /// read-only query-cache connection, but only authoritative contexts publish
+    /// `(DefId, args)` entries.
+    application_eval_cache_writes_allowed: bool,
     /// Entries of `cache` whose value is a limit-truncated *stack-context
     /// artifact* rather than a stable function of the input `TypeId`: a node
     /// is tainted when a recursion/depth/iteration/divergence limit event
@@ -287,6 +292,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             app_body_limit_epoch: 0,
             unresolved_def_seen: false,
             closed_eval_writes_allowed: false,
+            application_eval_cache_writes_allowed: false,
             tainted: FxHashSet::default(),
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
             union_complex_at_construction: interner.is_union_too_complex(),
@@ -390,7 +396,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Set the query database for Salsa-backed memoization.
+    #[must_use]
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
+        self.query_db = Some(db);
+        self.application_eval_cache_writes_allowed = true;
+        self
+    }
+
+    /// Set the query database for read-only cache access.
+    #[must_use]
+    pub fn with_query_db_read_only(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
         self
     }
@@ -398,6 +413,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Opt this evaluator in to *writing* the substitution-independent
     /// `closed_eval_cache`. Only the checker's authoritative, context-free
     /// type-resolution pass should call this — see `closed_eval_writes_allowed`.
+    #[must_use]
     pub const fn with_closed_eval_writes(mut self) -> Self {
         self.closed_eval_writes_allowed = true;
         self

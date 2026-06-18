@@ -770,8 +770,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.limit_epoch == self.app_body_limit_epoch
     }
 
-    /// Insert into the application-eval cache iff `query_db` is connected and the
-    /// current run has not hit any recursion/depth limit.
+    /// Insert into the application-eval cache iff authoritative query-cache
+    /// writes are enabled and the current run has not hit any recursion/depth
+    /// limit.
     ///
     /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
     /// repeated in every body-aware shortcut and finalize helper.
@@ -793,7 +794,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !self.application_eval_result_cacheable() {
             return;
         }
-        if let Some(db) = self.query_db {
+        if self.application_eval_cache_writes_allowed
+            && let Some(db) = self.query_db
+        {
             db.insert_application_eval_cache(
                 def_id,
                 expanded_args,

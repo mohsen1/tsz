@@ -195,7 +195,9 @@ impl<'a> CheckerState<'a> {
                 std::iter::empty(),
                 false,
                 expand_aliases,
-                Some(self.ctx.types),
+                crate::query_boundaries::state::type_environment::QueryCacheMode::ReadWrite(
+                    self.ctx.types,
+                ),
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
             )
             .result;

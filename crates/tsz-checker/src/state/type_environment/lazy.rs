@@ -85,7 +85,8 @@ pub(crate) fn exit_refs_resolution_scope() {
 impl<'a> CheckerState<'a> {
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
         use crate::query_boundaries::state::type_environment::{
-            contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
+            QueryCacheMode, contains_infer_types_db, contains_type_query_db,
+            evaluate_type_with_cache,
         };
 
         if type_id.is_intrinsic() {
@@ -190,12 +191,11 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                // First pass uses the limited `TypeEnvironment` resolver, which
-                // can leave residue (unresolved Lazy/IndexAccess/Mapped). Do NOT
-                // let it populate the resolver-independent application-eval cache,
-                // or sibling reads would observe under-resolved results. Writes
-                // are reserved for the authoritative full-resolver second pass.
-                None,
+                // First pass uses the limited `TypeEnvironment` resolver. It may
+                // read query-cache entries produced by authoritative passes, but
+                // must not publish `(DefId,args)` or closed-eval results because
+                // this resolver can leave residue from registration-window state.
+                QueryCacheMode::ReadOnly(self.ctx.types),
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
                     seed_persist,
                 ),
@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
                 // Second pass uses the authoritative full `CheckerContext`
                 // resolver, so its application expansions are safe to memoize in
                 // the per-file application-eval cache.
-                Some(self.ctx.types),
+                QueryCacheMode::ReadWrite(self.ctx.types),
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
                     second_pass_seed_persist,
                 ),

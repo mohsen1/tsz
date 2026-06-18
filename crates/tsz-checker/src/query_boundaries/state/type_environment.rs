@@ -423,6 +423,18 @@ pub(crate) enum CacheEntryCollection {
     Skip,
 }
 
+/// Controls query-cache access for `evaluate_type_with_cache`.
+///
+/// The mode is intentionally explicit because cache reads and writes have
+/// different safety requirements. Limited resolvers may use `ReadOnly` to reuse
+/// authoritative entries, but only full resolver boundaries may use `ReadWrite`.
+#[derive(Clone, Copy)]
+pub(crate) enum QueryCacheMode<'a> {
+    Disabled,
+    ReadOnly(&'a dyn QueryDatabase),
+    ReadWrite(&'a dyn QueryDatabase),
+}
+
 impl CacheEntryCollection {
     #[inline]
     #[must_use]
@@ -448,17 +460,23 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
     seed: impl Iterator<Item = (TypeId, TypeId)>,
     has_seed: bool,
     expand_application_display_alias_args: bool,
-    query_db: Option<&dyn QueryDatabase>,
+    query_cache: QueryCacheMode<'_>,
     cache_entry_collection: CacheEntryCollection,
 ) -> EvalWithCacheResult {
     let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
-    if let Some(query_db) = query_db {
-        evaluator = evaluator.with_query_db(query_db);
-        // This is the checker's authoritative, context-free type-resolution
-        // boundary (distinct from solver-internal mid-relation/inference/
-        // narrowing evaluators), so it is the only place permitted to *write*
-        // the substitution-independent `closed_eval_cache`.
-        evaluator = evaluator.with_closed_eval_writes();
+    match query_cache {
+        QueryCacheMode::Disabled => {}
+        QueryCacheMode::ReadOnly(query_db) => {
+            evaluator = evaluator.with_query_db_read_only(query_db);
+        }
+        QueryCacheMode::ReadWrite(query_db) => {
+            evaluator = evaluator.with_query_db(query_db);
+            // This is the checker's authoritative, context-free type-resolution
+            // boundary (distinct from solver-internal mid-relation/inference/
+            // narrowing evaluators), so it is the only place permitted to
+            // *write* the substitution-independent `closed_eval_cache`.
+            evaluator = evaluator.with_closed_eval_writes();
+        }
     }
     if expand_application_display_alias_args {
         evaluator = evaluator.with_expanded_application_display_alias_args();
