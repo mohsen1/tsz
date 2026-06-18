@@ -335,6 +335,7 @@ mod tests {
 
         // Dirty every guard the way an aborted mid-delegation row would.
         state_domain::state::set_cross_arena_depth_for_test(3);
+        state_domain::state::set_cross_arena_bailout_epoch_for_test(7);
         state_domain::type_analysis::dirty_cross_file_recursion_guards_for_test();
         types_domain::dirty_type_resolution_guards_for_test();
         super::promise_checker_object_normalization::dirty_awaited_eval_thread_local_state_for_test(
@@ -365,6 +366,11 @@ mod tests {
             0,
             "clear_all_thread_local_state must reset the cross-arena delegation depth"
         );
+        assert_eq!(
+            state_domain::state::cross_arena_bailout_epoch_for_test(),
+            0,
+            "clear_all_thread_local_state must reset the cross-arena bailout epoch"
+        );
         assert!(
             state_domain::type_analysis::cross_file_recursion_guards_clear_for_test(),
             "clear_all_thread_local_state must reset cross-file interface depth and alias stack"
@@ -377,5 +383,51 @@ mod tests {
             super::promise_checker_object_normalization::awaited_eval_thread_local_state_clear_for_test(),
             "clear_all_thread_local_state must reset the awaited-eval cycle guard and clamp epoch"
         );
+    }
+
+    /// `enter_cross_arena_delegation` must record a bailout (advance the
+    /// bailout epoch) when it refuses delegation at the depth cap, and must
+    /// NOT advance it on an allowed delegation. The epoch is what
+    /// `delegate_cross_arena_symbol_resolution` / `get_type_of_symbol` compare
+    /// before/after a resolution to decide whether a provisional sentinel was
+    /// minted under the cap and must be kept out of the persistent caches
+    /// (#13846). Name-agnostic: exercises the guard primitive directly.
+    #[test]
+    fn cross_arena_depth_cap_records_bailout_epoch() {
+        use crate::CheckerState;
+        use crate::state_domain::state;
+
+        state::set_cross_arena_depth_for_test(0);
+        state::set_cross_arena_bailout_epoch_for_test(0);
+
+        // Below the cap: delegation is allowed and does not record a bailout.
+        assert!(
+            CheckerState::<'_>::enter_cross_arena_delegation(),
+            "delegation below the depth cap must be allowed"
+        );
+        CheckerState::<'_>::leave_cross_arena_delegation();
+        assert_eq!(
+            state::cross_arena_bailout_epoch_for_test(),
+            0,
+            "an allowed delegation must not record a bailout"
+        );
+
+        // At the cap: delegation is refused and records a bailout so the
+        // enclosing resolution refuses to persist its incomplete result.
+        state::set_cross_arena_depth_for_test(5);
+        let before = state::cross_arena_bailout_epoch_for_test();
+        assert!(
+            !CheckerState::<'_>::enter_cross_arena_delegation(),
+            "delegation at the depth cap must be refused"
+        );
+        assert_ne!(
+            state::cross_arena_bailout_epoch_for_test(),
+            before,
+            "a depth-cap bailout must advance the bailout epoch"
+        );
+
+        // Leave the thread-locals clean for sibling tests on this worker.
+        state::set_cross_arena_depth_for_test(0);
+        state::set_cross_arena_bailout_epoch_for_test(0);
     }
 }

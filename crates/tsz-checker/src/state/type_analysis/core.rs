@@ -1325,9 +1325,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.symbol_types.insert(sym_id, placeholder);
         }
 
+        // Capture the cross-arena bailout epoch so a provisional sentinel
+        // (`any`/`error`) minted because a cross-arena delegation was refused by
+        // the depth cap during this resolution is not frozen as the symbol's
+        // authoritative type. A later shallower pass recomputes the real type
+        // (the immer `[WRITABLE]` computed-key poison, #13846). Gated on
+        // provenance (not on the value being `any`) so genuine `any` results
+        // still cache; only the degraded sentinel is dropped, so a single
+        // shallow resolution self-heals the cache without a recompute storm.
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
         self.pop_symbol_dependency();
+        let result_is_bailout_artifact = Self::cross_arena_bailout_epoch() != bailout_epoch_before
+            && result.is_any_unknown_or_error();
 
         // Fold cross-file `declare module` augmentations into an exported
         // interface's materialized body at this canonical resolution point, so
@@ -1421,7 +1432,15 @@ impl<'a> CheckerState<'a> {
             .get_symbol(sym_id)
             .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
             && self.ctor_result_embeds_inflight_instance(sym_id, result);
-        if let Some(file_idx) = cross_file_owner_idx {
+        if result_is_bailout_artifact {
+            // Registration-window artifact (a cross-arena delegation was refused
+            // by the depth cap during this resolution): drop the placeholder so
+            // the next lookup re-enters and a shallower pass recomputes the
+            // authoritative type, and do not promote the sentinel (#13846).
+            if use_local_symbol_state {
+                self.ctx.symbol_types.remove(&sym_id);
+            }
+        } else if let Some(file_idx) = cross_file_owner_idx {
             self.ctx.cache_cross_file_symbol_type(
                 sym_id,
                 file_idx as u32,

@@ -907,6 +907,13 @@ impl CheckerState<'_> {
             // cycle (see the detection above). The guard pops on drop —
             // including on panic unwind — so a reused worker thread never
             // inherits a stale entry.
+            // Capture the cross-arena bailout epoch before resolving. If a
+            // deeper delegation is refused by the depth cap while resolving this
+            // symbol, the result is a transiently-incomplete artifact (a
+            // provisional `any`/`error` minted under the cap) and must not be
+            // persisted/promoted as authoritative — a later shallower pass
+            // recomputes it. Mirrors the solver's `unresolved_def_seen` gate.
+            let bailout_epoch_before = Self::cross_arena_bailout_epoch();
             let result = {
                 let _alias_guard = alias_cycle_def_id.map(Self::enter_cross_arena_alias);
                 let _class_boundary = delegated_symbol_is_class_or_interface
@@ -914,6 +921,12 @@ impl CheckerState<'_> {
                 // Use get_type_of_symbol to ensure proper cycle detection.
                 checker.get_type_of_symbol(sym_id)
             };
+            let resolved_under_bailout = Self::cross_arena_bailout_epoch() != bailout_epoch_before;
+            // A provisional sentinel result minted under the cap must not be
+            // frozen as this symbol's authoritative type (#13846). Concrete
+            // results computed under a bailout are fine to persist.
+            let result_is_bailout_artifact =
+                resolved_under_bailout && result.is_any_unknown_or_error();
             let result_params = checker
                 .ctx
                 .get_existing_def_id(sym_id)
@@ -1003,7 +1016,22 @@ impl CheckerState<'_> {
             // mappings are NOT merged back here. The child already wrote through
             // to the shared DefinitionStore, and the parent reads from
             // DefinitionStore on local cache miss.
+            // Merge the child's resolved symbol types back into the parent, but
+            // drop provisional sentinels (`any`/`error`/`unknown`) that were
+            // minted under a depth-cap bailout while resolving this symbol.
+            // Such an entry is a registration-window artifact: merging it back
+            // propagates the poison first-writer-wins into the parent and the
+            // program-global bucket, where it later mis-routes identical
+            // patterns in other files (the immer `[WRITABLE]` computed-key
+            // poison, #13846). Gating on bailout *provenance* (not on the value
+            // being `any`) keeps genuine cross-file `any` results cached, and
+            // dropping only the degraded sentinels lets a later shallower pass
+            // recompute and persist the authoritative answer without a
+            // recompute storm over the concrete siblings.
             for (sym_id, type_id) in child_symbol_types {
+                if resolved_under_bailout && type_id.is_any_unknown_or_error() {
+                    continue;
+                }
                 self.ctx.symbol_types.entry_or_insert(sym_id, type_id);
             }
             self.ctx
@@ -1025,6 +1053,9 @@ impl CheckerState<'_> {
                 self.ctx.circular_type_aliases.insert(sym);
             }
             for (sym_id, inst_type) in child_instance_types {
+                if resolved_under_bailout && inst_type.is_any_unknown_or_error() {
+                    continue;
+                }
                 self.ctx
                     .symbol_instance_types
                     .entry_or_insert(sym_id, inst_type);
@@ -1032,7 +1063,12 @@ impl CheckerState<'_> {
 
             // Cache the result for lib delegations by SymbolId.
             // This prevents redundant child checker creation for the same lib symbol.
-            if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
+            // Skipped under a depth-cap bailout: the result is a transiently
+            // incomplete artifact that must not be frozen (#13846).
+            if symbol_type_cache_file_idx.is_none()
+                && !needs_cross_file_delegation
+                && !result_is_bailout_artifact
+            {
                 self.ctx
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
@@ -1043,8 +1079,11 @@ impl CheckerState<'_> {
 
             // Write through to the canonical cross-file symbol-type cache so
             // other parallel checkers can reuse this result without rebuilding
-            // a child checker.
-            if let Some(target_file_idx) = symbol_type_cache_file_idx {
+            // a child checker. Skipped under a depth-cap bailout so a provisional
+            // result is not promoted first-writer-wins (#13846).
+            if let Some(target_file_idx) =
+                symbol_type_cache_file_idx.filter(|_| !result_is_bailout_artifact)
+            {
                 self.cache_symbol_arena_or_cross_file_symbol_type(
                     sym_id,
                     target_file_idx,

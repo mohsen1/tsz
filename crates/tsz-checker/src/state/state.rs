@@ -37,6 +37,20 @@ thread_local! {
     /// Prevents stack overflow from deeply nested CheckerState creation.
     static CROSS_ARENA_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 
+    /// Monotonic counter bumped every time a cross-arena delegation is refused
+    /// by the `CROSS_ARENA_DEPTH` cap (a registration-window bailout). A
+    /// resolution that delegates captures this value before delegating and
+    /// compares it afterwards; if it advanced, a depth-cap bailout occurred
+    /// somewhere in its subtree, so the resolution's result is a transiently
+    /// incomplete artifact that must NOT be persisted as authoritative (a later
+    /// shallower pass recomputes it). This mirrors the solver's
+    /// `unresolved_def_seen` / `commit_closed_eval_writes` refusal to persist
+    /// results computed against an unresolved def. Without it, a provisional
+    /// `any`/`error` minted under the cap is merged back and promoted
+    /// first-writer-wins, then mis-routes identical patterns in other files
+    /// (the immer `[WRITABLE]` computed-key poison, #13846).
+    static CROSS_ARENA_BAILOUT_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
     /// Depth counter for resolving a class's directly-named heritage (`extends`)
     /// base expression. Nonzero while
     /// [`CheckerState::base_instance_type_from_expression`] is on the stack.
@@ -65,6 +79,7 @@ thread_local! {
 pub(crate) fn reset_cross_arena_depth() {
     CROSS_ARENA_DEPTH.with(|c| c.set(0));
     CLASS_HERITAGE_BASE_DEPTH.with(|c| c.set(0));
+    CROSS_ARENA_BAILOUT_EPOCH.with(|c| c.set(0));
 }
 
 #[cfg(test)]
@@ -75,6 +90,16 @@ pub(crate) fn set_cross_arena_depth_for_test(value: u32) {
 #[cfg(test)]
 pub(crate) fn cross_arena_depth_for_test() -> u32 {
     CROSS_ARENA_DEPTH.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn set_cross_arena_bailout_epoch_for_test(value: u64) {
+    CROSS_ARENA_BAILOUT_EPOCH.with(|c| c.set(value));
+}
+
+#[cfg(test)]
+pub(crate) fn cross_arena_bailout_epoch_for_test() -> u64 {
+    CROSS_ARENA_BAILOUT_EPOCH.with(std::cell::Cell::get)
 }
 
 // =============================================================================
@@ -356,10 +381,26 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn enter_cross_arena_delegation() -> bool {
         let d = CROSS_ARENA_DEPTH.with(std::cell::Cell::get);
         if d >= 5 {
+            // Refused by the depth cap: record the bailout so any enclosing
+            // delegation that captured the epoch refuses to persist its
+            // (now transiently-incomplete) result.
+            Self::mark_cross_arena_bailout();
             return false;
         }
         CROSS_ARENA_DEPTH.with(|c| c.set(d + 1));
         true
+    }
+
+    /// Record that a cross-arena delegation was refused by the depth cap.
+    pub(crate) fn mark_cross_arena_bailout() {
+        CROSS_ARENA_BAILOUT_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
+    }
+
+    /// Current cross-arena bailout epoch. Capture before delegating and compare
+    /// after; an advance means a depth-cap bailout occurred in the subtree and
+    /// the result must not be persisted as authoritative.
+    pub(crate) fn cross_arena_bailout_epoch() -> u64 {
+        CROSS_ARENA_BAILOUT_EPOCH.with(std::cell::Cell::get)
     }
 
     /// Decrement the cross-arena delegation depth counter.
