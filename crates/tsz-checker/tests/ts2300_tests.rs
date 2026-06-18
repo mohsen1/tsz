@@ -1096,8 +1096,9 @@ export interface foo {}
     );
 }
 
-/// When a const conflicts with a var, tsc uses TS2300 ("Duplicate identifier")
-/// because it's a mix of block-scoped and function-scoped declarations.
+/// When a const conflicts with a later var, tsc uses TS2451 ("Cannot redeclare
+/// block-scoped variable") on both because the first conflicting declaration is
+/// block-scoped.
 #[test]
 fn const_var_conflict_emits_ts2451() {
     // const before var in pure 2-way variable conflict → TS2451
@@ -1166,11 +1167,10 @@ fn var_type_alias_conflict_emits_ts2300() {
     );
 }
 
-/// Test that let+var+function at the same top-level scope get duplicate errors.
-///
-/// TODO: tsc emits TS2300 ("Duplicate identifier") here. We currently emit
-/// TS2451 ("Cannot redeclare block-scoped variable"). Update once classification
-/// is refined.
+/// `let`+`var`+`function` sharing a name at the same scope: once a function
+/// declaration joins the conflict, tsc reports TS2300 ("Duplicate identifier")
+/// on every declaration rather than the block-scoped-redeclaration TS2451.
+/// Matches `letAndVarRedeclaration.ts` (`e0`).
 #[test]
 fn let_var_function_same_scope_ts2300() {
     let diagnostics = verify_errors(
@@ -1185,9 +1185,9 @@ fn let_var_function_same_scope_ts2300() {
     assert_eq!(ts2300, 3, "All three should be TS2300 at same scope");
 }
 
-/// Test that var-before-let at the same scope level gets TS2451.
-/// When var comes first and let/const comes second, tsc uses TS2300 (not TS2451).
-/// When let/const comes first and var comes second, tsc uses TS2451.
+/// Same-file `var` + `let`/`const` follows tsc's source-position split:
+/// `var` first reports TS2300, while `let`/`const` first reports TS2451. This
+/// matches `letDeclarations-scopes-duplicates.ts` (`var5` versus `var6`).
 #[test]
 fn var_before_let_same_scope_ts2300() {
     let diagnostics = verify_errors(
@@ -1197,7 +1197,9 @@ fn var_before_let_same_scope_ts2300() {
             (2, 5, "Duplicate identifier 'x'."),
         ],
     );
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
     let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2451, 0, "var-before-let should not emit TS2451");
     assert_eq!(ts2300, 2, "var-before-let should be TS2300");
 }
 

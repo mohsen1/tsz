@@ -400,12 +400,9 @@ import { nonExistent } from "./thisModule";
     }
 }
 
-/// TS2451 vs TS2300: when `let` appears before `var` for the same name, tsc emits TS2451
-/// ("Cannot redeclare block-scoped variable") rather than TS2300 ("Duplicate identifier").
-/// The distinction depends on which declaration appears first in source order.
-///
-/// Regression test: the binder's declaration vector can be reordered by var hoisting,
-/// so we must use source position to determine the first declaration.
+/// A `let`+`var` redeclaration for the same name emits TS2451 ("Cannot
+/// redeclare block-scoped variable") on both declarations because the first
+/// conflicting declaration is block-scoped.
 #[test]
 fn test_ts2451_let_before_var_emits_block_scoped_error() {
     let diagnostics = compile_and_get_diagnostics(
@@ -433,9 +430,9 @@ var x = 2;
     );
 }
 
-/// When `var` appears before `let` for the same name, tsc emits TS2300
-/// ("Duplicate identifier") because the first declaration is non-block-scoped.
-/// When `let` appears before `var`, tsc emits TS2451 instead.
+/// A `var`+`let` redeclaration in the same file emits TS2300 ("Duplicate
+/// identifier") when the first conflicting declaration is the `var`. This is
+/// the source-order split in `letDeclarations-scopes-duplicates.ts`.
 #[test]
 fn test_ts2300_var_before_let_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
@@ -451,7 +448,7 @@ let x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // tsc uses TS2300 when the first declaration is non-block-scoped (var).
+    // Both declarations get TS2300 in the var-before-let ordering.
     assert!(
         codes.iter().all(|&c| c == 2300),
         "Expected all TS2300 (var-first + let conflict), got codes: {codes:?}"

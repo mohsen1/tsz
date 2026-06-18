@@ -1811,10 +1811,10 @@ impl<'a> CheckerState<'a> {
                     // variable (let/const) at the same scope, tsc uses TS2300.
                     false
                 } else if has_block_scoped_conflict {
-                    // Same-file mixed case (var + let/const, no function):
-                    // tsc uses TS2451 if the first conflicting declaration (by
-                    // source position) is block-scoped (let/const), TS2300 if
-                    // the first conflicting declaration is non-block-scoped (var).
+                    // Same-file mixed case (`var` + `let`/`const`, optionally
+                    // plus other conflict kinds): tsc uses TS2451 if the first
+                    // conflicting declaration by source position is block-scoped,
+                    // and TS2300 if the first is non-block-scoped (`var`).
                     let first_conflict = declarations
                         .iter()
                         .filter(|(decl_idx, _, is_local, _, _)| {
