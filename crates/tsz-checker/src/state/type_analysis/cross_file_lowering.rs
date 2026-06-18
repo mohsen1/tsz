@@ -171,6 +171,57 @@ impl CheckerState<'_> {
         lowering.lower_interface_declarations_with_symbol(&[decl_idx], sym_id)
     }
 
+    /// Resolve a cross-file interface's heritage-base name in the binder scope of
+    /// the arena that owns the `extends` clause, registering the owning file index
+    /// so downstream `get_type_of_symbol` / `get_type_params_for_symbol` take the
+    /// cross-arena delegation path.
+    ///
+    /// `resolve_cross_file_global_type_symbol` resolves names in the *current*
+    /// (importing) file's locals + globals. A base declared and exported only by
+    /// the declaring module (e.g. `interface MutationObserverOptions extends
+    /// MutationOptions`, where the consuming file imports `MutationObserverOptions`
+    /// but never `MutationOptions`) is module-scoped, not global, so it is unseen
+    /// there and every inherited member is dropped. Resolve the name in the
+    /// declaring arena's binder `file_locals` instead — that scope contains the
+    /// module's own top-level declarations.
+    ///
+    /// The returned `SymbolId` belongs to the declaring binder. Because raw
+    /// `SymbolId`s are per-binder (a foreign id passed to `get_type_of_symbol`
+    /// silently resolves the wrong symbol in the current arena), register its
+    /// owning file index in the cross-file overlay before returning. The overlay
+    /// is what `get_type_of_symbol` / `get_type_params_for_symbol` consult to
+    /// delegate resolution to the declaring arena's checker, so registration is
+    /// required for correctness, not just an optimization.
+    fn resolve_heritage_base_symbol_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        name: &str,
+    ) -> Option<SymbolId> {
+        use crate::query_boundaries::type_predicates::is_compiler_managed_type;
+
+        if is_compiler_managed_type(name) {
+            return None;
+        }
+        let owner_binder = self.ctx.get_binder_for_arena(arena)?;
+        let owner_file_idx = self.ctx.get_file_idx_for_arena(arena)?;
+        // The declaring module's own top-level scope. Resolving here (rather than
+        // in the importing file's locals/globals) is what reaches a module-scoped,
+        // non-imported base.
+        let base_sym_id = owner_binder.file_locals.get(name)?;
+        let symbol = owner_binder.get_symbol(base_sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::TYPE) {
+            return None;
+        }
+        // Pin the foreign symbol to its declaring file so the type / type-param
+        // queries below delegate to the right arena instead of mis-resolving the
+        // raw id against the current binder.
+        if owner_file_idx != self.ctx.current_file_idx {
+            self.ctx
+                .register_symbol_file_target(base_sym_id, owner_file_idx);
+        }
+        Some(base_sym_id)
+    }
+
     /// Merge heritage types from cross-file interface declarations.
     ///
     /// `merge_interface_heritage_types` uses `self.ctx.arena` to read heritage
@@ -236,7 +287,25 @@ impl CheckerState<'_> {
                         let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
                             continue;
                         };
-                        let Some(base_sym_id) = self.resolve_cross_file_global_type_symbol(&name)
+                        // Prefer the importing file's locals/globals resolution to
+                        // preserve every base that already resolved there (changing
+                        // those would perturb downstream relation shapes). Only when a
+                        // base is unresolvable here — a module-scoped base declared and
+                        // exported by the declaring module but never imported into the
+                        // consuming file (e.g. `MutationObserverOptions extends
+                        // MutationOptions`, where the consumer imports
+                        // `MutationObserverOptions` but never `MutationOptions`) — fall
+                        // back to resolving the name in the DECLARING arena's binder
+                        // scope, where the module's own top-level declarations live.
+                        // Without this fallback the loop `continue`s and drops every
+                        // inherited member. `resolve_heritage_base_symbol_in_arena`
+                        // registers the owning file index so the `get_type_of_symbol` /
+                        // `get_type_params_for_symbol` calls below take the proper
+                        // cross-arena delegation path (rather than mis-resolving a
+                        // foreign-binder SymbolId in the current arena).
+                        let Some(base_sym_id) = self
+                            .resolve_cross_file_global_type_symbol(&name)
+                            .or_else(|| self.resolve_heritage_base_symbol_in_arena(arena, &name))
                         else {
                             continue;
                         };
