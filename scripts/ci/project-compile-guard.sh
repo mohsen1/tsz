@@ -9,6 +9,12 @@ TSZ_BIN="${TSZ_BIN:-$DEFAULT_TARGET_DIR/dist-fast/tsz}"
 FIXTURE_ROOT="${TSZ_PROJECT_COMPILE_FIXTURE_ROOT:-$ROOT_DIR/.target/project-compile-guard}"
 PROJECT_TIMEOUT="${TSZ_PROJECT_COMPILE_TIMEOUT:-90}"
 INCLUDE_GENERATED_APPS="${TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS:-1}"
+# Skip category:"application" canary rows. These clone+install real apps (deps
+# can take minutes each) and are compatibility canaries excluded from the
+# benchmark corpus, so latency-sensitive callers (e.g. bench-publish's PGO
+# timing step, capped at 30m) set this to 1 to avoid blowing their job budget
+# on rows that produce no benchmark data.
+SKIP_APPLICATIONS="${TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS:-0}"
 PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
 PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-required}"
 ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
@@ -443,6 +449,10 @@ install_application_deps() {
 #   name fixture_dir repo ref install_cmd install_root app_tsconfig src_dir
 run_application_row() {
   local name="$1" fdir="$2" repo="$3" ref="$4" install_cmd="$5" install_root="$6" app_tsconfig="$7" src_rel="$8"
+  if [[ "$SKIP_APPLICATIONS" == "1" ]]; then
+    echo "Skipping application row $name (TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1)"
+    return 0
+  fi
   local root="$FIXTURE_ROOT/$fdir"
   ensure_git_fixture "$fdir" "$repo" "$ref" "$root"
   install_application_deps "$root/$install_root" "$install_cmd"

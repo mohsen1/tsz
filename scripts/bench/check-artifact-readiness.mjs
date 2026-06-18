@@ -28,11 +28,23 @@ import {
   REQUIRED_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
+import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import {
   hasCompletePhaseMetadata,
   isGreen,
 } from "./row-utils.mjs";
 import { measurementProfileStatus } from "./measurement-profile.mjs";
+
+// The bench artifact readiness gate must not demand rows that are intentionally
+// excluded from the bench runner (BENCH_RUNNER_EXCLUDED_ROWS): those rows are
+// never measured, so they can never appear in the merged artifact. Requiring
+// them fails every publish on a permanently-missing row — e.g.
+// type-challenges-solutions-project, a required compile-guard row that is
+// excluded from timing (#13549). Only rows that are both required AND actually
+// measured belong in the readiness required-set.
+const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
+  (name) => !BENCH_RUNNER_EXCLUDED_ROWS.has(name),
+);
 
 const args = process.argv.slice(2);
 
@@ -234,7 +246,7 @@ function analyzeArtifact(artifact, expectedCommit) {
     }
   }
 
-  const rows = REQUIRED_PROJECT_ROWS.map((name) => {
+  const rows = REQUIRED_MEASURED_ROWS.map((name) => {
     const row = byName.get(name) ?? null;
     const duplicateCount = duplicateCounts.get(name) ?? (row ? 1 : 0);
     const duplicate = duplicateCount > 1;
@@ -301,7 +313,7 @@ function uniqueRowsByName(rows) {
 }
 
 function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, sourceFreshness, rows, successfulProjectTimingPairs, missing, red, yellow, gray, green, duplicates }) {
-  const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
+  const missingNames = missing?.map((r) => r.name) ?? REQUIRED_MEASURED_ROWS;
   const metadataWarningsList = metadataWarnings(measurementProfile, validationWarnings);
   const nonGreenRows = rows
     ? uniqueRowsByName([
@@ -332,7 +344,7 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
     },
     metadata_clean: metadataWarningsList.length === 0,
     metadata_warnings_total: metadataWarningsList.length,
-    required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
+    required_row_count: rows?.length ?? REQUIRED_MEASURED_ROWS.length,
     successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
     required_project_timing_pairs: requiredProjectTimingPairs,
     green: green?.length ?? 0,
