@@ -217,14 +217,14 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
 
 assert.match(
   ciWorkflow,
-  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION: "1"[\s\S]+?Run unit suite on Cloud Run runner[\s\S]+?scripts\/ci\/github-suite\.sh unit/,
-  "unit should run the Cloud Run-safe unit slice directly on the Cloud Run runner",
+  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit unit suite to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-unit\.yaml/,
+  "unit should submit its linker-heavy compile to the Cloud Build pool: a single rustc compiling a workspace lib-test exceeds the 32 GiB Cloud Run budget even at the forced -j1, SIGKILLing the runner. The Cloud Run runner only orchestrates the submit, mirroring unit-checker-integration.",
 );
 
 assert.doesNotMatch(
   ciWorkflow,
-  /\n\s{2}unit:\n[\s\S]+?gcloud builds submit[\s\S]+?cloudbuild-unit\.yaml/,
-  "unit should not submit to Cloud Build",
+  /\n\s{2}unit:\n[\s\S]+?Run unit suite on Cloud Run runner[\s\S]+?scripts\/ci\/github-suite\.sh unit/,
+  "unit must not compile the linker-heavy slice directly on the 32 GiB Cloud Run runner — it OOM-SIGKILLs the runner and wedges the queue (see scripts/cloudbuild/cloudbuild-unit.yaml)",
 );
 
 assert.match(
