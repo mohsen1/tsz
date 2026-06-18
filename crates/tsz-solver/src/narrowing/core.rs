@@ -1416,6 +1416,20 @@ impl<'a> NarrowingContext<'a> {
                     {
                         return narrowed.non_never();
                     }
+                    // A `boolean` (or `true`/`false`) union member is the implicit
+                    // `true | false` union; excluding one boolean literal must leave
+                    // the other rather than keeping the whole member. The top-level
+                    // boolean special-case below only fires when the source is exactly
+                    // boolean, so recurse here so `Ann | boolean` minus `true` yields
+                    // `Ann | false` (mirrors tsc's `boolean` literal decomposition).
+                    if matches!(
+                        member,
+                        TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE
+                    ) {
+                        return self
+                            .narrow_excluding_type(member, excluded_type)
+                            .non_never();
+                    }
                     if self.is_assignable_to(member, excluded_type) {
                         None
                     } else {
