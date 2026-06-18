@@ -1453,19 +1453,31 @@ impl<'a> NarrowingContext<'a> {
             .filter(|&member| !self.is_type_subset_of(member, positive_type))
             .collect();
 
-        if remaining.len() == members.len() {
-            // Nothing filtered — let the caller try its structural fallback.
-            return None;
-        }
-        // If any shallow survivor is still structurally covered by the positive
-        // branch, the identity-only shortcut under-excluded. Fall back so
-        // constrained type parameters such as `Sub extends Base` are removed.
-        if remaining
-            .iter()
-            .any(|&member| self.is_assignable_to(member, positive_type))
+        if remaining.len() == members.len()
+            || remaining
+                .iter()
+                .any(|&member| self.is_assignable_to(member, positive_type))
         {
-            return None;
+            // Identity/containment did not catch every positive-branch member.
+            // Keep the pass top-level-only, but allow structural equivalence
+            // against the already-computed positive type. This covers freshly
+            // materialized true-branch shapes such as #52984 deep-path
+            // predicates without returning to recursive intersection descent.
+            let structurally_remaining: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| !self.is_assignable_to(member, positive_type))
+                .collect();
+            if structurally_remaining.len() == members.len() {
+                return None;
+            }
+            return Some(match structurally_remaining.as_slice() {
+                [] => TypeId::NEVER,
+                [single] => *single,
+                _ => self.db.union(structurally_remaining),
+            });
         }
+        // The pure identity/containment filter handled the positive members.
         Some(match remaining.as_slice() {
             [] => TypeId::NEVER,
             [single] => *single,

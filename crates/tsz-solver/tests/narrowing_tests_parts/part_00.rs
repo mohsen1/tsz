@@ -1042,6 +1042,33 @@ fn test_narrow_excluding_positive_subset_filters_union_members() {
 }
 
 #[test]
+fn test_narrow_excluding_positive_subset_filters_structural_member() {
+    // A predicate true branch may be freshly materialized and structurally cover
+    // a source member without sharing identity with it. The false branch should
+    // still drop only that top-level member.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let type_name = interner.intern_string("type");
+    let extra_name = interner.intern_string("extra");
+    let lit_a = interner.literal_string("A");
+    let lit_b = interner.literal_string("B");
+
+    let member_a = interner.object(vec![PropertyInfo::new(type_name, lit_a)]);
+    let member_b = interner.object(vec![
+        PropertyInfo::new(type_name, lit_b),
+        PropertyInfo::new(extra_name, TypeId::NUMBER),
+    ]);
+    let positive_b = interner.object(vec![PropertyInfo::new(type_name, lit_b)]);
+    let union = interner.union2(member_a, member_b);
+
+    let excluded = ctx
+        .narrow_excluding_positive_subset(union, positive_b)
+        .expect("structurally covered member should be filtered");
+    assert_eq!(excluded, member_a);
+}
+
+#[test]
 fn test_narrow_excluding_positive_subset_no_reduction_returns_none() {
     // When no source member is a subset of the positive type, the shallow filter
     // cannot reduce the source and returns None so the caller can fall back to
