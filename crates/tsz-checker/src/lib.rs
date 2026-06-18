@@ -1066,6 +1066,9 @@ mod merged_interface_constraint_relation_routing_arch_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "tests/multi_overload_infer_capture_tests.rs"]
+mod multi_overload_infer_capture_tests;
+#[cfg(test)]
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
 mod mutable_binding_widening_from_const_literal_tests;
 #[cfg(test)]
