@@ -7,7 +7,9 @@ use super::super::object_literal_context::ContextualPropertyPresence;
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
-use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::common::{
+    ContextualTypeContext, get_application_base, is_conditional_type, is_mapped_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -29,42 +31,12 @@ struct ObjectLiteralRequestFacts {
 }
 
 impl<'a> CheckerState<'a> {
-    /// An object literal contextually typed by an *inline* instantiated generic
-    /// **type-alias** application whose body is a computed (conditional/mapped)
-    /// type — e.g. ts-essentials `DeepPick<T, Filter>` used directly as a
-    /// `const` annotation — must have that application reduced through the
-    /// authoritative resolver before its per-property contextual types are
-    /// extracted.
-    ///
-    /// The solver's default per-property contextual extraction runs with a
-    /// non-resolving resolver, so a recursive instantiated alias body left as an
-    /// opaque `Application` cannot expand: each property's expected type then
-    /// degrades to the un-reduced source instead of the picked result, producing
-    /// spurious `TS2741`/`TS2322`. A named-alias or `satisfies` contextual type
-    /// already reaches the literal in evaluated form; reducing here brings the
-    /// inline-application case to the same parity (#13618).
-    ///
-    /// The gate is deliberately narrow — only an application whose base alias
-    /// body is a `Conditional`/`Mapped` type. An **interface/class** application
-    /// (e.g. comlink's `TransferHandler<object, MessagePort>`) instantiates its
-    /// members directly through the default path and must NOT be reduced:
-    /// re-evaluating it can widen a method's tuple-return contextual type. A
-    /// plain object/`Lazy` alias likewise resolves fine through the normal path.
     fn contextual_type_requires_authoritative_evaluation(&mut self, type_id: TypeId) -> bool {
-        if !matches!(
-            self.ctx.types.lookup(type_id),
-            Some(tsz_solver::TypeData::Application(_))
-        ) {
-            return false;
-        }
-        let Some(base) =
-            crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)
-        else {
+        let Some(base) = get_application_base(self.ctx.types, type_id) else {
             return false;
         };
         let base_body = self.resolve_lazy_type(base);
-        crate::query_boundaries::common::is_conditional_type(self.ctx.types, base_body)
-            || crate::query_boundaries::common::is_mapped_type(self.ctx.types, base_body)
+        is_conditional_type(self.ctx.types, base_body) || is_mapped_type(self.ctx.types, base_body)
     }
 
     fn collect_object_literal_request_facts(
