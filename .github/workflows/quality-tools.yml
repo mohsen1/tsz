@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install nightly Miri
         run: |
           rustup toolchain install nightly --component miri
@@ -57,7 +57,7 @@ jobs:
     env:
       CARGO_LLVM_COV_VERSION: "0.8.7"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install cargo-llvm-cov
         run: |
           if command -v cargo-llvm-cov >/dev/null 2>&1 \
@@ -86,7 +86,7 @@ jobs:
     env:
       CARGO_MUTANTS_VERSION: "27.0.0"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install cargo-mutants
         run: |
           if command -v cargo-mutants >/dev/null 2>&1 \
@@ -107,7 +107,7 @@ jobs:
       CARGO_SEMVER_CHECKS_VERSION: "0.47.0"
       TSZ_SEMVER_BASELINE_REV: ${{ inputs.semver_baseline_rev }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
       - name: Install cargo-semver-checks
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install nightly rust-src
         run: rustup toolchain install nightly --component rust-src
       - name: Run address sanitizer smoke
@@ -141,7 +141,7 @@ jobs:
     env:
       CARGO_BLOAT_VERSION: "0.12.1"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Install cargo-bloat
         run: |
           if command -v cargo-bloat >/dev/null 2>&1 \
