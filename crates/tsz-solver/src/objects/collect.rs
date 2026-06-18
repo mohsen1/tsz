@@ -79,6 +79,32 @@ pub enum PropertyCollectionResult {
     },
 }
 
+/// Cross-call memo surface for top-level `collect_properties_cached` results.
+///
+/// A supertrait of `QueryDatabase` so the result memo can be reached through a
+/// `&dyn QueryDatabase` without growing the (already at-cap) `caches::db`
+/// module. The real storage lives in `QueryCache`; every other implementor
+/// keeps the no-op defaults (no caching).
+pub trait CollectPropertiesResultCache {
+    /// Look up a cached top-level `collect_properties_cached(type_id)` result.
+    /// Default `None`. Only completed top-level collections are stored (see the
+    /// soundness note in `collect_properties_cached`).
+    fn collect_properties_result_cached(
+        &self,
+        _type_id: TypeId,
+    ) -> Option<PropertyCollectionResult> {
+        None
+    }
+
+    /// Record a completed top-level `collect_properties_cached` result. Default no-op.
+    fn set_collect_properties_result_cache(
+        &self,
+        _type_id: TypeId,
+        _result: PropertyCollectionResult,
+    ) {
+    }
+}
+
 /// Collect properties from an intersection type, recursively merging all members.
 ///
 /// This function handles:
@@ -126,6 +152,29 @@ pub fn collect_properties_cached<'a, R>(
 where
     R: TypeResolver,
 {
+    // Result memo (top-level calls only). `collect_properties_cached` is invoked
+    // hundreds of times for the same `type_id` during subtype/evaluation descent
+    // — on TypeBox, ~51% of all calls are top-level (stack empty) over only a few
+    // hundred distinct types (~277:1 redundancy). A top-level result memo on the
+    // shared `QueryCache` collapses that: a cached hit skips re-walking the whole
+    // property subtree.
+    //
+    // SOUNDNESS: the cache is consulted only when this is a *top-level* call
+    // (`COLLECT_PROPERTIES_STACK` empty at entry). Interior calls are skipped
+    // because the cross-call `CollectPropertiesDepthGuard` returns a *partial*
+    // result whenever a type already on the active stack is re-entered; caching
+    // such a partial result would poison the entry. At top level no outer type
+    // can be on the stack, so the computed result is complete. The cache lives in
+    // `QueryCache` and shares its lifecycle/`clear()` envelope (same as
+    // `object_spread_properties_cache`), so a resolver/program change rebuilds it.
+    let is_top_level = COLLECT_PROPERTIES_STACK.with_borrow(Vec::is_empty);
+    if is_top_level
+        && let Some(qdb) = query_db
+        && let Some(cached) = qdb.collect_properties_result_cached(type_id)
+    {
+        return cached;
+    }
+
     let mut collector = PropertyCollector {
         interner,
         resolver,
@@ -139,27 +188,31 @@ where
     };
     collector.collect(type_id);
 
-    // If we encountered Any at any point, the result is Any (commutative)
-    if collector.found_any {
-        return PropertyCollectionResult::Any;
-    }
-
-    // If no properties were collected, return NonObject
-    if collector.properties.is_empty()
+    let result = if collector.found_any {
+        // If we encountered Any at any point, the result is Any (commutative)
+        PropertyCollectionResult::Any
+    } else if collector.properties.is_empty()
         && collector.string_index.is_none()
         && collector.number_index.is_none()
     {
-        return PropertyCollectionResult::NonObject;
+        // If no properties were collected, return NonObject
+        PropertyCollectionResult::NonObject
+    } else {
+        // Sort properties by name to maintain interner invariants
+        collector.properties.sort_by_key(|p| p.name.0);
+        PropertyCollectionResult::Properties {
+            properties: collector.properties,
+            string_index: collector.string_index,
+            number_index: collector.number_index,
+        }
+    };
+
+    // Memoize the completed top-level result (see soundness note at entry).
+    if is_top_level && let Some(qdb) = query_db {
+        qdb.set_collect_properties_result_cache(type_id, result.clone());
     }
 
-    // Sort properties by name to maintain interner invariants
-    collector.properties.sort_by_key(|p| p.name.0);
-
-    PropertyCollectionResult::Properties {
-        properties: collector.properties,
-        string_index: collector.string_index,
-        number_index: collector.number_index,
-    }
+    result
 }
 
 /// Helper function to resolve Lazy types via DefId

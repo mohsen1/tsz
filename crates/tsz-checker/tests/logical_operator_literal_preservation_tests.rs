@@ -368,3 +368,83 @@ const probe: 0 | "yes" = x;
         "top-level logical const must still preserve `0 | \"yes\"`, got: {codes:?}"
     );
 }
+
+/// A non-literal left operand (`['a','b'].includes(s)`) of `&&` must NOT enter
+/// the literal-preserving context — its array literal still widens to
+/// `string[]` so `.includes(string)` is accepted. Before scoping, the operand's
+/// array kept `"a" | "b"` element literals, wrongly raising TS2345 (witnessed by
+/// ts-rest `query.ts`: `!['true','false','null'].includes(value.trim()) && ...`).
+#[test]
+fn array_literal_includes_in_logical_and_widens_elements() {
+    let source = r#"
+declare const value: string;
+const r = ['true', 'false', 'null'].includes(value.trim()) && value.length > 0;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2345),
+        "array literal element type must widen to string[] in && operand, got: {codes:?}"
+    );
+}
+
+/// Same for `||` — the left operand still carries no contextual type, so the
+/// array literal widens.
+#[test]
+fn array_literal_includes_in_logical_or_widens_elements() {
+    let source = r#"
+declare const value: string;
+const r = ['true', 'false', 'null'].includes(value.trim()) || value.length > 0;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2345),
+        "array literal element type must widen to string[] in || operand, got: {codes:?}"
+    );
+}
+
+/// Name/value-independence: the literal element strings do not drive the rule.
+/// Any string-literal array still widens to `string[]` in a logical operand.
+#[test]
+fn array_literal_includes_widening_is_value_independent() {
+    for elems in [
+        r#"'true', 'false', 'null'"#,
+        r#"'a', 'b'"#,
+        r#"'x'"#,
+        r#"'__brand', 'status', 'message'"#,
+    ] {
+        let source = format!(
+            r#"
+declare const value: string;
+const r = [{elems}].includes(value.trim()) && value.length > 0;
+"#
+        );
+        let codes = check_strict(&source);
+        assert!(
+            !codes.contains(&2345),
+            "array literal [{elems}] must widen in && operand, got: {codes:?}"
+        );
+    }
+}
+
+/// The full ts-rest `query.ts` shape: `unknown` narrowed by `typeof`, then a
+/// three-operand `&&` chain whose middle operand is an array-literal
+/// `.includes()` call. The array must widen so no TS2345 fires.
+#[test]
+fn typeof_narrowed_array_includes_chain_no_false_positive() {
+    let source = r#"
+declare const value: unknown;
+if (
+  typeof value === 'string' &&
+  !['true', 'false', 'null'].includes(value.trim()) &&
+  value.length > 0
+) {
+  const used: string = value;
+  void used;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2345),
+        "typeof-narrowed array.includes && chain must not raise TS2345, got: {codes:?}"
+    );
+}

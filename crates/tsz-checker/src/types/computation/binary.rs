@@ -23,6 +23,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
 
@@ -232,8 +233,18 @@ impl<'a> CheckerState<'a> {
                     // logical evaluator uses truthiness narrowing — a widened
                     // `string` cannot be narrowed to NEVER on the falsy branch,
                     // so the result wrongly unions in the right operand.
+                    //
+                    // Scope the flag to syntactic primitive-literal operands.
+                    // tsc carries no contextual type on a logical operand, so a
+                    // non-literal operand (a call, identifier, or nested array
+                    // literal) still widens its array/object literals normally;
+                    // setting the flag for every operand would suppress that
+                    // widening (e.g. `[...].includes(s) && ...` would keep the
+                    // element literal union).
                     let prev_preserve = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
+                    if self.logical_operand_is_primitive_literal(left_idx) {
+                        self.ctx.preserve_literal_types = true;
+                    }
                     let left_type =
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     self.ctx.preserve_literal_types = prev_preserve;
@@ -249,9 +260,12 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
                     // Preserve literal types for the left operand — see comment
-                    // on the && branch above for the rationale.
+                    // on the && branch above for the rationale (scoped to
+                    // syntactic primitive-literal operands).
                     let prev_preserve = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
+                    if self.logical_operand_is_primitive_literal(left_idx) {
+                        self.ctx.preserve_literal_types = true;
+                    }
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let outer_context = request.contextual_type;
@@ -784,7 +798,6 @@ impl<'a> CheckerState<'a> {
                     }
                     _ => "true",
                 };
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let message = format_message(
                     diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN,
                     &[condition_result],
@@ -800,7 +813,6 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
                     || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16)
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let condition_result = match op_kind {
                     k if k == SyntaxKind::EqualsEqualsToken as u16
                         || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
@@ -842,7 +854,6 @@ impl<'a> CheckerState<'a> {
                     left_narrow,
                 )
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // tsc widens literal types to their base primitives when comparing
                 // types from different primitive families (e.g., string vs number).
                 // For same-family comparisons (e.g., `"foo"` vs `"bar"`), literal
