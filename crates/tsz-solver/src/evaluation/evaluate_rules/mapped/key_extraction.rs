@@ -16,7 +16,7 @@ use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeDa
 use crate::visitor::keyof_inner_type;
 use tsz_common::interner::Atom;
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+impl<R: TypeResolver> TypeEvaluator<'_, R> {
     pub(super) fn mapped_key_from_literal(&self, type_id: TypeId) -> Option<MappedKey> {
         match self.interner().lookup(type_id)? {
             TypeData::Literal(LiteralValue::String(atom)) => Some(MappedKey {
