@@ -400,12 +400,11 @@ import { nonExistent } from "./thisModule";
     }
 }
 
-/// TS2451 vs TS2300: when `let` appears before `var` for the same name, tsc emits TS2451
-/// ("Cannot redeclare block-scoped variable") rather than TS2300 ("Duplicate identifier").
-/// The distinction depends on which declaration appears first in source order.
-///
-/// Regression test: the binder's declaration vector can be reordered by var hoisting,
-/// so we must use source position to determine the first declaration.
+/// A `let`+`var` redeclaration for the same name emits TS2451 ("Cannot
+/// redeclare block-scoped variable") on both declarations, not TS2300
+/// ("Duplicate identifier"): a block-scoped variable can never be redeclared.
+/// Order-independent — see `test_ts2451_var_before_let_emits_block_scoped_error`
+/// for the mirror case.
 #[test]
 fn test_ts2451_let_before_var_emits_block_scoped_error() {
     let diagnostics = compile_and_get_diagnostics(
@@ -433,11 +432,12 @@ var x = 2;
     );
 }
 
-/// When `var` appears before `let` for the same name, tsc emits TS2300
-/// ("Duplicate identifier") because the first declaration is non-block-scoped.
-/// When `let` appears before `var`, tsc emits TS2451 instead.
+/// A `var`+`let` redeclaration is a block-scoped redeclaration regardless of
+/// which declaration is written first: tsc emits TS2451 on both. The verdict is
+/// a property of the merged symbol (does it have a block-scoped declaration?),
+/// not source order. Confirmed against `letAndVarRedeclaration.ts`.
 #[test]
-fn test_ts2300_var_before_let_emits_duplicate_identifier() {
+fn test_ts2451_var_before_let_emits_block_scoped_error() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 var x = 1;
@@ -451,10 +451,11 @@ let x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // tsc uses TS2300 when the first declaration is non-block-scoped (var).
+    // Both declarations get TS2451 (block-scoped redeclaration), same as the
+    // `let`-before-`var` ordering.
     assert!(
-        codes.iter().all(|&c| c == 2300),
-        "Expected all TS2300 (var-first + let conflict), got codes: {codes:?}"
+        codes.iter().all(|&c| c == 2451),
+        "Expected all TS2451 (var-first + let conflict), got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,
