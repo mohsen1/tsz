@@ -499,6 +499,12 @@ mod ts2469_symbol_operator_tests;
 #[path = "../tests/ts2498_tests.rs"]
 mod ts2498_tests;
 #[cfg(test)]
+#[path = "tests/ts2536_deferred_conditional_indexed_access_tests.rs"]
+mod ts2536_deferred_conditional_indexed_access_tests;
+#[cfg(test)]
+#[path = "tests/ts2536_error_type_contagion_tests.rs"]
+mod ts2536_error_type_contagion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
@@ -603,6 +609,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
+#[cfg(test)]
+#[path = "tests/boolean_literal_union_narrowing_tests.rs"]
+mod boolean_literal_union_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/builtin_iterator_implements_tests.rs"]
 mod builtin_iterator_implements_tests;
@@ -1063,6 +1072,9 @@ mod merged_interface_constraint_relation_routing_arch_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "tests/multi_overload_infer_capture_tests.rs"]
+mod multi_overload_infer_capture_tests;
+#[cfg(test)]
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
 mod mutable_binding_widening_from_const_literal_tests;
 #[cfg(test)]
@@ -1092,6 +1104,9 @@ mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
 #[path = "tests/nullable_union_callback_variance_tests.rs"]
 mod nullable_union_callback_variance_tests;
+#[cfg(test)]
+#[path = "../tests/nullish_coalescing_unknown_result_tests.rs"]
+mod nullish_coalescing_unknown_result_tests;
 #[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;

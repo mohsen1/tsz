@@ -539,18 +539,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            let mut declared_type: Option<TypeId> =
-                if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
-                    && self.ctx.symbol_resolution_set.contains(&sym_id)
-                {
-                    None
-                } else {
-                    self.ctx
-                        .symbol_types
-                        .get(&sym_id)
-                        .copied()
-                        .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
-                };
+            // For a value symbol merged with an interface (declaration merging,
+            // e.g. lib globals `interface Date {} declare var Date: DateConstructor`
+            // or `interface Foo {} declare var Foo: {...}`), `symbol_types[sym_id]`
+            // holds the TYPE-space (instance) type, not the VALUE-space type a
+            // `typeof` query needs. The value declaration (the `var`) carries the
+            // value-space type, so resolve through its annotation first; only fall
+            // back to `symbol_types` when the value side has no annotation. Without
+            // this, a nested `(typeof Date)['now']` / `[typeof Foo][0]` resolves the
+            // deferred query against the instance and reports phantom TS2339s.
+            let merged_value_with_interface = sym_flags & tsz_binder::symbol_flags::VALUE != 0
+                && sym_flags & tsz_binder::symbol_flags::INTERFACE != 0;
+
+            let mut declared_type: Option<TypeId> = if merged_value_with_interface {
+                self.declared_annotation_type_for_type_query_symbol(sym_id)
+            } else if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                && self.ctx.symbol_resolution_set.contains(&sym_id)
+            {
+                None
+            } else {
+                self.ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+            };
 
             if declared_type.is_none() {
                 declared_type = self.declared_annotation_type_for_type_query_symbol(sym_id);

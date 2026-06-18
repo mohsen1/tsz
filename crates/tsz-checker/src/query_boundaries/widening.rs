@@ -4,8 +4,8 @@
 //! `tsz_solver::*` directly (architecture rule: no inline solver function
 //! calls in checker modules).
 
-use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 /// Widen a type for inference resolution: deep-widens fresh literals while
 /// preserving function/callable parameter and return types unchanged.
@@ -33,6 +33,16 @@ pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> T
     tsz_solver::operations::widening::apply_const_assertion(db, type_id)
 }
 
+/// Widen a fresh `let`/`var` initializer type, recursing into union members.
+///
+/// Like a plain `widen_type` but also widens fresh object/array constituents
+/// nested inside a top-level union (e.g. `(1 | 2 | 3)[] | (4 | 5)[]` →
+/// `number[]`), matching tsc's `getWidenedType`. Object freshness is respected,
+/// so non-fresh alias unions are left untouched.
+pub(crate) fn widen_type_for_mutable_binding(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::widen_type_for_mutable_binding(db, type_id)
+}
+
 /// Whether `type_id` is a *plain* object/array shape: `Object`,
 /// `ObjectWithIndex`, `Array`, or `Tuple` only. Excludes `Function`,
 /// `Callable`, `Mapped`, `Intersection`, `TypeParameter`, and `Lazy`.
@@ -43,4 +53,33 @@ pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> T
 pub(crate) fn is_plain_object_or_array_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_type(db, type_id)
         || tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)
+}
+
+/// The [`ObjectShape`] of `type_id` when it is an object type, else `None`.
+///
+/// Exposed alongside the const-assertion widening helpers so the return-type
+/// inference path can read an object literal's shape to widen a subset of its
+/// properties (preserving const-asserted leaves) through this narrow boundary.
+pub(crate) fn object_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<ObjectShape>> {
+    tsz_solver::type_queries::get_object_shape(db, type_id)
+}
+
+/// Rebuild an object type from `original` with `new_props`, preserving index
+/// signatures, flags (including `FRESH_LITERAL`), declaring symbol, and display
+/// provenance. Returns `original` unchanged when the properties are unchanged.
+///
+/// Pairs with [`object_shape_for_type`] for AST-driven partial widening that
+/// must keep the object's freshness/identity metadata.
+pub(crate) fn rebuild_object_with_shape_metadata(
+    db: &dyn TypeDatabase,
+    original: TypeId,
+    shape: &ObjectShape,
+    new_props: Vec<PropertyInfo>,
+) -> TypeId {
+    tsz_solver::operations::widening::rebuild_object_with_shape_metadata(
+        db, original, shape, new_props,
+    )
 }

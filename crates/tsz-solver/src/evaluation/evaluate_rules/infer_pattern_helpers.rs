@@ -1097,6 +1097,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true;
         }
 
+        // Multi-overload infer capture: a pattern with two or more call (or
+        // construct) signatures that each carry `infer` holes — e.g. the zustand
+        // `StoreDevtools` shape
+        //   S extends {
+        //     (...args: infer Sa1): infer Sr1
+        //     (...args: infer Sa2): infer Sr2
+        //   } ? ... : never
+        // matched against a two-overload `setState` callable. tsc binds each
+        // `infer` by pairing pattern signature `i` against the source signature at
+        // the corresponding position (the last `min(n, m)` overloads). The
+        // single-signature paths below only handle `call_signatures.len() == 1`;
+        // without this branch a multi-overload pattern falls through to the
+        // `is_subtype_of` fallback, which cannot bind `infer` holes, so the
+        // conditional wrongly collapses to its false branch (`never`).
+        if pattern_shape.properties.is_empty()
+            && let Some(result) = self.match_infer_multi_signature_pattern(
+                source,
+                pattern_shape_id,
+                bindings,
+                checker,
+            )
+        {
+            return result;
+        }
+
         // Determine which signature to use: call or construct.
         // Pattern `new (...) => infer P` has construct_signatures, not call_signatures.
         let is_construct_pattern = pattern_shape.call_signatures.is_empty()
@@ -1423,5 +1448,169 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         checker.is_subtype_of(source, pattern)
+    }
+
+    /// Match a multi-overload pattern callable (two or more call or construct
+    /// signatures, each bearing `infer` holes) against the `source` callable by
+    /// pairing signatures positionally.
+    ///
+    /// Returns `Some(true)` when every paired signature binds its infer holes,
+    /// `Some(false)` when the structural prerequisites hold but a pairing fails,
+    /// and `None` when this is not a multi-overload infer pattern (so the caller
+    /// continues with the single-signature paths / `is_subtype_of` fallback).
+    ///
+    /// tsc pairs the trailing `min(pattern_len, source_len)` overloads (the most
+    /// specific signatures sit last); we mirror that by aligning both lists from
+    /// the end. Candidates for the same `infer` name across signatures are
+    /// unioned, matching how tsc accumulates inferences across overloads.
+    fn match_infer_multi_signature_pattern(
+        &self,
+        source: TypeId,
+        pattern_shape_id: CallableShapeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<bool> {
+        let pattern_shape = self.interner().callable_shape(pattern_shape_id);
+        // Only the homogeneous multi-call or multi-construct shapes are handled
+        // here; mixed call+construct patterns keep the existing fallback.
+        let is_construct = pattern_shape.call_signatures.is_empty()
+            && pattern_shape.construct_signatures.len() >= 2;
+        let is_call = pattern_shape.construct_signatures.is_empty()
+            && pattern_shape.call_signatures.len() >= 2;
+        if !is_call && !is_construct {
+            return None;
+        }
+        let pattern_sigs = if is_construct {
+            &pattern_shape.construct_signatures
+        } else {
+            &pattern_shape.call_signatures
+        };
+        // Every pattern signature must carry an `infer` hole. A concrete overload
+        // sitting beside infer-bearing ones would need a real subtype relation
+        // (not infer binding), so defer the whole pattern to the existing
+        // single-signature / `is_subtype_of` fallback instead of guessing.
+        if !pattern_sigs
+            .iter()
+            .all(|sig| self.signature_contains_infer(sig))
+        {
+            return None;
+        }
+
+        let Some(source_shape_id) = self.source_callable_shape_id(source) else {
+            return Some(false);
+        };
+        let source_shape = self.interner().callable_shape(source_shape_id);
+        let source_sigs = if is_construct {
+            &source_shape.construct_signatures
+        } else {
+            &source_shape.call_signatures
+        };
+        if source_sigs.is_empty() {
+            return Some(false);
+        }
+
+        // Pair from the end: pattern signature `pattern_len-1-k` against source
+        // signature `source_len-1-k` for k in 0..min(len).
+        let pair_count = pattern_sigs.len().min(source_sigs.len());
+        let mut combined: FxHashMap<Atom, TypeId> = bindings.clone();
+        for k in 0..pair_count {
+            let pattern_sig = &pattern_sigs[pattern_sigs.len() - 1 - k];
+            let source_sig = &source_sigs[source_sigs.len() - 1 - k];
+            let mut pair_bindings = bindings.clone();
+            if !self.match_infer_signature_pair(
+                pattern_sig,
+                source_sig,
+                &mut pair_bindings,
+                checker,
+            ) {
+                return Some(false);
+            }
+            for (name, ty) in pair_bindings {
+                combined
+                    .entry(name)
+                    .and_modify(|existing| {
+                        if *existing != ty {
+                            *existing = self.interner().union2(*existing, ty);
+                        }
+                    })
+                    .or_insert(ty);
+            }
+        }
+        *bindings = combined;
+        Some(true)
+    }
+
+    /// Whether any param/return position of a call signature carries an `infer`.
+    fn signature_contains_infer(&self, sig: &crate::types::CallSignature) -> bool {
+        sig.params
+            .iter()
+            .any(|param| self.type_contains_infer(param.type_id))
+            || self.type_contains_infer(sig.return_type)
+    }
+
+    /// Bind the `infer` holes of a single pattern call signature against a single
+    /// source call signature (params + return), reusing the same param/return
+    /// matchers as the single-signature paths.
+    fn match_infer_signature_pair(
+        &self,
+        pattern_sig: &crate::types::CallSignature,
+        source_sig: &crate::types::CallSignature,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let has_param_infer = pattern_sig
+            .params
+            .iter()
+            .any(|param| self.type_contains_infer(param.type_id));
+        let has_return_infer = self.type_contains_infer(pattern_sig.return_type);
+        let has_single_rest_infer = pattern_sig.params.len() == 1
+            && pattern_sig.params[0].rest
+            && self.type_contains_infer(pattern_sig.params[0].type_id);
+
+        let (source_params, source_return) = self.instantiate_signature_for_infer(
+            &source_sig.params,
+            source_sig.return_type,
+            &source_sig.type_params,
+        );
+
+        if has_param_infer {
+            if has_single_rest_infer {
+                if !self.match_rest_infer_tuple(
+                    &source_params,
+                    pattern_sig.params[0].type_id,
+                    bindings,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else if !self.match_signature_params_for_infer(
+                &source_params,
+                &pattern_sig.params,
+                bindings,
+                checker,
+            ) {
+                return false;
+            }
+        }
+
+        if has_return_infer {
+            let mut visited = InferPatternVisited::default();
+            if !self.match_infer_pattern(
+                source_return,
+                pattern_sig.return_type,
+                bindings,
+                &mut visited,
+                checker,
+            ) {
+                return false;
+            }
+        }
+
+        // Every signature reaching here carries at least one infer hole (the
+        // driver only pairs all-infer patterns), so a successful param/return
+        // match is sufficient. The final subtype check is intentionally skipped
+        // to avoid contravariance false-negatives, mirroring the single-signature
+        // paths above.
+        true
     }
 }

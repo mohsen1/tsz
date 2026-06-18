@@ -19,6 +19,7 @@ use crate::def::DefId;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
+use crate::objects::{CollectPropertiesResultCache, PropertyCollectionResult};
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
@@ -226,6 +227,14 @@ pub struct QueryCache<'a> {
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
+    /// Memo for completed context-free `collect_properties_cached` results.
+    /// Keyed by `(TypeId, resolver_generation)`: the generation prevents
+    /// reusing a result after lazy `DefId` resolution can change. Shares this
+    /// cache's `clear()`/lifecycle envelope (same as
+    /// `object_spread_properties_cache`).
+    collect_properties_result_cache:
+        RefCell<FxHashMap<(TypeId, u64), crate::objects::PropertyCollectionResult>>,
+    collect_properties_cache_stats: CacheCounter,
     subtype_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
     /// Separate cache for assignability to prevent loose results from poisoning subtype checks.
     assignability_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
@@ -239,17 +248,6 @@ pub struct QueryCache<'a> {
     /// across multiple `SubtypeChecker` instances (common in constraint checking).
     /// `Some(type_id)` = successfully merged, `None` = not eligible for merging.
     intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
-    /// Cache for context-free `collect_properties` results, keyed by
-    /// `(TypeId, resolver_generation)`. Only populated for collections that
-    /// began at `COLLECT_PROPERTIES_STACK` depth 0 (see the safety contract on
-    /// [`crate::caches::db::QueryDatabase::lookup_collect_properties`]), so a
-    /// truncated/partial closure produced by an outer-frame recursion guard is
-    /// never stored or served out of context (the #12142 pitfall). Collapses
-    /// the repeated full-property materialization the recursive-schema canary
-    /// rows (typebox/kysely/ts-morph) perform per relation/member-access touch.
-    collect_properties_cache:
-        RefCell<FxHashMap<(TypeId, u64), crate::objects::PropertyCollectionResult>>,
-    collect_properties_cache_stats: CacheCounter,
     /// Cross-call cache for `instantiate_type` results, keyed by
     /// `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)`.
     ///
@@ -308,14 +306,14 @@ impl<'a> QueryCache<'a> {
             application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
+            collect_properties_result_cache: RefCell::new(FxHashMap::default()),
+            collect_properties_cache_stats: CacheCounter::new(),
             subtype_cache: RefCell::new(FxHashMap::default()),
             assignability_cache: RefCell::new(FxHashMap::default()),
             property_cache: RefCell::new(FxHashMap::default()),
             variance_cache: RefCell::new(FxHashMap::default()),
             canonical_cache: RefCell::new(FxHashMap::default()),
             intersection_merge_cache: RefCell::new(FxHashMap::default()),
-            collect_properties_cache: RefCell::new(FxHashMap::default()),
-            collect_properties_cache_stats: CacheCounter::new(),
             instantiation_cache: InstantiationCache::new(),
             subtype_reduction_cache: SubtypeReductionCache::new(),
             application_eval_cache_stats: SharedCacheCounter::new(),
@@ -337,13 +335,13 @@ impl<'a> QueryCache<'a> {
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
         self.object_spread_properties_cache.borrow_mut().clear();
+        self.collect_properties_result_cache.borrow_mut().clear();
         self.subtype_cache.borrow_mut().clear();
         self.assignability_cache.borrow_mut().clear();
         self.property_cache.borrow_mut().clear();
         self.variance_cache.borrow_mut().clear();
         self.canonical_cache.borrow_mut().clear();
         self.intersection_merge_cache.borrow_mut().clear();
-        self.collect_properties_cache.borrow_mut().clear();
         self.instantiation_cache.clear();
         self.subtype_reduction_cache.clear();
         self.reset_relation_cache_stats();
@@ -1305,6 +1303,41 @@ impl TypeResolver for QueryCache<'_> {
     }
 }
 
+impl CollectPropertiesResultCache for QueryCache<'_> {
+    fn collect_properties_result_cached(
+        &self,
+        type_id: TypeId,
+        resolver_generation: u64,
+    ) -> Option<PropertyCollectionResult> {
+        let result = self
+            .collect_properties_result_cache
+            .borrow()
+            .get(&(type_id, resolver_generation))
+            .cloned();
+        if result.is_some() {
+            self.collect_properties_cache_stats.record_hit();
+        } else {
+            self.collect_properties_cache_stats.record_miss();
+        }
+        result
+    }
+
+    fn set_collect_properties_result_cache(
+        &self,
+        type_id: TypeId,
+        resolver_generation: u64,
+        result: PropertyCollectionResult,
+    ) {
+        self.collect_properties_result_cache
+            .borrow_mut()
+            .insert((type_id, resolver_generation), result);
+    }
+}
+
+// `TypeInterner` is the other `QueryDatabase` implementor; it has no query
+// cache, so it keeps the no-op defaults (no collect-properties memoization).
+impl CollectPropertiesResultCache for TypeInterner {}
+
 impl QueryDatabase for QueryCache<'_> {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
@@ -1696,35 +1729,6 @@ impl QueryDatabase for QueryCache<'_> {
         self.intersection_merge_cache
             .borrow_mut()
             .insert(intersection_id, result);
-    }
-
-    fn lookup_collect_properties(
-        &self,
-        type_id: TypeId,
-        resolver_generation: u64,
-    ) -> Option<crate::objects::PropertyCollectionResult> {
-        let result = self
-            .collect_properties_cache
-            .borrow()
-            .get(&(type_id, resolver_generation))
-            .cloned();
-        if result.is_some() {
-            self.collect_properties_cache_stats.record_hit();
-        } else {
-            self.collect_properties_cache_stats.record_miss();
-        }
-        result
-    }
-
-    fn insert_collect_properties(
-        &self,
-        type_id: TypeId,
-        resolver_generation: u64,
-        result: crate::objects::PropertyCollectionResult,
-    ) {
-        self.collect_properties_cache
-            .borrow_mut()
-            .insert((type_id, resolver_generation), result);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {

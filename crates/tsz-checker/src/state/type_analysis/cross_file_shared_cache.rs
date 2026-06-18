@@ -9,6 +9,15 @@ fn shared_actual_lib_delegation_cache_key(name: &str) -> String {
     format!("\0actual-lib-delegation:{name}")
 }
 
+fn shared_actual_lib_value_declaration_cache_key(
+    name: &str,
+    file_name: &str,
+    decl_idx: tsz_parser::NodeIndex,
+    mode: u8,
+) -> String {
+    format!("\0actual-lib-value-declaration:{file_name}:{decl_idx:?}:{mode}:{name}")
+}
+
 impl<'a> CheckerState<'a> {
     /// Compute the shared-cache name for a builtin lib CLASS symbol, scoping the
     /// `symbol_arenas` borrow inside this `&self` method so the caller can then
@@ -87,6 +96,64 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn cache_shared_actual_lib_delegation(&self, shared_name: &str, result: TypeId) {
         self.insert_to_shared_lib_cache(
             shared_actual_lib_delegation_cache_key(shared_name),
+            result,
+        );
+    }
+
+    pub(crate) fn shared_actual_lib_value_declaration_name(
+        &self,
+        sym_id: SymbolId,
+        decl_arena: &tsz_parser::NodeArena,
+    ) -> Option<String> {
+        if !is_builtin_lib_declaration_arena(decl_arena) {
+            return None;
+        }
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let name = symbol.escaped_name.clone();
+        if self.lib_name_locally_augmented(&name) || self.any_program_file_augments_lib_name(&name)
+        {
+            return None;
+        }
+        Some(name)
+    }
+
+    pub(crate) fn cached_shared_actual_lib_value_declaration(
+        &mut self,
+        shared_name: &str,
+        decl_arena: &tsz_parser::NodeArena,
+        decl_idx: tsz_parser::NodeIndex,
+        mode: u8,
+    ) -> Option<TypeId> {
+        let file_name = decl_arena.source_files.first()?.file_name.as_str();
+        let cached_type = self.lookup_shared_lib_type(
+            &shared_actual_lib_value_declaration_cache_key(shared_name, file_name, decl_idx, mode),
+        )?;
+        self.ctx.lib_delegation_cache.insert_declaration_node_type(
+            decl_arena,
+            decl_idx,
+            mode,
+            cached_type,
+        );
+        Some(cached_type)
+    }
+
+    pub(crate) fn cache_shared_actual_lib_value_declaration(
+        &self,
+        shared_name: &str,
+        decl_arena: &tsz_parser::NodeArena,
+        decl_idx: tsz_parser::NodeIndex,
+        mode: u8,
+        result: TypeId,
+    ) {
+        let Some(file_name) = decl_arena
+            .source_files
+            .first()
+            .map(|source_file| source_file.file_name.as_str())
+        else {
+            return;
+        };
+        self.insert_to_shared_lib_cache(
+            shared_actual_lib_value_declaration_cache_key(shared_name, file_name, decl_idx, mode),
             result,
         );
     }
@@ -311,6 +378,122 @@ mod tests {
             state.shared_actual_lib_delegation_name(sym_id, Some(arena.as_ref()), false),
             None,
             "only built-in TypeScript libs may use the shared actual-lib name cache",
+        );
+    }
+
+    #[test]
+    fn shared_actual_lib_value_declaration_cache_roundtrip_warms_local_cache() {
+        let lib_files = load_lib_files(&["dom.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let x: Window;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        state
+            .ctx
+            .set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
+        let shared: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
+            Arc::new(dashmap::DashMap::new());
+        state.ctx.shared_lib_type_cache = Some(shared);
+
+        let dom_arena = lib_files[0].arena.as_ref();
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("Window")
+            .expect("Window should be a DOM lib symbol");
+        let decl_idx = state
+            .get_cross_file_symbol(sym_id)
+            .expect("Window symbol should be visible")
+            .value_declaration;
+        let shared_name = state
+            .shared_actual_lib_value_declaration_name(sym_id, dom_arena)
+            .expect("DOM value declarations should be shared-cache eligible");
+
+        assert!(
+            state
+                .cached_shared_actual_lib_value_declaration(&shared_name, dom_arena, decl_idx, 1)
+                .is_none(),
+            "cache should be empty before the first write"
+        );
+
+        state.cache_shared_actual_lib_value_declaration(
+            &shared_name,
+            dom_arena,
+            decl_idx,
+            1,
+            tsz_solver::TypeId::STRING,
+        );
+
+        assert_eq!(
+            state.cached_shared_actual_lib_value_declaration(&shared_name, dom_arena, decl_idx, 1),
+            Some(tsz_solver::TypeId::STRING)
+        );
+        assert_eq!(
+            state
+                .ctx
+                .lib_delegation_cache
+                .declaration_node_type(dom_arena, decl_idx, 1),
+            Some(tsz_solver::TypeId::STRING),
+            "shared hits should warm the file-local declaration-node cache"
+        );
+    }
+
+    #[test]
+    fn shared_actual_lib_value_declaration_name_rejects_program_augmentations() {
+        let lib_files = load_lib_files(&["dom.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let x: Window;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+
+        let mut augment_parser = ParserState::new(
+            "augment.ts".to_string(),
+            "export {}; declare global { interface Window { tszAugment: string; } }".to_string(),
+        );
+        let augment_root = augment_parser.parse_source_file();
+        let mut augment_binder = BinderState::new();
+        augment_binder.bind_source_file(augment_parser.get_arena(), augment_root);
+        let augment_binder = Arc::new(augment_binder);
+
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        state
+            .ctx
+            .set_all_binders(Arc::new(vec![Arc::clone(&binder), augment_binder]));
+
+        let dom_arena = lib_files[0].arena.as_ref();
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("Window")
+            .expect("Window should be a DOM lib symbol");
+
+        assert_eq!(
+            state.shared_actual_lib_value_declaration_name(sym_id, dom_arena),
+            None,
+            "program-wide global augmentations must keep value declarations out of the shared cache",
         );
     }
 

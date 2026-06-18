@@ -112,6 +112,35 @@ pub enum PropertyCollectionResult {
     },
 }
 
+/// Cross-call memo surface for context-free `collect_properties_cached` results.
+///
+/// A supertrait of `QueryDatabase` so the result memo can be reached through a
+/// `&dyn QueryDatabase` without growing the (already at-cap) `caches::db`
+/// module. The real storage lives in `QueryCache`; every other implementor
+/// keeps the no-op defaults (no caching).
+pub trait CollectPropertiesResultCache {
+    /// Look up a cached context-free `collect_properties_cached(type_id)` result.
+    /// Default `None`. The resolver generation prevents reusing a result after
+    /// lazy `DefId` resolution can change.
+    fn collect_properties_result_cached(
+        &self,
+        _type_id: TypeId,
+        _resolver_generation: u64,
+    ) -> Option<PropertyCollectionResult> {
+        None
+    }
+
+    /// Record a completed context-free `collect_properties_cached` result.
+    /// Default no-op.
+    fn set_collect_properties_result_cache(
+        &self,
+        _type_id: TypeId,
+        _resolver_generation: u64,
+        _result: PropertyCollectionResult,
+    ) {
+    }
+}
+
 /// Collect properties from an intersection type, recursively merging all members.
 ///
 /// This function handles:
@@ -210,7 +239,7 @@ where
     // and let the existing cross-collector guard truncate as before.
     if let Some(db) = query_db
         && !collect_properties_stack_contains(type_id)
-        && let Some(cached) = db.lookup_collect_properties(type_id, generation)
+        && let Some(cached) = db.collect_properties_result_cached(type_id, generation)
     {
         return cached;
     }
@@ -274,7 +303,7 @@ where
     // Store only context-free results (no outer-ancestor truncation); see the
     // cache contract at the top of this function.
     if cacheable && let Some(db) = query_db {
-        db.insert_collect_properties(type_id, generation, result.clone());
+        db.set_collect_properties_result_cache(type_id, generation, result.clone());
     }
 
     result
