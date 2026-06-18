@@ -1823,9 +1823,7 @@ impl<'a> CheckerState<'a> {
                     // back to the source-position heuristic: tsc uses TS2451 when
                     // the first conflicting declaration is block-scoped, TS2300
                     // when it is non-block-scoped.
-                    if !has_non_variable_conflict {
-                        true
-                    } else {
+                    if has_non_variable_conflict {
                         let first_conflict = declarations
                             .iter()
                             .filter(|(decl_idx, _, is_local, _, _)| {
@@ -1842,6 +1840,8 @@ impl<'a> CheckerState<'a> {
                                 (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                             })
                             .unwrap_or(true)
+                    } else {
+                        true
                     }
                 } else if has_remote_declaration {
                     false
