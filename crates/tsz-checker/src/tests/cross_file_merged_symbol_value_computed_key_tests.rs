@@ -42,7 +42,7 @@ fn check(symbols_src: &str, main_src: &str) -> Vec<Diagnostic> {
 fn codes(diagnostics: &[Diagnostic]) -> Vec<(u32, String)> {
     diagnostics
         .iter()
-        .map(|d| (d.code, d.message_text.to_string()))
+        .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
 
