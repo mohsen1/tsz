@@ -8,6 +8,7 @@
 //! - Intersection-over-union distribution
 //! - Literal absorption into primitives
 
+use super::shallow_subtype::ShallowReduceKind;
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     CallableShape, IntrinsicKind, LiteralValue, ObjectShape, PropertyInfo, TemplateLiteralId,
@@ -965,27 +966,44 @@ impl TypeInterner {
     /// `UNION_NORMALIZE_CACHE_MAX_LEN` keeps flag-setting inputs uncached.
     pub(crate) const UNION_SUBTYPE_PAIRWISE_LIMIT: u64 = 1_000_000;
 
-    /// A bare unit literal: `TypeData::Literal(_)` (string/number/boolean/bigint
-    /// literal). For two *distinct* bare unit literals `a != b`, the shallow
-    /// subtype engine is unconditionally `false` in **both** directions:
-    /// - As a source, a `Literal(_)` relates only to a widened primitive of its
-    ///   own domain, a matching template literal, or a union/builtin containing
-    ///   one of those — never to another `Literal(_)` (see
-    ///   `is_subtype_shallow_depth`'s literal-source branch).
-    /// - As a target, a `Literal(_)` is matched only by an identical literal
-    ///   (removed upstream by dedup) or `never` (removed upstream) — no other
-    ///   source is ever a subtype of a bare literal.
+    /// Whether `id` is an *unevaluated deferred type-level operation* that the
+    /// shallow subtype engine (`is_subtype_shallow`) can only relate to a
+    /// distinct peer by identity — never as a structural subtype in either
+    /// direction. Members of this family are inert under union subtype reduction:
+    /// they can neither be removed nor remove a peer, so the O(N²) pairwise sweep
+    /// over them is pure waste and is lifted out by `reduce_union_subtypes`.
     ///
-    /// So in the union-reduction pairwise sweep, a pair where **both** members
-    /// are bare unit literals can never reduce either way; the subtype call is
-    /// pure waste. Skipping such pairs collapses the dominant O(L²)
-    /// literal-vs-literal term of a `{ primitive, Literal:L }` union (the
-    /// residual ts-toolbelt #13250 signature) to O(L·K) useful checks against
-    /// the K non-literal members, with identical reduction output. Boolean
-    /// literals (`true`/`false`) are intrinsics, not `TypeData::Literal`, so
-    /// they are conservatively treated as non-literals and keep full checks.
-    fn is_bare_unit_literal(&self, id: TypeId) -> bool {
-        matches!(self.lookup(id), Some(TypeData::Literal(_)))
+    /// The shallow engine returns `true` for a *distinct* pair only through its
+    /// literal→primitive/template, builtin/union-membership, small-union, or
+    /// `Object`/`Function` structural arms. None of the variants below are a
+    /// `Literal`, a builtin primitive, a `Union`, an `Object`/`ObjectWithIndex`,
+    /// a `Function`, or a `TemplateLiteral`, so every arm misses and the engine
+    /// falls through to `false` whether the member is the source or the target.
+    /// `TypeParameter`/`Lazy` are intentionally excluded: they are skipped
+    /// wholesale upstream because they interact with reduction non-locally (an
+    /// unresolved parameter can stand for a super/subtype of a concrete peer),
+    /// which requires leaving the surrounding concrete members unreduced rather
+    /// than reduced around them.
+    fn is_shallow_inert_member(&self, id: TypeId) -> bool {
+        matches!(
+            self.lookup(id),
+            Some(
+                TypeData::Conditional(_)
+                    | TypeData::IndexAccess(_, _)
+                    | TypeData::Mapped(_)
+                    | TypeData::KeyOf(_)
+                    | TypeData::Infer(_)
+                    | TypeData::StringIntrinsic { .. }
+                    | TypeData::TypeQuery(_)
+                    | TypeData::ModuleNamespace(_)
+                    | TypeData::NoInfer(_)
+                    | TypeData::Application(_)
+                    | TypeData::BoundParameter(_)
+                    | TypeData::Recursive(_)
+                    | TypeData::ThisType
+                    | TypeData::UnresolvedTypeName(_)
+            )
+        )
     }
 
     /// Remove redundant types from a union using shallow subtype checks.
@@ -996,32 +1014,38 @@ impl TypeInterner {
             return;
         }
 
-        // Lift out *unevaluated deferred operations* (`Conditional` / `IndexAccess`)
-        // before the pairwise sweep. The shallow subtype engine has no rules for
-        // them: such a member never relates to any other member as source or
-        // target except by identity (already removed by the upstream dedup), so it
-        // can neither be removed by reduction nor cause another member's removal —
-        // it is fully inert. Running the O(N) pairwise scan over each one is pure
-        // waste; that is the eager-vs-deferred divergence #13242 targets, where
-        // distributing `Exclude`/`Extract` over a wide union yields a union of
-        // deferred conditionals tsc keeps lazy. Partition them aside, reduce only
-        // the reducible remainder through the *unchanged* engine below (so
-        // discriminant partitioning, literal absorption, and structural object
-        // reduction are all preserved exactly as for a deferred-free union), then
-        // splice the deferred members back. An all-deferred union short-circuits
-        // to zero pairwise checks; a mixed union (e.g. a JSX intrinsic-element
-        // props union carrying an `IndexAccess` arm) still reduces its concrete
-        // members. Reducing only the remainder — rather than skipping reduction
-        // for the whole union when any deferred member is present — is what keeps
-        // the concrete arms collapsing the way tsc does.
+        // Lift out *unevaluated deferred type-level operations* before the
+        // pairwise sweep. The shallow subtype engine (`is_subtype_shallow`) has
+        // no rules for any member of this family: it relates to a distinct peer
+        // only by identity (already removed by the upstream dedup), neither as
+        // source nor as target, so it is *fully inert* — it can neither be
+        // removed by reduction nor cause another member's removal. Running the
+        // O(N) pairwise scan over each one is pure waste.
+        //
+        // This is the eager-vs-deferred divergence #13242 targets: distributing
+        // `Exclude`/`Extract` over a wide union yields a union of deferred
+        // `Conditional`s tsc keeps lazy, and the same flat-slope reasoning holds
+        // for every other deferred operator that can stack up wide before it
+        // resolves — `keyof U` arms, `T[K]` index accesses, mapped/string-
+        // intrinsic/application/infer operands, `typeof`/namespace leaves, and
+        // the De Bruijn placeholders used while canonicalizing recursive aliases.
+        // #13667 proved the `Conditional`/`IndexAccess` slice; the full inert
+        // family (see `is_shallow_inert_member`) removes the same wasted
+        // N·(N−1) sweep for `keyof`-distribution and mapped-operand unions.
+        //
+        // Partition the inert members aside, reduce only the reducible remainder
+        // through the *unchanged* engine below (so discriminant partitioning,
+        // literal absorption, and structural object reduction are all preserved
+        // exactly as for an inert-free union), then splice the inert members
+        // back. An all-inert union short-circuits to zero pairwise checks; a
+        // mixed union (e.g. a JSX intrinsic-element props union carrying an
+        // `IndexAccess` arm) still reduces its concrete members. Reducing only
+        // the remainder — rather than skipping reduction for the whole union
+        // when any inert member is present — is what keeps the concrete arms
+        // collapsing the way tsc does.
         let deferred_count = flat
             .iter()
-            .filter(|&&id| {
-                matches!(
-                    self.lookup(id),
-                    Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
-                )
-            })
+            .filter(|&&id| self.is_shallow_inert_member(id))
             .count();
         if deferred_count > 0 {
             if deferred_count == len {
@@ -1031,10 +1055,7 @@ impl TypeInterner {
             let mut deferred: TypeListBuffer = SmallVec::new();
             let mut reducible: TypeListBuffer = SmallVec::new();
             for &id in flat.iter() {
-                if matches!(
-                    self.lookup(id),
-                    Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
-                ) {
+                if self.is_shallow_inert_member(id) {
                     deferred.push(id);
                 } else {
                     reducible.push(id);
@@ -1131,13 +1152,21 @@ impl TypeInterner {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
             let mut keep = vec![true; len];
-            // Bare-unit-literal mask (see `is_bare_unit_literal`): a pair whose
-            // endpoints are both literals never reduces either way, so the
-            // shallow subtype call is skipped for it. One O(N) classification
-            // pass replaces the O(L²) literal-vs-literal term of the sweep.
-            let literal: Vec<bool> = flat
+            // Precompute one coarse structural bucket per member (O(N)). A pair
+            // whose buckets cannot relate (e.g. object-vs-literal, primitive-vs-
+            // object, literal-vs-literal) is skipped without the shallow subtype
+            // call: `is_subtype_shallow` would deterministically answer `false`.
+            // This subsumes the bare-literal-pair skip and collapses the dominant
+            // cross-kind term of the mixed object/primitive/literal large-row
+            // union shape from N(N-1) shallow calls toward the count of genuinely
+            // same-kind pairs, while object-vs-object / function-vs-function
+            // reductions are preserved exactly. The inert deferred family is
+            // already lifted out above, so the residual here is concrete; any
+            // member the classifier does not model precisely buckets as
+            // `Wildcard` and keeps the real check.
+            let kinds: Vec<ShallowReduceKind> = flat
                 .iter()
-                .map(|&id| self.is_bare_unit_literal(id))
+                .map(|&id| self.shallow_reduce_kind(id))
                 .collect();
             let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
                 &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
@@ -1150,8 +1179,18 @@ impl TypeInterner {
                     if i == j || !keep[j] {
                         continue;
                     }
-                    // Both endpoints bare unit literals: provably non-subtype.
-                    if literal[i] && literal[j] {
+                    if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
+                        // The bucket skip must never hide a real subtype
+                        // relation: validate the over-approximation against the
+                        // shallow engine in debug/test builds across the whole
+                        // corpus. Release builds pay only the `may_relate` match.
+                        debug_assert!(
+                            !self.is_subtype_shallow(flat[i], flat[j]),
+                            "shallow_reduce_kind skipped a relating pair: \
+                             {:?} <: {:?}",
+                            kinds[i],
+                            kinds[j],
+                        );
                         continue;
                     }
                     if let Some(counter) = shallow_checks {
@@ -1264,29 +1303,32 @@ impl TypeInterner {
         } else {
             (1u64 << len) - 1
         };
-        // Bare-unit-literal mask: a pair where both endpoints are literals can
-        // never reduce either way (see `is_bare_unit_literal`), so skip the
-        // shallow subtype call for it. One O(N) classification pass replaces the
-        // O(L²) literal-vs-literal term of the sweep.
-        let mut literal_mask: u64 = 0;
-        for (idx, &id) in flat.iter().enumerate() {
-            if self.is_bare_unit_literal(id) {
-                literal_mask |= 1u64 << idx;
-            }
-        }
+        // One coarse structural bucket per member (stack-allocated for the
+        // <=64-member partition). Pairs whose buckets cannot relate skip the
+        // shallow subtype call; see `ShallowReduceKind::may_relate`. This
+        // subsumes the bare-literal-pair skip (`may_relate(Literal, Literal)` is
+        // `false`) and every other cross-kind disjoint pair.
+        let kinds: SmallVec<[ShallowReduceKind; 64]> = flat
+            .iter()
+            .map(|&id| self.shallow_reduce_kind(id))
+            .collect();
         let shallow_checks = tsz_common::perf_counters::enabled_fast()
             .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;
             }
-            let i_is_literal = literal_mask & (1u64 << i) != 0;
             for j in 0..len {
                 if i == j || keep & (1u64 << j) == 0 {
                     continue;
                 }
-                // Both endpoints bare unit literals: provably non-subtype.
-                if i_is_literal && literal_mask & (1u64 << j) != 0 {
+                if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
+                    debug_assert!(
+                        !self.is_subtype_shallow(flat[i], flat[j]),
+                        "shallow_reduce_kind skipped a relating pair: {:?} <: {:?}",
+                        kinds[i],
+                        kinds[j],
+                    );
                     continue;
                 }
                 if let Some(counter) = shallow_checks {
@@ -1606,8 +1648,9 @@ mod tests {
         // `number | "m0" | "m1" | ... | "mN-1"`: the primitive (`number`) does
         // not absorb the string literals (different domain), and distinct string
         // literals are mutually non-subtypes. The literal-vs-literal pairs are
-        // skipped by the bare-unit-literal mask, but the surviving member set
-        // must be identical to a full pairwise sweep: every member survives.
+        // skipped by the structural-bucket gate (`may_relate(Literal, Literal)`
+        // is `false`), but the surviving member set must be identical to a full
+        // pairwise sweep: every member survives.
         const N: usize = 50;
         let mut members = vec![TypeId::NUMBER];
         for i in 0..N {
@@ -1630,9 +1673,9 @@ mod tests {
     fn same_domain_primitive_absorbs_all_literals_with_mask() {
         let interner = TypeInterner::new();
         // `string | "s0" | ... | "sN-1"` must still collapse to just `string`.
-        // Absorption runs before the pairwise sweep, so the literal mask never
-        // changes this outcome — guards against the skip leaking into the
-        // absorb path.
+        // Absorption runs before the pairwise sweep, so the structural-bucket
+        // gate never changes this outcome — guards against the skip leaking into
+        // the absorb path.
         const N: usize = 50;
         let mut members = vec![TypeId::STRING];
         for i in 0..N {
@@ -1650,8 +1693,9 @@ mod tests {
         let interner = TypeInterner::new();
         // A union mixing distinct string literals with two structurally-related
         // objects where one reduces into the other. Literal-vs-literal pairs are
-        // skipped, but the object-vs-object reduction (a non-literal pair) must
-        // still fire: `{ a: 1 }` is absorbed by the wider `{ a: 1; b: 2 }`? No —
+        // skipped by the structural-bucket gate, but the object-vs-object
+        // reduction (`may_relate(Object, Object)` is `true`) must still fire:
+        // `{ a: 1 }` is absorbed by the wider `{ a: 1; b: 2 }`? No —
         // width subtyping makes the *narrower-keyed* object the supertype, so
         // `{ a: 1; b: 2 } <: { a: 1 }` and the wider one is removed. The literals
         // are irreducible and all survive.
@@ -1682,5 +1726,217 @@ mod tests {
         );
         assert!(list.contains(&interner.literal_string("x")));
         assert!(list.contains(&interner.literal_string("y")));
+    }
+
+    fn distinct_keyof(interner: &TypeInterner, n: u32) -> TypeId {
+        // `keyof <unique literal>` — a distinct, unevaluated `TypeData::KeyOf`
+        // per `n`. This is the shape produced by distributing `keyof` over a
+        // wide union before the operands resolve.
+        interner.keyof(interner.literal_number(f64::from(n)))
+    }
+
+    #[test]
+    fn union_of_deferred_keyofs_all_survive_reduction() {
+        let interner = TypeInterner::new();
+        // The shallow subtype engine cannot relate two deferred `keyof`
+        // operations, so a union of distinct ones is irreducible: every member
+        // survives. Before widening the inert-deferred lift past
+        // `Conditional`/`IndexAccess`, this width drove the full N·(N−1)
+        // pairwise sweep (all `false`).
+        const N: u32 = 64;
+        let members: Vec<TypeId> = (0..N).map(|i| distinct_keyof(&interner, i)).collect();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a wide deferred-keyof union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), N as usize);
+    }
+
+    #[test]
+    fn deferred_keyof_does_not_block_concrete_subtype_reduction() {
+        let interner = TypeInterner::new();
+        // A union mixing an inert deferred `keyof` with concrete members where
+        // one is a subtype of another (`"a"` <: `string`). The deferred member
+        // is inert and must be preserved, but it must NOT suppress the concrete
+        // reduction: `"a"` is absorbed into `string`. This proves the widened
+        // lift reduces only the reducible remainder, exactly like the
+        // `Conditional` case.
+        let kof = distinct_keyof(&interner, 0);
+        let members = vec![interner.literal_string("a"), TypeId::STRING, kof];
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a mixed deferred/concrete union to survive normalization");
+        };
+        let list = interner.type_list(list_id);
+        assert_eq!(
+            list.len(),
+            2,
+            "concrete `\"a\" | string` must reduce to `string` beside the inert keyof"
+        );
+        assert!(
+            list.contains(&TypeId::STRING),
+            "widened `string` must survive"
+        );
+        assert!(list.contains(&kof), "inert deferred keyof must survive");
+        assert!(
+            !list.contains(&interner.literal_string("a")),
+            "literal `\"a\"` must be absorbed by `string`"
+        );
+    }
+
+    #[test]
+    fn widened_lift_preserves_concrete_result_beside_many_inert_members() {
+        // The lift partitions inert members aside, reduces only the remainder,
+        // then splices them back. The reduced *concrete* result must be exactly
+        // what the same concrete members produce on their own — independent of
+        // how many inert members are mixed in. Use a literal→primitive
+        // absorption (`"a" | "b" | string` → `string`), which is a genuine,
+        // deterministic reduction.
+        let interner = TypeInterner::new();
+        let a = interner.literal_string("a");
+        let b = interner.literal_string("b");
+
+        // Concrete-only baseline: collapses to `string`.
+        let baseline = interner.union(vec![a, b, TypeId::STRING]);
+        assert_eq!(
+            baseline,
+            TypeId::STRING,
+            "`\"a\" | \"b\" | string` is `string`"
+        );
+
+        // Same concrete members beside a wide band of inert deferred members of
+        // several families (keyof, conditional). The concrete part must still
+        // collapse to exactly `string`; every inert member must survive.
+        let mut inert: Vec<TypeId> = (0..40).map(|i| distinct_keyof(&interner, i)).collect();
+        inert.extend((0..40).map(|i| distinct_conditional(&interner, i)));
+        let mut members = vec![a, b, TypeId::STRING];
+        members.extend(inert.iter().copied());
+        let mixed = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(mixed) else {
+            panic!("expected `string | <inert band>` to survive as a union");
+        };
+        let list = interner.type_list(list_id);
+
+        assert_eq!(
+            list.len(),
+            inert.len() + 1,
+            "exactly the collapsed `string` plus every inert member remain"
+        );
+        assert!(
+            list.contains(&TypeId::STRING),
+            "collapsed `string` must survive"
+        );
+        for &m in &inert {
+            assert!(
+                list.contains(&m),
+                "every inert member must survive the lift"
+            );
+        }
+        assert!(!list.contains(&a), "`\"a\"` must be absorbed by `string`");
+        assert!(!list.contains(&b), "`\"b\"` must be absorbed by `string`");
+    }
+
+    fn obj_with_unique_prop(interner: &TypeInterner, i: usize) -> TypeId {
+        let name = interner.intern_string(&format!("p{i}"));
+        let val = interner.literal_number((1000 + i) as f64);
+        interner.object(vec![PropertyInfo::new(name, val)])
+    }
+
+    #[test]
+    fn structural_bucket_preserves_mixed_object_primitive_literal_union() {
+        // The large-row shape that reaches the O(N^2) pairwise sweep: a widened
+        // primitive (so the `all_non_reducible && !has_primitive` early return
+        // does not fire) beside distinct unique-prop objects and cross-domain
+        // literals. No member is a subtype of any other, so every member must
+        // survive — the structural-bucket skip must not drop any of them.
+        let interner = TypeInterner::new();
+        let mut members = vec![TypeId::BOOLEAN];
+        for i in 0..100 {
+            match i % 3 {
+                0 => members.push(obj_with_unique_prop(&interner, i)),
+                1 => members.push(interner.literal_number((7_000_000 + i) as f64)),
+                _ => members.push(interner.literal_string(&format!("s{i}"))),
+            }
+        }
+        let expected = members.len();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a wide mixed-kind union to survive normalization");
+        };
+        assert_eq!(
+            interner.type_list(list_id).len(),
+            expected,
+            "every disjoint mixed-kind member must survive the bucketed sweep"
+        );
+    }
+
+    #[test]
+    fn structural_bucket_still_reduces_object_subtype_in_wide_union() {
+        // A wide union (so it takes the >64 bucketed path) carrying a genuine
+        // object-vs-object reduction. The shallow object engine compares
+        // overlapping property types at depth 0, where the depth-limited
+        // recursion returns `false` for any *distinct* property type pair — so a
+        // real shallow reduction needs identical-typed overlapping properties.
+        // `{ a: 1, b: 2 }` <: `{ a: 1 }` by width subtyping (the wider-keyed
+        // source satisfies every property of the narrower target with an
+        // identical `a: 1`), so the *wider* object is the subtype and must be
+        // reduced away even surrounded by disjoint padding members; the narrower
+        // `{ a: 1 }` survives.
+        let interner = TypeInterner::new();
+        let a = interner.intern_string("a");
+        let b = interner.intern_string("b");
+        let one = interner.literal_number(1.0);
+        let narrow = interner.object(vec![PropertyInfo::new(a, one)]);
+        let wide = interner.object(vec![
+            PropertyInfo::new(a, one),
+            PropertyInfo::new(b, interner.literal_number(2.0)),
+        ]);
+
+        let mut members = vec![TypeId::BOOLEAN, narrow, wide];
+        // Disjoint padding to push the union onto the >64 bucketed path.
+        for i in 0..80 {
+            members.push(interner.literal_string(&format!("pad{i}")));
+        }
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected the padded union to survive normalization");
+        };
+        let list = interner.type_list(list_id);
+        assert!(
+            list.contains(&narrow),
+            "the narrower object `{{ a: 1 }}` must survive as the supertype"
+        );
+        assert!(
+            !list.contains(&wide),
+            "the wider object `{{ a: 1, b: 2 }}` is a width-subtype of `{{ a: 1 }}` \
+             and must be reduced away even on the bucketed >64 path"
+        );
+    }
+
+    #[test]
+    fn structural_bucket_skip_matches_unbucketed_reduction_small_partition() {
+        // Drive the <=64 quadratic partition path (via the `boolean` primitive
+        // keeping the early-return from firing) and assert the surviving set is
+        // exactly the disjoint members: the stack-allocated bucket precompute
+        // must not change reduction on the small path either.
+        let interner = TypeInterner::new();
+        let mut members = vec![TypeId::BOOLEAN];
+        for i in 0..40 {
+            if i % 2 == 0 {
+                members.push(obj_with_unique_prop(&interner, i));
+            } else {
+                members.push(interner.literal_number((9_000_000 + i) as f64));
+            }
+        }
+        let expected = members.len();
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected the small mixed union to survive normalization");
+        };
+        assert_eq!(
+            interner.type_list(list_id).len(),
+            expected,
+            "disjoint members must all survive the small bucketed partition path"
+        );
     }
 }
