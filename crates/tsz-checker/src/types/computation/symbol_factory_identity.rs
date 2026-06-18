@@ -4,7 +4,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Upgrade the value type of an unannotated `const X = Symbol()` /
     /// `const X = Symbol.for(...)` declaration to its `unique symbol` value
     /// identity (`UniqueSymbol(SymbolRef(X))`), keyed on the variable's own
