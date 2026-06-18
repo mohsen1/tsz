@@ -397,7 +397,6 @@ fn test_solver_oversized_file_size_ceilings() {
 
 /// Ratchet guard: prevent the binder crate from growing oversized files.
 #[test]
-#[ignore = "file-size ratchet is currently red in the direct unit CI job"]
 fn test_binder_file_size_ceiling() {
     let binder_src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
