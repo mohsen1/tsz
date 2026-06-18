@@ -46,8 +46,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // defining `DefId` stay opaque so later passes with a richer
         // resolver can expand them.
         let Some(def_id) = self.resolve_application_def_id(app.base) else {
+            crate::evaluation::eval_materialization_probe::record_application_entry(false, false);
             return self.evaluate_application_no_def_id(app_id, original_type_id);
         };
+        crate::evaluation::eval_materialization_probe::record_application_entry(
+            true,
+            self.query_db.is_some(),
+        );
 
         tracing::trace!(
             base = app.base.0,
@@ -90,8 +95,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // skip the fallback behavior that preserves recursive/inference parity.
         if let Some(db) = self.query_db {
             let no_unchecked = self.no_unchecked_indexed_access;
-            if let Some(cached) = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
-            {
+            let cached = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked);
+            crate::evaluation::eval_materialization_probe::record_application_cache_lookup(
+                crate::evaluation::eval_materialization_probe::ApplicationLookupSite::RawArgs,
+                cached.is_some(),
+            );
+            if let Some(cached) = cached {
                 self.decrement_def_depth(def_id);
                 return cached;
             }
@@ -292,12 +301,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && let Some(resolved) = ctx.resolved
             && let Some(call_return) = self.value_call_return_application(def_id, resolved, args)
         {
+            crate::evaluation::eval_materialization_probe::record_application_body_path(
+                crate::evaluation::eval_materialization_probe::ApplicationBodyPath::ValueCallReturn,
+            );
             return ApplicationEvalOutcome::Computed(call_return);
         }
 
         // `typeof f<Args>` instantiation expression: specialize per-signature
         // (consume, not shadow, the callable's type params) — see helper (#10933).
         if let Some(specialized) = self.try_specialize_typeof_instantiation_expression(ctx, args) {
+            crate::evaluation::eval_materialization_probe::record_application_body_path(
+                crate::evaluation::eval_materialization_probe::ApplicationBodyPath::TypeofSpecialized,
+            );
             return ApplicationEvalOutcome::Computed(specialized);
         }
 
@@ -308,6 +323,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // published it yet). The opaque result is a registration-window
                 // artifact — keep it out of the persistent caches.
                 self.mark_unresolved_def_seen();
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueUnresolvedNoBody,
+                );
                 return ApplicationEvalOutcome::Computed(original_type_id);
             };
             // When the resolver returns `unknown` for the alias body, the
@@ -320,6 +338,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // expand it correctly.
             if resolved == TypeId::UNKNOWN {
                 self.mark_unresolved_def_seen();
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
+                );
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
 
@@ -348,8 +369,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 )
             {
                 self.mark_unresolved_def_seen();
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueSelfLazy,
+                );
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
+            crate::evaluation::eval_materialization_probe::record_application_body_path(
+                crate::evaluation::eval_materialization_probe::ApplicationBodyPath::KnownParams,
+            );
             self.evaluate_application_with_known_params(
                 def_id,
                 original_type_id,
@@ -370,6 +397,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
                 && !args.is_empty()
             {
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueTypeQueryCallable,
+                );
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
             // Class-instance extraction must apply on this path too: when a
@@ -381,6 +411,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = self.extract_class_instance_body(def_id, resolved);
             let extracted_params = self.extract_type_params_from_type(resolved);
             if !extracted_params.is_empty() && extracted_params.len() == args.len() {
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::ExtractedParams,
+                );
                 self.evaluate_application_with_extracted_params(
                     def_id,
                     original_type_id,
@@ -390,6 +423,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ctx.prefer_application_display_alias,
                 )
             } else {
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueExtractedMismatch,
+                );
                 ApplicationEvalOutcome::Computed(original_type_id)
             }
         } else {
@@ -398,6 +434,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // its target, or a def evaluated before its declaring file
             // published anything). Same registration-window taint as above.
             self.mark_unresolved_def_seen();
+            crate::evaluation::eval_materialization_probe::record_application_body_path(
+                crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueNoRegisteredBody,
+            );
             ApplicationEvalOutcome::Computed(original_type_id)
         }
     }
@@ -419,14 +458,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let expanded_args = self.prepare_expanded_args_for_body(resolved, args);
         let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        if let Some(db) = self.query_db
-            && let Some(cached) = db.lookup_application_eval_cache(
+        if let Some(db) = self.query_db {
+            let cached = db.lookup_application_eval_cache(
                 def_id,
                 &expanded_args,
                 no_unchecked_indexed_access,
-            )
-        {
-            return ApplicationEvalOutcome::ShortCircuit(cached);
+            );
+            crate::evaluation::eval_materialization_probe::record_application_cache_lookup(
+                crate::evaluation::eval_materialization_probe::ApplicationLookupSite::ExpandedArgs,
+                cached.is_some(),
+            );
+            if let Some(cached) = cached {
+                return ApplicationEvalOutcome::ShortCircuit(cached);
+            }
         }
 
         // Homomorphic mapped-type passthrough for non-object arguments.
@@ -509,14 +553,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let expanded_args = self.expand_type_args(args);
         let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        if let Some(db) = self.query_db
-            && let Some(cached) = db.lookup_application_eval_cache(
+        if let Some(db) = self.query_db {
+            let cached = db.lookup_application_eval_cache(
                 def_id,
                 &expanded_args,
                 no_unchecked_indexed_access,
-            )
-        {
-            return ApplicationEvalOutcome::ShortCircuit(cached);
+            );
+            crate::evaluation::eval_materialization_probe::record_application_cache_lookup(
+                crate::evaluation::eval_materialization_probe::ApplicationLookupSite::ExpandedArgs,
+                cached.is_some(),
+            );
+            if let Some(cached) = cached {
+                return ApplicationEvalOutcome::ShortCircuit(cached);
+            }
         }
 
         let evaluated = self.instantiate_and_finalize_application(
@@ -804,7 +853,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         no_unchecked_indexed_access: bool,
         evaluated: TypeId,
     ) {
-        if !self.application_eval_result_cacheable() {
+        let cacheable = self.application_eval_result_cacheable();
+        crate::evaluation::eval_materialization_probe::record_application_cache_insert(
+            cacheable,
+            self.query_db.is_some(),
+        );
+        if !cacheable {
             return;
         }
         // A limited-resolver (first-pass `TypeEnvironment`) evaluator must never
