@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
     /// and pre-compute the flow-narrowed type of each expression.
     ///
@@ -116,6 +116,173 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Walk a type node subtree and, for every `typeof <merged interface+value>`
+    /// query operand, record the value-space type in the type environment so the
+    /// solver's `resolve_type_query` resolves the deferred `TypeQuery(SymbolRef)`
+    /// to the value/constructor side rather than the instance type.
+    ///
+    /// This mirrors the recursion of [`Self::precompute_type_query_flow_types`]
+    /// but runs BEFORE alias body validation and only populates the dedicated
+    /// `typeof_value_types` map (it does not touch `node_types` / flow narrowing).
+    /// Body validation eagerly evaluates nested indexed-access / conditional
+    /// types over deferred `TypeQuery` operands, so the value-space type must be
+    /// registered by this point.
+    pub(super) fn register_type_query_value_types(&mut self, node_idx: NodeIndex) {
+        if node_idx == NodeIndex::NONE {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            if let Some(type_query) = self.ctx.arena.get_type_query(node) {
+                self.register_merged_value_typeof_type(type_query.expr_name);
+            }
+            return;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                    for &member_idx in &type_lit.members.nodes {
+                        let Some(member) = self.ctx.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if let Some(sig) = self.ctx.arena.get_signature(member) {
+                            if let Some(params) = &sig.parameters {
+                                for &p in &params.nodes {
+                                    if let Some(pn) = self.ctx.arena.get(p)
+                                        && let Some(pd) = self.ctx.arena.get_parameter(pn)
+                                    {
+                                        self.register_type_query_value_types(pd.type_annotation);
+                                    }
+                                }
+                            }
+                            self.register_type_query_value_types(sig.type_annotation);
+                        } else if let Some(prop) = self.ctx.arena.get_property_decl(member) {
+                            self.register_type_query_value_types(prop.type_annotation);
+                        } else if let Some(idx_sig) = self.ctx.arena.get_index_signature(member) {
+                            self.register_type_query_value_types(idx_sig.type_annotation);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &child in &composite.types.nodes {
+                        self.register_type_query_value_types(child);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    self.register_type_query_value_types(arr.element_type);
+                }
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+                    for &elem in &tuple.elements.nodes {
+                        self.register_type_query_value_types(elem);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.register_type_query_value_types(wrapped.type_node);
+                }
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
+                    self.register_type_query_value_types(indexed.object_type);
+                    self.register_type_query_value_types(indexed.index_type);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+                    self.register_type_query_value_types(cond.check_type);
+                    self.register_type_query_value_types(cond.extends_type);
+                    self.register_type_query_value_types(cond.true_type);
+                    self.register_type_query_value_types(cond.false_type);
+                }
+            }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
+                    self.register_type_query_value_types(mapped.type_node);
+                }
+            }
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                // `infer T extends typeof X` — register the value-space type for
+                // a `typeof` query in the inferred type parameter's constraint so
+                // constraint-driven resolution sees the value/constructor side.
+                if let Some(infer) = self.ctx.arena.get_infer_type(node)
+                    && let Some(type_param) =
+                        self.ctx.arena.get_type_parameter_at(infer.type_parameter)
+                {
+                    self.register_type_query_value_types(type_param.constraint);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    for &arg in &args.nodes {
+                        self.register_type_query_value_types(arg);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Register the VALUE-space type of a merged interface+value symbol for
+    /// `typeof` resolution.
+    ///
+    /// When `expr` is an identifier resolving to a symbol declared as both an
+    /// interface and a value (declaration merging, e.g. lib `Date`/`Request`,
+    /// or user `interface Foo {} declare var Foo: {...}`), its shared
+    /// `DefId`/`SymbolRef` holds the TYPE-space (instance) type. The value-space
+    /// type computed here (via the value-space identifier path, which models lib
+    /// globals through their `*Constructor` companion) is recorded in the type
+    /// environment so the solver's `resolve_type_query` returns the
+    /// value/constructor side for a deferred `TypeQuery(SymbolRef)` produced by
+    /// nested `typeof` positions (indexed-access, conditional, tuple). Pure
+    /// values (vars/functions/classes) already resolve correctly through the
+    /// normal `SymbolRef`/`DefId` paths and are left untouched.
+    fn register_merged_value_typeof_type(&mut self, expr: NodeIndex) {
+        use tsz_binder::symbol_flags;
+        if expr == NodeIndex::NONE {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return;
+        }
+        let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, expr) else {
+            return;
+        };
+        let is_merged_interface_value = self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.has_any_flags(symbol_flags::VALUE)
+                && symbol.has_any_flags(symbol_flags::INTERFACE)
+        });
+        if !is_merged_interface_value {
+            return;
+        }
+        let value_type = self.get_type_of_identifier(expr);
+        if value_type == TypeId::ANY || value_type == TypeId::ERROR {
+            return;
+        }
+        let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            env.insert_typeof_value_type(symbol_ref, value_type);
+        }
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.insert_typeof_value_type(symbol_ref, value_type);
         }
     }
 }
