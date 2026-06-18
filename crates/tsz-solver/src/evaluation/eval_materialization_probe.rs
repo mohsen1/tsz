@@ -44,6 +44,7 @@
 use crate::types::{TypeData, TypeId};
 use dashmap::{DashMap, DashSet};
 use rustc_hash::FxBuildHasher;
+use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,7 +62,7 @@ static FORCE_PROBE_FOR_TESTS: std::sync::atomic::AtomicBool =
 /// The probe gate: process-wide `TSZ_PERF_COUNTERS` (via `enabled_fast`), plus
 /// a `cfg(test)`-only force flag. One predictable branch on the hot path in a
 /// production build (the `cfg(test)` arm does not exist there).
-#[inline(always)]
+#[inline]
 fn gate_enabled() -> bool {
     #[cfg(test)]
     if FORCE_PROBE_FOR_TESTS.load(Ordering::Relaxed) {
@@ -259,7 +260,6 @@ pub fn dump_report() -> String {
         return String::new();
     }
 
-    use std::fmt::Write as _;
     let mut out = String::new();
     let _ = writeln!(out, "\n=== TSZ eval-materialization probe (#13250) ===");
     let _ = writeln!(
