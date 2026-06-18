@@ -3,12 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
+  PROJECT_ROW_DEFINITIONS,
   REQUIRED_COMPATIBILITY_FIELDS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
 import { isGreen } from "./row-utils.mjs";
 
 const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
+// Application rows (real apps cloned + installed) are NEVER timed by the
+// vs-tsgo benchmark, so the project-compile-guard / canary compatibility JSONL
+// is their ONLY source of a `compatibility` object. Track them so the
+// canary-compat merge attaches compat to application rows even when they are
+// promoted to benchmark_set:"required" (e.g. infisical-project) — without it
+// the required-row guard skips them and the site renders them gray forever.
+const APPLICATION_ROW_SET = new Set(
+  PROJECT_ROW_DEFINITIONS.filter((row) => row.category === "application").map((row) => row.name),
+);
 const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
   ...COMPILE_CANARY_PROJECT_ROWS,
@@ -66,7 +76,10 @@ function readJsonl(file) {
 function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
   if (compatibilityJsonlFiles.length === 0) return results;
 
-  const canaryNames = new Set(COMPILE_CANARY_PROJECT_ROWS);
+  // Attach compat for compile-canary rows AND application rows. Application
+  // rows are never timed, so this JSONL is their only compatibility source —
+  // including the ones promoted to benchmark_set:"required" (infisical-project).
+  const compatNames = new Set([...COMPILE_CANARY_PROJECT_ROWS, ...APPLICATION_ROW_SET]);
   const byName = new Map();
   const merged = results.map((row) => {
     if (row?.name) byName.set(row.name, row);
@@ -76,10 +89,13 @@ function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
   for (const file of compatibilityJsonlFiles) {
     for (const compatibility of readJsonl(file)) {
       const name = compatibility?.name;
-      if (!canaryNames.has(name)) continue;
+      if (!compatNames.has(name)) continue;
       const existing = byName.get(name);
       if (existing) {
-        if (REQUIRED_PROJECT_ROW_SET.has(name)) {
+        // Required NON-application rows get their compatibility from the timing
+        // run; don't let the canary JSONL clobber it. Application rows are not
+        // timed, so they DO need the canary compat attached even when required.
+        if (REQUIRED_PROJECT_ROW_SET.has(name) && !APPLICATION_ROW_SET.has(name)) {
           continue;
         }
         existing.compatibility = compatibility;
