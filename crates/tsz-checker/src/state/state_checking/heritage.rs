@@ -3,7 +3,6 @@
 use crate::query_boundaries::class_type as class_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -18,6 +17,41 @@ impl<'a> CheckerState<'a> {
                     .get(decl_idx)
                     .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
             })
+    }
+
+    /// Follow a heritage base symbol through a named import / re-export alias
+    /// chain to the underlying type declaration.
+    ///
+    /// A base referenced through a barrel — `import { I } from './barrel'` where
+    /// `./barrel` does `export type { I } from './impl'` — resolves to the
+    /// barrel's re-export *alias* symbol, which carries no type parameters of its
+    /// own. Computing arity off that alias makes a generic interface look
+    /// non-generic and falsely emits TS2315 ("Type 'I' is not generic"). The
+    /// general type-reference path already chases this chain via
+    /// `reference_import_alias_export_target`; the heritage path did not. Reuse
+    /// the same multi-hop follower so `extends I<...>` and `var x: I<...>` agree.
+    ///
+    /// Returns the original `sym_id` unchanged when it is not an import alias or
+    /// when the chain cannot be resolved, so non-aliased and `import =` heritage
+    /// bases keep their existing behavior.
+    fn heritage_symbol_resolved_through_reexport(
+        &self,
+        sym_id: SymbolId,
+        base_name: &str,
+    ) -> SymbolId {
+        let Some(symbol) = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+        else {
+            return sym_id;
+        };
+        if !self.reference_symbol_is_import_alias(symbol) {
+            return sym_id;
+        }
+        self.reference_import_alias_export_target(symbol, base_name)
+            .map_or(sym_id, |(target_sym_id, _)| target_sym_id)
     }
 
     fn import_equals_module_base_without_export_equals(&self, sym_id: SymbolId) -> Option<String> {
@@ -258,6 +292,16 @@ impl<'a> CheckerState<'a> {
                     }
                 });
                 if let Some(heritage_sym) = heritage_sym {
+                    // When the base is named through a chain of named re-exports
+                    // (`export type { X } from './x'`), the local heritage symbol
+                    // is an import alias whose own declaration carries no type
+                    // parameters. Chase the alias chain to the original
+                    // declaration so the arity / "is generic" checks below read
+                    // the real type-parameter list instead of falsely emitting
+                    // TS2315.
+                    let heritage_sym = self
+                        .resolve_heritage_alias_to_declaration_symbol(heritage_sym, expr_idx)
+                        .unwrap_or(heritage_sym);
                     let type_args = self
                         .ctx
                         .arena
@@ -288,36 +332,60 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Genericity / arity of the heritage reference. For a plain
-                    // identifier (`extends Base<...>`), resolve type parameters
-                    // through the same name-aware path a type-reference position
-                    // uses, so a generic declaration reached through an import or
-                    // a named re-export (`export type { Base } from './base'`) is
-                    // seen as generic instead of falsely flagged TS2315. The raw
-                    // `SymbolId` helpers stop at the unresolved import/re-export
-                    // alias and report zero type parameters. Call expressions and
-                    // qualified names keep the raw-symbol path below, which also
-                    // consults construct signatures.
+                    // For a plain identifier (`extends Base<T>`), read arity
+                    // through the same reference-aware path as type references.
+                    // The raw `SymbolId` can be an import/re-export alias with
+                    // no params, falsely making imported generic interfaces look
+                    // non-generic. Qualified names and call expressions keep the
+                    // resolved-symbol path because it also handles constructor
+                    // signatures.
                     let heritage_ref_name = self
                         .ctx
                         .arena
                         .get(expr_idx)
                         .filter(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
                         .and_then(|_| self.heritage_name_text(expr_idx));
-                    let (required_count, total_type_params) = match heritage_ref_name.as_deref() {
-                        Some(name) => (
-                            self.count_required_reference_type_params(heritage_sym, name),
-                            self.get_reference_type_params_for_symbol(heritage_sym, name)
-                                .len(),
-                        ),
-                        None => (
-                            self.count_required_type_params(heritage_sym),
-                            self.get_type_params_for_symbol(heritage_sym).len(),
-                        ),
+                    let params_sym = heritage_ref_name.as_deref().map_or_else(
+                        || {
+                            self.heritage_name_text(expr_idx)
+                                .map_or(heritage_sym, |base_name| {
+                                    self.heritage_symbol_resolved_through_reexport(
+                                        heritage_sym,
+                                        &base_name,
+                                    )
+                                })
+                        },
+                        |base_name| {
+                            self.heritage_symbol_resolved_through_reexport(heritage_sym, base_name)
+                        },
+                    );
+                    let type_params = if let Some(base_name) = heritage_ref_name.as_deref() {
+                        self.get_reference_type_params_for_symbol(heritage_sym, base_name)
+                    } else {
+                        self.get_type_params_for_symbol(params_sym)
                     };
+                    let required_count = if let Some(base_name) = heritage_ref_name.as_deref() {
+                        self.count_required_reference_type_params(heritage_sym, base_name)
+                    } else {
+                        type_params
+                            .iter()
+                            .filter(|param| param.default.is_none())
+                            .count()
+                    };
+                    let total_type_params = type_params.len();
+                    let heritage_display_name = self
+                        .heritage_name_text(expr_idx)
+                        .unwrap_or_else(|| "<expression>".to_string());
+                    let resolved_display_name =
+                        self.heritage_ts2314_display_name(params_sym, &heritage_display_name);
+                    let generic_display_name = Self::format_generic_display_name_with_interner(
+                        &resolved_display_name,
+                        &type_params,
+                        self.ctx.types,
+                    );
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
-                            let symbol_type = self.get_type_of_symbol(heritage_sym);
+                            let symbol_type = self.get_type_of_symbol(params_sym);
                             let has_generic_construct_signature =
                                 class_query::construct_signatures_for_type(
                                     self.ctx.types,
@@ -329,7 +397,7 @@ impl<'a> CheckerState<'a> {
 
                             // Also check declaration directly (catches cross-arena lib types)
                             let has_type_params_in_decl =
-                                self.symbol_declaration_has_type_parameters(heritage_sym);
+                                self.symbol_declaration_has_type_parameters(params_sym);
 
                             if !has_generic_construct_signature
                                 && !has_type_params_in_decl
@@ -337,13 +405,10 @@ impl<'a> CheckerState<'a> {
                                 && symbol_type != TypeId::ANY
                                 && !type_args.nodes.is_empty()
                             {
-                                let name = self
-                                    .heritage_name_text(expr_idx)
-                                    .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
                                     expr_idx,
                                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                                    &[name.as_str()],
+                                    &[heritage_display_name.as_str()],
                                 );
                             }
                             // Still resolve type arguments even when the type is not
@@ -359,31 +424,25 @@ impl<'a> CheckerState<'a> {
                                     is_class_declaration,
                                     is_extends_clause,
                                 )
-                                && let Some(name) = self.heritage_name_text(expr_idx)
+                                && let Some(_name) = self.heritage_name_text(expr_idx)
                             {
-                                let resolved_name =
-                                    self.heritage_ts2314_display_name(heritage_sym, &name);
-                                let type_params = self.get_type_params_for_symbol(heritage_sym);
-                                let display_name = Self::format_generic_display_name_with_interner(
-                                    &resolved_name,
-                                    &type_params,
-                                    self.ctx.types,
-                                );
                                 self.error_generic_type_requires_type_arguments_at(
-                                    &display_name,
+                                    &generic_display_name,
                                     required_count,
                                     type_idx,
                                 );
                             }
 
-                            self.validate_type_reference_type_arguments(
-                                heritage_sym,
+                            self.validate_type_reference_type_arguments_against_params(
+                                &type_params,
+                                required_count,
                                 type_args,
                                 type_idx,
+                                &generic_display_name,
                             );
                         }
                     } else if required_count > 0
-                        && let Some(name) = self.heritage_name_text(expr_idx)
+                        && let Some(_name) = self.heritage_name_text(expr_idx)
                     {
                         // tsc skips TS2314 for heritage clauses when:
                         // 1. JS files — type arguments are never required
@@ -396,16 +455,8 @@ impl<'a> CheckerState<'a> {
                             is_extends_clause,
                         );
                         if !skip_ts2314 {
-                            let resolved_name =
-                                self.heritage_ts2314_display_name(heritage_sym, &name);
-                            let type_params = self.get_type_params_for_symbol(heritage_sym);
-                            let display_name = Self::format_generic_display_name_with_interner(
-                                &resolved_name,
-                                &type_params,
-                                self.ctx.types,
-                            );
                             self.error_generic_type_requires_type_arguments_at(
-                                &display_name,
+                                &generic_display_name,
                                 required_count,
                                 type_idx,
                             );
@@ -1463,332 +1514,5 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-    }
-
-    /// Check whether `node_idx` is lexically enclosed within a class declaration
-    /// whose binder symbol equals `target_class_sym`.
-    ///
-    /// Walks AST parent pointers from `node_idx` upward. When it encounters a
-    /// `CLASS_DECLARATION` or `CLASS_EXPRESSION`, it checks whether that class's
-    /// binder symbol matches `target_class_sym`. If so, the node is inside the
-    /// target class and has access to its private/protected constructor.
-    ///
-    /// This is used for TS2675: a class with a private constructor can still be
-    /// extended by a class that is defined *within* the declaring class's body
-    /// (e.g., inside one of its methods).
-    fn is_lexically_inside_class(
-        &self,
-        node_idx: NodeIndex,
-        target_class_sym: tsz_binder::SymbolId,
-    ) -> bool {
-        let mut current = node_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-            if (parent_node.is_class_like())
-                && self
-                    .ctx
-                    .binder
-                    .get_node_symbol(parent)
-                    .is_some_and(|sym| sym == target_class_sym)
-            {
-                return true;
-            }
-            current = parent;
-        }
-    }
-
-    /// Find a reference to an enclosing class type parameter inside a base class expression.
-    ///
-    /// This traverses the runtime expression tree and only inspects embedded type nodes
-    /// (e.g., call/new type arguments, type assertions). It intentionally skips nested
-    /// function/class expression scopes to avoid shadowing false positives.
-    fn find_class_type_param_ref_in_base_expression(
-        &self,
-        expr_idx: NodeIndex,
-        class_type_param_names: &[String],
-    ) -> Option<NodeIndex> {
-        if expr_idx.is_none() || class_type_param_names.is_empty() {
-            return None;
-        }
-
-        let mut stack = vec![expr_idx];
-        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
-
-        while let Some(current) = stack.pop() {
-            if current.is_none() || !visited.insert(current) {
-                continue;
-            }
-
-            let Some(node) = self.ctx.arena.get(current) else {
-                continue;
-            };
-
-            // Nested function/class expressions introduce their own type parameter
-            // scopes and should not be treated as references to the outer class.
-            if matches!(
-                node.kind,
-                syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
-                    | syntax_kind_ext::CLASS_EXPRESSION
-            ) {
-                continue;
-            }
-
-            if node.is_type_node() {
-                if let Some(found) =
-                    self.find_class_type_param_ref_in_type_node(current, class_type_param_names)
-                {
-                    return Some(found);
-                }
-                continue;
-            }
-
-            for child_idx in self.ctx.arena.get_children(current) {
-                if child_idx.is_some() {
-                    stack.push(child_idx);
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Find a reference to one of `class_type_param_names` inside a type node.
-    fn find_class_type_param_ref_in_type_node(
-        &self,
-        type_idx: NodeIndex,
-        class_type_param_names: &[String],
-    ) -> Option<NodeIndex> {
-        if type_idx.is_none() || class_type_param_names.is_empty() {
-            return None;
-        }
-
-        let node = self.ctx.arena.get(type_idx)?;
-
-        match node.kind {
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && class_type_param_names.contains(&ident.escaped_text)
-                    {
-                        return Some(type_ref.type_name);
-                    }
-
-                    if let Some(type_args) = &type_ref.type_arguments {
-                        for &arg_idx in &type_args.nodes {
-                            if let Some(found) = self.find_class_type_param_ref_in_type_node(
-                                arg_idx,
-                                class_type_param_names,
-                            ) {
-                                return Some(found);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
-                let func_type = self.ctx.arena.get_function_type(node)?;
-
-                let own_params = self.collect_type_parameter_names(&func_type.type_parameters);
-                let filtered: Vec<String> = class_type_param_names
-                    .iter()
-                    .filter(|name| !own_params.contains(*name))
-                    .cloned()
-                    .collect();
-
-                let names_to_check: &[String] = if own_params.is_empty() {
-                    class_type_param_names
-                } else if filtered.is_empty() {
-                    return None;
-                } else {
-                    &filtered
-                };
-
-                for &param_idx in &func_type.parameters.nodes {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                        && let Some(found) = self.find_class_type_param_ref_in_type_node(
-                            param.type_annotation,
-                            names_to_check,
-                        )
-                    {
-                        return Some(found);
-                    }
-                }
-
-                self.find_class_type_param_ref_in_type_node(
-                    func_type.type_annotation,
-                    names_to_check,
-                )
-            }
-            _ => {
-                for child_idx in self.ctx.arena.get_children(type_idx) {
-                    if let Some(found) = self
-                        .find_class_type_param_ref_in_type_node(child_idx, class_type_param_names)
-                    {
-                        return Some(found);
-                    }
-                }
-                None
-            }
-        }
-    }
-
-    /// Collect type parameter names from a type parameter list.
-    fn collect_type_parameter_names(
-        &self,
-        type_parameters: &Option<tsz_parser::parser::NodeList>,
-    ) -> Vec<String> {
-        let Some(list) = type_parameters else {
-            return Vec::new();
-        };
-
-        let mut names = Vec::new();
-        for &param_idx in &list.nodes {
-            if let Some(node) = self.ctx.arena.get(param_idx)
-                && let Some(param) = self.ctx.arena.get_type_parameter(node)
-                && let Some(name_node) = self.ctx.arena.get(param.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            {
-                names.push(ident.escaped_text.clone());
-            }
-        }
-        names
-    }
-
-    /// TS2449/TS2450: Check if a class or enum referenced in a heritage clause
-    /// is used before its declaration in the source order.
-    fn check_heritage_class_before_declaration(
-        &mut self,
-        sym_id: tsz_binder::SymbolId,
-        usage_idx: NodeIndex,
-    ) {
-        use tsz_binder::symbol_flags;
-
-        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
-            return;
-        };
-
-        let is_class = symbol.has_any_flags(symbol_flags::CLASS);
-        let is_enum = symbol.has_any_flags(symbol_flags::REGULAR_ENUM);
-        if !is_class && !is_enum {
-            return;
-        }
-
-        // Skip check for cross-file symbols (imported from another file).
-        // Position comparison only makes sense within the same file.
-        if symbol.import_module().is_some() {
-            return;
-        }
-        // If decl_file_idx is set and differs from the current file, the declaration
-        // is in another file — TDZ position comparison is meaningless across files.
-        if symbol.decl_file_idx != u32::MAX
-            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
-        {
-            return;
-        }
-
-        // Get the declaration position
-        let Some(decl_idx) = symbol.primary_declaration() else {
-            return;
-        };
-
-        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
-            return;
-        };
-        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-            return;
-        };
-
-        // In multi-file mode, decl_idx may be from a different file's arena.
-        // Validate that the node at decl_idx actually matches the expected kind.
-        // A mismatch means the declaration is in another file — no TDZ applies.
-        if self.ctx.all_arenas.is_some() {
-            let kind_ok = (is_class && (decl_node.is_class_like()))
-                || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION);
-            if !kind_ok {
-                return;
-            }
-        }
-
-        // Skip check for ambient declarations — `declare class` is hoisted
-        // and can be referenced before its source position.
-        if self.is_ambient_declaration(decl_idx) {
-            return;
-        }
-
-        // Skip check for ambient declarations - they don't have runtime initialization order
-        // Check if the using class (heritage clause) is in an ambient declaration
-        if is_class {
-            // Find the class declaration that contains this heritage clause usage
-            let mut current = usage_idx;
-            while let Some(ext) = self.ctx.arena.get_extended(current) {
-                let parent = ext.parent;
-                if parent.is_none() {
-                    break;
-                }
-                if let Some(parent_node) = self.ctx.arena.get(parent)
-                    && parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                {
-                    // Check if this class is ambient
-                    if self.is_ambient_class_declaration(parent) {
-                        return;
-                    }
-                    break; // Found the containing class, no need to check further
-                }
-                current = parent;
-            }
-        }
-
-        // Only flag if usage is before declaration in source order
-        if usage_node.pos >= decl_node.pos {
-            return;
-        }
-
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        // Get the simple name from the symbol, not the full qualified expression text.
-        // tsc uses the symbol's simple name (e.g., 'E') not the qualified name ('N.E').
-        let name = symbol.escaped_name.clone();
-
-        // For property access expressions like N.E, point the error at the right-hand
-        // identifier (E), not the whole expression (N.E). tsc reports the error span
-        // on just the class name, not the qualified access path.
-        let error_node = if let Some(usage_node_data) = self.ctx.arena.get(usage_idx)
-            && usage_node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            if let Some(access) = self.ctx.arena.get_access_expr(usage_node_data) {
-                access.name_or_argument
-            } else {
-                usage_idx
-            }
-        } else {
-            usage_idx
-        };
-
-        let (msg_template, code) = if is_class {
-            (
-                diagnostic_messages::CLASS_USED_BEFORE_ITS_DECLARATION,
-                diagnostic_codes::CLASS_USED_BEFORE_ITS_DECLARATION,
-            )
-        } else {
-            (
-                diagnostic_messages::ENUM_USED_BEFORE_ITS_DECLARATION,
-                diagnostic_codes::ENUM_USED_BEFORE_ITS_DECLARATION,
-            )
-        };
-        let message = format_message(msg_template, &[&name]);
-        self.error_at_node(error_node, &message, code);
     }
 }

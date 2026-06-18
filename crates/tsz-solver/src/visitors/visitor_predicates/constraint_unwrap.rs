@@ -123,9 +123,16 @@ struct ObjectTypeChecker;
 
 impl ObjectTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-        // Fast path: intrinsic types match no arm. Skip lookup + dispatch.
+        // Fast path: the only object-like intrinsics are the `object`
+        // (non-primitive) and `Function` types; every other intrinsic
+        // (`string`, `number`, `never`, ...) matches no arm below. This mirrors
+        // `is_object_like_type_impl`, whose intrinsic fast-path also admits
+        // `OBJECT`/`FUNCTION`. Without this, an intersection that carries the
+        // `object` intrinsic member (e.g. `object & Record<"k", unknown>` from
+        // `in`-operator narrowing) was judged NOT object-like, so a follow-up
+        // `typeof x === "object"` guard narrowed it to `never`.
         if type_id.is_intrinsic() {
-            return false;
+            return type_id == TypeId::OBJECT || type_id == TypeId::FUNCTION;
         }
         match types.lookup(type_id) {
             Some(

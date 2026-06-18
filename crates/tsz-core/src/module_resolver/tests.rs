@@ -19,6 +19,7 @@ mod module_extension;
 mod node16_modes;
 mod package_exports_imports;
 mod package_json_data;
+mod path_existence_reset;
 mod path_mapping;
 mod pattern_matching;
 mod resolution_failure;

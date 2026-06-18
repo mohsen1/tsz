@@ -119,7 +119,7 @@ impl ModuleResolver {
                 let host_pt =
                     self.target_package_type_from_json(&package_json, importer_package_type);
 
-                for (target, resolved_using_ts_extension) in
+                for (target, resolved_using_ts_extension, is_types_condition) in
                     self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
                 {
                     // Per Node.js PACKAGE_IMPORTS_RESOLVE spec, the resolved
@@ -132,8 +132,27 @@ impl ModuleResolver {
                         else {
                             continue;
                         };
-                        if let Some(resolved) = self.try_file_or_directory(&resolved_path, host_pt)
-                        {
+                        // Imports targets follow the same PACKAGE_TARGET_RESOLVE
+                        // algorithm as exports targets, so route them through the
+                        // shared runtime probe (`try_export_target`) rather than
+                        // the classic `try_file_or_directory`. This makes an
+                        // extensionless imports target (e.g. `"#core/*":
+                        // "./src/core/*"` imported as `#core/sharedOptions`)
+                        // refuse extension/directory-index addition under
+                        // Node16/NodeNext/Bundler, matching tsc, while explicit
+                        // `.js`->`.ts` substitution still applies.
+                        //
+                        // A types-flavored condition (`types`/`types@<range>`)
+                        // keeps declaration-aware probing via `try_types_entry`
+                        // so an extensionless versioned-types target still finds
+                        // its `.d.ts` sibling, mirroring the exports path.
+                        let probed = if is_types_condition {
+                            self.try_types_entry(&resolved_path, host_pt)
+                                .or_else(|| self.try_export_target(&resolved_path, host_pt))
+                        } else {
+                            self.try_export_target(&resolved_path, host_pt)
+                        };
+                        if let Some(resolved) = probed {
                             return Ok(ResolvedModule {
                                 resolved_path: resolved.clone(),
                                 resolved_using_ts_extension,
@@ -186,6 +205,11 @@ impl ModuleResolver {
 
     /// Resolve imports field subpath into ordered target candidates.
     ///
+    /// Each candidate is `(target, resolved_using_ts_extension, is_types)`. The
+    /// `is_types` flag records whether the matched value passed through a
+    /// types-flavored condition (`types`/`types@<range>`); the caller uses it to
+    /// keep declaration-aware probing for extensionless targets.
+    ///
     /// Array targets remain as ordered candidates so filesystem/package
     /// resolution can try later fallbacks when earlier targets are missing.
     fn resolve_imports_subpath_candidates(
@@ -193,7 +217,7 @@ impl ModuleResolver {
         imports: &indexmap::IndexMap<String, PackageExports>,
         specifier: &str,
         conditions: &[String],
-    ) -> Vec<(String, bool)> {
+    ) -> Vec<(String, bool, bool)> {
         // Try exact match first.
         // Keys containing '*' are pattern keys and must not be treated as exact matches.
         if let Some((key, value)) = imports.get_key_value(specifier)
@@ -201,9 +225,9 @@ impl ModuleResolver {
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(key);
             return self
-                .resolve_export_targets_to_strings(value, conditions)
+                .resolve_export_targets_to_strings(value, conditions, false)
                 .into_iter()
-                .map(|target| (target, resolved_using_ts_extension))
+                .map(|(target, is_types)| (target, resolved_using_ts_extension, is_types))
                 .collect();
         }
 
@@ -216,12 +240,13 @@ impl ModuleResolver {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
             return self
-                .resolve_export_targets_to_strings(value, conditions)
+                .resolve_export_targets_to_strings(value, conditions, false)
                 .into_iter()
-                .map(|target| {
+                .map(|(target, is_types)| {
                     (
                         apply_wildcard_substitution(&target, &wildcard, is_directory_match),
                         resolved_using_ts_extension,
+                        is_types,
                     )
                 })
                 .collect();
@@ -244,29 +269,32 @@ impl ModuleResolver {
         &self,
         value: &PackageExports,
         conditions: &[String],
-    ) -> Vec<String> {
+        is_types_condition: bool,
+    ) -> Vec<(String, bool)> {
         match value {
-            PackageExports::String(s) => vec![s.clone()],
+            PackageExports::String(s) => vec![(s.clone(), is_types_condition)],
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order.
                 //
-                // Unlike `resolve_package_exports_with_conditions`, the
-                // imports path does not thread `is_types_condition` through
-                // the recursion because [`resolve_package_imports`] resolves
-                // every collected target via `try_file_or_directory`, which
-                // already probes declaration extensions for any target —
-                // types-flavored or not. If a future change tightens the
-                // imports-side probe (analogous to `try_export_target`'s
-                // Node16/NodeNext extensionless-runtime guard), thread the
-                // flavor here so versioned-types branches keep declaration-
-                // aware probing.
+                // The imports path now resolves collected targets through the
+                // spec'd runtime probe (`try_export_target`), which refuses to
+                // add an extension to an extensionless target under
+                // Node16/NodeNext/Bundler. So — exactly like the exports path —
+                // it must thread `is_types_condition` so a versioned-types
+                // branch (`types`/`types@<range>`) keeps declaration-aware
+                // probing for an extensionless target.
                 let mut results = Vec::new();
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
                         if matches!(nested, PackageExports::Null) {
                             return Vec::new();
                         }
-                        results.extend(self.resolve_export_targets_to_strings(nested, conditions));
+                        let nested_is_types = is_types_condition || is_types_condition_key(key);
+                        results.extend(self.resolve_export_targets_to_strings(
+                            nested,
+                            conditions,
+                            nested_is_types,
+                        ));
                     }
                 }
                 results
@@ -276,7 +304,11 @@ impl ModuleResolver {
                 // probe each syntactically applicable target.
                 let mut results = Vec::new();
                 for element in elements {
-                    results.extend(self.resolve_export_targets_to_strings(element, conditions));
+                    results.extend(self.resolve_export_targets_to_strings(
+                        element,
+                        conditions,
+                        is_types_condition,
+                    ));
                 }
                 results
             }

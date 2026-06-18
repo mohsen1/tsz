@@ -65,7 +65,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true
     }
 
-    fn source_callable_shape_id(&self, source: TypeId) -> Option<CallableShapeId> {
+    pub(crate) fn source_callable_shape_id(&self, source: TypeId) -> Option<CallableShapeId> {
         match self.interner().lookup(source) {
             Some(TypeData::Callable(shape_id)) => Some(shape_id),
             Some(TypeData::ReadonlyType(inner)) => self.source_callable_shape_id(inner),

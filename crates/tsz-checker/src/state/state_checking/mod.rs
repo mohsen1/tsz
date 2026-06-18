@@ -8,7 +8,7 @@ mod core;
 pub(crate) mod directive;
 mod dts_rules;
 pub(crate) mod heritage;
-mod heritage_call_constructor;
+mod heritage_call_expression;
 mod heritage_class_recovery;
 mod heritage_support;
 mod isolated_declarations;

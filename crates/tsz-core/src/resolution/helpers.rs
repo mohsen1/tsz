@@ -65,6 +65,13 @@ pub(crate) fn cached_is_dir(path: &Path) -> bool {
 /// Long-lived hosts should use `ModuleResolver::clear_cache` between
 /// compilation cycles. That public reset path calls this helper for the
 /// current thread; rayon worker threads keep their own cache entries.
+///
+/// The batch/merge-group worker reuses one thread across many compilations
+/// without a long-lived resolver to clear, so the per-compilation boundary
+/// reset calls this through the public
+/// [`crate::module_resolver::reset_path_existence_caches`] entry point —
+/// keeping the existence caches inside the same worker-reuse isolation contract
+/// as the interner, solver-limit, and checker thread-locals.
 pub(crate) fn clear_path_existence_caches() {
     FILE_EXISTS.with(|cache| cache.borrow_mut().clear());
     DIR_EXISTS.with(|cache| cache.borrow_mut().clear());

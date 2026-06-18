@@ -613,11 +613,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
-    /// Constrain `source_sig` against `target_sig`, erasing any source type
-    /// parameters first (using defaults/constraints). Shared helper for the
-    /// four overload-matching branches below, which all need to erase
-    /// source-side type params before constraining.
-    fn constrain_signature_erasing_source_type_params(
+    /// Constrain `source_sig` against `target_sig`, erasing the type parameters
+    /// of **both** signatures first (using defaults/constraints). Shared helper
+    /// for the overload-matching branches below.
+    ///
+    /// Erasing the target signature's own type parameters mirrors tsc's
+    /// `getErasedSignature` in `inferFromSignatures`: a generic target signature
+    /// (e.g. an interface method `refine<L extends …>(x: L): Builder<DB, TB, O>`)
+    /// still contributes inference from its parameter and return positions, with
+    /// its method-level type parameters replaced by their constraints/defaults.
+    /// Without this, type parameters that appear only inside a generic method
+    /// member (`DB`/`TB` above, reached only through `refine`'s return type) would
+    /// never receive a candidate and silently default to `unknown`.
+    fn constrain_signature_erasing_type_params(
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
@@ -626,22 +634,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
         is_constructor: bool,
     ) {
+        // `erase_signature_type_params` is a no-op clone when the signature has
+        // no type parameters, so this is cheap for the common non-generic case.
+        let erased_target = self.erase_signature_type_params(target_sig);
         if source_sig.type_params.is_empty() {
             self.constrain_call_signature_to_call_signature(
                 ctx,
                 var_map,
                 source_sig,
-                target_sig,
+                &erased_target,
                 priority,
                 is_constructor,
             );
         } else {
-            let erased = self.erase_signature_type_params(source_sig);
+            let erased_source = self.erase_signature_type_params(source_sig);
             self.constrain_call_signature_to_call_signature(
                 ctx,
                 var_map,
-                &erased,
-                target_sig,
+                &erased_source,
+                &erased_target,
                 priority,
                 is_constructor,
             );
@@ -664,10 +675,117 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if source_signatures.len() == 1 && target_signatures.len() == 1 {
             let source_sig = &source_signatures[0];
             let target_sig = &target_signatures[0];
-            if target_sig.type_params.is_empty() {
-                // Source may carry type params (e.g. generic class construct sig)
-                // while target does not; the helper erases them first when needed.
-                self.constrain_signature_erasing_source_type_params(
+            // Either side may carry type params (e.g. a generic class construct
+            // sig, or a generic interface method); the helper erases both first.
+            self.constrain_signature_erasing_type_params(
+                ctx,
+                var_map,
+                source_sig,
+                target_sig,
+                priority,
+                is_constructor,
+            );
+            return;
+        }
+
+        if target_signatures.len() == 1 {
+            // Erase the (possibly generic) target signature's own type parameters
+            // up front so both overload selection and the final constraint operate
+            // on tsc's `getErasedSignature` form. A non-generic target erases to an
+            // identical clone, preserving existing behavior.
+            let erased_target = self.erase_signature_type_params(&target_signatures[0]);
+            let target_sig = &erased_target;
+            let source_idx = if source_signatures.len() == 1 {
+                Some(0)
+            } else {
+                let target_fn = self.function_type_from_signature(target_sig, is_constructor);
+                let selected = self.select_signature_for_target(
+                    source_signatures,
+                    target_fn,
+                    var_map,
+                    is_constructor,
+                );
+                // Fallback: tsc's `inferFromSignaturesOfType` does NOT gate
+                // inference on assignability — it just pairs signatures by
+                // index from the end of each list (with `len = min(srcLen, tgtLen)`).
+                // When the target has 1 signature, that pairing picks the last
+                // source signature regardless of whether any source signature
+                // is "assignable" to the placeholder-erased target.
+                //
+                // The strict pre-check in `select_signature_for_target` is too
+                // restrictive for the common case where inheritance-merged
+                // callable overloads (e.g. `ArrayIterator<T>` adds a
+                // `[Symbol.iterator]` overload returning `ArrayIterator<T>`
+                // on top of the inherited `IteratorObject<T,…>` signature)
+                // disagree on the apparent return type while still being
+                // structurally compatible. Without this fallback, inference
+                // silently drops, the placeholder receives no candidate from
+                // the argument, and the call later fails with a spurious
+                // TS2769 (e.g. `Array.from(arr.values())`).
+                //
+                // Two guards prevent over-eager inference from the wrong
+                // overload:
+                //
+                // 1. `arity_compatible`: the chosen source signature's
+                //    parameter count must align with the target signature's
+                //    arity. This is the primary discriminator that lets us
+                //    pair `[Symbol.iterator](): ArrayIterator<A>` (arity 0)
+                //    with `[Symbol.iterator](): Iterator<T,…>` (arity 0)
+                //    while rejecting cross-arity pairings like a 2-arg
+                //    overload paired against a 1-arg target.
+                //
+                // 2. `all_same_arity`: every non-generic source overload
+                //    must share the same parameter count. Inheritance-merged
+                //    overload sets (the case this fallback exists to
+                //    rescue) always satisfy this — the derived interface's
+                //    override is a return-type refinement of the inherited
+                //    signature. By contrast, semantically split overload
+                //    sets such as `Array.from`'s `(arrayLike)` plus
+                //    `(arrayLike, mapfn, thisArg?)` represent distinct
+                //    calling conventions and must still rely on the strict
+                //    assignability discriminator.
+                selected.or_else(|| {
+                    let last_idx = source_signatures
+                        .iter()
+                        .rposition(|sig| sig.type_params.is_empty())?;
+                    let target_arity = target_sig.params.len();
+                    let last_arity = source_signatures[last_idx].params.len();
+                    let arity_compatible = last_arity == target_arity
+                        || source_signatures[last_idx]
+                            .params
+                            .last()
+                            .is_some_and(|p| p.rest);
+                    let all_same_arity = source_signatures
+                        .iter()
+                        .filter(|sig| sig.type_params.is_empty())
+                        .all(|sig| sig.params.len() == last_arity);
+                    if all_same_arity && arity_compatible {
+                        Some(last_idx)
+                    } else {
+                        None
+                    }
+                })
+            };
+            if let Some(idx) = source_idx {
+                self.constrain_signature_erasing_type_params(
+                    ctx,
+                    var_map,
+                    &source_signatures[idx],
+                    target_sig,
+                    priority,
+                    is_constructor,
+                );
+            }
+            return;
+        }
+
+        if source_signatures.len() == 1 {
+            let source_sig = &source_signatures[0];
+            for target_sig in target_signatures {
+                // Erase both sides (the helper is a no-op clone for non-generic
+                // signatures) so a generic target overload still contributes
+                // inference from its parameter and return positions.
+                self.constrain_signature_erasing_type_params(
                     ctx,
                     var_map,
                     source_sig,
@@ -679,136 +797,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        if target_signatures.len() == 1 {
-            let target_sig = &target_signatures[0];
-            if target_sig.type_params.is_empty() {
-                let source_idx = if source_signatures.len() == 1 {
-                    Some(0)
-                } else {
-                    let target_fn = self.function_type_from_signature(target_sig, is_constructor);
-                    let selected = self.select_signature_for_target(
-                        source_signatures,
-                        target_fn,
-                        var_map,
-                        is_constructor,
-                    );
-                    // Fallback: tsc's `inferFromSignaturesOfType` does NOT gate
-                    // inference on assignability — it just pairs signatures by
-                    // index from the end of each list (with `len = min(srcLen, tgtLen)`).
-                    // When the target has 1 signature, that pairing picks the last
-                    // source signature regardless of whether any source signature
-                    // is "assignable" to the placeholder-erased target.
-                    //
-                    // The strict pre-check in `select_signature_for_target` is too
-                    // restrictive for the common case where inheritance-merged
-                    // callable overloads (e.g. `ArrayIterator<T>` adds a
-                    // `[Symbol.iterator]` overload returning `ArrayIterator<T>`
-                    // on top of the inherited `IteratorObject<T,…>` signature)
-                    // disagree on the apparent return type while still being
-                    // structurally compatible. Without this fallback, inference
-                    // silently drops, the placeholder receives no candidate from
-                    // the argument, and the call later fails with a spurious
-                    // TS2769 (e.g. `Array.from(arr.values())`).
-                    //
-                    // Two guards prevent over-eager inference from the wrong
-                    // overload:
-                    //
-                    // 1. `arity_compatible`: the chosen source signature's
-                    //    parameter count must align with the target signature's
-                    //    arity. This is the primary discriminator that lets us
-                    //    pair `[Symbol.iterator](): ArrayIterator<A>` (arity 0)
-                    //    with `[Symbol.iterator](): Iterator<T,…>` (arity 0)
-                    //    while rejecting cross-arity pairings like a 2-arg
-                    //    overload paired against a 1-arg target.
-                    //
-                    // 2. `all_same_arity`: every non-generic source overload
-                    //    must share the same parameter count. Inheritance-merged
-                    //    overload sets (the case this fallback exists to
-                    //    rescue) always satisfy this — the derived interface's
-                    //    override is a return-type refinement of the inherited
-                    //    signature. By contrast, semantically split overload
-                    //    sets such as `Array.from`'s `(arrayLike)` plus
-                    //    `(arrayLike, mapfn, thisArg?)` represent distinct
-                    //    calling conventions and must still rely on the strict
-                    //    assignability discriminator.
-                    selected.or_else(|| {
-                        let last_idx = source_signatures
-                            .iter()
-                            .rposition(|sig| sig.type_params.is_empty())?;
-                        let target_arity = target_sig.params.len();
-                        let last_arity = source_signatures[last_idx].params.len();
-                        let arity_compatible = last_arity == target_arity
-                            || source_signatures[last_idx]
-                                .params
-                                .last()
-                                .is_some_and(|p| p.rest);
-                        let all_same_arity = source_signatures
-                            .iter()
-                            .filter(|sig| sig.type_params.is_empty())
-                            .all(|sig| sig.params.len() == last_arity);
-                        if all_same_arity && arity_compatible {
-                            Some(last_idx)
-                        } else {
-                            None
-                        }
-                    })
-                };
-                if let Some(idx) = source_idx {
-                    self.constrain_signature_erasing_source_type_params(
-                        ctx,
-                        var_map,
-                        &source_signatures[idx],
-                        target_sig,
-                        priority,
-                        is_constructor,
-                    );
-                }
-            }
-            return;
-        }
-
-        if source_signatures.len() == 1 {
-            let source_sig = &source_signatures[0];
-            let erased_sig;
-            let effective_sig = if source_sig.type_params.is_empty() {
-                source_sig
-            } else {
-                erased_sig = self.erase_signature_type_params(source_sig);
-                &erased_sig
-            };
-            for target_sig in target_signatures {
-                if target_sig.type_params.is_empty() {
-                    self.constrain_call_signature_to_call_signature(
-                        ctx,
-                        var_map,
-                        effective_sig,
-                        target_sig,
-                        priority,
-                        is_constructor,
-                    );
-                }
-            }
-            return;
-        }
-
-        // Match tsc's `inferFromSignatures`: filter target signatures down to
-        // the non-generic ones, then pair overloads from the bottom up with
-        // `len = min(sourceLen, filteredTargetLen)`. Excess leading entries on
-        // either side are skipped — tsc does not reuse the first source for
-        // unmatched leading targets.
-        let filtered_targets: Vec<&CallSignature> = target_signatures
-            .iter()
-            .filter(|sig| sig.type_params.is_empty())
-            .collect();
+        // Match tsc's `inferFromSignatures`: pair signatures from the bottom up
+        // with `len = min(sourceLen, targetLen)`, applying `getErasedSignature`
+        // to each target (and `getBaseSignature` to each source) rather than
+        // dropping generic target overloads. Excess leading entries on either
+        // side are skipped — tsc does not reuse the first source for unmatched
+        // leading targets.
         let source_len = source_signatures.len();
-        let filtered_target_len = filtered_targets.len();
-        let len = source_len.min(filtered_target_len);
+        let target_len = target_signatures.len();
+        let len = source_len.min(target_len);
         let source_skip = source_len - len;
-        let target_skip = filtered_target_len - len;
+        let target_skip = target_len - len;
         for i in 0..len {
             let source_sig = &source_signatures[source_skip + i];
-            let target_sig = filtered_targets[target_skip + i];
-            self.constrain_signature_erasing_source_type_params(
+            let target_sig = &target_signatures[target_skip + i];
+            self.constrain_signature_erasing_type_params(
                 ctx,
                 var_map,
                 source_sig,

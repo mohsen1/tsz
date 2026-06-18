@@ -958,14 +958,18 @@ impl<'a> NarrowingContext<'a> {
         // narrow `obj` to `never` when the property doesn't exist.
         let mut any_member_has_property = false;
 
-        // Resolver-aware subtype check. The bare `is_subtype_of` builds a
-        // `SubtypeChecker` with no resolver, so the nominal enum-member-to-
-        // whole-enum rule (`E.B <: E`, which needs
-        // `resolver.get_enum_parent_def_id`) cannot fire and silently returns
-        // `false`. For a discriminant property typed as a whole enum that makes
-        // every member fail the match and collapses the receiver to `never`
-        // (false TS2339). Route through the narrowing context's resolver-aware
-        // subtype helper so enum-typed discriminant properties relate correctly.
+        // The discriminant literal (`literal_value`) must be checked against the
+        // member's discriminant-property type with the env resolver in scope.
+        // The bare `is_subtype_of(self.db, ...)` runs against the default no-op
+        // `TypeResolver`, so resolver-backed nominal relations are invisible —
+        // most notably an enum member vs. its parent enum: a single object
+        // `{ tt: E }` checked with `e.tt === E.B` resolves `E` to a fully
+        // materialized `Enum(parent_def, 0 | 1 | 2)` whose member-to-parent link
+        // (`E.B <: E`) lives in the env's `enum_parents` map. Without the
+        // resolver, `is_subtype_of(E.B, E)` returns false, the only member fails
+        // the match, and the object collapses to `never` (false TS2339). Route
+        // every literal-vs-property subtype probe through the resolver-aware
+        // narrowing check.
         let literal_matches_property_type = |prop_type: TypeId| -> bool {
             if let Some(parts_id) = intersection_list_id(self.db, prop_type) {
                 return self.db.type_list(parts_id).iter().all(|&part| {

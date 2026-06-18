@@ -119,7 +119,72 @@ pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
         return reduced;
     }
 
+    // tsc computes `getUnionType([trueType, falseType], UnionReduction.Subtype)`,
+    // which drops the empty array literal `[]` (`never[]`) in
+    // `cond ? [1, 2, 3] : []` because it is a subtype of the sibling
+    // `(1 | 2 | 3)[]`, leaving a single array that later widens to `number[]`.
+    // Without this, the bare union keeps `never[]`, and a subsequent `.push`
+    // contravariantly intersects the per-arm element types to `never`.
+    //
+    // Scoped to the empty-array constituent (`Array<never>` / empty tuple)
+    // rather than general subtype reduction: full pairwise reduction over
+    // structurally-related call signatures picks the wrong constituent (tsc's
+    // `UnionReduction.Subtype` keeps the type that satisfies every member call,
+    // not simply the structural supertype), so a broad reduction here regresses
+    // `unionTypeReduction2`. The empty-array case is unambiguous because
+    // `Array<never>` is a subtype of every `T[]`.
+    if let Some(reduced) = reduce_empty_array_branch(interner, true_type, false_type) {
+        return reduced;
+    }
+
     interner.union2(true_type, false_type)
+}
+
+/// Drop an empty array literal branch (`Array<never>` or the empty tuple `[]`)
+/// from a conditional union when the sibling is an array/tuple it is a subtype
+/// of, matching tsc's `UnionReduction.Subtype`. Returns the surviving sibling.
+///
+/// Limited to the empty-array constituent: `Array<never>` is unambiguously a
+/// subtype of every `T[]`, so this never picks the wrong branch the way a
+/// general pairwise subtype reduction would for structurally-related call
+/// signatures.
+fn reduce_empty_array_branch(
+    interner: &dyn TypeDatabase,
+    true_type: TypeId,
+    false_type: TypeId,
+) -> Option<TypeId> {
+    // The sibling may be a bare array (`number[]`) or a union containing array
+    // members (`Array<number> | Set<number>`, from `cond ? f<number>() : []`),
+    // so the only guard is the subtype check: `Array<never>` is dropped exactly
+    // when it is a subtype of the sibling. `cond ? 5 : []` keeps both members
+    // because `never[]` is not a subtype of `number`.
+    if is_empty_array_literal_type(interner, true_type)
+        && !is_empty_array_literal_type(interner, false_type)
+        && is_subtype_of(interner, true_type, false_type)
+    {
+        return Some(false_type);
+    }
+    if is_empty_array_literal_type(interner, false_type)
+        && !is_empty_array_literal_type(interner, true_type)
+        && is_subtype_of(interner, false_type, true_type)
+    {
+        return Some(true_type);
+    }
+    None
+}
+
+/// The empty array literal `[]` interns as `Array<never>` (an evolving-array
+/// base in strict mode) or as the empty tuple. Either form is the bottom array
+/// that subtype reduction folds into a sibling array.
+fn is_empty_array_literal_type(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::Array(element)) => element == TypeId::NEVER,
+        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).is_empty(),
+        _ => false,
+    }
 }
 
 /// tsc computes a conditional expression's type as

@@ -353,8 +353,8 @@ fn compile_resolves_package_exports_versioned_condition_respects_compiler_versio
 }
 
 // Regression for issue #4763: package.json `imports` versioned conditions
-// share the same `resolve_exports_target_candidates` plumbing, so the
-// override must reach `imports` as well.
+// share the same target-candidate plumbing (`resolve_target_candidates_with_flavor`)
+// as `exports`, so the override must reach `imports` as well.
 #[test]
 fn compile_resolves_package_imports_versioned_condition_respects_compiler_version_override() {
     let temp = TempDir::new().expect("temp dir");
@@ -407,7 +407,17 @@ fn compile_resolves_package_imports_versioned_condition_respects_compiler_versio
 }
 
 #[test]
-fn compile_resolves_package_imports_wildcard() {
+fn compile_rejects_extensionless_package_imports_wildcard_under_node16() {
+    // tsc parity: under the `exports`/`imports`-aware modes
+    // (Node16/NodeNext/Bundler), a package.json `imports` wildcard target that
+    // is EXTENSIONLESS (`"#utils/*": "./types/*"` imported as `#utils/widget`)
+    // is resolved verbatim via PACKAGE_TARGET_RESOLVE. The runtime does NOT add
+    // a `.ts`/`.d.ts` extension, so even though `types/widget.d.ts` sits on
+    // disk, tsc emits TS2307. (Verified directly against `tsc` 6.x: the trace
+    // reads `Using 'imports' subpath '#utils/*' with target './types/widget'`
+    // then `Module name '#utils/widget' was not resolved.`) Only a target
+    // carrying an explicit `.js`/`.mjs`/`.cjs` extension is remapped to its TS
+    // sibling, and only a types-flavored condition keeps declaration probing.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -435,19 +445,76 @@ fn compile_resolves_package_imports_wildcard() {
           }
         }"##,
     );
-    write_file(&base.join("types/widget.d.ts"), "export const widget = ;");
+    write_file(
+        &base.join("types/widget.d.ts"),
+        "export declare const widget: number;",
+    );
 
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(!result.diagnostics.is_empty());
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.file.contains("types/widget.d.ts"))
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for an extensionless imports wildcard target, got diagnostics: {:?}",
+        result.diagnostics
     );
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_resolves_package_imports_wildcard_with_js_extension_to_ts_sibling() {
+    // Companion to the extensionless case: when the `imports` wildcard target
+    // carries an explicit runtime extension (`"#utils/*": "./types/*.js"`), the
+    // substituted target `./types/widget.js` carries `.js`, so tsc strips it
+    // and remaps to its `./types/widget.ts` sibling. (Verified against `tsc`
+    // 6.x: `Using 'imports' subpath '#utils/*' with target './types/widget.js'`
+    // -> `... has a '.js' extension - stripping it` -> resolves `widget.ts`.)
+    // This proves the guard keys on the target's extension, not on the
+    // specifier or a file-name, and that the `.js`->`.ts` substitution path is
+    // preserved.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {"rootDir": ".",
+            "outDir": "dist",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmit": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { widget } from '#utils/widget'; export const n: number = widget;",
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "type": "module",
+          "imports": {
+            "#utils/*": "./types/*.js"
+          }
+        }"##,
+    );
+    write_file(
+        &base.join("types/widget.ts"),
+        "export const widget: number = 1;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected `#utils/widget` (via ./types/*.js) to resolve to types/widget.ts, got diagnostics: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

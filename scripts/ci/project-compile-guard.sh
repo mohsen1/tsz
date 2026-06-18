@@ -9,6 +9,12 @@ TSZ_BIN="${TSZ_BIN:-$DEFAULT_TARGET_DIR/dist-fast/tsz}"
 FIXTURE_ROOT="${TSZ_PROJECT_COMPILE_FIXTURE_ROOT:-$ROOT_DIR/.target/project-compile-guard}"
 PROJECT_TIMEOUT="${TSZ_PROJECT_COMPILE_TIMEOUT:-90}"
 INCLUDE_GENERATED_APPS="${TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS:-1}"
+# Skip category:"application" canary rows. These clone+install real apps (deps
+# can take minutes each) and are compatibility canaries excluded from the
+# benchmark corpus, so latency-sensitive callers (e.g. bench-publish's PGO
+# timing step, capped at 30m) set this to 1 to avoid blowing their job budget
+# on rows that produce no benchmark data.
+SKIP_APPLICATIONS="${TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS:-0}"
 PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
 PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-required}"
 ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
@@ -410,8 +416,27 @@ install_application_deps() {
     echo "warn: application install dir missing: $dir" >&2
     return 0
   fi
+  # Make the package manager runnable. `corepack enable` installs yarn/pnpm
+  # shims into Node's bin dir, but on the Cloud Run runner that dir is not
+  # always on PATH, so a bare `yarn install` died with "yarn: command not
+  # found" and every yarn-based app row (excalidraw, medusa, outline, joplin,
+  # cal-com, affine, rocketchat) lost its dep graph. Run the install through
+  # `corepack <pm>` when the PM isn't directly on PATH — corepack resolves the
+  # version from the app's `packageManager` field and runs it without needing
+  # the global shim. Non-interactive so a missing pin can't hang. Install stays
+  # best-effort: any failure is non-fatal (the compile then surfaces TS2307).
   echo "Installing application deps: (cd $dir && $cmd)"
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
+  local pm="${cmd%% *}"
+  case "$pm" in
+    yarn | pnpm | npm)
+      if ! command -v "$pm" >/dev/null 2>&1 && command -v corepack >/dev/null 2>&1; then
+        echo "info: package manager $pm not on PATH; routing install through corepack" >&2
+        cmd="corepack $cmd"
+      fi
+      ;;
+  esac
   if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
     echo "warn: application dep install failed (continuing; compile will surface unresolved modules): $dir" >&2
   fi
@@ -424,6 +449,10 @@ install_application_deps() {
 #   name fixture_dir repo ref install_cmd install_root app_tsconfig src_dir
 run_application_row() {
   local name="$1" fdir="$2" repo="$3" ref="$4" install_cmd="$5" install_root="$6" app_tsconfig="$7" src_rel="$8"
+  if [[ "$SKIP_APPLICATIONS" == "1" ]]; then
+    echo "Skipping application row $name (TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1)"
+    return 0
+  fi
   local root="$FIXTURE_ROOT/$fdir"
   ensure_git_fixture "$fdir" "$repo" "$ref" "$root"
   install_application_deps "$root/$install_root" "$install_cmd"

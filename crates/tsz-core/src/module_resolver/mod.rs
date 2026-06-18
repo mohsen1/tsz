@@ -1197,5 +1197,31 @@ fn is_arbitrary_extension_declaration(specifier: &str, resolved_path: &std::path
     resolved_name.ends_with(&expected_suffix)
 }
 
+/// Reset the resolver's thread-local filesystem-existence caches
+/// (`FILE_EXISTS` / `DIR_EXISTS`) for the current thread.
+///
+/// These caches memoize `is_file` / `is_dir` for the duration of one
+/// compilation (the filesystem is assumed stable while a single `tsz`
+/// invocation runs, mirroring tsc's `ModuleResolutionHost` memoization). They
+/// live in a `thread_local!`, not on the [`ModuleResolver`] instance, so a
+/// fresh resolver per compilation does *not* clear them: only
+/// [`ModuleResolver::clear_cache`] does, and the batch/merge-group worker
+/// reuses one thread across many compilations without constructing-and-clearing
+/// a long-lived resolver.
+///
+/// This free-function entry point lets the per-compilation boundary reset
+/// (`clear_batch_iteration_state`) drop the existence caches alongside the
+/// interner, solver-limit, and checker thread-locals, so a later compilation on
+/// a reused worker never reads a stale existence answer for a path whose
+/// on-disk state changed between compilations (emit-then-recheck, a watch
+/// rebuild, or a reused temporary path). It is the module-resolver sibling of
+/// `clear_thread_local_cache` (interner) and `clear_all_thread_local_state`
+/// (checker), completing the worker-reuse isolation contract that keeps batch
+/// results byte-identical to a fresh process regardless of what ran before on
+/// the thread (#13368 / #13255 isolation family).
+pub fn reset_path_existence_caches() {
+    crate::resolution::helpers::clear_path_existence_caches();
+}
+
 #[cfg(test)]
 mod tests;

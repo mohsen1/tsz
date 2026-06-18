@@ -85,6 +85,71 @@ impl CheckerState<'_> {
         false
     }
 
+    /// True when a `&&`/`||`/`??` operand is (syntactically) a primitive literal
+    /// expression whose freshness must survive checking so the logical evaluator
+    /// can prove it always truthy/falsy (e.g. `"baz" || z`, `1 && x`).
+    ///
+    /// tsc's `checkExpression` returns the fresh literal type for literal
+    /// operands but still widens nested array/object literals via best-common-type
+    /// (logical operands carry no contextual type). tsz models the freshness with
+    /// the `preserve_literal_types` context flag, but that flag also suppresses
+    /// array-literal element widening. Enabling it indiscriminately for every
+    /// operand makes `['true','false','null'].includes(s) && ...` keep the
+    /// element union `"true" | "false" | "null"` instead of widening to `string`,
+    /// so `.includes(string)` wrongly fails (witnessed by ts-rest `query.ts`).
+    /// Gating on a syntactic primitive-literal operand keeps the freshness fix
+    /// without entering nested array/object/call literal widening.
+    pub(crate) fn logical_operand_is_primitive_literal(&self, idx: NodeIndex) -> bool {
+        // Look through parentheses and `as`/`!`/`<T>`/`satisfies` assertions in
+        // one step, then classify the underlying expression syntactically.
+        let inner = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(inner) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16 =>
+            {
+                true
+            }
+            // `undefined` is an identifier in expression position.
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "undefined"),
+            // `-1` / `+1` prefix on a numeric/bigint literal stays a unit literal.
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                self.ctx.arena.get_unary_expr(node).is_some_and(|unary| {
+                    let op = unary.operator;
+                    (op == SyntaxKind::MinusToken as u16 || op == SyntaxKind::PlusToken as u16)
+                        && self.ctx.arena.get(unary.operand).is_some_and(|operand| {
+                            operand.kind == SyntaxKind::NumericLiteral as u16
+                                || operand.kind == SyntaxKind::BigIntLiteral as u16
+                        })
+                })
+            }
+            // A nested logical expression whose operands are themselves literals
+            // (e.g. `("a" && "b") || z`): keep preserving so the inner result
+            // stays a literal for the evaluator.
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.ctx.arena.get_binary_expr(node).is_some_and(|binary| {
+                    let op = binary.operator_token;
+                    (op == SyntaxKind::AmpersandAmpersandToken as u16
+                        || op == SyntaxKind::BarBarToken as u16
+                        || op == SyntaxKind::QuestionQuestionToken as u16)
+                        && self.logical_operand_is_primitive_literal(binary.left)
+                })
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn resolve_literal_index_access_property_type(
         &mut self,
         type_id: TypeId,
