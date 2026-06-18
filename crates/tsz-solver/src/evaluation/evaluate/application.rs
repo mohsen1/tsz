@@ -14,6 +14,16 @@
 
 use super::*;
 
+struct ApplicationFinalizeContext<'a> {
+    original_args: &'a [TypeId],
+    expanded_args: &'a [TypeId],
+    body: TypeId,
+    type_params: &'a [TypeParamInfo],
+    prefer_application_display_alias: bool,
+    record_structural_back_reference: bool,
+    no_unchecked_indexed_access: bool,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a generic type application: Base<Args>
     ///
@@ -470,13 +480,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let evaluated = self.instantiate_and_finalize_application(
             def_id,
             original_type_id,
-            args,
-            &expanded_args,
-            effective_body,
-            type_params,
-            prefer_application_display_alias,
-            /* record_structural_back_reference */ true,
-            no_unchecked_indexed_access,
+            ApplicationFinalizeContext {
+                original_args: args,
+                expanded_args: &expanded_args,
+                body: effective_body,
+                type_params,
+                prefer_application_display_alias,
+                record_structural_back_reference: true,
+                no_unchecked_indexed_access,
+            },
         );
         ApplicationEvalOutcome::Computed(evaluated)
     }
@@ -510,13 +522,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let evaluated = self.instantiate_and_finalize_application(
             def_id,
             original_type_id,
-            args,
-            &expanded_args,
-            resolved,
-            type_params,
-            prefer_application_display_alias,
-            /* record_structural_back_reference */ false,
-            no_unchecked_indexed_access,
+            ApplicationFinalizeContext {
+                original_args: args,
+                expanded_args: &expanded_args,
+                body: resolved,
+                type_params,
+                prefer_application_display_alias,
+                record_structural_back_reference: false,
+                no_unchecked_indexed_access,
+            },
         );
         ApplicationEvalOutcome::Computed(evaluated)
     }
@@ -793,6 +807,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !self.application_eval_result_cacheable() {
             return;
         }
+        // A limited-resolver (first-pass `TypeEnvironment`) evaluator must never
+        // *write* the resolver-independent `(DefId, args)` application-eval
+        // cache. Even a fully-materialized result can be context-dependent: a
+        // conditional that binds `infer` against the inference/contextual state
+        // at the use site (`propTypeValidatorInference`) produces a concrete
+        // result that is NOT a pure function of `(DefId, args)`. Persisting it
+        // would poison a later authoritative read. The limited pass still
+        // *reads* the cache (authoritative entries are always correct) and
+        // still shares the resolver-independent instantiation cache (pure
+        // structural substitution), which is where its cross-block reuse comes
+        // from.
+        if self.limited_resolver {
+            return;
+        }
         if let Some(db) = self.query_db {
             db.insert_application_eval_cache(
                 def_id,
@@ -958,19 +986,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// strong enough to back-reference from the evaluated structural form to
     /// the original `Application`. The lite-resolver fallback path keeps
     /// this off because it cannot prove the nominal origin.
-    #[allow(clippy::too_many_arguments)]
     fn instantiate_and_finalize_application(
         &mut self,
         def_id: DefId,
         original_type_id: TypeId,
-        original_args: &[TypeId],
-        expanded_args: &[TypeId],
-        body: TypeId,
-        type_params: &[TypeParamInfo],
-        prefer_application_display_alias: bool,
-        record_structural_back_reference: bool,
-        no_unchecked_indexed_access: bool,
+        context: ApplicationFinalizeContext<'_>,
     ) -> TypeId {
+        let ApplicationFinalizeContext {
+            original_args,
+            expanded_args,
+            body,
+            type_params,
+            prefer_application_display_alias,
+            record_structural_back_reference,
+            no_unchecked_indexed_access,
+        } = context;
         let mut instantiated = self.cached_generic_instantiation(body, type_params, expanded_args);
         // Rebind polymorphic `this` to the concrete application so
         // interface bodies like `constraint: Constraint<this>` preserve

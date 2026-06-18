@@ -194,9 +194,13 @@ impl<'a> CheckerState<'a> {
                 type_id,
                 std::iter::empty(),
                 false,
-                expand_aliases,
-                Some(self.ctx.types),
-                crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+                crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+                    expand_application_display_alias_args: expand_aliases,
+                    query_db: Some(self.ctx.types),
+                    authoritative: true,
+                    cache_entry_collection:
+                        crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+                },
             )
             .result;
             if evaluated == TypeId::ERROR {

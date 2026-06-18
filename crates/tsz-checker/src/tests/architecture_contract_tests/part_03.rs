@@ -246,19 +246,19 @@ fn test_evaluate_type_with_cache_can_skip_cache_entry_collection() {
     let indexed = types.index_access(types.array(TypeId::STRING), TypeId::NUMBER);
     let seed = std::iter::empty::<(TypeId, TypeId)>();
     let has_seed = false;
-    let expand_application_display_alias_args = false;
-    let query_db = None;
-    let cache_entry_collection =
-        crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip;
     let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
         &types,
         &tsz_solver::def::resolver::NoopResolver,
         indexed,
         seed,
         has_seed,
-        expand_application_display_alias_args,
-        query_db,
-        cache_entry_collection,
+        crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+            expand_application_display_alias_args: false,
+            query_db: None,
+            authoritative: false,
+            cache_entry_collection:
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+        },
     );
 
     assert_eq!(evaluated.result, TypeId::STRING);

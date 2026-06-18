@@ -423,6 +423,14 @@ pub(crate) enum CacheEntryCollection {
     Skip,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct EvaluateTypeWithCacheOptions<'a> {
+    pub(crate) expand_application_display_alias_args: bool,
+    pub(crate) query_db: Option<&'a dyn QueryDatabase>,
+    pub(crate) authoritative: bool,
+    pub(crate) cache_entry_collection: CacheEntryCollection,
+}
+
 impl CacheEntryCollection {
     #[inline]
     #[must_use]
@@ -447,20 +455,27 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
     type_id: TypeId,
     seed: impl Iterator<Item = (TypeId, TypeId)>,
     has_seed: bool,
-    expand_application_display_alias_args: bool,
-    query_db: Option<&dyn QueryDatabase>,
-    cache_entry_collection: CacheEntryCollection,
+    options: EvaluateTypeWithCacheOptions<'_>,
 ) -> EvalWithCacheResult {
     let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
-    if let Some(query_db) = query_db {
+    if let Some(query_db) = options.query_db {
         evaluator = evaluator.with_query_db(query_db);
-        // This is the checker's authoritative, context-free type-resolution
-        // boundary (distinct from solver-internal mid-relation/inference/
-        // narrowing evaluators), so it is the only place permitted to *write*
-        // the substitution-independent `closed_eval_cache`.
-        evaluator = evaluator.with_closed_eval_writes();
+        if options.authoritative {
+            // The checker's authoritative, context-free type-resolution
+            // boundary (full `CheckerContext` resolver), so it is the only
+            // place permitted to *write* the substitution-independent
+            // `closed_eval_cache` and to persist application results
+            // unconditionally.
+            evaluator = evaluator.with_closed_eval_writes();
+        } else {
+            // A limited-resolver pass (first-pass `TypeEnvironment`): it may
+            // read the cross-call caches and share resolver-independent
+            // instantiations, but it must not write the `closed_eval_cache` or
+            // application-eval cache.
+            evaluator = evaluator.with_limited_resolver();
+        }
     }
-    if expand_application_display_alias_args {
+    if options.expand_application_display_alias_args {
         evaluator = evaluator.with_expanded_application_display_alias_args();
     }
     if has_seed {
@@ -471,7 +486,10 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
         silent_depth_bailed: evaluator.is_silent_depth_bailed(),
-        cache_entries: if matches!(cache_entry_collection, CacheEntryCollection::Collect) {
+        cache_entries: if matches!(
+            options.cache_entry_collection,
+            CacheEntryCollection::Collect
+        ) {
             evaluator.drain_cache().collect()
         } else {
             Vec::new()

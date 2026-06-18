@@ -137,9 +137,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             application,
             std::iter::empty(),
             false,
-            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-            Some(self.ctx.types),
-            crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+            crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+                expand_application_display_alias_args: self.ctx.is_declaration_file()
+                    || self.ctx.emit_declarations(),
+                query_db: Some(self.ctx.types),
+                authoritative: true,
+                cache_entry_collection:
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+            },
         )
         .result;
         if evaluated != TypeId::ERROR && evaluated != application {
