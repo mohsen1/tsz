@@ -525,7 +525,12 @@ impl<'a> CheckerState<'a> {
         {
             return self.get_type_of_symbol(symbol.parent);
         }
-        self.widen_literal_type(type_id)
+        // Use the mutable-binding widening entry so fresh array/object members
+        // nested inside a top-level union widen too. tsc collapses a conditional
+        // over array literals (`cond ? [1, 2, 3] : [4, 5]`) to `number[]`; the
+        // plain literal-widening path would keep `(1 | 2 | 3)[] | (4 | 5)[]`,
+        // whose later `.push` parameter contravariantly intersects to `never`.
+        crate::query_boundaries::widening::widen_type_for_mutable_binding(self.ctx.types, type_id)
     }
 
     /// Widen only enum member types to their parent enum type.
