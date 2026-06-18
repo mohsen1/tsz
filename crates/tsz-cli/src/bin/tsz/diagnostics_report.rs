@@ -229,6 +229,12 @@ fn build_diagnostics_report(
     }
 
     report.perf_counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
+    // Measurement-only eval-materialization probe (#13250). Appended to the
+    // same field so it renders directly under the perf-counter dump and only
+    // when `TSZ_PERF_COUNTERS` is set (both helpers return "" otherwise).
+    report
+        .perf_counter_dump
+        .push_str(&tsz_solver::observability::eval_materialization_probe_report());
 
     report
 }

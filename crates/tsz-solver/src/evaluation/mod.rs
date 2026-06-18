@@ -1,4 +1,5 @@
 pub(crate) mod cross_eval_guard;
+pub mod eval_materialization_probe;
 pub(crate) mod evaluate;
 pub(crate) mod evaluate_rules;
 pub(crate) mod memo_audit;

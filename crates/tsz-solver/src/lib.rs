@@ -196,6 +196,20 @@ pub mod computation {
     };
 }
 
+/// Solver-owned observability reports.
+///
+/// These are measurement-only surfaces for CLI diagnostics and performance
+/// monitoring. They must not feed decisions back into checker or solver
+/// semantics.
+pub mod observability {
+    /// Measurement-only eval-materialization probe report (#13250).
+    ///
+    /// Returns an empty string unless `TSZ_PERF_COUNTERS` is set.
+    pub fn eval_materialization_probe_report() -> String {
+        crate::evaluation::eval_materialization_probe::dump_report()
+    }
+}
+
 /// Tier 4: Type construction — building new types.
 ///
 /// These create or modify types via the interner. Should be accessed through
