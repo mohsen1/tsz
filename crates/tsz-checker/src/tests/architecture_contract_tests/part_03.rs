@@ -258,6 +258,7 @@ fn test_evaluate_type_with_cache_can_skip_cache_entry_collection() {
         has_seed,
         expand_application_display_alias_args,
         query_db,
+        /* authoritative */ false,
         cache_entry_collection,
     );
 

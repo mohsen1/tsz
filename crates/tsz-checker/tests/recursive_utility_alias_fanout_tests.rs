@@ -269,3 +269,75 @@ const check: { inner: Anchor } = w;
         "Wrap<Anchor>.inner = Anchor assignment must be valid. Got: {codes:?}"
     );
 }
+
+/// Cross-block sub-application reuse (the `Recursive utility aliases` perf
+/// hotspot). Two independent blocks apply the same recursive
+/// conditional/mapped utility pipeline to a structurally identical concrete
+/// seed, so the shared leaf sub-applications (`DeepReadonly<Leaf>`, …) are
+/// re-reached from different alias positions.
+///
+/// The first-pass `TypeEnvironment` evaluator now participates in the
+/// cross-call application-eval/instantiation caches so that shared sub-work is
+/// computed once and reused. This test guards the *correctness* invariant of
+/// that reuse: the deep property access must still resolve to `string` in every
+/// block, exactly as without caching.
+#[test]
+fn recursive_utility_alias_cross_block_reuse_preserves_results() {
+    let codes = check_source_codes(
+        r#"
+type DeepReadonly<T> = T extends (...args: any[]) => any
+    ? T
+    : T extends readonly [infer H, ...infer R]
+        ? readonly [DeepReadonly<H>, ...DeepReadonly<R>]
+        : T extends object
+            ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+            : T;
+type Pipeline<S> = DeepReadonly<{ [K in keyof S as K extends string ? K : never]: S[K] }>;
+
+interface Leaf { id: string; flags: { labels: readonly ["a", "b"] }; }
+
+type Variant0<S0> = Pipeline<{ item0: S0; nested0: { right: Leaf } }>;
+type Materialized0 = Variant0<{ value: Leaf }>;
+declare const m0: Materialized0;
+const v0: string = m0.nested0.right.flags.labels[0];
+
+type Variant1<S1> = Pipeline<{ item1: S1; nested1: { right: Leaf } }>;
+type Materialized1 = Variant1<{ value: Leaf }>;
+declare const m1: Materialized1;
+const v1: string = m1.nested1.right.flags.labels[0];
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "shared-leaf recursive utility blocks must type-check cleanly with deep \
+         access resolving to string; got: {codes:?}"
+    );
+}
+
+/// Safety gate for limited-resolver caching: a recursive alias whose argument
+/// is itself an alias chain (`AnchorAlias = Anchor`) shares the same
+/// `(DefId, args)` application-eval entry as the direct form. The first-pass
+/// evaluator must not persist an under-resolved result under that
+/// resolver-independent key, so both spellings must agree (no spurious TS2322
+/// or TS2589).
+#[test]
+fn recursive_utility_alias_chain_arg_reuse_is_consistent() {
+    let codes = check_source_codes(
+        r#"
+type DeepReadonly<T> = T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+type Anchor = { value: string; child: { value: string } };
+type AnchorAlias = Anchor;
+type Direct = DeepReadonly<Anchor>;
+type ViaAlias = DeepReadonly<AnchorAlias>;
+declare const d: Direct;
+const a: ViaAlias = d;
+const b: Direct = a;
+"#,
+    );
+    assert!(
+        !codes.contains(&2589) && !codes.contains(&2322),
+        "direct and alias-chain DeepReadonly applications must agree; got: {codes:?}"
+    );
+}

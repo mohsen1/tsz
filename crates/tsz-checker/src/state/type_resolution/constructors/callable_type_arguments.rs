@@ -196,6 +196,7 @@ impl<'a> CheckerState<'a> {
                 false,
                 expand_aliases,
                 Some(self.ctx.types),
+                /* authoritative */ true,
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
             )
             .result;

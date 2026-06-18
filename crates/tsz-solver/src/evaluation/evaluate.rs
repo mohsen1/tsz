@@ -212,6 +212,20 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// evaluators must NOT opt in: their results can differ from the stored
     /// plain-context entries.
     persistent_memo_reads: bool,
+    /// Set on a *limited-resolver* evaluator (the checker's first-pass
+    /// `TypeEnvironment` evaluation, whose `Lazy` resolution is intentionally
+    /// partial). Such an evaluator participates in the cross-call caches for
+    /// reuse but must never *write* the resolver-independent
+    /// `application_eval_cache`: even a fully-materialized application result
+    /// can be context-dependent (a conditional binding `infer` against the
+    /// use-site inference/contextual state), so it is not a pure function of
+    /// `(DefId, args)` and a write would poison a later authoritative read.
+    /// It still *reads* that cache (authoritative entries are always correct)
+    /// and still shares the `instantiation_cache` (pure structural
+    /// substitution is resolver- and context-independent), which is the source
+    /// of its cross-block reuse. An authoritative full-resolver evaluator
+    /// (`closed_eval_writes_allowed`) keeps the unconditional write.
+    limited_resolver: bool,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -291,6 +305,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
             union_complex_at_construction: interner.is_union_too_complex(),
             persistent_memo_reads: false,
+            limited_resolver: false,
         }
     }
 
@@ -400,6 +415,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// type-resolution pass should call this — see `closed_eval_writes_allowed`.
     pub const fn with_closed_eval_writes(mut self) -> Self {
         self.closed_eval_writes_allowed = true;
+        self
+    }
+
+    /// Mark this evaluator as backed by a *limited* resolver (the checker's
+    /// first-pass `TypeEnvironment` evaluation). It shares the
+    /// resolver-independent `instantiation_cache` and may *read* the
+    /// `application_eval_cache`, but it never *writes* the latter, so an
+    /// under-resolved or context-dependent first-pass result can never shadow
+    /// the answer a later full-resolver pass would derive. See
+    /// [`Self::limited_resolver`].
+    pub const fn with_limited_resolver(mut self) -> Self {
+        self.limited_resolver = true;
         self
     }
 

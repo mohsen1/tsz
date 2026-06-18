@@ -89,6 +89,12 @@ struct DiagnosticsReport {
     assignability_hits: u64,
     assignability_misses: u64,
     eval_cache_entries: usize,
+    application_eval_cache_entries: usize,
+    application_eval_cache_hits: u64,
+    application_eval_cache_misses: u64,
+    instantiation_cache_entries: usize,
+    instantiation_cache_hits: u64,
+    instantiation_cache_misses: u64,
     property_cache_entries: usize,
     variance_cache_entries: usize,
     query_cache_kb: f64,
@@ -185,6 +191,12 @@ fn build_diagnostics_report(
         report.assignability_hits = qc.relation.assignability_hits;
         report.assignability_misses = qc.relation.assignability_misses;
         report.eval_cache_entries = qc.eval_cache_entries;
+        report.application_eval_cache_entries = qc.application_eval_cache_entries;
+        report.application_eval_cache_hits = qc.application_eval_cache_hits;
+        report.application_eval_cache_misses = qc.application_eval_cache_misses;
+        report.instantiation_cache_entries = qc.instantiation_cache_entries;
+        report.instantiation_cache_hits = qc.instantiation_cache_hits;
+        report.instantiation_cache_misses = qc.instantiation_cache_misses;
         report.property_cache_entries = qc.property_cache_entries;
         report.variance_cache_entries = qc.variance_cache_entries;
         report.query_cache_kb = qc.estimated_size_bytes() as f64 / 1024.0;
@@ -392,6 +404,33 @@ fn render_diagnostics_report(report: &DiagnosticsReport, extended: bool) -> Stri
             out,
             "Eval cache:                    {}",
             report.eval_cache_entries
+        );
+        let app_eval_total =
+            report.application_eval_cache_hits + report.application_eval_cache_misses;
+        let app_eval_rate = if app_eval_total == 0 {
+            0.0
+        } else {
+            report.application_eval_cache_hits as f64 * 100.0 / app_eval_total as f64
+        };
+        let _ = writeln!(
+            out,
+            "Application eval cache:        {} entries ({} hits, {} misses, {app_eval_rate:.1}%)",
+            report.application_eval_cache_entries,
+            report.application_eval_cache_hits,
+            report.application_eval_cache_misses,
+        );
+        let inst_total = report.instantiation_cache_hits + report.instantiation_cache_misses;
+        let inst_rate = if inst_total == 0 {
+            0.0
+        } else {
+            report.instantiation_cache_hits as f64 * 100.0 / inst_total as f64
+        };
+        let _ = writeln!(
+            out,
+            "Instantiation cache:           {} entries ({} hits, {} misses, {inst_rate:.1}%)",
+            report.instantiation_cache_entries,
+            report.instantiation_cache_hits,
+            report.instantiation_cache_misses,
         );
         let _ = writeln!(
             out,

@@ -190,12 +190,17 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                // First pass uses the limited `TypeEnvironment` resolver, which
-                // can leave residue (unresolved Lazy/IndexAccess/Mapped). Do NOT
-                // let it populate the resolver-independent application-eval cache,
-                // or sibling reads would observe under-resolved results. Writes
-                // are reserved for the authoritative full-resolver second pass.
-                None,
+                // Pass 1 uses the limited `TypeEnvironment` resolver. It now
+                // participates in the cross-call application-eval/instantiation
+                // caches (`query_db`) so recursive utility-alias expansion
+                // reuses shared sub-applications across sibling positions
+                // instead of re-expanding them at every use site. The
+                // `authoritative = false` flag keeps it from writing the
+                // `closed_eval_cache` and restricts its application-eval writes
+                // to fully-materialized results, so the limited resolver can
+                // never shadow an answer the authoritative pass would refine.
+                Some(self.ctx.types),
+                /* authoritative */ false,
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
                     seed_persist,
                 ),
@@ -308,6 +313,7 @@ impl<'a> CheckerState<'a> {
                 // resolver, so its application expansions are safe to memoize in
                 // the per-file application-eval cache.
                 Some(self.ctx.types),
+                /* authoritative */ true,
                 crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
                     second_pass_seed_persist,
                 ),

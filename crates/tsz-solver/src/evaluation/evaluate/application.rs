@@ -793,6 +793,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !self.application_eval_result_cacheable() {
             return;
         }
+        // A limited-resolver (first-pass `TypeEnvironment`) evaluator must never
+        // *write* the resolver-independent `(DefId, args)` application-eval
+        // cache. Even a fully-materialized result can be context-dependent: a
+        // conditional that binds `infer` against the inference/contextual state
+        // at the use site (`propTypeValidatorInference`) produces a concrete
+        // result that is NOT a pure function of `(DefId, args)`. Persisting it
+        // would poison a later authoritative read. The limited pass still
+        // *reads* the cache (authoritative entries are always correct) and
+        // still shares the resolver-independent instantiation cache (pure
+        // structural substitution), which is where its cross-block reuse comes
+        // from.
+        if self.limited_resolver {
+            return;
+        }
         if let Some(db) = self.query_db {
             db.insert_application_eval_cache(
                 def_id,
