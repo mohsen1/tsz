@@ -1625,17 +1625,23 @@ impl<'a> CheckerState<'a> {
                     lowering
                 };
 
-                // Use merged interface lowering for multi-arena declarations
-                let has_multi_arenas = has_declaration_arenas;
-                let interface_type = if has_multi_arenas {
-                    let (ty, _merged_params) = lowering
-                        .lower_merged_interface_declarations_with_symbol(
-                            &decls_with_arenas,
-                            Some(sym_id),
-                        );
-                    ty
+                // Use arena-aware interface lowering whenever declarations live
+                // outside the current file arena, even if there is only one
+                // declaration. Single-lib interfaces such as `Generator` need
+                // the owner arena's type-parameter identities just as much as
+                // multi-file lib merges.
+                let use_arena_aware_lowering = needs_text_based_resolution;
+                let (interface_type, lowered_params) = if use_arena_aware_lowering {
+                    lowering.lower_merged_interface_declarations_with_symbol(
+                        &decls_with_arenas,
+                        Some(sym_id),
+                    )
                 } else {
-                    lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)
+                    (
+                        lowering
+                            .lower_interface_declarations_with_symbol(&symbol.declarations, sym_id),
+                        Vec::new(),
+                    )
                 };
                 // First try the standard heritage merge (works for user-arena interfaces).
                 let mut merged =
@@ -1668,12 +1674,41 @@ impl<'a> CheckerState<'a> {
                     merged = self.merge_cross_file_heritage(&symbol.declarations, sym_id, merged);
                 }
                 self.pop_type_parameters(updates);
+                // The returned params MUST share the body's identities. A cross-arena
+                // `NodeIndex` collision in `push_type_parameters` can mis-read a lib
+                // interface's params (`MapIterator<T>` as a user `<Args>`), leaking the
+                // body's free `T` into concrete `Map`/`Set` iteration (false
+                // TS2488/TS2345; jotai #13652). Only repair same-arity collisions:
+                // nonzero arity mismatches can be contextual-generator scopes whose
+                // return-context inference still depends on the pushed params, and
+                // replacing those with owner params leaks `TReturn` as `never`
+                // (gcye3 #13726).
+                let canonical_params = self.get_type_params_for_symbol(sym_id);
+                let owner_params = if !lowered_params.is_empty() {
+                    lowered_params
+                } else {
+                    canonical_params.clone()
+                };
+                let prefer_canonical = !canonical_params.is_empty();
+                let same_arity_collision = needs_text_based_resolution
+                    && !owner_params.is_empty()
+                    && params.len() == owner_params.len()
+                    && !params
+                        .iter()
+                        .map(|p| p.name)
+                        .eq(owner_params.iter().map(|c| c.name));
+                let resolved_params = if same_arity_collision {
+                    owner_params
+                } else {
+                    params
+                };
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                    let canonical_params = self.get_type_params_for_symbol(sym_id);
-                    let reg_params = if canonical_params.is_empty() {
-                        params.clone()
-                    } else {
+                    let reg_params = if same_arity_collision {
+                        resolved_params.clone()
+                    } else if prefer_canonical {
                         canonical_params
+                    } else {
+                        resolved_params.clone()
                     };
                     self.ctx.insert_def_type_params(def_id, reg_params.clone());
                     // Publication/consumption of heritage-merged interface
@@ -1693,12 +1728,12 @@ impl<'a> CheckerState<'a> {
                         merged,
                         needs_text_based_resolution && merged == interface_type,
                         &decls_with_arenas,
-                        &params,
+                        &resolved_params,
                     ) {
                         return consumed;
                     }
                 }
-                return (merged, params);
+                return (merged, resolved_params);
             }
 
             if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
@@ -1924,57 +1959,5 @@ impl<'a> CheckerState<'a> {
             return (instance_type, instance_params);
         }
         (body_type, type_params)
-    }
-
-    /// Type-position result for a class symbol whose resolution fell back to
-    /// the value side.
-    ///
-    /// `get_type_of_symbol` returns the CONSTRUCTOR type for classes. A
-    /// type-position reference (`x: Cls`, `field: Cls<T>`) must resolve to the
-    /// INSTANCE type instead; serving the constructor flips
-    /// instance/constructor identity depending on which side was computed
-    /// first — deterministically wrong for classes declared in cross-file
-    /// `.d.ts` modules once a co-included root has populated the value-side
-    /// caches (#13185). Uses the `symbol_instance_types` entry the value-side
-    /// computation registered; returns `None` (keeping the legacy result)
-    /// when no instance type is available.
-    fn class_type_position_result(
-        &mut self,
-        sym_id: SymbolId,
-        value_type: TypeId,
-        value_params: &[tsz_solver::TypeParamInfo],
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let is_class = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .or_else(|| self.get_cross_file_symbol(sym_id))
-            .is_some_and(|symbol| {
-                symbol.has_any_flags(symbol_flags::CLASS)
-                    && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::INTERFACE)
-            });
-        if !is_class {
-            return None;
-        }
-
-        let instance_type = self
-            .ctx
-            .symbol_instance_types
-            .get(&sym_id)
-            .copied()
-            .filter(|&t| !t.is_any_unknown_or_error())?;
-        if instance_type == value_type {
-            return None;
-        }
-
-        let params = if value_params.is_empty() {
-            self.ctx
-                .get_existing_def_id(sym_id)
-                .and_then(|def_id| self.ctx.get_def_type_params(def_id))
-                .unwrap_or_default()
-        } else {
-            value_params.to_vec()
-        };
-        Some((instance_type, params))
     }
 }
