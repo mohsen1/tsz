@@ -36,46 +36,6 @@ impl<'a> CheckerState<'a> {
             .cache_cross_file_symbol_type(sym_id, symbol.decl_file_idx, type_id, Vec::new());
     }
 
-    fn can_register_evaluated_alias_form(
-        &self,
-        alias_def_id: tsz_solver::def::DefId,
-        type_id: TypeId,
-    ) -> bool {
-        let mut pending = self.ctx.collect_lazy_def_ids_cached(type_id).to_vec();
-        if pending.is_empty() {
-            return true;
-        }
-
-        let mut visited = FxHashSet::default();
-        let mut steps = 0usize;
-        while let Some(def_id) = pending.pop() {
-            if !visited.insert(def_id) {
-                continue;
-            }
-            if def_id == alias_def_id {
-                return false;
-            }
-
-            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
-                // Member body not set yet (e.g., forward-declared interface).
-                // Skip instead of rejecting — we can still safely evaluate the
-                // alias body; unresolved members will stay as Lazy and won't
-                // cause incorrect registrations.  The evaluation machinery has
-                // its own recursion limits to prevent infinite loops.
-                continue;
-            };
-
-            steps += 1;
-            if steps > 64 {
-                return false;
-            }
-
-            pending.extend(self.ctx.collect_lazy_def_ids_cached(body).iter().copied());
-        }
-
-        true
-    }
-
     // Nested generic declarations can be re-evaluated out of context (for example during
     // application-type expansion), so recover the nearest enclosing generic scope when the
     // current type-parameter list is missing its outer captures.
@@ -1325,9 +1285,22 @@ impl<'a> CheckerState<'a> {
             self.ctx.symbol_types.insert(sym_id, placeholder);
         }
 
+        // Capture the cross-arena bailout epoch so a provisional `any` minted
+        // because a cross-arena delegation was refused by the depth cap during
+        // this resolution is not frozen as the symbol's authoritative type. A
+        // later shallower pass recomputes the real type (the immer `[WRITABLE]`
+        // computed-key poison, #13846). Gated on provenance (not on the value
+        // being `any`) so genuine `any` results still cache; only the
+        // provisional `any` is dropped, so a single shallow resolution
+        // self-heals the cache without a recompute storm. `ERROR`/`UNKNOWN` are
+        // deliberate cross-file cycle markers (and are already excluded from the
+        // program bucket), so they are left untouched here.
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
         self.pop_symbol_dependency();
+        let result_is_bailout_artifact =
+            Self::cross_arena_bailout_epoch() != bailout_epoch_before && result == TypeId::ANY;
 
         // Fold cross-file `declare module` augmentations into an exported
         // interface's materialized body at this canonical resolution point, so
@@ -1421,7 +1394,15 @@ impl<'a> CheckerState<'a> {
             .get_symbol(sym_id)
             .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
             && self.ctor_result_embeds_inflight_instance(sym_id, result);
-        if let Some(file_idx) = cross_file_owner_idx {
+        if result_is_bailout_artifact {
+            // Registration-window artifact (a cross-arena delegation was refused
+            // by the depth cap during this resolution): drop the placeholder so
+            // the next lookup re-enters and a shallower pass recomputes the
+            // authoritative type, and do not promote the sentinel (#13846).
+            if use_local_symbol_state {
+                self.ctx.symbol_types.remove(&sym_id);
+            }
+        } else if let Some(file_idx) = cross_file_owner_idx {
             self.ctx.cache_cross_file_symbol_type(
                 sym_id,
                 file_idx as u32,
