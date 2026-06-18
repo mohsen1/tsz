@@ -939,6 +939,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::STRING;
         }
 
+        // `const X = Symbol()` / `const X = Symbol.for(...)` — the value has the
+        // distinct `unique symbol` identity `typeof X`, not the general `symbol`
+        // type the factory call returns.
+        if let Some(unique) = self.const_symbol_factory_unique_value_type(idx) {
+            return unique;
+        }
+
         // Infer from initializer
         if var_decl.initializer.is_some() {
             let init_type = self.get_type_of_node(var_decl.initializer);
@@ -961,18 +968,6 @@ impl<'a> CheckerState<'a> {
                     widened,
                     self.ctx.strict_null_checks(),
                 );
-            }
-
-            // `const k = Symbol()` / `const k = Symbol.for(...)` — infer unique
-            // symbol type. In TypeScript, unannotated const declarations
-            // initialized with global symbol factory calls get a unique symbol
-            // type (typeof k), not the general `symbol` type.
-            if let Some(unique) = self.const_symbol_factory_unique_symbol_type(
-                idx,
-                var_decl.initializer,
-                var_decl.name,
-            ) {
-                return unique;
             }
 
             // const: preserve literal type from the initializer directly.
@@ -1041,39 +1036,6 @@ impl<'a> CheckerState<'a> {
     /// Get the binder SymbolId for a variable declaration's name node.
     fn get_symbol_id_for_variable_name(&self, name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
         self.ctx.binder.get_node_symbol(name_idx)
-    }
-
-    /// `unique symbol` value identity for an unannotated `const` initialized
-    /// with a global symbol factory call (`const k = Symbol()` /
-    /// `Symbol.for(...)`). In TypeScript such a const has type `typeof k`
-    /// (`unique symbol`), keyed by the binding identity, not the general
-    /// `symbol` type the call's return lowers to.
-    ///
-    /// Shared by both value-declaration typing paths
-    /// ([`Self::get_type_of_variable_declaration`] and
-    /// `type_of_value_declaration_with_mode`) so they stay in sync; the
-    /// cross-file / merged path relies on this to keep symbol-keyed member
-    /// identity for an imported `const` name-merged with `type X = typeof X`
-    /// (#13855). Cheap discriminators (`const` flag, bound symbol) gate the
-    /// costlier unshadowed-global resolution in the factory-call checks.
-    pub(crate) fn const_symbol_factory_unique_symbol_type(
-        &self,
-        decl_idx: NodeIndex,
-        initializer: NodeIndex,
-        name: NodeIndex,
-    ) -> Option<TypeId> {
-        if self.is_const_variable_declaration(decl_idx)
-            && let Some(sym_id) = self.ctx.binder.get_node_symbol(name)
-            && (self.is_symbol_call_initializer(initializer)
-                || self.is_symbol_for_call_initializer(initializer))
-        {
-            return Some(
-                self.ctx
-                    .types
-                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0)),
-            );
-        }
-        None
     }
 
     /// Get the type of an assignment target without definite assignment checks.

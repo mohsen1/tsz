@@ -644,6 +644,13 @@ impl<'a> CheckerState<'a> {
                 );
                 return self.resolve_ref_type(annotated);
             }
+            // `const X = Symbol()` / `const X = Symbol.for(...)` — preserve the
+            // `unique symbol` value identity across the cross-arena delegation so
+            // an importing file's `[X]` keys intern to the same symbol-keyed
+            // member instead of a wide `[k: symbol]: V` index signature.
+            if let Some(unique) = self.const_symbol_factory_unique_value_type(decl_idx) {
+                return unique;
+            }
             if self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(decl_idx)
@@ -663,21 +670,6 @@ impl<'a> CheckerState<'a> {
                 .get(var_decl.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                 .map(|ident| ident.escaped_text.clone());
-            // `const k = Symbol()` / `const k = Symbol.for(...)` — an unannotated
-            // const initialized with a global symbol factory call has the
-            // unique-symbol value identity `typeof k`, not the general `symbol`
-            // type the call's return lowers to. Sharing the inference with the
-            // same-file `get_type_of_variable_declaration` path keeps the two in
-            // sync; the cross-file / merged value-declaration path relies on it
-            // so an imported `const` name-merged with a `type X = typeof X`
-            // alias keeps its symbol-keyed member identity (#13855).
-            if let Some(unique) = self.const_symbol_factory_unique_symbol_type(
-                decl_idx,
-                var_decl.initializer,
-                var_decl.name,
-            ) {
-                return unique;
-            }
             // For const declarations without type annotation, preserve the literal type
             // from the initializer (matching tsc behavior where `const x = "foo"` has
             // type `"foo"`, not `string`).

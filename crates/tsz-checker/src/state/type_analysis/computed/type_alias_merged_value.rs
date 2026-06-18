@@ -42,6 +42,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // `const X = Symbol()` / `const X = Symbol.for(...)` name-merged with a
+        // same-named `type X = typeof X` alias: keep the `unique symbol` value
+        // identity instead of the wide `symbol` the factory call returns, so the
+        // merged value cache (and `typeof X`) agrees with the symbol's own
+        // identity.
+        if let Some(unique) = self.const_symbol_factory_unique_value_type(decl) {
+            return Some(unique);
+        }
+
         if var_decl.initializer.is_some() {
             let init_type = self.get_type_of_node(var_decl.initializer);
             if init_type != TypeId::ERROR && init_type != TypeId::UNKNOWN {

@@ -623,6 +623,9 @@ path = "tests/conditional_extends_readonly_identity_tests.rs"
 name = "conditional_extends_readonly_variance_tests"
 path = "tests/conditional_extends_readonly_variance_tests.rs"
 [[test]]
+name = "merged_unique_symbol_factory_value_identity_tests"
+path = "tests/merged_unique_symbol_factory_value_identity_tests.rs"
+[[test]]
 name = "deferred_conditional_identity_extends_tests"
 path = "tests/deferred_conditional_identity_extends_tests.rs"
 [[test]]
