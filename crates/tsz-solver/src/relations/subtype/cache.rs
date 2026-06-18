@@ -294,9 +294,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Application type-argument comparison at cycle points for TS2403).
         // Types containing ThisType are context-dependent (they depend on which class
         // is currently being checked via the resolver's this_type_stack). Caching them
-        // would poison the cache with results computed outside of any class context
-        // (e.g., during class type construction), causing later legitimate checks
-        // inside class bodies to get the wrong cached result.
+        // in the shared cache would poison it with results computed outside of any
+        // class context (e.g., during class type construction), causing later
+        // legitimate checks inside class bodies to get the wrong cached result. Such
+        // pairs instead use the instance-local fallback memo (issue #13828), which is
+        // valid for the lifetime of this checker — the `this` binding is fixed for one
+        // top-level query — and dropped afterward, so it cannot poison sibling checks.
         //
         // Use contains_this_type (not just is_this_type) because even after
         // substitute_this_type_if_needed the *target* may still be a class instance
@@ -306,35 +309,59 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Class-symbol classification is also context-dependent: the callback
         // can make the same object shape behave as a named class/interface in
         // one checker and as a plain structural object in another. Since the
-        // relation cache key cannot encode an arbitrary predicate, avoid
-        // sharing those answers across checker instances.
+        // relation cache key cannot encode an arbitrary predicate, those answers
+        // are excluded from the cross-checker shared cache and likewise served by
+        // the instance-local fallback memo, whose `is_class_symbol` closure is fixed
+        // for the checker's lifetime.
         let has_class_check_context = self.is_class_symbol.is_some();
         let can_use_shared_relation_cache = !has_this_type && !has_class_check_context;
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
         // non-callback-mode results and cannot poison each other.
-        if !self.identity_cycle_check
-            && can_use_shared_relation_cache
-            && let Some(db) = self.query_db
-        {
-            let key = self.make_cache_key(source, target);
-            match db.lookup_subtype_cache_value(key) {
-                Some(RelationCacheValue::True) => return SubtypeResult::True,
-                Some(RelationCacheValue::False) => return SubtypeResult::False,
-                // Budget-conditional assumed-related verdict (tsc
-                // `Ternary.Maybe` parity): honest only when this query's
-                // remaining fuel budget is no larger than the recorded
-                // run's. Under a raised budget, fall through and recompute
-                // (fuel-band cache honesty).
-                Some(RelationCacheValue::LimitTrue { fuel_band })
-                    if limit_result_cache_enabled()
-                        && remaining_global_subtype_fuel() <= fuel_band =>
-                {
-                    tsz_common::perf_counters::record_relation_limit_cache_hit();
-                    return SubtypeResult::DepthExceeded;
+        if !self.identity_cycle_check {
+            if can_use_shared_relation_cache {
+                if let Some(db) = self.query_db {
+                    let key = self.make_cache_key(source, target);
+                    match db.lookup_subtype_cache_value(key) {
+                        Some(RelationCacheValue::True) => return SubtypeResult::True,
+                        Some(RelationCacheValue::False) => return SubtypeResult::False,
+                        // Budget-conditional assumed-related verdict (tsc
+                        // `Ternary.Maybe` parity): honest only when this query's
+                        // remaining fuel budget is no larger than the recorded
+                        // run's. Under a raised budget, fall through and recompute
+                        // (fuel-band cache honesty).
+                        Some(RelationCacheValue::LimitTrue { fuel_band })
+                            if limit_result_cache_enabled()
+                                && remaining_global_subtype_fuel() <= fuel_band =>
+                        {
+                            tsz_common::perf_counters::record_relation_limit_cache_hit();
+                            return SubtypeResult::DepthExceeded;
+                        }
+                        Some(RelationCacheValue::LimitTrue { .. }) | None => {}
+                    }
                 }
-                Some(RelationCacheValue::LimitTrue { .. }) | None => {}
+            } else if !self.local_relation_cache.is_empty() {
+                // Context-dependent pair (polymorphic `this` / class-check
+                // context): excluded from the cross-checker shared cache, but
+                // memoizable for this checker instance's lifetime (issue
+                // #13828). The context — the resolver's `this` binding and the
+                // `is_class_symbol` closure — is fixed for the instance, so a
+                // definitive verdict for this pair holds for every repeat of it
+                // in the same query's recursive structural walk. The memo is
+                // dropped with the checker (and cleared by `reset`), so it can
+                // never serve a verdict to a later query under a different
+                // context. A non-empty memo implies `query_db` was present at
+                // write time (and it never reverts to `None`), so no `query_db`
+                // recheck is needed before building the key below.
+                let key = self.make_cache_key(source, target);
+                if let Some(&related) = self.local_relation_cache.get(&key) {
+                    return if related {
+                        SubtypeResult::True
+                    } else {
+                        SubtypeResult::False
+                    };
+                }
             }
         }
 
@@ -434,45 +461,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         macro_rules! leave_global {
             () => {
                 crate::limits::leave_subtype_frame(global_depth == 0);
-            };
-        }
-
-        // Helper macro to cache a definitive subtype result, but only when the
-        // computation did not depend on a `Lazy` whose body was unresolved
-        // (which would make the result undetermined and poison the cache).
-        //
-        // This is best-effort and intentionally conservative: the snapshots are
-        // process-wide (thread-local), so *any* unresolved-`Lazy` event or
-        // weak-type-sensitivity event anywhere in this top-level call's subtree
-        // — even in a branch whose result did not feed the final answer —
-        // suppresses the write. That only ever skips a cache write
-        // (correctness-preserving: the result is recomputed later), never
-        // produces a wrong answer. Captures `lazy_failures_at_entry` and
-        // `weak_sensitivity_at_entry` from the enclosing scope by name.
-        //
-        // Results computed under `bypass_evaluation` are also never written:
-        // that mode compares raw alias/meta forms without expanding them, so
-        // its answers can differ from full-evaluation answers for the same
-        // pair, and the flag-agnostic `RelationCacheKey` cannot tell the two
-        // modes apart. Persisting a raw-mode `False` (e.g. `unknown` vs an
-        // alias application that evaluates to `unknown`) would poison every
-        // later full-evaluation check of the same pair, from any raw-mode
-        // entry point (`check_return_compat`'s placeholder fallback, the
-        // evaluator's union/intersection simplification). Reads stay shared:
-        // a full-evaluation answer is the more precise result for the same
-        // relation, so serving it to a bypass-mode query is sound.
-        macro_rules! cache_definitive {
-            ($db:expr, $key:expr, $result:expr) => {
-                if !self.bypass_evaluation
-                    && crate::limits::poison_sentinel_counts()
-                        == (lazy_failures_at_entry, weak_sensitivity_at_entry)
-                {
-                    match $result {
-                        SubtypeResult::True => $db.insert_subtype_cache($key, true),
-                        SubtypeResult::False => $db.insert_subtype_cache($key, false),
-                        SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
-                    }
-                }
             };
         }
 
@@ -926,10 +914,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
-                if can_use_shared_relation_cache && let Some(db) = self.query_db {
-                    let key = self.make_cache_key(source, target);
-                    cache_definitive!(db, key, result);
-                }
+                self.record_definitive_verdict(
+                    source,
+                    target,
+                    result,
+                    can_use_shared_relation_cache,
+                    lazy_failures_at_entry,
+                    weak_sensitivity_at_entry,
+                );
                 finish_frame!(result);
                 leave_global!();
                 return result;
@@ -986,10 +978,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.def_guard.leave(dp);
             }
             self.guard.leave(pair);
-            if can_use_shared_relation_cache && let Some(db) = self.query_db {
-                let key = self.make_cache_key(source, target);
-                cache_definitive!(db, key, result);
-            }
+            self.record_definitive_verdict(
+                source,
+                target,
+                result,
+                can_use_shared_relation_cache,
+                lazy_failures_at_entry,
+                weak_sensitivity_at_entry,
+            );
             finish_frame!(result);
             leave_global!();
             return result;
@@ -1008,10 +1004,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.def_guard.leave(dp);
             }
             self.guard.leave(pair);
-            if can_use_shared_relation_cache && let Some(db) = self.query_db {
-                let key = self.make_cache_key(source, target);
-                cache_definitive!(db, key, result);
-            }
+            self.record_definitive_verdict(
+                source,
+                target,
+                result,
+                can_use_shared_relation_cache,
+                lazy_failures_at_entry,
+                weak_sensitivity_at_entry,
+            );
             finish_frame!(result);
             leave_global!();
             return result;
@@ -1095,12 +1095,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             "check_subtype dispatch result"
         );
 
-        // Cache definitive results for cross-checker memoization.
-        // Skip context-dependent results (see lookup guard above).
-        if can_use_shared_relation_cache && let Some(db) = self.query_db {
-            let key = self.make_cache_key(source, target);
-            cache_definitive!(db, key, result);
-        }
+        // Cache definitive results for cross-checker memoization. Context-
+        // dependent pairs route to the instance-local fallback memo instead of
+        // the shared cache (see `record_definitive_verdict` and the lookup
+        // guard above).
+        self.record_definitive_verdict(
+            source,
+            target,
+            result,
+            can_use_shared_relation_cache,
+            lazy_failures_at_entry,
+            weak_sensitivity_at_entry,
+        );
 
         finish_frame!(result);
 
@@ -1109,6 +1115,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::limits::leave_subtype_frame(global_depth == 0);
 
         result
+    }
+
+    /// Record a definitive subtype verdict for later reuse.
+    ///
+    /// Context-independent pairs are written to the cross-checker shared
+    /// `QueryCache`. Context-dependent pairs — those carrying a polymorphic
+    /// `this` or checked inside a class-check context, for which
+    /// `can_use_shared_relation_cache` is `false` — are written to the
+    /// instance-local fallback memo instead (issue #13828): their verdict
+    /// depends on the resolver's current `this` binding and on the
+    /// `is_class_symbol` closure, neither of which the flag-agnostic
+    /// [`RelationCacheKey`] encodes, so sharing them across checker instances
+    /// could poison sibling checks. Both inputs are fixed for the lifetime of
+    /// one checker instance, so the local memo safely serves repeats of the
+    /// same pair within one query and is dropped when the instance (or its
+    /// `reset`) ends.
+    ///
+    /// Only definitive `True`/`False` verdicts are recorded; `CycleDetected` /
+    /// `DepthExceeded` are budget-conditional and handled by the maybe-keys
+    /// promotion path.
+    ///
+    /// This mirrors the discipline of the former `cache_definitive!` macro and
+    /// is intentionally conservative: the poison-sentinel snapshots are
+    /// process-wide (thread-local), so *any* unresolved-`Lazy` event or
+    /// weak-type-sensitivity event anywhere in this top-level call's subtree —
+    /// even in a branch whose result did not feed the final answer —
+    /// suppresses the write. That only ever skips a write
+    /// (correctness-preserving: the result is recomputed later), never
+    /// produces a wrong answer. Results computed under `bypass_evaluation` are
+    /// likewise never written: that mode compares raw alias/meta forms without
+    /// expanding them, so its answers can differ from full-evaluation answers
+    /// for the same pair, and the flag-agnostic `RelationCacheKey` cannot tell
+    /// the two modes apart.
+    fn record_definitive_verdict(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        result: SubtypeResult,
+        can_use_shared_relation_cache: bool,
+        lazy_failures_at_entry: u64,
+        weak_sensitivity_at_entry: u64,
+    ) {
+        let related = match result {
+            SubtypeResult::True => true,
+            SubtypeResult::False => false,
+            SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => return,
+        };
+        if self.bypass_evaluation
+            || crate::limits::poison_sentinel_counts()
+                != (lazy_failures_at_entry, weak_sensitivity_at_entry)
+        {
+            return;
+        }
+        let Some(db) = self.query_db else {
+            return;
+        };
+        let key = self.make_cache_key(source, target);
+        if can_use_shared_relation_cache {
+            db.insert_subtype_cache(key, related);
+        } else {
+            self.local_relation_cache.insert(key, related);
+        }
     }
 
     /// Maybe-stack completion protocol for one `check_subtype` frame
@@ -1139,7 +1207,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   `LimitTrue` — or discarded on failure. Promotion is additionally
     ///   gated on the unresolved-`Lazy` / weak-type-sensitivity counters
     ///   having been stable across the whole outermost window, the same
-    ///   discipline `cache_definitive!` applies to definitive writes.
+    ///   discipline `record_definitive_verdict` applies to definitive writes.
     fn finish_relation_frame(
         &mut self,
         result: SubtypeResult,
