@@ -110,8 +110,12 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
-    pub(crate) const fn with_query_db(mut self, query_db: Option<&'a dyn QueryDatabase>) -> Self {
-        self.query_db = query_db;
+    pub(crate) const fn with_query_db(mut self, _query_db: Option<&'a dyn QueryDatabase>) -> Self {
+        // Keep the resolver-aware `QueryDatabase` at the outer cache boundary.
+        // Nested instantiation evaluation must stay resolver-less: routing
+        // `evaluate_*` through query-backed semantic helpers is not cache-only
+        // and can change inference/conformance behavior.
+        self.query_db = None;
         self
     }
 
