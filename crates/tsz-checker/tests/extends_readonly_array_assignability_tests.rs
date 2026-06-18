@@ -1,5 +1,5 @@
 //! An interface/class that declares `extends Array<T>` or `extends
-//! ReadonlyArray<T>` is a heritage-flattened object shape, not a `TypeData::Array`.
+//! ReadonlyArray<T>` is a heritage-flattened object shape, not a syntactic array.
 //! The solver subtype dispatch accepts such a source against a *mutable* array
 //! target via a covariant element check (PR #13928). These tests cover the
 //! symmetric `readonly U[]` / `ReadonlyArray<U>` target side and guard the
