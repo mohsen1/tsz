@@ -18,6 +18,33 @@ pub(super) const fn should_cache_base_expr_result(
     type_argument_count == 0 && !has_active_type_parameter_scope
 }
 
+/// Choose the type that fills a *missing* type argument of a generic base class,
+/// matching `tsc`'s `default -> constraint -> unknown` order.
+///
+/// `TypeId::ERROR` (and `TypeData::Error`) is tsz's internal cycle/fuel
+/// sentinel, never a type `tsc` produces. When a base parameter's default or
+/// constraint has degraded to it during cross-arena base-class resolution, it
+/// must NOT be baked into the inherited member's type-argument slot — that is
+/// the `error`/`never`-in-a-type-argument-slot leak family (issue #13484, e.g.
+/// kysely `SelectFrom<error, …>`). A degraded default/constraint is treated as
+/// absent and the fill falls through to `unknown`, enforcing the same boundary
+/// invariant that [`CheckerState::cache_base_instance_result`] applies to a
+/// top-level `ERROR`. `is_genuine_error_type` is used (not `is_error_type`) so a
+/// deferrable, display-preserving `UnresolvedTypeName` default/constraint is
+/// still honored rather than discarded.
+pub(crate) fn missing_base_type_arg_fill(
+    types: &dyn tsz_solver::construction::TypeDatabase,
+    default: Option<TypeId>,
+    constraint: Option<TypeId>,
+) -> TypeId {
+    let usable = |candidate: Option<TypeId>| {
+        candidate.filter(|&t| !crate::query_boundaries::common::is_genuine_error_type(types, t))
+    };
+    usable(default)
+        .or_else(|| usable(constraint))
+        .unwrap_or(TypeId::UNKNOWN)
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn apply_type_arguments_to_constructor_type(
         &mut self,
@@ -807,10 +834,8 @@ impl<'a> CheckerState<'a> {
         let base_instance_type = self.resolve_lazy_type(base_instance_type);
         if type_args.len() < base_type_params.len() {
             for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
-                let fallback = param
-                    .default
-                    .or(param.constraint)
-                    .unwrap_or(TypeId::UNKNOWN);
+                let fallback =
+                    missing_base_type_arg_fill(self.ctx.types, param.default, param.constraint);
                 let substitution = TypeSubstitution::from_args(
                     self.ctx.types,
                     &base_type_params[..param_index],

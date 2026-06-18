@@ -20,15 +20,41 @@ pub(crate) struct InferSubstitutor<'a> {
     interner: &'a dyn TypeDatabase,
     bindings: FxHashMap<Atom, TypeId>,
     visiting: FxHashMap<TypeId, TypeId>,
+    /// Remaining distinct-node-visit budget for this traversal (breadth bound).
+    ///
+    /// Decremented once per node entering [`Self::substitute_inner`]; cache
+    /// hits and intrinsic leaves are free. Shared across the whole traversal
+    /// (not saved/restored by [`Self::with_shadowed_binding`]) so it bounds
+    /// cumulative breadth, not per-scope work. See
+    /// [`crate::limits::MAX_INFER_SUBSTITUTION_NODES`].
+    visit_budget: u32,
 }
 
 impl<'a> InferSubstitutor<'a> {
     /// Create a new substitutor with the given interner and bindings.
     pub fn new(interner: &'a dyn TypeDatabase, bindings: &'a FxHashMap<Atom, TypeId>) -> Self {
+        Self::with_visit_budget(
+            interner,
+            bindings,
+            crate::limits::MAX_INFER_SUBSTITUTION_NODES,
+        )
+    }
+
+    /// Create a substitutor with an explicit node-visit budget.
+    ///
+    /// `new` uses the calibrated [`crate::limits::MAX_INFER_SUBSTITUTION_NODES`];
+    /// tests use a small budget to exercise the breadth-bail path without
+    /// materializing a million-node type.
+    fn with_visit_budget(
+        interner: &'a dyn TypeDatabase,
+        bindings: &'a FxHashMap<Atom, TypeId>,
+        visit_budget: u32,
+    ) -> Self {
         InferSubstitutor {
             interner,
             bindings: bindings.clone(),
             visiting: FxHashMap::default(),
+            visit_budget,
         }
     }
 
@@ -48,6 +74,16 @@ impl<'a> InferSubstitutor<'a> {
         if let Some(&cached) = self.visiting.get(&type_id) {
             return cached;
         }
+        // Breadth bound: `with_solver_frame` only caps recursion *depth*, and
+        // is RAII-balanced, so a shallow-but-wide or self-expanding type
+        // (fresh `TypeId`s interned per conditional level — issue #13040) walks
+        // an unbounded number of distinct nodes without ever tripping it. Once
+        // the per-traversal node budget is spent, leave the type opaque
+        // (identity) — the same relation-preserving bail the depth guard takes.
+        if self.visit_budget == 0 {
+            return type_id;
+        }
+        self.visit_budget -= 1;
         crate::recursion::with_solver_frame(|| self.substitute_inner(type_id)).unwrap_or(type_id)
     }
 
@@ -616,5 +652,112 @@ impl<'a> InferSubstitutor<'a> {
         self.visiting = outer_visiting;
         self.bindings.insert(name, masked);
         result
+    }
+}
+
+#[cfg(test)]
+mod visit_budget_tests {
+    use super::*;
+    use crate::def::DefId;
+    use crate::intern::TypeInterner;
+    use crate::types::TupleElement;
+
+    /// Build `[name_0, name_1, …, name_{n-1}]` as a tuple of distinct
+    /// `UnresolvedTypeName`s plus a bindings map sending each `name_i` to a
+    /// distinct `Lazy(DefId)`. Substituting it fully yields a tuple of those
+    /// lazies; the per-element identity makes a partial (budget-truncated)
+    /// substitution observable element by element.
+    fn bound_name_tuple(
+        interner: &TypeInterner,
+        n: usize,
+    ) -> (TypeId, FxHashMap<Atom, TypeId>, Vec<TypeId>) {
+        let mut bindings = FxHashMap::default();
+        let mut elements = Vec::with_capacity(n);
+        let mut values = Vec::with_capacity(n);
+        for i in 0..n {
+            let name = interner.intern_string(&format!("Name{i}"));
+            let value = interner.lazy(DefId(1000 + i as u32));
+            bindings.insert(name, value);
+            elements.push(TupleElement::fixed(interner.unresolved_type_name(name)));
+            values.push(value);
+        }
+        (interner.tuple(elements), bindings, values)
+    }
+
+    /// A budget at least as large as the node count substitutes every element —
+    /// byte-identical to the default (calibrated, effectively unbounded) path.
+    #[test]
+    fn budget_at_or_above_node_count_substitutes_fully() {
+        let interner = TypeInterner::new();
+        let (input, bindings, values) = bound_name_tuple(&interner, 5);
+        let expected = interner.tuple(values.iter().copied().map(TupleElement::fixed).collect());
+
+        // The tuple node plus its five elements are six distinct visits.
+        let bounded =
+            InferSubstitutor::with_visit_budget(&interner, &bindings, 6).substitute(input);
+        let default = InferSubstitutor::new(&interner, &bindings).substitute(input);
+
+        assert_eq!(bounded, expected, "full budget substitutes every element");
+        assert_eq!(
+            bounded, default,
+            "an at-capacity budget matches the calibrated default path"
+        );
+    }
+
+    /// Once the budget is spent the remaining elements are left opaque
+    /// (identity) rather than substituted — a relation-preserving partial
+    /// result, the same bail shape the depth guard takes.
+    #[test]
+    fn exhausted_budget_leaves_remaining_nodes_opaque() {
+        let interner = TypeInterner::new();
+        let (input, bindings, values) = bound_name_tuple(&interner, 5);
+
+        // Budget 3: the tuple (1) and the first two elements (2) are visited;
+        // the last three elements see an empty budget and stay unsubstituted.
+        let bounded =
+            InferSubstitutor::with_visit_budget(&interner, &bindings, 3).substitute(input);
+
+        let full = interner.tuple(values.iter().copied().map(TupleElement::fixed).collect());
+        assert_ne!(bounded, full, "a spent budget must not fully substitute");
+
+        let Some(TypeData::Tuple(list)) = interner.lookup(bounded) else {
+            panic!("substitution result is still a tuple");
+        };
+        let elements = interner.tuple_list(list);
+        assert_eq!(elements[0].type_id, values[0], "element 0 substituted");
+        assert_eq!(elements[1].type_id, values[1], "element 1 substituted");
+        for (i, original) in [2usize, 3, 4].into_iter().enumerate() {
+            // Untouched elements equal the original `UnresolvedTypeName(Name_i)`.
+            let name = interner.intern_string(&format!("Name{original}"));
+            assert_eq!(
+                elements[original].type_id,
+                interner.unresolved_type_name(name),
+                "element {original} (index past budget {i}) is left opaque",
+            );
+        }
+    }
+
+    /// The bail point is a deterministic function of the input and the budget,
+    /// so the same inputs always truncate identically (no schedule sensitivity).
+    #[test]
+    fn budget_truncation_is_deterministic() {
+        let interner = TypeInterner::new();
+        let (input, bindings, _) = bound_name_tuple(&interner, 8);
+        let first = InferSubstitutor::with_visit_budget(&interner, &bindings, 4).substitute(input);
+        let second = InferSubstitutor::with_visit_budget(&interner, &bindings, 4).substitute(input);
+        assert_eq!(
+            first, second,
+            "identical input + budget truncates identically"
+        );
+    }
+
+    /// A zero budget is a hard stop: the top-level type is returned unchanged.
+    #[test]
+    fn zero_budget_returns_input_unchanged() {
+        let interner = TypeInterner::new();
+        let (input, bindings, _) = bound_name_tuple(&interner, 3);
+        let bounded =
+            InferSubstitutor::with_visit_budget(&interner, &bindings, 0).substitute(input);
+        assert_eq!(bounded, input, "a zero budget substitutes nothing");
     }
 }

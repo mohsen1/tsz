@@ -831,7 +831,15 @@ impl<'a> CheckerState<'a> {
                             target_sym_id = underlying;
                         }
                     }
-                    let target = self.get_symbol_globally(target_sym_id)?;
+                    // Read the *target's* real declaration data from its owning
+                    // binder. `get_symbol_globally` would pin a raw-id-colliding
+                    // local import alias here (per-file binders mint colliding
+                    // ids), hiding a merged value+type-alias target's VALUE side
+                    // and collapsing the value-position type to the type-alias
+                    // body (e.g. an imported `const x = Symbol.for(..)` merged
+                    // with `type x = typeof x` would resolve to an unevaluated
+                    // `typeof x` cross-arena).
+                    let target = self.resolved_import_target_symbol(target_sym_id)?;
                     let tflags = target.flags;
                     if (tflags
                         & (tsz_binder::symbol_flags::INTERFACE

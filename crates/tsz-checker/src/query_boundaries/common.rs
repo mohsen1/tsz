@@ -1722,6 +1722,16 @@ pub(crate) fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_error_type(db, type_id)
 }
 
+/// Like [`is_error_type`] but does NOT treat a display-preserving
+/// `UnresolvedTypeName` as an error.
+///
+/// Used where a *genuine* internal `error` sentinel (the cycle/fuel sentinel
+/// `TypeId::ERROR` / `TypeData::Error`) must be distinguished from a deferrable
+/// cross-file reference that simply has not been bound yet.
+pub(crate) fn is_genuine_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_genuine_error_type(db, type_id)
+}
+
 pub(crate) fn is_module_namespace_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_module_namespace_type(db, type_id)
 }
