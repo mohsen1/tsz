@@ -67,8 +67,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /publish:[\s\S]+needs: bench[\s\S]+if: always\(\) && \(needs\.bench\.result == 'success' \|\| needs\.bench\.result == 'failure' \|\| needs\.bench\.result == 'cancelled'\)[\s\S]+Merge benchmark results/,
-  "bench publish should run after failed or timed-out/cancelled shard jobs so uploaded complete shard artifacts can still be merged instead of pinning the website to stale data",
+  /publish:[\s\S]+needs: \[bench, pgo-compile-canaries\][\s\S]+if: >-[\s\S]+always\(\) &&[\s\S]+\(needs\.bench\.result == 'success' \|\| needs\.bench\.result == 'failure' \|\| needs\.bench\.result == 'cancelled'\) &&[\s\S]+needs\.pgo-compile-canaries\.result == 'success'[\s\S]+Merge benchmark results/,
+  "bench publish should run after failed or timed-out/cancelled shard jobs once the overlapping PGO canary prerequisite succeeds, so uploaded complete shard artifacts can still be merged instead of pinning the website to stale data",
 );
 
 assert.doesNotMatch(
