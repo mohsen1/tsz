@@ -1457,6 +1457,15 @@ impl<'a> NarrowingContext<'a> {
             // Nothing filtered — let the caller try its structural fallback.
             return None;
         }
+        // If any shallow survivor is still structurally covered by the positive
+        // branch, the identity-only shortcut under-excluded. Fall back so
+        // constrained type parameters such as `Sub extends Base` are removed.
+        if remaining
+            .iter()
+            .any(|&member| self.is_assignable_to(member, positive_type))
+        {
+            return None;
+        }
         Some(match remaining.as_slice() {
             [] => TypeId::NEVER,
             [single] => *single,
