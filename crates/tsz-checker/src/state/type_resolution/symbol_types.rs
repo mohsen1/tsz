@@ -1156,9 +1156,8 @@ impl<'a> CheckerState<'a> {
         // raw-`SymbolId` cross-file collision) would recurse until the stack
         // overflows. Once nesting passes the depth cap, return the symbol's own
         // lazy reference instead of crashing. Refs #13212.
-        let _depth_guard = match TypeReferenceResolutionDepthGuard::enter() {
-            Some(guard) => guard,
-            None => return (self.ctx.create_lazy_type_ref(sym_id), Vec::new()),
+        let Some(_depth_guard) = TypeReferenceResolutionDepthGuard::enter() else {
+            return (self.ctx.create_lazy_type_ref(sym_id), Vec::new());
         };
 
         let local_alias_symbol = self

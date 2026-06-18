@@ -286,15 +286,12 @@ impl<'a> CheckerState<'a> {
         // contains itself) would recurse here until the stack overflows and
         // aborts the entire compile. Bail to a degenerate `any` once nesting
         // passes the depth cap instead of crashing. Refs #13212.
-        let _depth_guard = match PropertyAccessDepthGuard::enter() {
-            Some(guard) => guard,
-            None => {
-                return tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    write_type: None,
-                    from_index_signature: false,
-                };
-            }
+        let Some(_depth_guard) = PropertyAccessDepthGuard::enter() else {
+            return tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                write_type: None,
+                from_index_signature: false,
+            };
         };
 
         // Lazy single-member fast path: when the receiver is a bare
