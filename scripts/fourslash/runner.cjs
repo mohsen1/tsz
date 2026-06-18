@@ -194,14 +194,32 @@ function snapshotWeightFile() {
 }
 
 function resultRowsForWeights(parsed) {
+    // Legacy uncollapsed snapshot kept a full per-test result array.
     if (Array.isArray(parsed.results)) {
         return parsed.results;
     }
-    if (Array.isArray(parsed.summary?.slowest)) {
-        return parsed.summary.slowest;
+    // Compact snapshot: `weights` is a {file: elapsedMs} map covering every
+    // passing test, and `fail` carries the failing/timeout rows (with their
+    // own `elapsed` + `timedOut` so the timeout bias still applies). Combine
+    // both so the LPT balancer sees a weight for ~every test rather than the
+    // handful in `summary.slowest`. Before this, collapsing `pass` to bare
+    // strings (#13274) left only ~10 weighted tests and silently degraded
+    // weighted sharding to near-uniform assignment.
+    const rows = [];
+    if (parsed.weights && typeof parsed.weights === "object" && !Array.isArray(parsed.weights)) {
+        for (const [file, elapsed] of Object.entries(parsed.weights)) {
+            rows.push({ file, elapsed });
+        }
     }
     if (Array.isArray(parsed.fail)) {
-        return parsed.fail;
+        rows.push(...parsed.fail);
+    }
+    if (rows.length > 0) {
+        return rows;
+    }
+    // Fallback for snapshots predating the `weights` map.
+    if (Array.isArray(parsed.summary?.slowest)) {
+        return parsed.summary.slowest;
     }
     return [];
 }
@@ -231,7 +249,23 @@ function stringifyCompactSnapshot(snapshot) {
 
     lines.push(
         "  ],",
-        `  "fail": ${indentJson(snapshot.fail, 2).trimStart()}`,
+        `  "fail": ${indentJson(snapshot.fail, 2).trimStart()},`,
+        '  "weights": {',
+    );
+
+    // Per-test timings as a compact {file: ms} map. Packed many entries per
+    // line so the full-corpus weight set stays well under the 2000-line file
+    // cap (the reason #13274 collapsed the old per-test result array).
+    const weightEntries = Object.entries(snapshot.weights || {})
+        .map(([file, ms]) => `${JSON.stringify(file)}: ${ms}`);
+    for (let i = 0; i < weightEntries.length; i += 16) {
+        const chunk = weightEntries.slice(i, i + 16).join(", ");
+        const comma = i + 16 < weightEntries.length ? "," : "";
+        lines.push(`    ${chunk}${comma}`);
+    }
+
+    lines.push(
+        "  }",
         "}",
         "",
     );
@@ -1005,6 +1039,15 @@ async function main() {
                         if (r.elapsed !== undefined) record.elapsed = r.elapsed;
                         return record;
                     }),
+                // Per-test timings (ms) for passing tests, consumed by
+                // loadHistoricalWeights() for LPT shard balancing. Kept as a
+                // compact {file: ms} map so the snapshot stays small while the
+                // balancer still sees a real weight for ~every test.
+                weights: Object.fromEntries(
+                    jsonResults
+                        .filter(r => r.status === "pass" && !r.timedOut && Number.isFinite(Number(r.elapsed)))
+                        .map(r => [r.file, Number(r.elapsed)]),
+                ),
             }
             : detail;
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
