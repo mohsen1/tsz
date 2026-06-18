@@ -701,20 +701,72 @@ where
 ///
 /// Unlike [`check_files_in_parallel_chunks_with_reuse`], which splits the work
 /// into `ceil(files / chunk_size)` contiguous chunks — and therefore builds
-/// `ceil(files / chunk_size)` `CheckerState`s — this distributes files
-/// **round-robin** into exactly `pool_size` partitions. Each partition is one
-/// long-lived `CheckerState` (built once via `apply_to`, re-targeted per file
-/// via `switch_to_file`), so the expensive O(program) per-file setup is
-/// amortised over `files / pool_size` files instead of `chunk_size`. Round-robin
-/// (vs contiguous) also spreads heavy files (deep `delegate_cross_arena`
-/// cascades) across partitions instead of clustering them in one chunk.
+/// `ceil(files / chunk_size)` `CheckerState`s — this distributes files into
+/// exactly `pool_size` partitions. Each partition is one long-lived
+/// `CheckerState` (built once via `apply_to`, re-targeted per file via
+/// `switch_to_file`), so the expensive O(program) per-file setup is amortised
+/// over `files / pool_size` files instead of `chunk_size`.
+///
+/// # Cost-balanced partitioning
+///
+/// Files are distributed by **estimated check cost** rather than statically
+/// (`pos % pool_size`). A static round-robin split ignores per-file cost, so
+/// under file-**size** skew — a few huge files among many tiny ones — one
+/// partition can collect a disproportionate share of the heavy files and
+/// become the straggler that bounds wall-time, even though the pool's
+/// aggregate CPU is fine. We estimate each file's cost by its AST node count
+/// (`arena.nodes.len()`, already materialised by binding, so no extra
+/// traversal), sort files heaviest-first, and greedily place each into the
+/// currently-lightest bin. This is the classic longest-processing-time (LPT)
+/// makespan heuristic: bins finish with ~equal estimated cost, so wall-time
+/// tracks the busiest **balanced** worker rather than the unluckiest static
+/// partition. AST node count is a proxy (check cost is super-linear in some
+/// shapes), but it captures the file-size skew this path targets.
 ///
 /// Results are reassembled into the original `work_items` order (downstream
 /// diagnostic aggregation is order-sensitive). The per-partition body is
 /// [`check_files_sequentially_with_reuse`] verbatim, so the reset contract
-/// (`CheckerContext::switch_to_file`) and stats accounting are unchanged.
+/// (`CheckerContext::switch_to_file`) and stats accounting are unchanged, and
+/// — because every file's result is stitched back by its original position —
+/// diagnostics are byte-identical regardless of how files are partitioned.
+/// Greedy longest-processing-time (LPT) assignment of items with the given
+/// `costs` into `pool_size` bins; returns the chosen bin index for each item
+/// (indexed as `costs`).
+///
+/// Items are placed heaviest-first into the currently-lightest bin. This is the
+/// classic LPT makespan heuristic (a 4/3-approximation of the optimal): the
+/// bin with the largest total cost — the straggler that bounds the pool's
+/// wall-time — is provably close to the `total / pool_size` lower bound, so no
+/// single bin collects a disproportionate share of the heavy items the way a
+/// cost-blind `pos % pool_size` round-robin can. Ties (equal costs, equal bin
+/// loads) break to the lowest index, so the assignment is deterministic and
+/// independent of input ordering up to cost.
+///
+/// Complexity is `O(n log n + n * pool_size)` for `n = costs.len()`: the sort
+/// dominates, and the per-item lightest-bin scan is cheap because `pool_size`
+/// is bounded by the core count.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn check_files_round_robin_pool<F>(
+fn lpt_bin_assignment(costs: &[u64], pool_size: usize) -> Vec<usize> {
+    let pool_size = pool_size.max(1);
+    let mut order: Vec<usize> = (0..costs.len()).collect();
+    order.sort_unstable_by(|&a, &b| costs[b].cmp(&costs[a]).then(a.cmp(&b)));
+
+    let mut loads = vec![0u64; pool_size];
+    let mut bin_of = vec![0usize; costs.len()];
+    for idx in order {
+        // Lightest bin wins; `min_by` returns the first element on ties and the
+        // `.then(index)` comparator keeps that the lowest bin index.
+        let bin = (0..pool_size)
+            .min_by(|&a, &b| loads[a].cmp(&loads[b]).then(a.cmp(&b)))
+            .expect("pool_size >= 1");
+        loads[bin] += costs[idx];
+        bin_of[idx] = bin;
+    }
+    bin_of
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_files_cost_balanced_pool<F>(
     work_items: &[usize],
     ctx: &CheckFilesReuseCtx<'_>,
     flags: &CheckFileFlags,
@@ -729,11 +781,20 @@ where
     debug_assert!(!flags.extract_type_cache);
     let pool_size = pool_size.max(1).min(work_items.len().max(1));
 
-    // Distribute round-robin, carrying each file's original position so the
-    // partitions' results can be stitched back into `work_items` order.
+    // Estimate per-file check cost by AST node count (materialised during
+    // binding, so no extra traversal) and assign files to `pool_size` bins by
+    // longest-processing-time greedy bin-packing (see [`lpt_bin_assignment`]).
+    let costs: Vec<u64> = work_items
+        .iter()
+        .map(|&file_idx| ctx.program.files[file_idx].arena.nodes.len().max(1) as u64)
+        .collect();
+    let bin_of = lpt_bin_assignment(&costs, pool_size);
+
+    // Each file carries its original position so the partitions' results can be
+    // stitched back into `work_items` order.
     let mut partitions: Vec<Vec<(usize, usize)>> = vec![Vec::new(); pool_size];
-    for (pos, &file_idx) in work_items.iter().enumerate() {
-        partitions[pos % pool_size].push((pos, file_idx));
+    for (pos, &bin) in bin_of.iter().enumerate() {
+        partitions[bin].push((pos, work_items[pos]));
     }
 
     // Each partition runs on its own long-lived checker, in parallel. Bounding
@@ -771,6 +832,139 @@ where
     }
     ordered
         .into_iter()
-        .map(|slot| slot.expect("round-robin pool filled every work-item position"))
+        .map(|slot| slot.expect("cost-balanced pool filled every work-item position"))
         .collect()
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lpt_bin_assignment_tests {
+    use super::lpt_bin_assignment;
+
+    /// Total cost of the most-loaded bin — the straggler that bounds the pool's
+    /// wall-time.
+    fn max_bin_load(costs: &[u64], bins: &[usize], pool_size: usize) -> u64 {
+        let mut loads = vec![0u64; pool_size];
+        for (i, &b) in bins.iter().enumerate() {
+            loads[b] += costs[i];
+        }
+        loads.into_iter().max().unwrap_or(0)
+    }
+
+    /// The previous static scheduler: file at position `p` goes to bin
+    /// `p % pool_size`, ignoring cost.
+    fn round_robin(n: usize, pool_size: usize) -> Vec<usize> {
+        (0..n).map(|p| p % pool_size).collect()
+    }
+
+    #[test]
+    fn assignment_is_deterministic() {
+        let costs = [5, 1, 4, 1, 3, 9, 2, 6];
+        assert_eq!(
+            lpt_bin_assignment(&costs, 3),
+            lpt_bin_assignment(&costs, 3),
+            "same input must yield the same assignment"
+        );
+    }
+
+    #[test]
+    fn every_item_lands_in_a_valid_bin() {
+        let costs = [7, 7, 7, 1, 1, 1, 1];
+        let pool = 4;
+        let bins = lpt_bin_assignment(&costs, pool);
+        assert_eq!(bins.len(), costs.len());
+        assert!(bins.iter().all(|&b| b < pool));
+    }
+
+    #[test]
+    fn edge_cases() {
+        // Empty input.
+        assert!(lpt_bin_assignment(&[], 4).is_empty());
+        // Single bin: everything in bin 0.
+        assert_eq!(lpt_bin_assignment(&[3, 1, 2], 1), vec![0, 0, 0]);
+        // Degenerate pool_size 0 is clamped to 1.
+        assert_eq!(lpt_bin_assignment(&[3, 1], 0), vec![0, 0]);
+        // Fewer items than bins: heaviest-first, one per bin.
+        assert_eq!(lpt_bin_assignment(&[1, 3, 2], 8), vec![2, 0, 1]);
+    }
+
+    /// The headline property: when heavy files happen to align to the pool
+    /// width, cost-blind round-robin piles them all into one straggler bin,
+    /// while LPT spreads them and pads with the light files — reaching the
+    /// theoretical `total / pool_size` makespan lower bound.
+    #[test]
+    fn lpt_beats_round_robin_under_aligned_skew() {
+        let pool = 8;
+        let n = 64;
+        // Eight heavy files at positions 0, 8, 16, ... — all `≡ 0 (mod 8)`, so
+        // round-robin sends every one of them to bin 0.
+        let mut costs = vec![1u64; n];
+        for k in 0..8 {
+            costs[k * 8] = 100;
+        }
+        let total: u64 = costs.iter().sum();
+        let lower_bound = total.div_ceil(pool as u64);
+
+        let rr_max = max_bin_load(&costs, &round_robin(n, pool), pool);
+        let lpt_max = max_bin_load(&costs, &lpt_bin_assignment(&costs, pool), pool);
+
+        // Round-robin strands all eight heavies in one bin.
+        assert_eq!(rr_max, 8 * 100, "round-robin clusters the aligned heavies");
+        // LPT is at or near the optimal makespan, far below round-robin.
+        assert!(
+            lpt_max < rr_max / 4,
+            "lpt makespan {lpt_max} should be far below round-robin {rr_max}"
+        );
+        // LPT never exceeds the lower bound plus one max-cost item (its 4/3
+        // approximation guarantee comfortably implies this looser bound).
+        let max_cost = *costs.iter().max().unwrap();
+        assert!(
+            lpt_max <= lower_bound + max_cost,
+            "lpt makespan {lpt_max} exceeds lower_bound {lower_bound} + max_cost {max_cost}"
+        );
+    }
+
+    /// Across a spread of continuous (power-law-ish) cost distributions and
+    /// pool widths, every LPT assignment satisfies the always-true least-loaded
+    /// greedy bound `makespan <= ceil(total / pool) + max_cost`, and LPT beats
+    /// cost-blind round-robin in aggregate — the robustness claim that
+    /// motivates replacing the static split. (Per-trial `lpt <= rr` is not
+    /// asserted: LPT is a 4/3-approximation, so an unlucky round-robin can
+    /// occasionally tie or edge it on a single shape; the aggregate cannot.)
+    #[test]
+    fn lpt_respects_greedy_bound_and_wins_in_aggregate() {
+        let mut state: u64 = 0x9E37_79B9;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let (mut lpt_total, mut rr_total) = (0u64, 0u64);
+        for _ in 0..200 {
+            let n = 1 + (next() % 300) as usize;
+            let pool = 1 + (next() % 16) as usize;
+            let costs: Vec<u64> = (0..n)
+                .map(|_| {
+                    if next() % 16 == 0 {
+                        50 + next() % 200
+                    } else {
+                        1
+                    }
+                })
+                .collect();
+            let total: u64 = costs.iter().sum();
+            let max_cost = *costs.iter().max().unwrap();
+            let lpt_max = max_bin_load(&costs, &lpt_bin_assignment(&costs, pool), pool);
+            assert!(
+                lpt_max <= total.div_ceil(pool as u64) + max_cost,
+                "lpt {lpt_max} violated greedy bound for n={n} pool={pool}"
+            );
+            lpt_total += lpt_max;
+            rr_total += max_bin_load(&costs, &round_robin(n, pool), pool);
+        }
+        assert!(
+            lpt_total < rr_total,
+            "lpt aggregate makespan {lpt_total} should beat round-robin {rr_total}"
+        );
+    }
 }

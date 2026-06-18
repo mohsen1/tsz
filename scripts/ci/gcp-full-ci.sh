@@ -955,7 +955,7 @@ run_emit_shard() {
 
   if [[ "$shard_count" -eq 1 ]]; then
     ci_section "Emit aggregate"
-    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1
+    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1
     write_emit_metric "$METRICS_DIR/emit.json" \
       "$js_p" "$js_t" "$js_s" "$js_to" \
       "$dts_p" "$dts_t" "$dts_s"
@@ -1051,7 +1051,7 @@ run_emit_aggregate() {
     echo "warning: ${failed_shards} emit shard(s) returned non-zero rc; aggregate still applies the full-corpus floor" >&2
   fi
 
-  validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards"
+  validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards" || return 1
   write_emit_metric "$METRICS_DIR/emit.json" \
     "$js_p" "$js_t" "$js_s" "$js_to" \
     "$dts_p" "$dts_t" "$dts_s"

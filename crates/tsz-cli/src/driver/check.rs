@@ -49,8 +49,8 @@ mod source_resolution_setup;
 
 use check_file::{
     CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
-    check_file_for_parallel, check_files_in_parallel_chunks_with_reuse,
-    check_files_round_robin_pool, check_files_sequentially_with_reuse,
+    check_file_for_parallel, check_files_cost_balanced_pool,
+    check_files_in_parallel_chunks_with_reuse, check_files_sequentially_with_reuse,
 };
 use checker_diagnostics::{
     keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
@@ -330,7 +330,7 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// The user's explicit `TSZ_CHECKER_POOL` request, parsed once.
 ///
 /// The bounded checker pool checks files on a fixed pool of `N` long-lived
-/// `CheckerState`s (round-robin file assignment, each reused via
+/// `CheckerState`s (cost-balanced file assignment, each reused via
 /// `switch_to_file`) instead of the per-file fresh checker. This amortises the
 /// O(program) per-file setup over `files / N` files — the lever that unblocks
 /// large multi-file projects.
@@ -1460,13 +1460,16 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     )
             });
             if let Some(pool_size) = checker_pool_size {
-                // Bounded long-lived checker pool: N round-robin partitions,
-                // each a long-lived `CheckerState` reused via `switch_to_file`,
-                // amortising the O(program) per-file setup over `files / N`
-                // files — the lever that unblocks large multi-file projects.
-                // DOM/webworker programs are refused above so they keep the
-                // deterministic sequential gate. The per-partition body is the
-                // proven sequential-reuse path, so diagnostics are
+                // Bounded long-lived checker pool: N cost-balanced
+                // partitions, each a long-lived `CheckerState` reused via
+                // `switch_to_file`, amortising the O(program) per-file setup
+                // over `files / N` files — the lever that unblocks large
+                // multi-file projects. Files are bin-packed by estimated
+                // check cost so a few heavy files don't strand one partition
+                // as the wall-time straggler. DOM/webworker programs are
+                // refused above so they keep the deterministic sequential
+                // gate. The per-partition body is the proven sequential-reuse
+                // path, so diagnostics are
                 // byte-identical to the fresh-checker arm.
                 tsz::parallel::ensure_rayon_global_pool();
                 let reuse_ctx = CheckFilesReuseCtx {
@@ -1487,7 +1490,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     program_has_unsupported_js_root,
                     extract_type_cache,
                 };
-                check_files_round_robin_pool(
+                check_files_cost_balanced_pool(
                     &work_items,
                     &reuse_ctx,
                     &reuse_flags,
