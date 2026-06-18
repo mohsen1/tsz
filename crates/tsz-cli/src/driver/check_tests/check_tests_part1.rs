@@ -1595,6 +1595,78 @@ declare namespace Intl {
         collect_es2015_default_lib_diagnostics_with_options(source, |_: &mut _| {})
     }
 
+    /// Multi-file variant of [`collect_es2015_default_lib_diagnostics`]. Each
+    /// `(relative_name, source)` pair is written into the same temp directory so
+    /// `./name` imports resolve cross-file, exercising the program/CLI path
+    /// (distinct from the single-`main.ts` in-process path). The default es2015
+    /// lib set is loaded (includes `lib.dom.d.ts`).
+    fn collect_es2015_default_lib_diagnostics_multifile(files: &[(&str, &str)]) -> Vec<Diagnostic> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut file_paths = Vec::with_capacity(files.len());
+        for (name, source) in files {
+            let path = dir.path().join(name);
+            std::fs::write(&path, source).expect("write source");
+            file_paths.push(path);
+        }
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            module_resolutions: _,
+            type_reference_errors,
+            resolution_mode_errors,
+            ..
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
+            None,
+            &type_cache_output,
+        )
+        .diagnostics
+    }
+
     fn collect_es2015_default_lib_diagnostics_with_options(
         source: &str,
         configure: impl FnOnce(&mut ResolvedCompilerOptions),
