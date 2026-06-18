@@ -1571,6 +1571,9 @@ use plan::{
 #[path = "config_deprecation_tests.rs"]
 mod config_deprecation_tests;
 #[cfg(test)]
+#[path = "cross_file_alias_provider_private_reference_tests.rs"]
+mod cross_file_alias_provider_private_reference_tests;
+#[cfg(test)]
 #[path = "cross_file_circular_alias_tests.rs"]
 mod cross_file_circular_alias_tests;
 #[cfg(test)]
