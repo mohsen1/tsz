@@ -415,6 +415,29 @@ const fn should_use_sequential_fresh_checking(
         || (has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib)
 }
 
+/// Whether the bounded checker pool (`TSZ_CHECKER_POOL`) must be refused
+/// because the program includes a parallel-order-sensitive global lib
+/// (DOM/webworker).
+///
+/// The pool runs `pool_size` long-lived `CheckerState`s in parallel over one
+/// shared `DefinitionStore`, so it is subject to the same schedule-dependent
+/// lib-interface materialization hazard as the fresh-parallel lane gated by
+/// [`should_use_sequential_fresh_checking`]: DOM/SVG element interfaces with
+/// deep heritage are first-demand materialized concurrently, and sibling
+/// workers observe pre-finalize body forms, producing non-deterministic
+/// diagnostics. The pool dispatch is evaluated before that gate, so the
+/// refusal is enforced here independently — DOM programs take the sequential
+/// path whether the pool was reached via an explicit `TSZ_CHECKER_POOL=N` or
+/// a default-on policy. The `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` diagnosis
+/// override lifts the refusal so forced-parallel byte-diffs can be driven from
+/// the env; non-determinism is never the default.
+const fn pool_refused_for_order_sensitive_global_lib(
+    has_parallel_order_sensitive_global_lib: bool,
+    force_parallel_order_sensitive_global_lib: bool,
+) -> bool {
+    has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib
+}
+
 const fn needs_separate_boxed_prime_checker(
     no_emit: bool,
     emit_declarations: bool,
@@ -1339,7 +1362,28 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // than narrowing it.
             let use_file_session_reuse =
                 use_sequential_checking && !extract_type_cache && reuse_requested;
-            if let Some(pool_size) = checker_pool_size().filter(|_| !extract_type_cache) {
+            // The bounded checker pool runs `pool_size` long-lived checkers in
+            // parallel over the *same* shared `DefinitionStore`, so it carries
+            // the identical schedule-dependent lib-interface materialization
+            // hazard as the fresh-parallel lane (DOM/webworker globals; see
+            // `should_use_sequential_fresh_checking`). The pool branch is
+            // evaluated before the `use_sequential_checking` gate, so without
+            // this refusal an explicit `TSZ_CHECKER_POOL=N` — or a future
+            // default-on pool — would route a DOM project onto the pool and
+            // produce non-deterministic diagnostics (proven: `keyof`/indexed
+            // access over DOM element-tag-name maps yields distinct output per
+            // schedule). Refuse the pool for those programs so they take the
+            // deterministic sequential path regardless of how the pool was
+            // requested; the `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` diagnosis
+            // override lifts the refusal for byte-diff testing only.
+            let pool_size = checker_pool_size().filter(|_| {
+                !extract_type_cache
+                    && !pool_refused_for_order_sensitive_global_lib(
+                        has_parallel_order_sensitive_global_lib,
+                        force_parallel_order_sensitive_global_lib,
+                    )
+            });
+            if let Some(pool_size) = pool_size {
                 // Bounded long-lived checker pool (`TSZ_CHECKER_POOL`): N
                 // round-robin partitions, each a long-lived `CheckerState`
                 // reused via `switch_to_file`, amortising the O(program)
