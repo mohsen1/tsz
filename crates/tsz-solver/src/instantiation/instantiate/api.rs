@@ -766,7 +766,7 @@ pub(crate) fn instantiate_with_request_cached(
             db.insert_instantiation_cache(key, restored);
             return InstantiationResult::ok(restored);
         }
-        let result = run_instantiator(interner, request);
+        let result = run_instantiator(interner, query_db, request);
         if !result.depth_exceeded() {
             db.insert_instantiation_cache(key, result.type_id());
             if let Some(alpha_key) = alpha_key
@@ -781,7 +781,7 @@ pub(crate) fn instantiate_with_request_cached(
         }
         return result;
     }
-    run_instantiator(interner, request)
+    run_instantiator(interner, query_db, request)
 }
 
 fn alpha_canonicalize_cached_result(
@@ -814,10 +814,12 @@ fn alpha_canonicalize_cached_result(
 /// touching any cache.
 fn run_instantiator(
     interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
     request: InstantiationRequest<'_>,
 ) -> InstantiationResult {
     let options = request.options();
-    let mut instantiator = TypeInstantiator::new(interner, request.substitution());
+    let mut instantiator =
+        TypeInstantiator::new(interner, request.substitution()).with_query_db(query_db);
     instantiator.substitute_infer = options.substitute_infer();
     instantiator.preserve_meta_types = options.preserve_meta_types();
     instantiator.preserve_unsubstituted_type_params = options.preserve_unsubstituted_type_params();
@@ -866,8 +868,9 @@ pub fn instantiate_type_with_request(
 /// constraints reference substituted outer type parameters, so a fresh local
 /// binding such as a mapped type's iteration variable cannot be rewritten
 /// into its constraint by the forward-reference fallback in `instantiate_key`.
-pub(crate) fn instantiate_type_with_shadowed(
+pub(crate) fn instantiate_type_with_shadowed_cached(
     interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
     type_id: TypeId,
     substitution: &TypeSubstitution,
     shadowed_params: &[Atom],
@@ -878,7 +881,7 @@ pub(crate) fn instantiate_type_with_shadowed(
     if substitution.is_empty() {
         return type_id;
     }
-    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    let mut instantiator = TypeInstantiator::new(interner, substitution).with_query_db(query_db);
     instantiator.shadowed.extend_from_slice(shadowed_params);
     // The walk returns a relation-preserving value on a depth/frame bail (it
     // never surfaces a substitution-bound free type parameter), so keep it

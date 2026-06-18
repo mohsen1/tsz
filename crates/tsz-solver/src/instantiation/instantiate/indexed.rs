@@ -50,7 +50,7 @@ impl<'a> TypeInstantiator<'a> {
             return self.interner.index_access(inst_obj, inst_idx);
         }
         // Evaluate immediately to achieve O(1) equality
-        crate::evaluation::evaluate::evaluate_index_access(self.interner, inst_obj, inst_idx)
+        self.evaluate_index_access(inst_obj, inst_idx)
     }
 
     /// Instantiate a `keyof`: instantiate the operand and evaluate immediately.
@@ -115,7 +115,7 @@ impl<'a> TypeInstantiator<'a> {
             return self.interner.keyof(inst_operand);
         }
         // Evaluate immediately to expand keyof { a: 1 } -> "a"
-        let result = crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand);
+        let result = self.evaluate_keyof(inst_operand);
 
         // Store display alias so the formatter shows "keyof Shape" instead
         // of the expanded union. Only store when the result is non-trivial
@@ -173,7 +173,7 @@ impl<'a> TypeInstantiator<'a> {
         // If we detected types that can be evaluated, trigger evaluation
         // to potentially expand the template literal to a union of string literals
         if needs_evaluation {
-            crate::evaluation::evaluate::evaluate_type(self.interner, template_type)
+            self.evaluate_type(template_type)
         } else {
             template_type
         }
@@ -198,7 +198,7 @@ impl<'a> TypeInstantiator<'a> {
                 | TypeData::Literal(LiteralValue::String(_))
                 | TypeData::TemplateLiteral(_)
                 | TypeData::Intrinsic(IntrinsicKind::String) => {
-                    crate::evaluation::evaluate::evaluate_type(self.interner, string_intrinsic)
+                    self.evaluate_type(string_intrinsic)
                 }
                 _ => string_intrinsic,
             }

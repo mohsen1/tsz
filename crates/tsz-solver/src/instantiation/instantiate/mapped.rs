@@ -11,9 +11,10 @@ use rustc_hash::FxHashMap;
 use crate::types::{MappedType, MappedTypeId, TypeData, TypeId, TypeParamInfo};
 
 use super::{
-    TypeInstantiator, TypeSubstitution, conditional_condition_needs_resolver, instantiate_type,
-    instantiate_type_with_shadowed, mapped_constraint_needs_resolver,
-    template_has_lazy_application_in_composite, type_contains_lazy_application,
+    TypeInstantiator, TypeSubstitution, conditional_condition_needs_resolver,
+    instantiate_type_cached, instantiate_type_with_shadowed_cached,
+    mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
+    type_contains_lazy_application,
 };
 
 impl<'a> TypeInstantiator<'a> {
@@ -46,7 +47,7 @@ impl<'a> TypeInstantiator<'a> {
             && !self.is_shadowed(tp_info.name)
             && let Some(substituted) = self.substitution.get(tp_info.name)
         {
-            let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+            let resolved = self.evaluate_type(substituted);
             if let Some(TypeData::Union(list_id)) = self.interner.lookup(resolved)
                 && !Self::is_array_or_tuple_like(self.interner, resolved)
             {
@@ -74,8 +75,9 @@ impl<'a> TypeInstantiator<'a> {
                     }
                     member_subst.insert(tp_info.name, member);
                     let inst = |t| {
-                        instantiate_type_with_shadowed(
+                        instantiate_type_with_shadowed_cached(
                             self.interner,
+                            self.query_db,
                             t,
                             &member_subst,
                             &iter_var_shadow,
@@ -116,9 +118,9 @@ impl<'a> TypeInstantiator<'a> {
                 keyof_source,
                 mapped.type_param.name,
             )
-            && crate::evaluation::evaluate::evaluate_type(self.interner, substituted) == TypeId::ANY
+            && self.evaluate_type(substituted) == TypeId::ANY
             && tp_info.constraint.is_some_and(|c| {
-                let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                let ec = self.evaluate_type(c);
                 Self::is_array_or_tuple_like(self.interner, ec)
             })
         {
@@ -128,10 +130,12 @@ impl<'a> TypeInstantiator<'a> {
             self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
             let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
-            let mapped_element = crate::evaluation::evaluate::evaluate_type(
+            let mapped_element = self.evaluate_type(instantiate_type_cached(
                 self.interner,
-                instantiate_type(self.interner, new_template, &subst),
-            );
+                self.query_db,
+                new_template,
+                &subst,
+            ));
 
             let final_element = if matches!(
                 mapped.optional_modifier,
@@ -166,7 +170,7 @@ impl<'a> TypeInstantiator<'a> {
                 keyof_source,
                 mapped.type_param.name,
             );
-            let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+            let resolved = self.evaluate_type(substituted);
 
             // tsc: When a homomorphic mapped type's source type parameter
             // is instantiated with `any`, the result depends on the type
@@ -178,7 +182,7 @@ impl<'a> TypeInstantiator<'a> {
             // makes `Objectish<any>` assignable to `any[]`, which is wrong.
             if resolved == TypeId::ANY {
                 let constraint_is_array_like = tp_info.constraint.is_some_and(|c| {
-                    let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                    let ec = self.evaluate_type(c);
                     Self::is_array_or_tuple_like(self.interner, ec)
                 });
 
@@ -189,10 +193,12 @@ impl<'a> TypeInstantiator<'a> {
                     self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
                     let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
-                    let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                    let mapped_element = self.evaluate_type(instantiate_type_cached(
                         self.interner,
-                        instantiate_type(self.interner, new_template, &subst),
-                    );
+                        self.query_db,
+                        new_template,
+                        &subst,
+                    ));
 
                     let final_element = if matches!(
                         mapped.optional_modifier,
@@ -244,7 +250,7 @@ impl<'a> TypeInstantiator<'a> {
                 match self.interner.lookup(resolved) {
                     Some(TypeData::Tuple(tid)) => Some((tid, false)),
                     Some(TypeData::ReadonlyType(inner)) => {
-                        let ir = crate::evaluation::evaluate::evaluate_type(self.interner, inner);
+                        let ir = self.evaluate_type(inner);
                         if ir.is_intrinsic() {
                             None
                         } else {
@@ -348,10 +354,12 @@ impl<'a> TypeInstantiator<'a> {
                     };
 
                     let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-                    let mapped_type = crate::evaluation::evaluate::evaluate_type(
+                    let mapped_type = self.evaluate_type(instantiate_type_cached(
                         self.interner,
-                        instantiate_type(self.interner, rebound_template, &subst),
-                    );
+                        self.query_db,
+                        rebound_template,
+                        &subst,
+                    ));
 
                     // Re-wrap a `...E[]` rest in `Array<>`; absorb
                     // `Add ?` on a rest as `T | undefined` (a rest can
@@ -399,14 +407,12 @@ impl<'a> TypeInstantiator<'a> {
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
                 let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
-                let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                let mapped_element = self.evaluate_type(instantiate_type_cached(
                     self.interner,
-                    crate::instantiation::instantiate::instantiate_type(
-                        self.interner,
-                        new_template,
-                        &subst,
-                    ),
-                );
+                    self.query_db,
+                    new_template,
+                    &subst,
+                ));
 
                 // Apply mapped type modifiers
                 let final_element = if matches!(
@@ -549,7 +555,7 @@ impl<'a> TypeInstantiator<'a> {
             // the mapped type after inference resolves the type parameters.
             mapped_type
         } else {
-            crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
+            self.evaluate_type(mapped_type)
         }
     }
 }
