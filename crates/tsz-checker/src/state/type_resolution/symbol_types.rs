@@ -1625,17 +1625,23 @@ impl<'a> CheckerState<'a> {
                     lowering
                 };
 
-                // Use merged interface lowering for multi-arena declarations
-                let has_multi_arenas = has_declaration_arenas;
-                let interface_type = if has_multi_arenas {
-                    let (ty, _merged_params) = lowering
-                        .lower_merged_interface_declarations_with_symbol(
-                            &decls_with_arenas,
-                            Some(sym_id),
-                        );
-                    ty
+                // Use arena-aware interface lowering whenever declarations live
+                // outside the current file arena, even if there is only one
+                // declaration. Single-lib interfaces such as `Generator` need
+                // the owner arena's type-parameter identities just as much as
+                // multi-file lib merges.
+                let use_arena_aware_lowering = needs_text_based_resolution;
+                let (interface_type, lowered_params) = if use_arena_aware_lowering {
+                    lowering.lower_merged_interface_declarations_with_symbol(
+                        &decls_with_arenas,
+                        Some(sym_id),
+                    )
                 } else {
-                    lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)
+                    (
+                        lowering
+                            .lower_interface_declarations_with_symbol(&symbol.declarations, sym_id),
+                        Vec::new(),
+                    )
                 };
                 // First try the standard heritage merge (works for user-arena interfaces).
                 let mut merged =
@@ -1672,25 +1678,35 @@ impl<'a> CheckerState<'a> {
                 // `NodeIndex` collision in `push_type_parameters` can mis-read a lib
                 // interface's params (`MapIterator<T>` as a user `<Args>`), leaking the
                 // body's free `T` into concrete `Map`/`Set` iteration (false
-                // TS2488/TS2345; jotai #13652). Prefer the arena-aware
-                // `get_type_params_for_symbol` set, but ONLY on a real collision
-                // (arity/name mismatch); else overriding breaks the body↔params identity
-                // invariant (a free `TReturn` leaks `never` into generator inference; gcye3 #13726).
+                // TS2488/TS2345; jotai #13652). Only repair same-arity collisions:
+                // nonzero arity mismatches can be contextual-generator scopes whose
+                // return-context inference still depends on the pushed params, and
+                // replacing those with owner params leaks `TReturn` as `never`
+                // (gcye3 #13726).
                 let canonical_params = self.get_type_params_for_symbol(sym_id);
+                let owner_params = if !lowered_params.is_empty() {
+                    lowered_params
+                } else {
+                    canonical_params.clone()
+                };
                 let prefer_canonical = !canonical_params.is_empty();
-                let pushed_disagrees = !params
-                    .iter()
-                    .map(|p| p.name)
-                    .eq(canonical_params.iter().map(|c| c.name));
-                let resolved_params =
-                    if needs_text_based_resolution && prefer_canonical && pushed_disagrees {
-                        canonical_params.clone()
-                    } else {
-                        params
-                    };
+                let same_arity_collision = needs_text_based_resolution
+                    && !owner_params.is_empty()
+                    && params.len() == owner_params.len()
+                    && !params
+                        .iter()
+                        .map(|p| p.name)
+                        .eq(owner_params.iter().map(|c| c.name));
+                let resolved_params = if same_arity_collision {
+                    owner_params.clone()
+                } else {
+                    params
+                };
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                    let reg_params = if prefer_canonical {
-                        canonical_params
+                    let reg_params = if same_arity_collision {
+                        resolved_params.clone()
+                    } else if prefer_canonical {
+                        canonical_params.clone()
                     } else {
                         resolved_params.clone()
                     };
