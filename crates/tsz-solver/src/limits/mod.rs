@@ -121,6 +121,27 @@ pub(crate) const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
 /// Named distinctly so the divergence stays visible (see module doc).
 pub(crate) const MAX_TYPE_SUBSTITUTION_DEPTH: u32 = 50;
 
+/// Maximum distinct type nodes one `InferSubstitutor` traversal may visit
+/// (breadth bound for infer-binding substitution).
+///
+/// `recursion::with_solver_frame` (see [`MAX_SOLVER_STACK_FRAMES`]) bounds how
+/// *deep* a single substitution recurses, but it is RAII-balanced, so a type
+/// that is shallow yet enormously *wide* — or one whose conditional expansion
+/// interns fresh `TypeId`s on every level, the self-expanding family in issue
+/// #13040 — keeps the live frame count low and never trips the depth guard.
+/// One such substitution then walks an unbounded number of distinct nodes,
+/// which is a (non-depth) channel of the diagnostic display/eval non-termination
+/// that the per-rendered-type display budget bounds on the checker side.
+///
+/// This cap bounds total node visits per traversal. On exhaustion the
+/// substitutor leaves the remaining nodes opaque (identity), the same
+/// relation-preserving bail the depth guard already takes via
+/// `with_solver_frame(...).unwrap_or(type_id)`. It is calibrated far above any
+/// legitimately substituted type (a successfully-checked 1.47 M LOC corpus
+/// visits orders of magnitude fewer nodes in any single substitution), so a
+/// terminating substitution is byte-identical; only a runaway is truncated.
+pub(crate) const MAX_INFER_SUBSTITUTION_NODES: u32 = 1_000_000;
+
 /// Maximum cumulative evaluation fuel across all `TypeEvaluator` instances
 /// of one file-check session (thread-local, reset per file).
 ///
