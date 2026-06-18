@@ -6,6 +6,7 @@
 mod aliases;
 mod cache_statistics;
 mod caches;
+mod canonical_app_key;
 mod compiler_options;
 mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
@@ -16,6 +17,7 @@ pub use caches::{
     NarrowableIdentifierCache, NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache,
     TypeNodeSurfaceCaches, TypeReferenceValidationCaches,
 };
+pub use canonical_app_key::CanonicalAppKey;
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
@@ -36,6 +38,7 @@ pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, Wor
 mod def_mapping;
 mod def_mapping_formatters;
 mod deferred_flow_env_write;
+mod unresolved_import;
 pub use deferred_flow_env_write::DeferredFlowEnvWrite;
 mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
@@ -921,12 +924,11 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for mapped type evaluation with resolution.
     pub mapped_eval_set: FxHashSet<TypeId>,
 
-    /// Recursion guard for `evaluate_type_with_resolution`.
-    /// Prevents infinite mutual recursion through
-    /// `evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
-    /// → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution`
-    /// on recursive type aliases.
-    pub type_resolution_visiting: FxHashSet<TypeId>,
+    /// Recursion guard for `evaluate_type_with_resolution`, preventing infinite
+    /// mutual recursion (evaluate → prune → impossible-property → evaluate) on
+    /// recursive type aliases. Keyed by [`CanonicalAppKey`] (not raw [`TypeId`])
+    /// to collapse import-alias variants; see that type for the rationale.
+    pub type_resolution_visiting: FxHashSet<CanonicalAppKey>,
     /// Reentrancy guard for `prune_impossible_object_union_members_with_env`.
     /// Prevents infinite mutual recursion: evaluate → prune → evaluate → prune.
     pub pruning_union_members: bool,

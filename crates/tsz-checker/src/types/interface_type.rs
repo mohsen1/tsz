@@ -805,6 +805,25 @@ impl<'a> CheckerState<'a> {
                     }) else {
                         continue;
                     };
+                    // When the base is named through a chain of named re-exports
+                    // (`export type { X } from './x'` / `export { X } from`), the
+                    // local heritage symbol is an import alias whose own
+                    // declaration is the import specifier — it carries no
+                    // type-parameter list. Both the base body
+                    // (`get_type_of_symbol`) and the base params
+                    // (`get_type_params_for_symbol`) must read off the *same*
+                    // original declaration symbol; otherwise the param list is
+                    // empty and the `instantiate_type` substitution below is a
+                    // no-op, leaving the inherited member bound to the base's
+                    // free type parameter instead of the supplied argument
+                    // (false TS2322/TS2416 on `const y: Y`). Re-point to the
+                    // chased generic declaration, mirroring the arity / "is
+                    // generic" diagnostic gate (#13797). Non-generic and
+                    // namespace / `import =` / `export =` aliases keep the
+                    // original surface (the helper returns `None`).
+                    let base_sym_id = self
+                        .resolve_heritage_alias_to_declaration_symbol(base_sym_id, expr_idx)
+                        .unwrap_or(base_sym_id);
                     let Some((
                         base_symbol_declarations,
                         base_symbol_value_declaration,

@@ -75,4 +75,115 @@ impl<'a> CheckerState<'a> {
         self.indexed_access_key_space_relation_outcome(index_type_for_check, keyof_constraint)
             .related
     }
+
+    /// Apparent type of a *deferred* indexed access `B[K1]` whose base `B` is a
+    /// deferred conditional (e.g. `Cond<T>['required']`). tsc resolves such a
+    /// generic indexed access through `getConstraintOfIndexedAccessType`: it
+    /// indexes `B`'s base constraint — the union of the conditional's branch
+    /// results — with `K1`. That apparent type carries a concrete key space even
+    /// while the access itself stays deferred, so a later access
+    /// `B[K1][K2]` (or a spread `[...B[K1]]`) validates `K2`/array-likeness
+    /// against it instead of failing as if `B[K1]` had no members.
+    ///
+    /// Returns the evaluated apparent type, or `None` when `object_type` is not
+    /// such a deferred indexed access, the inner key is not a usable literal, the
+    /// conditional has no resolvable branch-union constraint, or the apparent
+    /// type cannot be reduced to a concrete (non-deferred) form.
+    pub(super) fn deferred_indexed_access_conditional_apparent_type(
+        &mut self,
+        object_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common as q;
+        // Resolve a generic `Application` (e.g. an alias `Drop<T>`) whose body is
+        // an indexed access into that indexed access first, so both the direct and
+        // alias-wrapped forms are covered.
+        let resolve_index_access = |this: &mut Self, ty: TypeId| -> Option<(TypeId, TypeId)> {
+            if let Some(parts) = q::index_access_types(this.ctx.types, ty) {
+                return Some(parts);
+            }
+            if q::is_generic_application(this.ctx.types, ty) {
+                let expanded = this.evaluate_application_type(ty);
+                if let Some(parts) = q::index_access_types(this.ctx.types, expanded) {
+                    return Some(parts);
+                }
+            }
+            None
+        };
+        let (inner_base, inner_index) = resolve_index_access(self, object_type)?;
+
+        // The inner base must resolve to a deferred conditional; otherwise the
+        // existing concrete/type-parameter paths already own validation.
+        let resolve_conditional = |this: &mut Self, ty: TypeId| -> Option<TypeId> {
+            if q::is_conditional_type(this.ctx.types, ty) {
+                return Some(ty);
+            }
+            if q::is_generic_application(this.ctx.types, ty) {
+                let expanded = this.evaluate_application_type(ty);
+                if q::is_conditional_type(this.ctx.types, expanded) {
+                    return Some(expanded);
+                }
+            }
+            None
+        };
+        let conditional = match resolve_conditional(self, inner_base) {
+            Some(c) => c,
+            None => {
+                let evaluated_base = self.evaluate_type_with_env(inner_base);
+                resolve_conditional(self, evaluated_base)?
+            }
+        };
+
+        let base_constraint = q::conditional_branch_union_constraint(self.ctx.types, conditional)?;
+        // The branch-union must have resolved to a concrete shape; a constraint
+        // that is itself still deferred has no computable apparent type.
+        if q::is_conditional_type(self.ctx.types, base_constraint)
+            || q::is_index_access_type(self.ctx.types, base_constraint)
+        {
+            return None;
+        }
+
+        // The inner key drives `apparent = base_constraint[inner_index]`. Evaluate
+        // it; an apparent type that is still deferred (e.g. the inner key was
+        // itself generic) gives no concrete key space, so bail.
+        let apparent = self.evaluate_type_with_env(
+            self.ctx
+                .types
+                .factory()
+                .index_access(base_constraint, inner_index),
+        );
+        if apparent == TypeId::ERROR
+            || apparent == TypeId::ANY
+            || q::is_index_access_type(self.ctx.types, apparent)
+            || q::is_conditional_type(self.ctx.types, apparent)
+        {
+            return None;
+        }
+        Some(apparent)
+    }
+
+    /// Index-key validation for `B[K1][K2]` where `B[K1]` is a deferred indexed
+    /// access into a deferred conditional. Validates the outer literal key `K2`
+    /// against the key space of the apparent type of `B[K1]` (see
+    /// [`Self::deferred_indexed_access_conditional_apparent_type`]). tsc accepts
+    /// `Cond<T>['required']['length']` (length ∈ keyof of the tuple apparent
+    /// type) but still rejects `Cond<T>['required']['nope']`.
+    pub(super) fn deferred_indexed_access_conditional_key_is_valid(
+        &mut self,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+        index_type_for_check: TypeId,
+    ) -> bool {
+        let Some(apparent) = self
+            .deferred_indexed_access_conditional_apparent_type(object_type_for_check)
+            .or_else(|| self.deferred_indexed_access_conditional_apparent_type(object_type))
+        else {
+            return false;
+        };
+        let keyof_apparent = self.ctx.types.evaluate_keyof(apparent);
+        if crate::query_boundaries::common::is_keyof_type(self.ctx.types, keyof_apparent) {
+            return false;
+        }
+        self.indexed_access_key_space_relation_outcome(index_type_for_check, keyof_apparent)
+            .related
+    }
 }
