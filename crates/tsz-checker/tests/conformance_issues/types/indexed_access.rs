@@ -1597,3 +1597,198 @@ type WithParens<T extends keyof DataFetchFns, F extends keyof DataFetchFns[T]> =
         "Expected the normalized `DataFetchFns[F]` object display.\nActual TS2536: {ts2536:#?}"
     );
 }
+
+// Regression matrix for #13720: a nested generic indexed access `T[K1][K2]`
+// rooted at a *concrete* object/tuple base, where `K1 extends keyof T` and `K2`
+// is constrained against the key space of `T`'s values, must not emit a
+// spurious TS2536. `tsc` validates `K2` by following the constraint chain:
+// `T[K1]`'s apparent type is the union of `T`'s values, and `K2`'s constraint
+// lies within `keyof` of that union, so the access is a valid deferred type.
+// The witnesses below mirror hotscript `DigitCompare`
+// (`DigitCompareTable[D1][D2]`) and `addition.ts`, plus adjacent forms; every
+// one is `tsc`-clean. The fix must follow the structural constraint chain, not
+// any user-chosen identifier, so each case renames binders / value shapes.
+
+#[test]
+fn nested_generic_indexed_access_into_concrete_object_base_no_ts2536() {
+    // K2 constrained by `keyof T[keyof T]` (the common key set of T's values).
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type T = {
+    a: { x: 1; y: 2 };
+    b: { x: 3; y: 4 };
+};
+type Read<K1 extends keyof T, K2 extends keyof T[keyof T]> = T[K1][K2];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for `T[K1][K2]` into a concrete object base when K2 is \
+         constrained by the value key space.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_inner_keyof_constraint_no_ts2536() {
+    // Distinct binder names; K2's constraint depends on K1 (`keyof T[K1]`),
+    // so the constraint is itself a deferred `keyof` of a generic indexed
+    // access — it must still be treated as a usable (unresolved) key space.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Lookup = {
+    first: { lo: 0; hi: 9 };
+    second: { lo: 1; hi: 8 };
+};
+type Pick2<Row extends keyof Lookup, Col extends keyof Lookup[Row]> = Lookup[Row][Col];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when the outer key is constrained by `keyof T[K1]`.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_concrete_tuple_table_no_ts2536() {
+    // hotscript `DigitCompare`: a concrete tuple-of-tuples indexed by two
+    // numeric-literal-constrained type parameters (`Digit = 0|...|9`). `Digit`
+    // is itself written as `Digits[number]` (an indexed access), matching the
+    // upstream `utils.ts` shape, to exercise the constraint chain end to end.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+type Digit = Digits[number];
+type DigitCompareTable = [
+    [0, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+    [1, 0, -1, -1, -1, -1, -1, -1, -1, -1],
+    [1, 1, 0, -1, -1, -1, -1, -1, -1, -1],
+    [1, 1, 1, 0, -1, -1, -1, -1, -1, -1],
+    [1, 1, 1, 1, 0, -1, -1, -1, -1, -1],
+    [1, 1, 1, 1, 1, 0, -1, -1, -1, -1],
+    [1, 1, 1, 1, 1, 1, 0, -1, -1, -1],
+    [1, 1, 1, 1, 1, 1, 1, 0, -1, -1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 0, -1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+];
+type DigitCompare<D1 extends Digit, D2 extends Digit> = DigitCompareTable[D1][D2];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for the hotscript `DigitCompareTable[D1][D2]` tuple table.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_heterogeneous_values_common_keys_no_ts2536() {
+    // The value objects have *different* key sets, so `keyof` of their union is
+    // the strict common subset (`"x" | "y"`). A key constrained to that common
+    // subset is still valid for every branch.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Grid = {
+    north: { x: 1; y: 2; z: 9 };
+    south: { x: 3; y: 4 };
+};
+type CommonKey = keyof Grid[keyof Grid];
+type Cell<Row extends keyof Grid, Axis extends CommonKey> = Grid[Row][Axis];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when the outer key is constrained to the common value key \
+         subset of heterogeneous values.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_through_alias_and_interface_no_ts2536() {
+    // The concrete base reaches the access through an interface and a type
+    // alias (a wrapper / nesting variant of the same rule).
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Leaf { width: 10; height: 20 }
+interface Tree { left: Leaf; right: Leaf }
+type Wrapped = Tree;
+type Dim<Branch extends keyof Wrapped, Side extends keyof Wrapped[keyof Wrapped]> =
+    Wrapped[Branch][Side];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for a nested generic indexed access reached through an \
+         interface/alias chain.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_three_levels_no_ts2536() {
+    // Three-level nesting `T[K1][K2][K3]` with each key constrained against the
+    // previous level's key space stays deferred and valid.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Deep = {
+    a: { p: { m: 1 } };
+    b: { p: { m: 2 } };
+};
+type Read3<
+    K1 extends keyof Deep,
+    K2 extends keyof Deep[K1],
+    K3 extends keyof Deep[K1][K2]
+> = Deep[K1][K2][K3];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for a three-level nested generic indexed access.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_literal_outer_generic_inner_no_ts2536() {
+    // The inner key is a concrete literal (`T["a"]`) while only the outer key is
+    // generic. The outer key still resolves against the concrete value's key
+    // space, so no TS2536 — the constraint chain must work regardless of which
+    // level supplies the generic key.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type T = { a: { x: 1; y: 2 }; b: { x: 3; y: 4 } };
+type Read<K2 extends keyof T[keyof T]> = T["a"][K2];
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when the inner key is a concrete literal and only the outer \
+         key is generic.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_indexed_access_missing_literal_key_still_emits_ts2536() {
+    // Negative control / anti-over-suppression: the fix must not blanket-suppress
+    // TS2536 for nested generic indexed accesses. A concrete literal key that is
+    // genuinely absent from every value of the base must still report TS2536,
+    // exactly as `tsc` does.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type T = { a: { x: 1 }; b: { x: 2 } };
+type Bad<K1 extends keyof T> = T[K1]["nope"];
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should still emit TS2536 when the outer literal key is absent from every value of \
+         the concrete base.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
