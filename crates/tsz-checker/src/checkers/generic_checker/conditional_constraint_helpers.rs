@@ -93,16 +93,21 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             let raw_branch = branch;
+            if self.indexed_object_map_branch_satisfies_constraint(raw_branch, constraint) {
+                return true;
+            }
             let resolved_branch = self.resolve_lazy_type(raw_branch);
+            if resolved_branch != raw_branch
+                && self.indexed_object_map_branch_satisfies_constraint(resolved_branch, constraint)
+            {
+                return true;
+            }
             let branch_evaluated = self.evaluate_type_for_assignability(resolved_branch);
-            self.indexed_object_map_branch_satisfies_constraint(raw_branch, constraint)
-                || self
-                    .conditional_constraint_component_relation_outcome(resolved_branch, constraint)
-                    .related
+            self.conditional_constraint_component_relation_outcome(resolved_branch, constraint)
+                .related
                 || self
                     .conditional_constraint_component_relation_outcome(branch_evaluated, constraint)
                     .related
-                || self.indexed_object_map_branch_satisfies_constraint(resolved_branch, constraint)
                 || (raw_branch == true_type
                     && raw_branch == check_type
                     && self.conditional_extends_type_satisfies_constraint(extends_type, constraint))
@@ -499,11 +504,13 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let true_resolved = self.resolve_lazy_type(true_type);
-                if self
-                    .conditional_constraint_component_relation_outcome(true_resolved, constraint)
-                    .related
+                if self.indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
                     || self
-                        .indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
+                        .conditional_constraint_component_relation_outcome(
+                            true_resolved,
+                            constraint,
+                        )
+                        .related
                 {
                     return true;
                 }

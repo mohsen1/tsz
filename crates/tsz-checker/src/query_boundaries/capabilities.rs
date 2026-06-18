@@ -280,15 +280,26 @@ pub(crate) fn is_known_node_global(name: &str) -> bool {
 
 /// Check if a module specifier is a known Node.js built-in module (TS2591).
 ///
-/// When module resolution fails for one of these specifiers, tsc emits TS2591
-/// ("Cannot find name 'X'. Do you need to install type definitions for node?")
+/// When module resolution fails for one of these specifiers, tsc emits the
+/// "install type definitions for node" diagnostic family (TS2580/TS2591)
 /// instead of TS2307 ("Cannot find module 'X'").
+///
+/// This is the single source of truth for "is this a Node.js builtin module
+/// specifier?". The list mirrors `@types/node`'s ambient `declare module`
+/// surface and includes the documented subpath builtins (`fs/promises`,
+/// `stream/promises`, `path/posix`, …). tsc classifies a subpath builtin
+/// exactly like its base module, so they must share one set — otherwise the
+/// same import shape produces TS2591 for `fs` but TS2307 for `fs/promises`.
+/// The `node:`-prefixed spelling names the same builtin, so it is stripped
+/// before matching. Adding a name here means tsz no longer treats it as a
+/// resolvable user package on resolution failure.
 pub(crate) fn is_known_node_module(specifier: &str) -> bool {
     // Handle `node:` prefix (e.g., `node:fs`, `node:path`)
     let name = specifier.strip_prefix("node:").unwrap_or(specifier);
     matches!(
         name,
         "assert"
+            | "assert/strict"
             | "async_hooks"
             | "buffer"
             | "child_process"
@@ -299,32 +310,43 @@ pub(crate) fn is_known_node_module(specifier: &str) -> bool {
             | "dgram"
             | "diagnostics_channel"
             | "dns"
+            | "dns/promises"
             | "domain"
             | "events"
             | "fs"
+            | "fs/promises"
             | "http"
             | "http2"
             | "https"
             | "inspector"
+            | "inspector/promises"
             | "module"
             | "net"
             | "os"
             | "path"
+            | "path/posix"
+            | "path/win32"
             | "perf_hooks"
             | "process"
             | "punycode"
             | "querystring"
             | "readline"
+            | "readline/promises"
             | "repl"
             | "stream"
+            | "stream/consumers"
+            | "stream/promises"
+            | "stream/web"
             | "string_decoder"
             | "sys"
             | "timers"
+            | "timers/promises"
             | "tls"
             | "trace_events"
             | "tty"
             | "url"
             | "util"
+            | "util/types"
             | "v8"
             | "vm"
             | "wasi"
@@ -445,6 +467,58 @@ pub(crate) fn is_known_test_runner_global(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_known_node_module_recognizes_subpath_builtins() {
+        // Base builtins.
+        for base in ["fs", "path", "stream", "dns", "util", "readline", "timers"] {
+            assert!(
+                is_known_node_module(base),
+                "expected base builtin {base} to be recognized"
+            );
+        }
+        // Subpath builtins must classify identically to their base module —
+        // tsc treats `fs/promises` exactly like `fs`. Previously these fell
+        // through to a raw TS2307 because only the suppression list knew them.
+        for subpath in [
+            "assert/strict",
+            "dns/promises",
+            "fs/promises",
+            "inspector/promises",
+            "path/posix",
+            "path/win32",
+            "readline/promises",
+            "stream/consumers",
+            "stream/promises",
+            "stream/web",
+            "timers/promises",
+            "util/types",
+        ] {
+            assert!(
+                is_known_node_module(subpath),
+                "expected subpath builtin {subpath} to be recognized"
+            );
+            // The `node:` scheme names the same builtin.
+            assert!(
+                is_known_node_module(&format!("node:{subpath}")),
+                "expected node:{subpath} to be recognized"
+            );
+        }
+        // Non-builtins (real user packages, incl. lookalikes) stay unrecognized
+        // so they still take the user-package TS2307 path.
+        for other in [
+            "express",
+            "fs-extra",
+            "lodash",
+            "fsx",
+            "node:does-not-exist",
+        ] {
+            assert!(
+                !is_known_node_module(other),
+                "expected non-builtin {other} to NOT be recognized"
+            );
+        }
+    }
 
     #[test]
     fn test_import_attributes_feature_gate() {

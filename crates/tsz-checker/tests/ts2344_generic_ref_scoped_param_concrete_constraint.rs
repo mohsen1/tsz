@@ -415,3 +415,52 @@ type Use<A> = Box<ExecText<A>>;
         "Nested conditional filters should satisfy string constraints through their extends branch. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn indexed_object_map_filtering_to_string_satisfies_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Box<T extends string> = T;
+type PickMatching<U, M> =
+  U extends unknown
+    ? { 1: U & M, 0: never }[U extends M ? 1 : 0]
+    : never;
+type NextText<OP> = PickMatching<OP, string>;
+type Routed<A> = NextText<string | { payload: A }>;
+
+type Use<A> = Box<Routed<A>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Indexed object-map filters whose values include `string` should satisfy string constraints. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn indexed_object_map_filtering_to_number_does_not_satisfy_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Box<T extends string> = T;
+type PickMatching<U, M> =
+  U extends unknown
+    ? { 1: U & M, 0: never }[U extends M ? 1 : 0]
+    : never;
+type NextNumber<OP> = PickMatching<OP, number>;
+type Routed<A> = NextNumber<number | { payload: A }>;
+
+type Use<A> = Box<Routed<A>>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected one TS2344 when the object-map filter is bounded by number, not string. Got: {diagnostics:?}"
+    );
+}

@@ -52,7 +52,7 @@ impl<'a> TypeInstantiator<'a> {
             readonly_modifier: mapped.readonly_modifier,
             optional_modifier: mapped.optional_modifier,
         });
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expanded);
+        let evaluated = self.evaluate_type(expanded);
         if evaluated == TypeId::ERROR
             || matches!(self.interner.lookup(evaluated), Some(TypeData::Mapped(_)))
         {

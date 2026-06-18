@@ -828,13 +828,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// snapshot taken at body entry. Termination is owned by the recursion guards
     /// and fuel, not by this cache, so a (now rarer) skipped write cannot
     /// reintroduce a hang.
+    ///
+    /// This is the *epoch* permit. A second, complementary permit —
+    /// [`is_concrete_application_fixpoint`](Self::is_concrete_application_fixpoint)
+    /// — additionally admits fully-concrete, fully-resolved results that are
+    /// stack-independent by construction even when this epoch test fails. Both
+    /// permits are consulted at the single write site
+    /// [`insert_application_eval_cache_if_some`](Self::insert_application_eval_cache_if_some).
     #[inline]
     const fn application_eval_result_cacheable(&self) -> bool {
         self.limit_epoch == self.app_body_limit_epoch
     }
 
-    /// Insert into the application-eval cache iff `query_db` is connected and the
-    /// current run has not hit any recursion/depth limit.
+    /// Insert into the application-eval cache iff `query_db` is connected and
+    /// the result is safe to persist under the resolver-independent
+    /// `(DefId, expanded_args, no_unchecked)` key.
     ///
     /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
     /// repeated in every body-aware shortcut and finalize helper.
@@ -843,9 +851,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// context: a limited resolver could otherwise store an under-resolved
     /// result under the resolver-independent `(DefId, args)` key and poison
     /// sibling reads. Reads use the same explicit `query_db` gate for the same
-    /// reason. They are additionally gated on
-    /// [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
-    /// so a depth-bounded run never persists a stack-context artifact.
+    /// reason.
+    ///
+    /// The result is persisted when *either* permit holds:
+    /// - [`application_eval_result_cacheable`](Self::application_eval_result_cacheable):
+    ///   no cycle/depth/iteration/divergence event fired in this application's
+    ///   body subtree, so the result is not a stack-context artifact; or
+    /// - [`is_concrete_application_fixpoint`](Self::is_concrete_application_fixpoint):
+    ///   the arguments are fully concrete and the result is fully resolved, so
+    ///   the value is an ambient-stack-independent fixpoint even if a *deeper*
+    ///   sub-expansion brushed a limit (issue #13508, root cause B).
     fn insert_application_eval_cache_if_some(
         &self,
         def_id: DefId,
@@ -853,7 +868,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         no_unchecked_indexed_access: bool,
         evaluated: TypeId,
     ) {
-        let cacheable = self.application_eval_result_cacheable();
+        let cacheable = self.application_eval_result_cacheable()
+            || self.is_concrete_application_fixpoint(expanded_args, evaluated);
         crate::evaluation::eval_materialization_probe::record_application_cache_insert(
             cacheable,
             self.query_db.is_some(),
@@ -883,6 +899,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 evaluated,
             );
         }
+    }
+
+    /// Whether a `(args -> result)` application is a *concrete fixpoint*: its
+    /// arguments carry no free type parameters and its result is fully resolved
+    /// (no free type parameter and no `error` sentinel).
+    ///
+    /// Such a result is a complete, ambient-stack-independent function of
+    /// `(def_id, args, no_unchecked)` — exactly the per-`(symbol, type-arg
+    /// tuple)` instantiation fixpoint `tsc` shares via its `resolvingType` memo
+    /// — so it is safe to persist even when
+    /// [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
+    /// would withhold the write because a *deeper* sub-expansion advanced
+    /// `limit_epoch`. That epoch gate is correct but over-broad for the shape
+    /// that dominates the recursive conditional-alias canaries (`typebox`
+    /// `Static<…>`, `remeda` `FilteredArray<…>`): any depth/fuel truncation
+    /// leaves an `error` sentinel (or an unexpanded type parameter) in the
+    /// result, so the `error`-free + parameter-free predicate is precisely what
+    /// distinguishes a genuine fixpoint from a truncated stack-context
+    /// artifact. Without sharing these, every sibling conditional arm and every
+    /// fresh assignability-check evaluator re-walks the same enormous concrete
+    /// type — the "limit ↔ sharing" circularity (the limit fires *because* the
+    /// DAG is re-walked, and sharing is blocked *because* the limit fired).
+    /// Termination stays owned by the recursion guards and fuel, so this only
+    /// collapses redundant re-evaluation.
+    fn is_concrete_application_fixpoint(&self, args: &[TypeId], result: TypeId) -> bool {
+        // Concrete instantiation: every argument must itself be parameter-free,
+        // so the key identifies one global instantiation rather than a
+        // context-dependent one. Checked first because it is cheap (few args)
+        // and gates the deeper result walk below.
+        if args
+            .iter()
+            .any(|&arg| crate::type_queries::contains_type_parameters_db(self.interner, arg))
+        {
+            return false;
+        }
+        // A fully-resolved result: no `error` sentinel (a depth/fuel truncation
+        // artifact) and no free type parameter (which would make the value
+        // context-dependent). Either disqualifies the result as a fixpoint.
+        // The bare-`ERROR` test is a cheap fast-path for the common bail value
+        // before the deep `contains_error_type_db` walk.
+        result != TypeId::ERROR
+            && !crate::type_queries::contains_error_type_db(self.interner, result)
+            && !crate::type_queries::contains_type_parameters_db(self.interner, result)
     }
 
     /// Extract the instance side of a class-shaped resolved body.

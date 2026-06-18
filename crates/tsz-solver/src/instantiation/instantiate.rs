@@ -9,6 +9,7 @@
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
+use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
@@ -31,6 +32,7 @@ const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 /// Instantiator for applying type substitutions.
 pub struct TypeInstantiator<'a> {
     interner: &'a dyn TypeDatabase,
+    query_db: Option<&'a dyn QueryDatabase>,
     substitution: &'a TypeSubstitution,
     /// Track visited types to handle cycles
     visiting: FxHashMap<TypeId, TypeId>,
@@ -86,6 +88,7 @@ impl<'a> TypeInstantiator<'a> {
             });
         TypeInstantiator {
             interner,
+            query_db: None,
             substitution,
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
@@ -105,6 +108,46 @@ impl<'a> TypeInstantiator<'a> {
 
     fn is_shadowed(&self, name: Atom) -> bool {
         self.shadowed.contains(&name)
+    }
+
+    pub(crate) const fn with_query_db(mut self, _query_db: Option<&'a dyn QueryDatabase>) -> Self {
+        // Keep the resolver-aware `QueryDatabase` at the outer cache boundary.
+        // Nested instantiation evaluation must stay resolver-less: routing
+        // `evaluate_*` through query-backed semantic helpers is not cache-only
+        // and can change inference/conformance behavior.
+        self.query_db = None;
+        self
+    }
+
+    #[inline]
+    pub(super) fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        if let Some(db) = self.query_db {
+            db.evaluate_type(type_id)
+        } else {
+            crate::evaluation::evaluate::evaluate_type(self.interner, type_id)
+        }
+    }
+
+    #[inline]
+    pub(super) fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        if let Some(db) = self.query_db {
+            db.evaluate_index_access(object_type, index_type)
+        } else {
+            crate::evaluation::evaluate::evaluate_index_access(
+                self.interner,
+                object_type,
+                index_type,
+            )
+        }
+    }
+
+    #[inline]
+    pub(super) fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        if let Some(db) = self.query_db {
+            db.evaluate_keyof(operand)
+        } else {
+            crate::evaluation::evaluate::evaluate_keyof(self.interner, operand)
+        }
     }
 
     /// Pre-trip the sticky depth-exceeded guard so the very next
@@ -166,7 +209,7 @@ impl<'a> TypeInstantiator<'a> {
         // would change `T[P]` (the union of all key values) into a per-key
         // `T[Q]`, so it is intentionally excluded.
         let substituted = self.substitution.get(p_name)?;
-        let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+        let resolved = self.evaluate_type(substituted);
         if !crate::type_queries::is_type_usable_as_property_name(self.interner, resolved) {
             return None;
         }
