@@ -332,14 +332,24 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
+        let mut heritage_incomplete = false;
         if let Some(ty) = lib_type_id {
-            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name).0);
+            let (merged, incomplete) = self.merge_lib_interface_heritage(ty, name);
+            lib_type_id = Some(merged);
+            heritage_incomplete = incomplete;
         }
 
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
-            self.register_augmented_lib_body(name, merged);
+            // Only publish (and, via the monotone gate, pin) the finalized body
+            // when heritage is complete: an augmented body built on a
+            // heritage-incomplete (base-dropped) form is still missing inherited
+            // members, and pinning it would freeze the thin form in the shared
+            // store (#13862 / #12299).
+            if !heritage_incomplete {
+                self.register_augmented_lib_body(name, merged);
+            }
         }
 
         // Mirror into shared cache when safe (no local augmentations).

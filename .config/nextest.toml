@@ -39,6 +39,14 @@ filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context) | t
 slow-timeout = { period = "120s", terminate-after = 2 }
 threads-required = "num-test-threads"
 
+# DOM lib-heritage publication witnesses intentionally build enough files to
+# exercise the fresh per-file checker pool. Run them alone with the longer
+# timeout used by other heavy checker regression tests.
+[[profile.default.overrides]]
+filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential)'
+slow-timeout = { period = "120s", terminate-after = 2 }
+threads-required = "num-test-threads"
+
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
 
@@ -64,6 +72,13 @@ threads-required = "num-test-threads"
 # Issue #10677 / #10683 regression — see the matching default-profile override.
 [[profile.ci.overrides]]
 filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context) | test(fuel_drained_inside_function_body_keeps_select_callback_context)'
+slow-timeout = { period = "120s", terminate-after = 2 }
+threads-required = "num-test-threads"
+
+# DOM lib-heritage publication witnesses — see the matching default-profile
+# override.
+[[profile.ci.overrides]]
+filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 threads-required = "num-test-threads"
 
