@@ -1265,3 +1265,70 @@ function foo({
         "Expected TS7022 for destructured parameter binding captured by sibling defaults.\nActual errors: {diagnostics:#?}"
     );
 }
+
+/// A parameter default whose template literal reads the `.name` *property* of an
+/// earlier parameter (e.g. a default of `Array<${item.name}>`) is NOT a
+/// self-reference: the `.name` part is a member name resolved in the object's
+/// namespace, not the sibling parameter named `name`. `tsc` accepts this; tsz
+/// previously walked into the property-name child of the access expression and
+/// mis-flagged it as TS2372/TS7022. Witnessed by io-ts `array`/`pipe`/
+/// `enumerableRecord` helpers (`index.ts`).
+#[test]
+fn test_ts2372_not_emitted_for_property_access_name_in_sibling_param_default() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Mixed { readonly name: string }
+function array<C extends Mixed>(item: C, name = `Array<${item.name}>`): string {
+    return name;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2372),
+        "TS2372 must NOT fire: `item.name` reads a property, not the `name` param.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 7022 && message.contains("'name'")),
+        "TS7022 must NOT fire for `name` whose default reads `item.name`.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// Negative guard: a genuine self-reference in the default (`name = name`) and a
+/// self-reference through the *object* side of a property access
+/// (`name = name.toString()`) MUST still be flagged TS2372/TS7022, matching
+/// `tsc`. Ensures the property-access fix narrows traversal to the object side
+/// only, without disabling real self-reference detection.
+#[test]
+fn test_ts2372_still_emitted_for_genuine_param_self_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function bare(name = name): string { return name; }
+function viaObject(name = name.toString()): string { return name; }
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2372 = diagnostics.iter().filter(|(c, _)| *c == 2372).count();
+    assert!(
+        ts2372 >= 2,
+        "TS2372 must still fire for both `name = name` and `name = name.toString()`.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 7022 && message.contains("'name'")),
+        "TS7022 must still fire for genuine self-referential `name` default.\nActual errors: {diagnostics:#?}"
+    );
+}

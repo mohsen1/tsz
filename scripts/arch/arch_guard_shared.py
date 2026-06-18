@@ -1435,14 +1435,23 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `common` in the very same expressions — no new quarantine entry.
         # Removal condition remains #8225 narrowing this quarantine.
         #
-        # Bumped 3072→3076 for the remeda error-type-contagion fix (#13512):
+        # Bumped by 1 for the nested deferred-conditional indexed-access parity
+        # fix (#13792): the new `indexed_access/deferred_conditional_index.rs`
+        # module resolves a deferred `B[K1]` apparent type through the existing
+        # `query_boundaries::common` structural predicates (`is_conditional_type`,
+        # `is_generic_application`, `is_index_access_type`, `is_keyof_type`,
+        # `conditional_branch_union_constraint`). These join the sibling
+        # predicates already routed through `common`; the net live count rises by
+        # one over current main — no new quarantine entry.
+        # Removal condition remains #8225 narrowing this quarantine.
+        #
+        # Bumped 3073→3076 for the remeda error-type-contagion fix (#13512):
         # the `indexed_access/error_contagion.rs` spine walk adds an
         # `application_info` + `index_access_types` peel and the
         # `context/unresolved_import.rs` detector adds a `lazy_def_id` lookup,
         # all through the existing `query_boundaries::common` gateway joining the
         # sibling structural predicates already used in the same expressions —
-        # no new quarantine entry. (+2 from the layered #13792 base whose own
-        # ratchet lands with it.) Removal condition remains #8225.
+        # no new quarantine entry. Removal condition remains #8225.
         3076,
     ),
 ]
