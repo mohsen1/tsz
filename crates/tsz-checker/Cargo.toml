@@ -1354,6 +1354,9 @@ path = "tests/jsx_pragma_boundary_tests.rs"
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 [[test]]
+name = "typeof_function_generic_alias_narrowing_tests"
+path = "tests/typeof_function_generic_alias_narrowing_tests.rs"
+[[test]]
 name = "discriminant_literal_reference_narrowing_tests"
 path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 [[test]]
