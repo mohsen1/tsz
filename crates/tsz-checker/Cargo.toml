@@ -626,6 +626,9 @@ path = "tests/deferred_conditional_identity_extends_tests.rs"
 name = "deferred_conditional_indexed_access_tests"
 path = "tests/deferred_conditional_indexed_access_tests.rs"
 [[test]]
+name = "deferred_hof_application_unknown_array_constraint_tests"
+path = "tests/deferred_hof_application_unknown_array_constraint_tests.rs"
+[[test]]
 name = "ts2322_property_decl_annotation_tests"
 path = "tests/ts2322_property_decl_annotation_tests.rs"
 [[test]]
