@@ -453,6 +453,17 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
+            // A spread element (`{ ...src }`) contributes every property carried by
+            // the spread source's type to the variable's semantic shape. The
+            // initializer therefore already declares `property_name` when the spread
+            // source structurally has it; a later `obj.prop = ...` write is a
+            // re-assignment of an existing property, not an expando forward-read.
+            if elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                || elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+            {
+                return self.spread_source_type_declares_property(elem_node, property_name);
+            }
+
             let elem_prop_name = match elem_node.kind {
                 syntax_kind_ext::PROPERTY_ASSIGNMENT => self
                     .ctx
@@ -479,6 +490,72 @@ impl<'a> CheckerState<'a> {
 
             elem_prop_name.is_some_and(|name| name == property_name)
         })
+    }
+
+    /// Whether a spread element's source type structurally declares `property_name`.
+    ///
+    /// The spread source expression is typed when the enclosing object literal is
+    /// computed (node-type cache); for a plain identifier source the resolved
+    /// symbol type is the fallback. The structural `type_has_property` query covers
+    /// named members, index signatures, and members introduced through nested
+    /// spreads.
+    fn spread_source_type_declares_property(
+        &self,
+        spread_elem_node: &tsz_parser::parser::node::Node,
+        property_name: &str,
+    ) -> bool {
+        let Some(spread) = self.ctx.arena.get_spread(spread_elem_node) else {
+            return false;
+        };
+        let spread_type = self
+            .ctx
+            .node_types
+            .get(&spread.expression.0)
+            .copied()
+            .or_else(|| {
+                self.resolve_identifier_symbol(spread.expression)
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            });
+        let Some(spread_type) = spread_type else {
+            return false;
+        };
+        let prop_atom = self.ctx.types.intern_string(property_name);
+        self.resolved_type_has_property(spread_type, prop_atom)
+    }
+
+    /// Structural `type_has_property` that first resolves a `Lazy(DefId)` source
+    /// reference (type alias / interface) through the checker-owned `DefId`
+    /// resolver. The solver's environment-free finite-name query cannot enumerate
+    /// members of an unresolved lazy reference, so a spread of an interface-typed
+    /// value (`{ ...state }` where `state: QueryState`) would otherwise report no
+    /// properties.
+    fn resolved_type_has_property(
+        &self,
+        type_id: tsz_solver::TypeId,
+        prop_atom: tsz_common::Atom,
+    ) -> bool {
+        use crate::query_boundaries::definition_identity::lazy_def_id;
+        use crate::query_boundaries::property_access::type_has_property;
+        use crate::query_boundaries::type_checking_utilities::application_base;
+        use tsz_solver::relations::subtype::TypeResolver;
+
+        if type_has_property(self.ctx.types, type_id, prop_atom) {
+            return true;
+        }
+        // The property *name* set of an interface/alias is independent of its type
+        // arguments, so peel a generic application (`QueryState<T, E>`) to its base
+        // before resolving the lazy reference. Resolving the `DefId` body yields the
+        // interface's structural members, which the environment-free finite-name
+        // query cannot enumerate from an unresolved `Lazy` reference alone.
+        let base = application_base(self.ctx.types, type_id).unwrap_or(type_id);
+        if let Some(def_id) = lazy_def_id(self.ctx.types, base)
+            && let Some(body) = self.ctx.resolve_lazy(def_id, self.ctx.types)
+            && body != type_id
+            && body != base
+        {
+            return type_has_property(self.ctx.types, body, prop_atom);
+        }
+        false
     }
 
     pub(in crate::types_domain) fn union_has_explicit_property_member(
