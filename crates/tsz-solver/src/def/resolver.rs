@@ -919,6 +919,39 @@ impl TypeEnvironment {
         })
     }
 
+    /// Resolve the redirect target for a `Lazy(DefId(N))` whose own
+    /// body/params/variance are not directly available, by reinterpreting the
+    /// numeric value `N` as a raw `SymbolId` and looking up the real `DefId`.
+    ///
+    /// This reinterpretation is sound ONLY for *zombie* `DefId`s minted via
+    /// `interner.reference(SymbolRef(N))`, where `N` genuinely is a `SymbolId`.
+    /// A store-registered `DefId` lives in the `DefId` number space, which is
+    /// disjoint in meaning from the `SymbolId` space; resolving it through the
+    /// file-agnostic symbol→def index returns whatever unrelated definition
+    /// merely shares that raw numeric id. Lib symbols make this collision
+    /// routine — every lib symbol keeps the `u32::MAX` declaration-file
+    /// sentinel, so the index is first-writer-wins across lib binders. Concrete
+    /// defect (#13862): `HTMLDivElement` resolves to `DefId(218)`; with its body
+    /// not yet materialized, the old fallback re-read `218` as a `SymbolId` and
+    /// answered with the def whose *symbol* id is `218` (`FileSystemEntry`),
+    /// corrupting `HTMLElementTagNameMap["div"]`. Returning `None` for a
+    /// registered `DefId` makes callers defer (the checker materializes the real
+    /// body on demand) instead of resolving a collision.
+    fn raw_symbol_fallback_def(&self, def_id: DefId) -> Option<DefId> {
+        if self
+            .definition_store
+            .as_ref()
+            .is_some_and(|store| store.contains(def_id))
+        {
+            return None;
+        }
+        self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.find_def_by_symbol(def_id.0))
+        })
+    }
+
     /// Get a `DefId`'s type parameters.
     ///
     /// Checks local `def_type_params` first, then falls back to `DefinitionStore`
@@ -1356,13 +1389,12 @@ impl TypeResolver for TypeEnvironment {
             return Some(ty);
         }
 
-        // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
-        // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
-        let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
-            self.definition_store
-                .as_ref()
-                .and_then(|store| store.find_def_by_symbol(def_id.0))
-        })?;
+        // Fallback: `interner.reference(SymbolRef(N))` creates a zombie
+        // `Lazy(DefId(N))` whose numeric value is a raw `SymbolId`; redirect to
+        // the real `DefId`. `raw_symbol_fallback_def` returns `None` for a
+        // registered `DefId` so its value is never mis-read as a colliding
+        // `SymbolId` (#13862).
+        let real_def = self.raw_symbol_fallback_def(def_id)?;
         tsz_common::perf_counters::record_type_environment_raw_symbol_lazy_fallback();
         tracing::trace!(
             target: "tsz::solver::def_id",
@@ -1389,31 +1421,20 @@ impl TypeResolver for TypeEnvironment {
         // ensuring lib types like Readonly<T> whose params were registered
         // in the shared store (not the local cache) are found.
         self.get_def_params_owned(def_id).or_else(|| {
-            // Fallback: resolve raw SymbolId-based DefIds to real DefIds
-            let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
-                self.definition_store
-                    .as_ref()
-                    .and_then(|store| store.find_def_by_symbol(def_id.0))
-            })?;
+            // Fallback: resolve a zombie raw-SymbolId `DefId` to the real def
+            // (never a registered `DefId`; #13862).
+            let real_def = self.raw_symbol_fallback_def(def_id)?;
             self.get_def_params_owned(real_def)
         })
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        self.declared_variances
-            .get(&def_id.0)
-            .cloned()
-            .or_else(|| {
-                let real_def = self.symbol_to_def.get(&def_id.0)?;
-                self.declared_variances.get(&real_def.0).cloned()
-            })
-            .or_else(|| {
-                let real_def = self
-                    .definition_store
-                    .as_ref()?
-                    .find_def_by_symbol(def_id.0)?;
-                self.declared_variances.get(&real_def.0).cloned()
-            })
+        self.declared_variances.get(&def_id.0).cloned().or_else(|| {
+            // Fallback: redirect a zombie raw-SymbolId `DefId` to the real def
+            // (never a registered `DefId`; #13862).
+            let real_def = self.raw_symbol_fallback_def(def_id)?;
+            self.declared_variances.get(&real_def.0).cloned()
+        })
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -1530,19 +1551,16 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_def_raw_body(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         // Check the local def_types cache first, then the shared DefinitionStore.
-        // Also handle raw SymbolId-based DefIds (from interner.reference) via the
-        // same symbol-index fallback used in resolve_lazy.
+        // Also handle zombie raw-SymbolId `DefId`s (from interner.reference) via
+        // the same fallback used in resolve_lazy (never a registered `DefId`;
+        // #13862).
         self.def_types
             .get(&def_id.0)
             .copied()
             .or_else(|| self.definition_store.as_ref()?.get_body(def_id))
             .or_else(|| {
+                let real_def = self.raw_symbol_fallback_def(def_id)?;
                 let store = self.definition_store.as_ref()?;
-                let real_def = self
-                    .symbol_to_def
-                    .get(&def_id.0)
-                    .copied()
-                    .or_else(|| store.find_def_by_symbol(def_id.0))?;
                 self.def_types
                     .get(&real_def.0)
                     .copied()
@@ -1554,6 +1572,7 @@ impl TypeResolver for TypeEnvironment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::def::DefinitionInfo;
     use crate::types::IntrinsicKind;
     use std::sync::Arc;
 
@@ -1615,6 +1634,76 @@ mod tests {
         assert_eq!(
             env.resolve_lazy(DefId(raw_symbol.0), &interner),
             Some(resolved_type)
+        );
+    }
+
+    /// Regression (#13862): `resolve_lazy` must never reinterpret a *registered*
+    /// `DefId`'s numeric value as a `SymbolId`.
+    ///
+    /// `Lazy(DefId(N))` is created both for genuine registered definitions and
+    /// for zombie references (`interner.reference(SymbolRef(N))`, where `N` is a
+    /// raw `SymbolId`). The raw-symbol fallback is only sound for the zombie
+    /// case. For a registered `DefId` whose body is not yet materialized,
+    /// resolving it through `find_def_by_symbol(def_id.0)` collides with the
+    /// unrelated definition that merely shares that raw numeric id — exactly the
+    /// cross-lib-binder defect where `HTMLElementTagNameMap["div"]` resolved
+    /// `HTMLDivElement` (= `DefId(218)`) to the def whose *symbol* id is `218`
+    /// (`FileSystemEntry`). Lib symbols all carry the `u32::MAX` declaration-file
+    /// sentinel, so the file-agnostic symbol→def index is first-writer-wins
+    /// across lib binders, making the collision routine.
+    #[test]
+    fn resolve_lazy_does_not_symbol_conflate_a_registered_def() {
+        let interner = crate::construction::TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+
+        // The "real" def (HTMLDivElement-like): registered, body NOT materialized.
+        let real = store.register(DefinitionInfo::interface(
+            interner.intern_string("ElementLike"),
+            vec![],
+            vec![],
+        ));
+
+        // A collider whose *SymbolId* equals `real`'s `DefId` numeric value and
+        // which carries a concrete body, so `find_def_by_symbol(real.0)` resolves
+        // to it.
+        let mut collider_info =
+            DefinitionInfo::type_alias(interner.intern_string("Collider"), vec![], TypeId::STRING);
+        collider_info.symbol_id = Some(real.0);
+        let collider = store.register(collider_info);
+        store.set_body(collider, TypeId::STRING);
+        assert_eq!(store.find_def_by_symbol(real.0), Some(collider));
+
+        let mut env = TypeEnvironment::new();
+        env.set_definition_store(Arc::clone(&store));
+
+        // `real`'s body is unmaterialized. The pre-fix code returned the
+        // collider's body via symbol conflation; the fix defers instead.
+        assert_eq!(env.resolve_lazy(real, &interner), None);
+    }
+
+    /// The symbol-conflation fallback stays valid for *zombie* `DefId`s — those
+    /// minted by `interner.reference(SymbolRef(N))` where `DefId(N)` is itself
+    /// unregistered.
+    #[test]
+    fn resolve_lazy_store_zombie_fallback_still_redirects() {
+        let interner = crate::construction::TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+
+        let mut info =
+            DefinitionInfo::type_alias(interner.intern_string("Real"), vec![], TypeId::NUMBER);
+        info.symbol_id = Some(9000); // raw SymbolId 9000
+        let real = store.register(info);
+        store.set_body(real, TypeId::NUMBER);
+
+        let mut env = TypeEnvironment::new();
+        env.set_definition_store(Arc::clone(&store));
+
+        // DefId(9000) is unregistered, so the fallback legitimately reads 9000 as
+        // a SymbolId and redirects to `real`'s body.
+        assert!(store.get(DefId(9000)).is_none());
+        assert_eq!(
+            env.resolve_lazy(DefId(9000), &interner),
+            Some(TypeId::NUMBER)
         );
     }
 
