@@ -14,6 +14,7 @@ mod computed_helpers_private;
 mod computed_loops;
 mod core;
 mod core_type_query;
+mod core_typeof_value;
 pub(crate) mod cross_file;
 mod cross_file_alias_cycle;
 mod cross_file_alias_shortcut;
