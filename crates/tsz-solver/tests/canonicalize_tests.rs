@@ -1084,3 +1084,176 @@ fn canonicalize_object_with_index_signature() {
         panic!("Expected object type with index");
     }
 }
+
+// ===================================================================
+// Type-parameter `default` must not fragment canonical identity (#13609)
+// ===================================================================
+
+// `tsc` never distinguishes type parameters by their declared `default` in
+// relation/identity; the default is metadata consumed only at instantiation
+// when no argument is supplied. tsz interns type parameters structurally and
+// hashes the `default` field, so two references to the same parameter that
+// differ only in whether the (optional) default was captured intern to
+// distinct `TypeId`s. Those must still canonicalize to one identity so the
+// relation's reflexive/identity fast path is not lost.
+#[test]
+fn canonicalize_type_param_ignores_optional_default() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let name = interner.intern_string("R");
+    let constraint = Some(TypeId::STRING);
+
+    // Same parameter, one with a captured default, one without.
+    let r_with_default = interner.type_param(TypeParamInfo {
+        name,
+        constraint,
+        default: Some(TypeId::NUMBER),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let r_no_default = interner.type_param(TypeParamInfo {
+        name,
+        constraint,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+
+    // Distinct interned identities (the structural hash includes `default`)...
+    assert_ne!(
+        r_with_default, r_no_default,
+        "precondition: interning keeps the default distinct"
+    );
+
+    // ...but they canonicalize to the same identity.
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(r_with_default),
+        c2.canonicalize(r_no_default),
+        "type-parameter default must not fragment canonical identity"
+    );
+
+    // Two *different* defaults on the same parameter also collapse.
+    let r_other_default = interner.type_param(TypeParamInfo {
+        name,
+        constraint,
+        default: Some(TypeId::BOOLEAN),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    let mut c4 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c3.canonicalize(r_with_default),
+        c4.canonicalize(r_other_default),
+        "differing defaults on the same parameter canonicalize identically"
+    );
+}
+
+// A genuinely different parameter (different name/constraint) must stay
+// distinct — the normalization only drops `default`, it does not erase the
+// parameter's identity.
+#[test]
+fn canonicalize_type_param_default_drop_preserves_real_distinctions() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let r = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: Some(TypeId::NUMBER),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    // Different name.
+    let s = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: None,
+        default: Some(TypeId::NUMBER),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    // Different constraint.
+    let r_constrained = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: Some(TypeId::STRING),
+        default: Some(TypeId::NUMBER),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    let mut c4 = Canonicalizer::new(&interner, &env);
+    assert_ne!(
+        c1.canonicalize(r),
+        c2.canonicalize(s),
+        "distinct parameter names stay distinct after dropping default"
+    );
+    assert_ne!(
+        c3.canonicalize(r),
+        c4.canonicalize(r_constrained),
+        "distinct constraints stay distinct after dropping default"
+    );
+}
+
+// The same identity rule applies when the type parameter is declared in a
+// signature's type-parameter list: two generic function types that differ only
+// in a type parameter's `default` must canonicalize to one identity, so the
+// relation's reflexive short-circuit holds for `<R extends X = "json">() => R`
+// against `<R extends X>() => R` (#13609).
+#[test]
+fn canonicalize_function_type_param_list_ignores_default() {
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let r = interner.intern_string("R");
+    let make = |default: Option<TypeId>| {
+        let body = interner.type_param(TypeParamInfo {
+            name: r,
+            constraint: Some(TypeId::STRING),
+            default,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        interner.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: r,
+                constraint: Some(TypeId::STRING),
+                default,
+                is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
+            }],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: body,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: body,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let with_default = make(Some(TypeId::NUMBER));
+    let without_default = make(None);
+    assert_ne!(
+        with_default, without_default,
+        "precondition: interning keeps the default distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(with_default),
+        c2.canonicalize(without_default),
+        "type-parameter default in a signature list must not fragment identity"
+    );
+}

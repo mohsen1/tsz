@@ -164,8 +164,22 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 TypeData::TypeParameter(info) => {
                     if let Some(index) = self.find_param_index(info.name) {
                         self.interner.bound_parameter(index)
+                    } else if info.default.is_some() {
+                        // Free type-parameter reference carrying a `default`. The
+                        // default is identity-irrelevant (see
+                        // `canonical_type_param`): two references to the same
+                        // parameter that differ only in whether the default was
+                        // captured (`R extends ResponseType = "json"` vs a bare
+                        // `R`) intern to distinct `TypeId`s and would fragment the
+                        // identity fast path. Drop it for the canonical form; the
+                        // interned parameter keeps its default for instantiation.
+                        let normalized = crate::types::TypeParamInfo {
+                            default: None,
+                            ..info
+                        };
+                        self.interner.type_param(normalized)
                     } else {
-                        // Free variable (shouldn't happen in valid code)
+                        // Free variable with no default — already canonical.
                         type_id
                     }
                 }
@@ -275,17 +289,12 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         })
                         .collect();
 
-                    // Canonicalize type parameter constraints and defaults
+                    // Canonicalize type parameter constraints (defaults are
+                    // identity-irrelevant; see `canonical_type_param`).
                     let c_type_params: Vec<crate::types::TypeParamInfo> = shape
                         .type_params
                         .iter()
-                        .map(|tp| crate::types::TypeParamInfo {
-                            name: tp.name,
-                            constraint: tp.constraint.map(|c| self.canonicalize(c)),
-                            default: tp.default.map(|d| self.canonicalize(d)),
-                            is_const: tp.is_const,
-                            origin: tp.origin,
-                        })
+                        .map(|&tp| self.canonical_type_param(tp))
                         .collect();
 
                     // Canonicalize type predicate (if it has a type_id)
@@ -348,11 +357,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     // { [K in T]: K } and { [P in T]: P } hash to the same value.
                     // Since we use De Bruijn indices (BoundParameter) in the body,
                     // this name is never looked up, only used for hashing identity.
-                    let mut c_type_param = mapped.type_param;
+                    let mut c_type_param = self.canonical_type_param(mapped.type_param);
                     c_type_param.name = self.interner.intern_string("");
-                    // Also canonicalize constraint/default inside TypeParamInfo if present
-                    c_type_param.constraint = c_type_param.constraint.map(|c| self.canonicalize(c));
-                    c_type_param.default = c_type_param.default.map(|d| self.canonicalize(d));
 
                     let c_mapped = crate::types::MappedType {
                         type_param: c_type_param,
@@ -644,6 +650,30 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         self.interner.object_with_index(new_shape)
     }
 
+    /// Canonical (identity) form of a declared type parameter.
+    ///
+    /// The `constraint` is canonicalized recursively, but `default` is dropped:
+    /// `tsc` never distinguishes type parameters by their declared `default` in
+    /// relation/identity (the default is consumed only at instantiation when no
+    /// argument is supplied). Keeping it would let two otherwise-identical
+    /// generic signatures — `<R extends X = "json">` vs `<R extends X>` —
+    /// canonicalize to distinct identities and miss the relation's reflexive
+    /// short-circuit (#13609). Callers that manage an alpha-equivalence scope
+    /// (function/signature/mapped) must push the parameter name before calling
+    /// so the constraint's self/sibling references resolve to bound parameters.
+    fn canonical_type_param(
+        &mut self,
+        tp: crate::types::TypeParamInfo,
+    ) -> crate::types::TypeParamInfo {
+        crate::types::TypeParamInfo {
+            name: tp.name,
+            constraint: tp.constraint.map(|c| self.canonicalize(c)),
+            default: None,
+            is_const: tp.is_const,
+            origin: tp.origin,
+        }
+    }
+
     /// Canonicalize a single call signature with type parameter scope management.
     fn canonicalize_signature(
         &mut self,
@@ -676,18 +706,12 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             })
             .collect();
 
-        // Canonicalize type parameter constraints and defaults
+        // Canonicalize type parameter constraints (defaults are
+        // identity-irrelevant; see `canonical_type_param`).
         let c_type_params: Vec<crate::types::TypeParamInfo> = sig
             .type_params
             .iter()
-            .map(|tp| crate::types::TypeParamInfo {
-                name: tp.name,
-                constraint: tp.constraint.map(|c| self.canonicalize(c)),
-                default: tp.default.map(|d| self.canonicalize(d)),
-                // Preserve other fields as-is
-                is_const: tp.is_const,
-                origin: tp.origin,
-            })
+            .map(|&tp| self.canonical_type_param(tp))
             .collect();
 
         // Canonicalize type predicate (if it has a type_id)
