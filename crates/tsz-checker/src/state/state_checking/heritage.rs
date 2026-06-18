@@ -332,23 +332,57 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Resolve the base through any named import / re-export alias
-                    // chain before reading its type-parameter arity. A barrel
-                    // re-export (`export type { I } from './impl'`) otherwise hands
-                    // back a parameter-less alias symbol and falsely makes a
-                    // generic base look non-generic (TS2315). The downstream
-                    // `heritage_sym` is left untouched so constructor / namespace /
-                    // before-declaration checks keep their existing semantics.
-                    let params_sym =
-                        self.heritage_name_text(expr_idx)
-                            .map_or(heritage_sym, |base_name| {
-                                self.heritage_symbol_resolved_through_reexport(
-                                    heritage_sym,
-                                    &base_name,
-                                )
-                            });
-                    let required_count = self.count_required_type_params(params_sym);
-                    let total_type_params = self.get_type_params_for_symbol(params_sym).len();
+                    // For a plain identifier (`extends Base<T>`), read arity
+                    // through the same reference-aware path as type references.
+                    // The raw `SymbolId` can be an import/re-export alias with
+                    // no params, falsely making imported generic interfaces look
+                    // non-generic. Qualified names and call expressions keep the
+                    // resolved-symbol path because it also handles constructor
+                    // signatures.
+                    let heritage_ref_name = self
+                        .ctx
+                        .arena
+                        .get(expr_idx)
+                        .filter(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                        .and_then(|_| self.heritage_name_text(expr_idx));
+                    let params_sym = heritage_ref_name.as_deref().map_or_else(
+                        || {
+                            self.heritage_name_text(expr_idx)
+                                .map_or(heritage_sym, |base_name| {
+                                    self.heritage_symbol_resolved_through_reexport(
+                                        heritage_sym,
+                                        &base_name,
+                                    )
+                                })
+                        },
+                        |base_name| {
+                            self.heritage_symbol_resolved_through_reexport(heritage_sym, base_name)
+                        },
+                    );
+                    let type_params = if let Some(base_name) = heritage_ref_name.as_deref() {
+                        self.get_reference_type_params_for_symbol(heritage_sym, base_name)
+                    } else {
+                        self.get_type_params_for_symbol(params_sym)
+                    };
+                    let required_count = if let Some(base_name) = heritage_ref_name.as_deref() {
+                        self.count_required_reference_type_params(heritage_sym, base_name)
+                    } else {
+                        type_params
+                            .iter()
+                            .filter(|param| param.default.is_none())
+                            .count()
+                    };
+                    let total_type_params = type_params.len();
+                    let heritage_display_name = self
+                        .heritage_name_text(expr_idx)
+                        .unwrap_or_else(|| "<expression>".to_string());
+                    let resolved_display_name =
+                        self.heritage_ts2314_display_name(params_sym, &heritage_display_name);
+                    let generic_display_name = Self::format_generic_display_name_with_interner(
+                        &resolved_display_name,
+                        &type_params,
+                        self.ctx.types,
+                    );
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
                             let symbol_type = self.get_type_of_symbol(params_sym);
@@ -371,13 +405,10 @@ impl<'a> CheckerState<'a> {
                                 && symbol_type != TypeId::ANY
                                 && !type_args.nodes.is_empty()
                             {
-                                let name = self
-                                    .heritage_name_text(expr_idx)
-                                    .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
                                     expr_idx,
                                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                                    &[name.as_str()],
+                                    &[heritage_display_name.as_str()],
                                 );
                             }
                             // Still resolve type arguments even when the type is not
@@ -393,29 +424,25 @@ impl<'a> CheckerState<'a> {
                                     is_class_declaration,
                                     is_extends_clause,
                                 )
-                                && let Some(name) = self.heritage_name_text(expr_idx)
+                                && let Some(_name) = self.heritage_name_text(expr_idx)
                             {
-                                let resolved_name =
-                                    self.heritage_ts2314_display_name(params_sym, &name);
-                                let type_params = self.get_type_params_for_symbol(params_sym);
-                                let display_name = Self::format_generic_display_name_with_interner(
-                                    &resolved_name,
-                                    &type_params,
-                                    self.ctx.types,
-                                );
                                 self.error_generic_type_requires_type_arguments_at(
-                                    &display_name,
+                                    &generic_display_name,
                                     required_count,
                                     type_idx,
                                 );
                             }
 
-                            self.validate_type_reference_type_arguments(
-                                params_sym, type_args, type_idx,
+                            self.validate_type_reference_type_arguments_against_params(
+                                &type_params,
+                                required_count,
+                                type_args,
+                                type_idx,
+                                &generic_display_name,
                             );
                         }
                     } else if required_count > 0
-                        && let Some(name) = self.heritage_name_text(expr_idx)
+                        && let Some(_name) = self.heritage_name_text(expr_idx)
                     {
                         // tsc skips TS2314 for heritage clauses when:
                         // 1. JS files — type arguments are never required
@@ -428,16 +455,8 @@ impl<'a> CheckerState<'a> {
                             is_extends_clause,
                         );
                         if !skip_ts2314 {
-                            let resolved_name =
-                                self.heritage_ts2314_display_name(params_sym, &name);
-                            let type_params = self.get_type_params_for_symbol(params_sym);
-                            let display_name = Self::format_generic_display_name_with_interner(
-                                &resolved_name,
-                                &type_params,
-                                self.ctx.types,
-                            );
                             self.error_generic_type_requires_type_arguments_at(
-                                &display_name,
+                                &generic_display_name,
                                 required_count,
                                 type_idx,
                             );
