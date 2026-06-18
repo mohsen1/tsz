@@ -53,6 +53,13 @@ HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 
 # shellcheck source=scripts/ci/ci-resources.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ci-resources.sh"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
+# Cap nextest test-thread parallelism for the memory-heavy unit lib-tests on the
+# 32 GiB Cloud Run runners. The build side is already pinned to CARGO_BUILD_JOBS=1
+# for unit (rustc RSS >16 GiB), but the *test* phase ran 4-wide (profile.ci
+# test-threads=4); several heavy lib-test processes (tsz-checker/solver/emitter)
+# peaking together exceeded 32 GiB and SIGKILLed the runner ("lost communication"),
+# cancelling main CI. Default to 2; override with TSZ_CI_UNIT_TEST_THREADS.
+export UNIT_NEXTEST_TEST_THREADS="${TSZ_CI_UNIT_TEST_THREADS:-2}"
 echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
 
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
@@ -581,6 +588,7 @@ run_unit_tests() {
   if (( ${#general_pkg_args[@]} > 0 )); then
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
+      --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
       "${general_pkg_args[@]}"
   fi
 
@@ -716,6 +724,7 @@ run_unit_shard() {
   cargo nextest run \
     --archive-file "$tmp_archive" \
     --profile ci \
+    --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
     --partition "hash:$((shard_index + 1))/${shard_count}"
   rm -f "$tmp_archive"
 }
