@@ -91,6 +91,42 @@ fn type_predicate_cache_statistics_reports_union_normalize_entries() {
 }
 
 #[test]
+fn union_normalize_memo_shares_order_permuted_member_lists() {
+    // A non-order-preserving union's normalized result is a pure function of
+    // its member multiset, so rebuilding the same multiset with members in a
+    // different order must reuse the memo instead of re-running the O(N^2)
+    // `reduce_union_subtypes` sweep (issue #13240). Three disjoint primitives
+    // are non-reducible against each other, so the union keeps all members and
+    // its identity is stable across orderings.
+    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+
+    let interner = TypeInterner::new();
+
+    let first_order = interner.union_from_slice(&[TypeId::BOOLEAN, TypeId::NUMBER, TypeId::STRING]);
+
+    // After the first build the canonical (sorted) key is memoized. A rebuild
+    // in a different member order must hit that entry without recomputing.
+    let before = tsz_common::perf_counters::PerfCounters::snapshot()
+        .solver_materialization
+        .union_subtype_reduction_calls;
+    let permuted_order =
+        interner.union_from_slice(&[TypeId::STRING, TypeId::BOOLEAN, TypeId::NUMBER]);
+    let after = tsz_common::perf_counters::PerfCounters::snapshot()
+        .solver_materialization
+        .union_subtype_reduction_calls;
+
+    assert_eq!(
+        first_order, permuted_order,
+        "union member order must not change the interned result"
+    );
+    assert_eq!(
+        after, before,
+        "an order-permuted rebuild of the same multiset must be served from the \
+         memo, not re-run through reduce_union_subtypes"
+    );
+}
+
+#[test]
 fn boxed_def_id_registration_is_idempotent() {
     let interner = TypeInterner::new();
     let def_id = DefId(7);

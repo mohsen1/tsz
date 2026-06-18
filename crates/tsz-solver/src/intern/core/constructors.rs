@@ -780,18 +780,67 @@ impl TypeInterner {
     /// interning) is deterministic in the flattened input list over immutable
     /// interned types, and evaluation hot paths rebuild the same unions
     /// constantly (the interner sees ~97% repeat hits on type-level-heavy
-    /// projects). Key is the exact pre-normalization member list, so repeats
-    /// skip straight to the previously interned result.
+    /// projects).
+    ///
+    /// Two key spellings share one memo:
+    /// - The **raw** pre-normalization member list is the fast path, taken
+    ///   first at zero canonicalization cost, and serves exact repeats.
+    /// - For non-order-preserving unions the normalized result is a pure
+    ///   function of the member *multiset* (the pipeline sorts+dedups
+    ///   internally before doing any reduction), so on a raw miss the
+    ///   **canonical** (sorted, deduped) member list is consulted too. Generic
+    ///   instantiation and conditional distribution rebuild the same multiset
+    ///   with members in varying orders; canonical keying lets those
+    ///   order-permuted reconstructions share one entry instead of each
+    ///   re-running the O(N²) `reduce_union_subtypes` sweep (issue #13240 /
+    ///   #12271 / #13250).
+    ///
+    /// `should_preserve_callable_union_order` is a function of the member set,
+    /// so a given multiset is deterministically order-preserving or not: an
+    /// order-preserving callable union (whose result *is* order-dependent)
+    /// keeps raw-only keying, and its raw key can never alias another union's
+    /// canonical key.
     pub(super) fn normalize_union(&self, flat: TypeListBuffer) -> TypeId {
         if flat.len() > Self::UNION_NORMALIZE_CACHE_MAX_LEN {
             return self.normalize_union_uncached(flat);
         }
+        // Fast path: an exact repeat of a previously-seen member list. This is
+        // the dominant case and pays only one hash lookup.
         if let Some(hit) = self.union_normalize_cache.get(flat.as_slice()) {
             return *hit;
         }
-        let key: Box<[TypeId]> = flat.as_slice().into();
+
+        // Order-preserving callable unions retain their input member order, so
+        // their normalized result is order-dependent — only the raw spelling
+        // is a valid key.
+        if self.should_preserve_callable_union_order(&flat) {
+            let key: Box<[TypeId]> = flat.as_slice().into();
+            let result = self.normalize_union_uncached(flat);
+            self.union_normalize_cache.insert(key, result);
+            return result;
+        }
+
+        // Canonical key: catches order-permuted reconstructions of the same
+        // multiset that the raw key just missed.
+        let mut canonical = flat.clone();
+        self.sort_union_members(&mut canonical);
+        canonical.dedup();
+        let canonical_key: Box<[TypeId]> = canonical.as_slice().into();
+        if let Some(hit) = self.union_normalize_cache.get(&canonical_key) {
+            let shared = *hit;
+            // Record the raw spelling so a later exact repeat takes the fast
+            // path above without recomputing the canonical key.
+            self.union_normalize_cache
+                .insert(flat.as_slice().into(), shared);
+            return shared;
+        }
+
+        let raw_key: Box<[TypeId]> = flat.as_slice().into();
         let result = self.normalize_union_uncached(flat);
-        self.union_normalize_cache.insert(key, result);
+        // Store under both spellings: the raw key serves exact repeats from the
+        // fast path; the canonical key serves future order-permuted repeats.
+        self.union_normalize_cache.insert(canonical_key, result);
+        self.union_normalize_cache.insert(raw_key, result);
         result
     }
 
