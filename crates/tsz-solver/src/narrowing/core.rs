@@ -13,7 +13,7 @@ use crate::visitor::{
     type_param_info, union_list_id,
 };
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
@@ -459,6 +459,62 @@ pub struct NarrowingCache {
     /// recursive-schema `collect_properties_cached` walk can be cached once per
     /// `(source, target)` pair (issue #13242 / #13250).
     pub(crate) narrow_subtype_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+    /// Re-entrancy depth of the exclusion-narrowing families
+    /// (`narrow_excluding_type` / `narrow_excluding_function` /
+    /// `narrow_excluding_typeof_object`).
+    ///
+    /// The outermost frame (`depth == 0`) primes [`Self::narrow_excluding_fuel`]
+    /// so the cumulative work bound is scoped *per top-level request* and never
+    /// leaks across the many independent narrowings a shared cache serves.
+    pub(crate) narrow_excluding_depth: Cell<u32>,
+    /// Remaining cumulative work for the current outermost exclusion-narrowing
+    /// request.
+    ///
+    /// `narrow_type_param_excluding` re-mints a fresh `source & narrowed_constraint`
+    /// intersection at every level, so the per-pair [`Self::narrow_excluding_visiting`]
+    /// guard (keyed on a *stable* `(source, excluded)`) never fires for a
+    /// self-referential constraint such as `T extends Foo`: each recursion
+    /// presents a different `source` `TypeId`. A persistent work counter — the
+    /// narrowing analogue of tsc's `instantiationCount` — bounds that
+    /// breadth-fanned recursion regardless of how many fresh types it mints. On
+    /// exhaustion the recursion bails to the unchanged source, the same
+    /// conservative answer the in-flight cycle guard returns.
+    pub(crate) narrow_excluding_fuel: Cell<u32>,
+    /// Per-request work cap used to prime [`Self::narrow_excluding_fuel`]. `0`
+    /// means "use [`NARROW_EXCLUDING_WORK_BUDGET`]"; tests and tuning may lower
+    /// it to exercise the bail path deterministically.
+    pub(crate) narrow_excluding_budget: Cell<u32>,
+}
+
+/// Per-request cumulative work bound shared by the exclusion-narrowing families
+/// (`narrow_excluding_type` / `narrow_excluding_function` /
+/// `narrow_excluding_typeof_object`) and their `narrow_type_param_excluding*`
+/// recursions.
+///
+/// One unit is charged per *fresh* (un-memoized) exclusion narrow. Real flow
+/// narrowing performs at most a few hundred such steps per request, so the bound
+/// is pure headroom on conforming code and only bites the pathological
+/// breadth-fan that re-mints `source & constraint` intersections without
+/// converging (the latent defect tracked in the narrowing-recursion audit). It
+/// mirrors the role of tsc's `instantiationCount` cap: a generous absolute
+/// ceiling that turns a non-terminating expansion into a bounded, conservative
+/// result rather than a tuned per-shape heuristic.
+pub(crate) const NARROW_EXCLUDING_WORK_BUDGET: u32 = 1_000_000;
+
+/// RAII guard for one exclusion-narrowing recursion frame.
+///
+/// Restores the prior re-entrancy depth on every return path (including panic
+/// unwinds), so the per-request budget priming in [`NarrowingContext`] stays
+/// balanced. Shared by all `narrow_excluding_*` entry points.
+pub(in crate::narrowing) struct ExclusionFrame<'b> {
+    depth: &'b Cell<u32>,
+    prior: u32,
+}
+
+impl Drop for ExclusionFrame<'_> {
+    fn drop(&mut self) {
+        self.depth.set(self.prior);
+    }
 }
 
 /// Cache key for [`NarrowingContext::narrow_excluding_type`] and
@@ -523,6 +579,9 @@ impl NarrowingCache {
                 512,
                 FxBuildHasher,
             )),
+            narrow_excluding_depth: Cell::new(0),
+            narrow_excluding_fuel: Cell::new(0),
+            narrow_excluding_budget: Cell::new(0),
         }
     }
 
@@ -1506,6 +1565,55 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// Enter one exclusion-narrowing recursion frame.
+    ///
+    /// The outermost frame (`depth == 0`) primes the per-request cumulative work
+    /// budget; nested frames inherit it. Scoping the bound to one top-level
+    /// narrowing keeps it from accumulating across the many independent requests
+    /// a shared cache serves, while still bounding a recursion that re-mints
+    /// fresh `source & constraint` intersections (which slip past the
+    /// stable-keyed `narrow_excluding_visiting` guard). The returned guard
+    /// restores the prior depth on drop.
+    ///
+    /// Shared by [`Self::narrow_excluding_type`], [`Self::narrow_excluding_function`],
+    /// and [`Self::narrow_excluding_typeof_object`] so the three exclusion families
+    /// draw down one budget, and a self-referential constraint reached through
+    /// any of them terminates the same way.
+    pub(in crate::narrowing) fn enter_exclusion_frame(&self) -> ExclusionFrame<'_> {
+        let depth = &self.cache.narrow_excluding_depth;
+        let prior = depth.get();
+        if prior == 0 {
+            let cap = self.cache.narrow_excluding_budget.get();
+            let cap = if cap == 0 {
+                NARROW_EXCLUDING_WORK_BUDGET
+            } else {
+                cap
+            };
+            self.cache.narrow_excluding_fuel.set(cap);
+        }
+        depth.set(prior + 1);
+        ExclusionFrame { depth, prior }
+    }
+
+    /// Charge one unit of the per-request exclusion-narrowing budget. Returns
+    /// `false` once the budget is spent, signalling the caller to bail to a
+    /// conservative (un-narrowed) result.
+    pub(in crate::narrowing) fn charge_exclusion_work(&self) -> bool {
+        let fuel = self.cache.narrow_excluding_fuel.get();
+        if fuel == 0 {
+            return false;
+        }
+        self.cache.narrow_excluding_fuel.set(fuel - 1);
+        true
+    }
+
+    /// Whether the current request is still within its exclusion-narrowing
+    /// budget. Used to skip memoizing a result whose subtree drained the budget
+    /// (a truncated, request-local answer that must not poison a later request).
+    fn exclusion_within_budget(&self) -> bool {
+        self.cache.narrow_excluding_fuel.get() > 0
+    }
+
     /// Narrow a type to exclude members assignable to target.
     ///
     /// Memoizing entry point. The recursive body (`narrow_excluding_type_uncached`)
@@ -1518,8 +1626,8 @@ impl<'a> NarrowingContext<'a> {
     /// union (issue #13242 / #13250).
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
         // Intrinsics and identity pairs are answered without recursion; skip the
-        // memo bookkeeping for them so the common shallow path stays allocation-
-        // and borrow-free.
+        // memo and budget bookkeeping for them so the common shallow path stays
+        // allocation- and borrow-free.
         if source_type == TypeId::ANY {
             return TypeId::ANY;
         }
@@ -1527,6 +1635,24 @@ impl<'a> NarrowingContext<'a> {
             return self.narrow_excluding_type_uncached(source_type, excluded_type);
         }
 
+        let _frame = self.enter_exclusion_frame();
+        self.narrow_excluding_type_budgeted(source_type, excluded_type)
+    }
+
+    /// Override the per-request exclusion-narrowing work budget shared by every
+    /// `narrow_excluding_*` family.
+    ///
+    /// `0` restores the default [`NARROW_EXCLUDING_WORK_BUDGET`]. Lets tests
+    /// exercise the bail path deterministically without driving a million-step
+    /// recursion.
+    #[cfg(test)]
+    pub(crate) fn set_narrow_excluding_budget(&self, budget: u32) {
+        self.cache.narrow_excluding_budget.set(budget);
+    }
+
+    /// Memoized, budget-charged body of [`Self::narrow_excluding_type`]. Always
+    /// reached with the per-request fuel primed by the outermost frame.
+    fn narrow_excluding_type_budgeted(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
         let key = NarrowExcludingKey {
             source: source_type,
             excluded: excluded_type,
@@ -1534,6 +1660,14 @@ impl<'a> NarrowingContext<'a> {
         };
         if let Some(&cached) = self.cache.narrow_excluding_cache.borrow().get(&key) {
             return cached;
+        }
+        // Charge one unit of the per-request budget for each fresh exclusion
+        // narrow. On exhaustion, bail to the unchanged source — the same
+        // conservative answer the in-flight cycle guard below returns — so a
+        // breadth-fanned recursion that keeps minting fresh intersections
+        // terminates instead of spinning unbounded.
+        if !self.charge_exclusion_work() {
+            return source_type;
         }
         // Re-entry on the same `(source, excluded)` pair is a recursive-alias
         // cycle: leave the source unchanged so the in-flight outer frame owns the
@@ -1551,10 +1685,16 @@ impl<'a> NarrowingContext<'a> {
             .narrow_excluding_visiting
             .borrow_mut()
             .remove(&key);
-        self.cache
-            .narrow_excluding_cache
-            .borrow_mut()
-            .insert(key, result);
+        // Only memoize when the whole subtree stayed within budget. A result that
+        // bottomed out the fuel is truncated and request-local, so caching it
+        // would poison a later, fully-budgeted request with the conservative
+        // answer.
+        if self.exclusion_within_budget() {
+            self.cache
+                .narrow_excluding_cache
+                .borrow_mut()
+                .insert(key, result);
+        }
         result
     }
 

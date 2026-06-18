@@ -67,6 +67,16 @@ impl<'a> NarrowingContext<'a> {
     /// Excludes object types (objects, arrays, tuples, class instances).
     /// Note: null should already be excluded before calling this.
     pub(crate) fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
+        // Shares the per-request exclusion-narrowing budget (see
+        // `narrow_excluding_type`): `narrow_type_param_excluding_typeof_object`
+        // re-mints `T & narrowed` and recurses here, so a self-referential
+        // constraint must be bounded on this path too. Charge one unit per call
+        // and bail to the unchanged source when the budget is spent.
+        let _frame = self.enter_exclusion_frame();
+        if !self.charge_exclusion_work() {
+            return source_type;
+        }
+
         let resolved = self.resolve_type(source_type);
 
         if let Some(narrowed) = self.narrow_type_param_excluding_typeof_object(resolved) {
