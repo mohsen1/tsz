@@ -1505,6 +1505,35 @@ jobs:
           cp bench-pgo-compile-compatibility/project-compatibility-summary.json \
             .target/project-compile-guard/
 
+      # The category:"application" canary rows (umami, excalidraw, ...) are
+      # compiled with full compat by the TRIGGERING CI run's
+      # project-compile-canary matrix (no skip flag), but the PGO compat step
+      # above runs with TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 (to fit its
+      # budget) so it emits no compat line for them. Without an application
+      # compat row the site's compatibilityState() renders them gray
+      # ("missing or incomplete artifact"). Reuse the already-computed canary
+      # compat from the triggering run so they show real status/files/peak.
+      #
+      # Best-effort by design: only the workflow_run (push-to-main) publish
+      # path has a triggering CI run; a missing/old artifact must NEVER block
+      # publishing the timing benchmarks (app rows just fall back to gray).
+      - name: Download application compile compatibility (best-effort)
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .target/app-compile-compat
+          if [[ -n "${CI_RUN_ID:-}" ]]; then
+            gh run download "$CI_RUN_ID" -n project-compile-canary-logs \
+              -D .target/app-compile-compat \
+              || echo "::warning::could not download project-compile-canary-logs from run ${CI_RUN_ID}; application rows will render gray this run"
+          fi
+          find .target/app-compile-compat -type f -print 2>/dev/null || true
+
       - id: merge
         name: Merge benchmark results
         shell: bash
@@ -1528,10 +1557,21 @@ jobs:
           else
             echo "complete=true" >> "$GITHUB_OUTPUT"
           fi
+          compat_args=( --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" )
+          # Add the application-row compat from the triggering CI run if present
+          # (mergeCompatibilityCanaries is idempotent: re-attaching the same
+          # canary compat is harmless and required rows are never overwritten).
+          app_compat="$(find "$GITHUB_WORKSPACE/.target/app-compile-compat" -name 'project-compatibility.jsonl' -type f 2>/dev/null | head -1)"
+          if [[ -n "$app_compat" && -s "$app_compat" ]]; then
+            echo "Including application compile compatibility from triggering CI run: $app_compat"
+            compat_args+=( --compat-jsonl "$app_compat" )
+          else
+            echo "::warning::no application compile compatibility found; application rows will render gray this run"
+          fi
           node scripts/bench/merge-results.mjs \
             "$GITHUB_WORKSPACE/bench-results.json" \
             --require-runner-signature \
-            --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" \
+            "${compat_args[@]}" \
             "${json_files[@]}"
 
       - name: Summarize green tsgo winners
