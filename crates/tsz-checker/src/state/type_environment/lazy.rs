@@ -1591,8 +1591,23 @@ impl<'a> CheckerState<'a> {
             } else {
                 env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params);
+                    env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
+            }
+            // Mirror the def body into the flow-analyzer env. The evaluator-only
+            // `insert_def` above advances `type_env.def_types[def_id]` to the
+            // freshly-resolved body; without this mirror the flow-analyzer env
+            // keeps whatever body it was first given, and the vacancy-only
+            // file-prep reconciliation (`overlay_missing_from`) cannot repair a
+            // present-but-stale entry. The two envs then diverge on
+            // `def_types[def_id]` — the silent `DefId -> TypeId` divergence the
+            // #13086 reconciliation assertion guards against and a source of
+            // query-site-dependent wrong types (#13942 / #13944). The mirror
+            // performs no evaluator-side write or cache invalidation, so
+            // evaluator resolution order and cached results are unchanged.
+            if let Some(def_id) = def_id {
+                self.ctx
+                    .mirror_def_to_flow_env(def_id, resolved, type_params);
             }
             true
         } else {
@@ -1601,7 +1616,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Insert `type_id` for `def_id` into both type environments, carrying type params
-    /// when present. Safe to call during recursive resolution; failed borrows are logged.
+    /// when present. Safe to call during recursive resolution.
+    ///
+    /// The evaluator env (`type_env`) is written directly. The flow-analyzer env
+    /// is updated through the deferred mirror rather than a direct
+    /// `try_borrow_mut`: a direct borrow that loses the race would *drop* the
+    /// mirror, leaving the flow env with a stale `def_types[def_id]` that the
+    /// vacancy-only file-prep reconciliation cannot repair. The mirror defers a
+    /// lost write and replays it before reconciliation, so the two envs never
+    /// diverge (#13086 / #13942 / #13944).
     fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
         // insert_def_with_params with empty params is equivalent to insert_def, so we
         // unify both paths and avoid a conditional.
@@ -1614,14 +1637,7 @@ impl<'a> CheckerState<'a> {
                 "try_insert_def_in_type_env: borrow failed; insert skipped"
             ),
         }
-        match self.ctx.type_environment.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
-            Err(e) => tracing::warn!(
-                target_env = "type_environment",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
+        self.ctx.mirror_def_to_flow_env(def_id, type_id, params);
     }
 
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
@@ -1972,6 +1988,14 @@ impl<'a> CheckerState<'a> {
                     env.insert_class_instance_type(def_id, resolved);
                 }
                 env.insert_def(def_id, resolved);
+                // Mirror both writes into the flow-analyzer env so it does not
+                // retain a stale `def_types`/`class_instance_types` entry for this
+                // remapped def (see `mirror_def_to_flow_env`; #13086 / #13942).
+                if is_class {
+                    self.ctx.mirror_class_instance_to_flow_env(def_id, resolved);
+                }
+                self.ctx
+                    .mirror_def_to_flow_env(def_id, resolved, Vec::new());
             }
 
             Some((inserted, resolved))
