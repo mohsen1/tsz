@@ -164,23 +164,23 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 TypeData::TypeParameter(info) => {
                     if let Some(index) = self.find_param_index(info.name) {
                         self.interner.bound_parameter(index)
-                    } else if info.default.is_some() {
-                        // Free type-parameter reference carrying a `default`. The
-                        // default is identity-irrelevant (see
-                        // `canonical_type_param`): two references to the same
-                        // parameter that differ only in whether the default was
-                        // captured (`R extends ResponseType = "json"` vs a bare
-                        // `R`) intern to distinct `TypeId`s and would fragment the
-                        // identity fast path. Drop it for the canonical form; the
-                        // interned parameter keeps its default for instantiation.
-                        let normalized = crate::types::TypeParamInfo {
-                            default: None,
-                            ..info
-                        };
-                        self.interner.type_param(normalized)
                     } else {
-                        // Free variable with no default — already canonical.
-                        type_id
+                        // Free type-parameter reference. Its identity is the
+                        // parameter itself — its name and the *shape* of its
+                        // constraint — never how the optional `default` was
+                        // captured nor what *resolution state* the constraint
+                        // snapshot happened to be in. Two references to the same
+                        // parameter whose constraint differs only because one
+                        // captured a resolved form (`keyof ResponseMap | "json"`)
+                        // and the other its still-`Lazy` pre-resolution alias must
+                        // canonicalize to one identity, or the relation's
+                        // reflexive/identity fast path fragments (#13609). Reuse
+                        // `canonical_type_param` so a free reference and a declared
+                        // parameter (function/signature/mapped) reduce identically:
+                        // canonicalize the constraint, drop the default. The
+                        // interned parameter keeps its default for instantiation.
+                        let normalized = self.canonical_type_param(info);
+                        self.interner.type_param(normalized)
                     }
                 }
 

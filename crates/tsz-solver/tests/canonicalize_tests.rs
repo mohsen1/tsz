@@ -1257,3 +1257,143 @@ fn canonicalize_function_type_param_list_ignores_default() {
         "type-parameter default in a signature list must not fragment identity"
     );
 }
+
+// ===================================================================
+// A free type-parameter reference's constraint must canonicalize, so its
+// identity does not fragment on the constraint's *resolution state* (#13609)
+// ===================================================================
+
+/// Resolver where `DefId(1)` is a type alias whose body is `string | number`.
+/// Models a cross-module constraint reference that one signature captured as a
+/// still-`Lazy` alias and another captured already expanded to its union body.
+struct AliasConstraintResolver {
+    body: TypeId,
+}
+
+impl TypeResolver for AliasConstraintResolver {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (def_id == DefId(1)).then_some(self.body)
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<DefKind> {
+        (def_id == DefId(1)).then_some(DefKind::TypeAlias)
+    }
+}
+
+// `tsc` identifies a type parameter by the parameter itself, never by what
+// resolution state its constraint snapshot was in. tsz interns a free
+// type-parameter reference structurally, hashing the constraint `TypeId`, so the
+// *same* parameter `R` referenced with constraint `Lazy(Alias)` in one signature
+// and the alias's expanded `string | number` body in another interns to distinct
+// `TypeId`s. Both must canonicalize to one identity (the #13609 `507`/`516`
+// constraint-snapshot fragmentation), restoring the relation's reflexive
+// short-circuit.
+#[test]
+fn canonicalize_free_type_param_constraint_resolution_state_converges() {
+    let interner = TypeInterner::new();
+    let union_body = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let resolver = AliasConstraintResolver { body: union_body };
+
+    let r = interner.intern_string("R");
+    // Same parameter, constraint captured as the still-`Lazy` alias...
+    let r_lazy_constraint = interner.type_param(TypeParamInfo {
+        name: r,
+        constraint: Some(interner.lazy(DefId(1))),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    // ...vs the same constraint already resolved to the alias body.
+    let r_resolved_constraint = interner.type_param(TypeParamInfo {
+        name: r,
+        constraint: Some(union_body),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+
+    assert_ne!(
+        r_lazy_constraint, r_resolved_constraint,
+        "precondition: interning keeps the two constraint snapshots distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &resolver);
+    let mut c2 = Canonicalizer::new(&interner, &resolver);
+    assert_eq!(
+        c1.canonicalize(r_lazy_constraint),
+        c2.canonicalize(r_resolved_constraint),
+        "a free type parameter's constraint resolution state must not fragment identity"
+    );
+
+    // The default is still irrelevant on top of the constraint convergence.
+    let r_lazy_with_default = interner.type_param(TypeParamInfo {
+        name: r,
+        constraint: Some(interner.lazy(DefId(1))),
+        default: Some(TypeId::BOOLEAN),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c3 = Canonicalizer::new(&interner, &resolver);
+    let mut c4 = Canonicalizer::new(&interner, &resolver);
+    assert_eq!(
+        c3.canonicalize(r_lazy_with_default),
+        c4.canonicalize(r_resolved_constraint),
+        "constraint convergence holds regardless of the captured default"
+    );
+}
+
+// The convergence is structural, not name-driven: renaming the binder leaves the
+// identity rule intact (anti-hardcoding gate), and a *genuinely* different
+// constraint shape still stays distinct (the fix only collapses resolution-state
+// differences, it does not erase real constraint distinctions).
+#[test]
+fn canonicalize_free_type_param_constraint_convergence_is_name_agnostic() {
+    let interner = TypeInterner::new();
+    let union_body = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let resolver = AliasConstraintResolver { body: union_body };
+
+    // Renamed binder `Element` instead of `R`.
+    let elem = interner.intern_string("Element");
+    let lazy_constraint = interner.type_param(TypeParamInfo {
+        name: elem,
+        constraint: Some(interner.lazy(DefId(1))),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let resolved_constraint = interner.type_param(TypeParamInfo {
+        name: elem,
+        constraint: Some(union_body),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c1 = Canonicalizer::new(&interner, &resolver);
+    let mut c2 = Canonicalizer::new(&interner, &resolver);
+    assert_eq!(
+        c1.canonicalize(lazy_constraint),
+        c2.canonicalize(resolved_constraint),
+        "constraint resolution-state convergence is independent of the binder name"
+    );
+
+    // Negative control: a genuinely different constraint shape (`string` only,
+    // not the `string | number` the alias expands to) must stay distinct.
+    let other_constraint = interner.type_param(TypeParamInfo {
+        name: elem,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c3 = Canonicalizer::new(&interner, &resolver);
+    let mut c4 = Canonicalizer::new(&interner, &resolver);
+    assert_ne!(
+        c3.canonicalize(resolved_constraint),
+        c4.canonicalize(other_constraint),
+        "a genuinely different constraint shape must not be merged by canonicalization"
+    );
+}
