@@ -630,6 +630,13 @@ jobs:
       # dist-fast build is short enough without sccache, and all harness suites
       # are blocked until this artifact uploads.
       TSZ_CI_DISABLE_SCCACHE: "1"
+      # On PR (non-refresh) dist runs the cargo-target-deps exact key always
+      # misses and falls back to a markerless warm blob, so cargo rebuilds the
+      # workspace regardless — the ~200s restore is pure overhead on the
+      # critical path (dist-binaries gates every harness suite). Skip it on
+      # non-refresh runs; keep it on trusted refresh runs that legitimately
+      # restore a fresher incremental base before re-publishing the cache.
+      TSZ_CI_SKIP_DIST_RESTORE: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '0' || '1' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
