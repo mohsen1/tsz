@@ -1404,10 +1404,70 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
 
+  pgo-compile-canaries:
+    name: bench-pgo-compile-canaries
+    needs: bench-prep-artifact
+    if: always() && needs.bench-prep-artifact.result == 'success'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Run PGO compile canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          # Skip category:"application" canary rows here: they clone+install real
+          # apps (minutes each) and are excluded from the benchmark corpus, so
+          # they produce no PGO timing data. Application compatibility is still
+          # tracked by the CI project-compile-canary shards, which do not set
+          # this flag.
+          TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
+          TSZ_PROJECT_COMPILE_SET=canary \
+          TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 \
+          TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
+          scripts/ci/project-compile-guard.sh
+
+      - name: Stage PGO compile compatibility artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bench-pgo-compile-compatibility
+          cp .target/project-compile-guard/project-compatibility.jsonl \
+            bench-pgo-compile-compatibility/
+          cp .target/project-compile-guard/project-compatibility-summary.json \
+            bench-pgo-compile-compatibility/
+
+      - name: Upload PGO compile compatibility artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-pgo-compile-compatibility
+          path: bench-pgo-compile-compatibility
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 1
+
   publish:
     name: bench-publish
-    needs: bench
-    if: always() && (needs.bench.result == 'success' || needs.bench.result == 'failure' || needs.bench.result == 'cancelled')
+    needs: [bench, pgo-compile-canaries]
+    if: >-
+      always() &&
+      (needs.bench.result == 'success' || needs.bench.result == 'failure' || needs.bench.result == 'cancelled') &&
+      needs.pgo-compile-canaries.result == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     steps:
@@ -1429,26 +1489,21 @@ jobs:
           name: bench-prep-ready
           path: .
 
-      - name: Run PGO compile canaries
+      - name: Download PGO compile compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-pgo-compile-compatibility
+          path: bench-pgo-compile-compatibility
+
+      - name: Restore PGO compile compatibility artifact
         shell: bash
         run: |
           set -euo pipefail
-
-          tar -xf bench-prep.tar
-          test -x .target-bench/dist/tsz
-          test -f .target-bench/dist/.bench-pgo-optimized
-
-          # Skip category:"application" canary rows here: they clone+install real
-          # apps (minutes each) and are excluded from the benchmark corpus, so
-          # they produce no PGO timing data but would blow this job's 30m budget
-          # (observed 2026-06-17: bench-publish timed out for ~14h, freezing the
-          # published benchmarks). Application *compatibility* is still tracked by
-          # the CI project-compile-canary shards, which do not set this flag.
-          TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
-          TSZ_PROJECT_COMPILE_SET=canary \
-          TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 \
-          TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
-          scripts/ci/project-compile-guard.sh
+          mkdir -p .target/project-compile-guard
+          cp bench-pgo-compile-compatibility/project-compatibility.jsonl \
+            .target/project-compile-guard/
+          cp bench-pgo-compile-compatibility/project-compatibility-summary.json \
+            .target/project-compile-guard/
 
       - id: merge
         name: Merge benchmark results
