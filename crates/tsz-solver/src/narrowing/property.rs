@@ -229,51 +229,24 @@ impl<'a> NarrowingContext<'a> {
         if present {
             // Positive: "prop" in x
             //
-            // `has_property` is apparent-type aware (so arrays/functions/
-            // primitives are recognised), but the structural property the
-            // promotion logic below needs only exists for object shapes. When
-            // the member is contributed purely by the apparent type (e.g.
-            // `push` on `T[]`, `call` on a function type) there is no own slot
-            // to promote, and tsc leaves the receiver unchanged — so return it
-            // as-is rather than synthesising a bogus `{ prop: unknown }` slot.
-            let has_own_property = self
-                .get_property_type(resolved_type, property_name)
-                .is_some();
-            if has_property && !has_own_property {
-                return source_type;
-            }
+            // `has_property` is apparent-type aware, so this covers both an
+            // apparent-only member (e.g. `push` on `T[]`) and a declared own
+            // property. In either case the property is already part of the
+            // non-union receiver's type, so the `in` check adds nothing.
             if has_property {
-                // Property exists: promote to required. For exact-optional
-                // slots the write type excludes the synthetic missing-property
-                // `undefined`, so use it for the presence filter.
-                let prop_info = self.get_property_info(resolved_type, property_name);
-                let prop_type = prop_info
-                    .as_ref()
-                    .map(|prop| {
-                        if prop.optional {
-                            prop.write_type
-                        } else {
-                            prop.type_id
-                        }
-                    })
-                    .or_else(|| self.get_property_type(resolved_type, property_name));
-                let required_prop = PropertyInfo {
-                    name: property_name,
-                    type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
-                    write_type: prop_type.unwrap_or(TypeId::UNKNOWN),
-                    optional: false,
-                    readonly: prop_info.as_ref().is_some_and(|prop| prop.readonly),
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                };
-                let filter_obj = self.db.object(vec![required_prop]);
-                self.db.intersection2(source_type, filter_obj)
+                // The property is already declared on the (non-union) source
+                // type — whether contributed by the apparent type (no own slot)
+                // or by an own property slot. tsc's `narrowTypeByInKeyword`
+                // adds no structural information in this case: the property is
+                // already known, so the receiver is returned unchanged. In
+                // particular an *optional* own property keeps its optionality
+                // (so `delete x.p` after `"p" in x` stays legal) and its
+                // declared type keeps `undefined` (so `"p" in x` does not
+                // discriminate the property's value type). Synthesising a
+                // required-property intersection wrongly stripped both, causing
+                // false TS2790 on `delete` and unsoundly excluding `undefined`
+                // from the property's type (ofetch `delete options.query`).
+                source_type
             } else {
                 // Property not found on a non-union type.
                 // TypeScript narrows to `source_type & Record<prop, unknown>` for

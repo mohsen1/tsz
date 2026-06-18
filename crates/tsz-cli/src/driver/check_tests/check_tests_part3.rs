@@ -1262,3 +1262,64 @@ interface Node {
         );
     }
 
+    /// A generic class declared in one module that `extends` a global lib
+    /// interface whose own body inherits from a further lib base
+    /// (`class FetchResponse<T> extends Response`, where
+    /// `interface Response extends Body`) must surface the transitive base
+    /// members (`json`, `text`, `body`, ...) when the class is used from a
+    /// DIFFERENT module.
+    ///
+    /// The class instance type is built in a transient cross-arena delegation
+    /// child (`delegate_cross_arena_class_instance_type`) running against the
+    /// declaring file's binder, which lacks the merged standard-lib globals.
+    /// `merge_lib_interface_heritage` resolved the lib base symbol through that
+    /// binder and silently bailed when it was absent, dropping the lib base's
+    /// own `extends` and leaving an own-members-only `Response`. Property access
+    /// and assignability then mis-reported the inherited members as missing
+    /// (false TS2339 / TS2740). The same-file and non-generic forms were
+    /// unaffected because they resolve the lib base in the top-level checker
+    /// whose binder carries the globals; this is the class analog of the
+    /// interface-path fix #13767 / the lib-interface drain #12299.
+    ///
+    /// Vary the class name, type parameter spelling, and lib base so a fix keyed
+    /// to a single identifier would not satisfy this.
+    #[test]
+    fn cross_file_generic_class_inherits_transitive_lib_base_members() {
+        for (class_name, type_param, lib_base, inherited_member) in [
+            ("FetchResponse", "T", "Response", "json"),
+            ("Wrapped", "TValue", "Response", "text"),
+        ] {
+            let base_src = format!(
+                "export class {class_name}<{type_param}> extends {lib_base} {{ parsed?: {type_param}; }}\n"
+            );
+            let use_src = format!(
+                "import {{ {class_name} }} from './base';\nfunction take(x: {class_name}<number>) {{ x.{inherited_member}(); }}\n"
+            );
+            let diagnostics = collect_es2015_default_lib_diagnostics_multifile(&[
+                ("base.ts", base_src.as_str()),
+                ("use.ts", use_src.as_str()),
+            ]);
+            assert!(
+                !diagnostics.iter().any(|diag| diag.code == 2339),
+                "{class_name}<{type_param}> extends {lib_base}: inherited `{inherited_member}` must resolve cross-file: {diagnostics:?}"
+            );
+        }
+
+        // Guard against over-correction: a genuinely missing member still errors
+        // on the cross-file generic class.
+        let bogus = collect_es2015_default_lib_diagnostics_multifile(&[
+            (
+                "base.ts",
+                "export class FetchResponse<T> extends Response { parsed?: T; }\n",
+            ),
+            (
+                "use.ts",
+                "import { FetchResponse } from './base';\nfunction take(x: FetchResponse<number>) { x.totallyBogusMember(); }\n",
+            ),
+        ]);
+        assert!(
+            bogus.iter().any(|diag| diag.code == 2339),
+            "a genuinely missing member must still report TS2339 cross-file: {bogus:?}"
+        );
+    }
+
