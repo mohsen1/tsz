@@ -545,10 +545,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let t_shape_id = object_shape_id(self.interner, resolved_target)
                 .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
             if let Some(t_sid) = t_shape_id {
-                let collected = crate::objects::collect_properties(
+                // Reuse the context-free `collect_properties` memo (#13865) so
+                // the explain pass does not re-walk the source intersection's
+                // full recursive-schema closure that the boolean relation already
+                // collected. Mirrors the relation-side sites (`overlap`/`helpers`/
+                // `core`) which already thread `query_db`; the explain pass was
+                // the remaining bare caller re-collecting from scratch.
+                let collected = crate::objects::collect_properties_cached(
                     resolved_source,
                     self.interner,
                     self.resolver,
+                    self.query_db,
                 );
                 if let crate::objects::PropertyCollectionResult::Properties { properties, .. } =
                     collected
@@ -728,10 +735,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 } else if let Some(s_shape_id) = object_shape_id(self.interner, resolved_source) {
                     self.interner.object_shape(s_shape_id).properties.clone()
                 } else if source_intersection_members.is_some() {
-                    match crate::objects::collect_properties(
+                    // Same memo activation as the intersection-vs-object arm
+                    // above (the callable-target explain path is the other bare
+                    // caller re-collecting the already-walked source closure).
+                    match crate::objects::collect_properties_cached(
                         resolved_source,
                         self.interner,
                         self.resolver,
+                        self.query_db,
                     ) {
                         crate::objects::PropertyCollectionResult::Properties {
                             properties, ..

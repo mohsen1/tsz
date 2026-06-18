@@ -329,6 +329,9 @@ mod integration_tests;
 #[path = "../tests/enum_nominality.rs"]
 mod enum_nominality;
 #[cfg(test)]
+#[path = "../tests/explain_intersection_source_collect_memo_tests.rs"]
+mod explain_intersection_source_collect_memo_tests;
+#[cfg(test)]
 #[path = "../tests/intersection_union_tests.rs"]
 mod intersection_union_tests;
 // lawyer_tests: loaded from relations/lawyer.rs
