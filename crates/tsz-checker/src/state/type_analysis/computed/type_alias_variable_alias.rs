@@ -580,17 +580,10 @@ impl<'a> CheckerState<'a> {
                     // unique symbol type. In TypeScript, unannotated const
                     // declarations initialized with global symbol factory calls get
                     // a unique symbol type (typeof k), not the general `symbol` type.
-                    if var_decl.initializer.is_some()
-                        && self.is_const_variable_declaration(resolved_value_decl)
-                        && (self.is_symbol_call_initializer(var_decl.initializer)
-                            || self.is_symbol_for_call_initializer(var_decl.initializer))
+                    if let Some(unique) =
+                        self.const_symbol_factory_unique_value_type(resolved_value_decl)
                     {
-                        return (
-                            self.ctx
-                                .types
-                                .unique_symbol(tsz_solver::SymbolRef(sym_id.0)),
-                            Vec::new(),
-                        );
+                        return (unique, Vec::new());
                     }
                     // Fall back to inferring from initializer
                     if var_decl.initializer.is_some() {

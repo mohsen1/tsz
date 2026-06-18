@@ -139,6 +139,10 @@ path = "tests/lib_target_suggestion_ts2550_tests.rs"
 name = "imported_infer_readonly_alias_cli_tests"
 path = "tests/imported_infer_readonly_alias_cli_tests.rs"
 
+[[test]]
+name = "merged_unique_symbol_factory_cli_tests"
+path = "tests/merged_unique_symbol_factory_cli_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

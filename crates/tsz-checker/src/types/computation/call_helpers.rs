@@ -644,6 +644,13 @@ impl<'a> CheckerState<'a> {
                 );
                 return self.resolve_ref_type(annotated);
             }
+            // `const X = Symbol()` / `const X = Symbol.for(...)` — preserve the
+            // `unique symbol` value identity across the cross-arena delegation so
+            // an importing file's `[X]` keys intern to the same symbol-keyed
+            // member instead of a wide `[k: symbol]: V` index signature.
+            if let Some(unique) = self.const_symbol_factory_unique_value_type(decl_idx) {
+                return unique;
+            }
             if self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(decl_idx)
