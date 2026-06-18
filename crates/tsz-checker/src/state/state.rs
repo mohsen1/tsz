@@ -36,6 +36,21 @@ thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
     /// Prevents stack overflow from deeply nested CheckerState creation.
     static CROSS_ARENA_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+
+    /// Depth counter for resolving a class's directly-named heritage (`extends`)
+    /// base expression. Nonzero while
+    /// [`CheckerState::base_instance_type_from_expression`] is on the stack.
+    ///
+    /// The cross-arena lib-heritage global fallback
+    /// (`select_global_lib_interface`) is only sound for the lib interface that
+    /// is the class's own `extends` target (and its transitive lib heritage,
+    /// resolved while still inside this scope). Member-signature resolution that
+    /// happens later — outside this scope — must NOT trigger the fallback: a
+    /// delegation child eagerly pulling an entire global graph (e.g. the DOM
+    /// graph reached through `React.Component`'s members) re-merges base members
+    /// the top-level checker already owns, producing duplicated intersections
+    /// and false JSX-inference diagnostics.
+    static CLASS_HERITAGE_BASE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Reset the cross-arena delegation depth counter to zero.
@@ -49,6 +64,7 @@ thread_local! {
 /// pathological project cannot poison the next one.
 pub(crate) fn reset_cross_arena_depth() {
     CROSS_ARENA_DEPTH.with(|c| c.set(0));
+    CLASS_HERITAGE_BASE_DEPTH.with(|c| c.set(0));
 }
 
 #[cfg(test)]
@@ -588,6 +604,22 @@ impl<'a> CheckerState<'a> {
     /// from different arenas.
     pub(crate) fn is_in_cross_arena_delegation() -> bool {
         CROSS_ARENA_DEPTH.with(|c| c.get() > 0)
+    }
+
+    /// Enter the scope that resolves a class's directly-named heritage
+    /// (`extends`) base expression. See [`CLASS_HERITAGE_BASE_DEPTH`].
+    pub(crate) fn enter_class_heritage_base() {
+        CLASS_HERITAGE_BASE_DEPTH.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// Leave the class-heritage-base resolution scope.
+    pub(crate) fn leave_class_heritage_base() {
+        CLASS_HERITAGE_BASE_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+
+    /// Whether we are resolving a class's directly-named heritage base.
+    pub(crate) fn is_resolving_class_heritage_base() -> bool {
+        CLASS_HERITAGE_BASE_DEPTH.with(|c| c.get() > 0)
     }
 
     /// Check if the source file has any parse errors.

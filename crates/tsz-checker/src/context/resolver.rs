@@ -561,6 +561,31 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         self.symbol_types.get(&sym_id).copied()
     }
 
+    /// Resolve a `typeof X` query to its VALUE-space type.
+    ///
+    /// For a merged interface+value symbol (declaration merging, e.g. lib
+    /// `Date`/`Request` or user `interface Foo {} declare var Foo: {...}`),
+    /// `resolve_ref`/`symbol_types` holds the TYPE-space (instance) type, which
+    /// is wrong for a `typeof` query. The checker records the value-space type
+    /// in the type environment's `typeof_value_types` map (see
+    /// `register_type_query_value_types`); prefer it here so nested `typeof`
+    /// positions (indexed-access, conditional, tuple) evaluated through this
+    /// resolver resolve to the value/constructor side. Falls back to the default
+    /// `resolve_ref` for all other symbols.
+    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        if let Ok(env) = self.type_env.try_borrow()
+            && let Some(value_ty) = env.get_typeof_value_type(symbol)
+        {
+            return Some(value_ty);
+        }
+        if let Ok(env) = self.type_environment.try_borrow()
+            && let Some(value_ty) = env.get_typeof_value_type(symbol)
+        {
+            return Some(value_ty);
+        }
+        self.resolve_ref(symbol, interner)
+    }
+
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         let sym_id = self.def_to_symbol_id(def_id)?;
         let symbol = self.binder.get_symbol(sym_id)?;

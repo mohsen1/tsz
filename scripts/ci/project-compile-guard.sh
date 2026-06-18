@@ -416,8 +416,27 @@ install_application_deps() {
     echo "warn: application install dir missing: $dir" >&2
     return 0
   fi
+  # Make the package manager runnable. `corepack enable` installs yarn/pnpm
+  # shims into Node's bin dir, but on the Cloud Run runner that dir is not
+  # always on PATH, so a bare `yarn install` died with "yarn: command not
+  # found" and every yarn-based app row (excalidraw, medusa, outline, joplin,
+  # cal-com, affine, rocketchat) lost its dep graph. Run the install through
+  # `corepack <pm>` when the PM isn't directly on PATH — corepack resolves the
+  # version from the app's `packageManager` field and runs it without needing
+  # the global shim. Non-interactive so a missing pin can't hang. Install stays
+  # best-effort: any failure is non-fatal (the compile then surfaces TS2307).
   echo "Installing application deps: (cd $dir && $cmd)"
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
+  local pm="${cmd%% *}"
+  case "$pm" in
+    yarn | pnpm | npm)
+      if ! command -v "$pm" >/dev/null 2>&1 && command -v corepack >/dev/null 2>&1; then
+        echo "info: package manager $pm not on PATH; routing install through corepack" >&2
+        cmd="corepack $cmd"
+      fi
+      ;;
+  esac
   if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
     echo "warn: application dep install failed (continuing; compile will surface unresolved modules): $dir" >&2
   fi
