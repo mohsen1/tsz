@@ -12,6 +12,27 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether `idx` is a value reference nested inside a computed property name
+    /// (`[expr]`) of a type-only element — a member of an `interface` declaration
+    /// or a type literal (`{ [sym]: T }`).
+    ///
+    /// Such computed names are type-level: the property key they compute has no
+    /// runtime control-flow node, so `tsc` does not subject a value referenced in
+    /// the name (e.g. a `unique symbol` const) to definite-assignment (TS2454)
+    /// analysis. Computed names in value positions (object literals, class fields)
+    /// have a real container in the control-flow graph and stay flow-checked.
+    ///
+    /// Reuses `find_enclosing_computed_property` (which climbs to the enclosing
+    /// `COMPUTED_PROPERTY_NAME`, handling nested expressions such as `[ns.sym]`
+    /// and stopping at function boundaries) plus the shared container classifier
+    /// `computed_property_name_has_type_only_container`.
+    pub(crate) fn reference_in_type_position_computed_name(&self, idx: NodeIndex) -> bool {
+        self.find_enclosing_computed_property(idx)
+            .is_some_and(|computed_name_idx| {
+                self.computed_property_name_has_type_only_container(computed_name_idx)
+            })
+    }
+
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
     ///
     /// This is the main entry point for flow analysis when variables are used.
@@ -162,7 +183,16 @@ impl<'a> CheckerState<'a> {
         // narrowed type). The definite assignment analysis itself handles typeof/
         // instanceof true branches — those are treated as proof that the variable
         // has a value, so TS2454 is suppressed in those branches.
-        if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
+        // A reference inside a computed property name on a type-only element
+        // (interface / type-literal member) names a type-level property key with
+        // no runtime control-flow node, so `tsc` does not raise TS2454 for it.
+        // Narrowing above still runs (so a literal-typed key keeps its literal
+        // type); only the definite-assignment diagnostic is suppressed here.
+        // Value-position computed names (object literals, class fields) stay
+        // flow-checked.
+        if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id)
+            && !self.reference_in_type_position_computed_name(idx)
+        {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
             // Mark this node so `get_type_of_node` won't re-narrow via the second

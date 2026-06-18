@@ -9,6 +9,37 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    /// Whether the computed property name node `computed_name_idx` is a member
+    /// of a type-only element — an `interface` declaration or a type literal
+    /// (`{ [sym]: T }`). The container is the name's grandparent
+    /// (`name -> member -> container`), which uniformly covers property / method
+    /// / accessor / index signatures without enumerating each member kind.
+    ///
+    /// Computed names on type-only elements are type-level: the key they compute
+    /// has no runtime control-flow node, so a value referenced inside the name
+    /// (e.g. a `unique symbol` const) must not be subjected to definite-assignment
+    /// (TS2454) or temporal-dead-zone (TS2448) analysis. Value-position computed
+    /// names (object literals, class fields) have a real control-flow container
+    /// and stay flow-checked.
+    pub(crate) fn computed_property_name_has_type_only_container(
+        &self,
+        computed_name_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_idx) = self.ctx.arena.parent_of(computed_name_idx) else {
+            return false;
+        };
+        let Some(container_idx) = self.ctx.arena.parent_of(member_idx) else {
+            return false;
+        };
+        let Some(container) = self.ctx.arena.get(container_idx) else {
+            return false;
+        };
+        matches!(
+            container.kind,
+            syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_LITERAL
+        )
+    }
+
     /// Check if a variable is used before its declaration in a static block.
     ///
     /// This detects Temporal Dead Zone (TDZ) violations where a block-scoped variable
@@ -175,8 +206,13 @@ impl<'a> CheckerState<'a> {
         // 5. Check if usage is inside a computed property name.
         // Skip TDZ in ambient/type-only contexts (interfaces, type aliases,
         // declare class, .d.ts files) — these don't have runtime TDZ semantics.
-        if self.find_enclosing_computed_property(usage_idx).is_some()
+        // A computed name on an `interface` / type-literal member is type-level:
+        // its key has no runtime control-flow node, so `tsc` raises no TS2448 for
+        // a forward reference there (only value-position computed names — object
+        // literals, class fields — keep runtime TDZ).
+        if let Some(computed_name_idx) = self.find_enclosing_computed_property(usage_idx)
             && !self.ctx.arena.is_in_ambient_context(usage_idx)
+            && !self.computed_property_name_has_type_only_container(computed_name_idx)
         {
             return true;
         }

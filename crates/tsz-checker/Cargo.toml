@@ -590,6 +590,9 @@ path = "tests/tuple_index_access_tests.rs"
 name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 [[test]]
+name = "computed_property_name_type_position_no_ts2454_tests"
+path = "tests/computed_property_name_type_position_no_ts2454_tests.rs"
+[[test]]
 name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 [[test]]
