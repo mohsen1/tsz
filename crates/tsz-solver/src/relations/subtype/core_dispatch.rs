@@ -1013,6 +1013,53 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
+        // Object-like source vs (mutable) array target. An interface/class that
+        // declares `extends Array<T>` (e.g. `interface NonEmptyArray<A> extends
+        // Array<A>`) is assignable to `T[]`. Arrays are `TypeData::Array`, not
+        // object shapes, so none of the structural object branches above fire and
+        // the pair would otherwise fall through to failure.
+        //
+        // `tsc` treats array assignability covariantly, so `S <: T[]` reduces to
+        // the element relation on the numeric element type. We therefore:
+        //   1. require the source to carry a non-`readonly` numeric index
+        //      signature — `Array<T>` declares `[n: number]: T`, and a `readonly`
+        //      source (a `ReadonlyArray`-derived shape) is not assignable to a
+        //      mutable array, matching `tsc`;
+        //   2. confirm the source genuinely provides the whole `Array` member
+        //      surface by name, distinguishing a heritage-flattened
+        //      `extends Array` shape (its inherited members are present as named
+        //      properties) from a bare `Record<number, T>` that merely shares a
+        //      numeric index. The scan walks the source's own named properties
+        //      directly rather than going through `lookup_property`, so a
+        //      `[key: string]` index signature cannot spoof every member name; and
+        //   3. decide the relation by the covariant element check.
+        //
+        // This deliberately avoids materializing the instantiated `Array<T>`
+        // interface and running a full structural comparison: doing that in this
+        // hot dispatch path (a) re-enters instantiation/evaluation with observable
+        // cache side effects and (b) can exhaust the relation depth limit on deep
+        // generic sources, which is treated as `true` and silently over-accepts
+        // unrelated types.
+        if let Some(t_elem) = array_element_type(self.interner, target)
+            && let Some(s_shape_id) = object_with_index_shape_id(self.interner, source)
+            && let Some(array_base) = self.resolver.get_array_base_type()
+            && let Some(array_shape_id) = object_shape_id(self.interner, array_base)
+                .or_else(|| object_with_index_shape_id(self.interner, array_base))
+        {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            if let Some(num_idx) = s_shape.number_index
+                && !num_idx.readonly
+            {
+                let array_shape = self.interner.object_shape(array_shape_id);
+                let source_has_full_array_surface = array_shape.properties.iter().all(|member| {
+                    member.optional || s_shape.properties.iter().any(|p| p.name == member.name)
+                });
+                if source_has_full_array_surface {
+                    return self.check_subtype(num_idx.value_type, t_elem);
+                }
+            }
+        }
+
         if let (Some(s_fn_id), Some(t_fn_id)) = (
             function_shape_id(self.interner, source),
             function_shape_id(self.interner, target),
