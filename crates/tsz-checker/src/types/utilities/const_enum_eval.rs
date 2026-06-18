@@ -13,6 +13,7 @@
 //! nested but non-cyclic expression trees.
 
 use super::cycle_guard::{self, CycleSetId};
+use tsz_common::numeric::{to_int32, to_uint32};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -103,7 +104,7 @@ pub(crate) fn evaluate_const_enum_initializer(
             match unary.operator {
                 op if op == SyntaxKind::MinusToken as u16 => Some(-operand),
                 op if op == SyntaxKind::PlusToken as u16 => Some(operand),
-                op if op == SyntaxKind::TildeToken as u16 => Some(!(operand as i32) as f64),
+                op if op == SyntaxKind::TildeToken as u16 => Some(f64::from(!to_int32(operand))),
                 _ => None,
             }
         }
@@ -120,22 +121,22 @@ pub(crate) fn evaluate_const_enum_initializer(
                 op if op == SyntaxKind::SlashToken as u16 => Some(left / right),
                 op if op == SyntaxKind::PercentToken as u16 => Some(left % right),
                 op if op == SyntaxKind::BarToken as u16 => {
-                    Some((left as i32 | right as i32) as f64)
+                    Some(f64::from(to_int32(left) | to_int32(right)))
                 }
                 op if op == SyntaxKind::AmpersandToken as u16 => {
-                    Some((left as i32 & right as i32) as f64)
+                    Some(f64::from(to_int32(left) & to_int32(right)))
                 }
                 op if op == SyntaxKind::CaretToken as u16 => {
-                    Some((left as i32 ^ right as i32) as f64)
+                    Some(f64::from(to_int32(left) ^ to_int32(right)))
                 }
                 op if op == SyntaxKind::LessThanLessThanToken as u16 => {
-                    Some(((left as i32) << (right as u32 & 0x1f)) as f64)
+                    Some(f64::from(to_int32(left) << (to_uint32(right) & 0x1f)))
                 }
                 op if op == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
-                    Some(((left as i32) >> (right as u32 & 0x1f)) as f64)
+                    Some(f64::from(to_int32(left) >> (to_uint32(right) & 0x1f)))
                 }
                 op if op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
-                    Some(((left as u32) >> (right as u32 & 0x1f)) as f64)
+                    Some(f64::from(to_uint32(left) >> (to_uint32(right) & 0x1f)))
                 }
                 op if op == SyntaxKind::AsteriskAsteriskToken as u16 => Some(left.powf(right)),
                 _ => None,
@@ -461,4 +462,108 @@ fn enum_member_index(
             .and_then(|m_data| arena.get_identifier_text(m_data.name))
             .is_some_and(|m_name| m_name == member_name)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_parser::parser::ParserState;
+
+    /// Parse `source`, find the first enum declaration, and evaluate the
+    /// initializer of its first member through [`evaluate_const_enum_initializer`].
+    ///
+    /// Literal-only initializers (the bitwise/shift witnesses below) need no
+    /// binder, so this exercises the evaluator in isolation and deterministically.
+    fn first_member_value(source: &str) -> Option<f64> {
+        let mut parser = ParserState::new("t.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if let Some(enum_data) = arena.get_enum_at(idx) {
+                let m_idx = enum_data.members.nodes[0];
+                let m_node = arena.get(m_idx)?;
+                let m_data = arena.get_enum_member(m_node)?;
+                let enum_name = arena.get_identifier_text(enum_data.name);
+                return evaluate_const_enum_initializer(
+                    arena,
+                    m_data.initializer,
+                    enum_data,
+                    enum_name,
+                    0,
+                );
+            }
+            for child in arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn bitwise_or_wraps_like_ecmascript_toint32() {
+        // `0x80000000` is 2_147_483_648. ECMAScript `ToInt32` wraps it to
+        // -2_147_483_648 before `| 0`; the old saturating `as i32` cast produced
+        // i32::MAX (2_147_483_647), diverging from tsc.
+        assert_eq!(
+            first_member_value("const enum E { A = 0x80000000 | 0 }"),
+            Some(-2_147_483_648.0)
+        );
+        // Renamed binder: behavior follows the value, not the enum/member name.
+        assert_eq!(
+            first_member_value("const enum Flags { Mask = 0x80000000 | 0 }"),
+            Some(-2_147_483_648.0)
+        );
+    }
+
+    #[test]
+    fn bitwise_and_xor_not_wrap() {
+        // 0xFFFFFFFF -> ToInt32 -> -1.
+        assert_eq!(
+            first_member_value("const enum E { A = 0xFFFFFFFF & 0xFFFFFFFF }"),
+            Some(-1.0)
+        );
+        assert_eq!(
+            first_member_value("const enum E { A = 0xFFFFFFFF ^ 0 }"),
+            Some(-1.0)
+        );
+        // ~0 == -1, and ~0x7FFFFFFF == -2147483648.
+        assert_eq!(first_member_value("const enum E { A = ~0 }"), Some(-1.0));
+        assert_eq!(
+            first_member_value("const enum E { A = ~0x7FFFFFFF }"),
+            Some(-2_147_483_648.0)
+        );
+    }
+
+    #[test]
+    fn shifts_use_toint32_touint32_operands() {
+        // 1 << 31 -> i32::MIN (signed left shift), matching JS.
+        assert_eq!(
+            first_member_value("const enum E { A = 1 << 31 }"),
+            Some(-2_147_483_648.0)
+        );
+        // Signed `>>` sign-extends: -2147483648 >> 31 == -1.
+        assert_eq!(
+            first_member_value("const enum E { A = (0x80000000 | 0) >> 31 }"),
+            Some(-1.0)
+        );
+        // Unsigned `>>>` zero-fills the ToUint32 operand: 0x80000000 >>> 31 == 1.
+        assert_eq!(
+            first_member_value("const enum E { A = 0x80000000 >>> 31 }"),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn small_values_are_unaffected() {
+        // Regression: ordinary in-range constants keep their value.
+        assert_eq!(
+            first_member_value("const enum E { A = 1 << 4 }"),
+            Some(16.0)
+        );
+        assert_eq!(first_member_value("const enum E { A = 6 & 3 }"), Some(2.0));
+        assert_eq!(first_member_value("const enum E { A = 5 | 2 }"), Some(7.0));
+        assert_eq!(first_member_value("const enum E { A = 255 }"), Some(255.0));
+    }
 }

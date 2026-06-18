@@ -5,6 +5,7 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::numeric::{to_int32, to_uint32};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -378,7 +379,9 @@ impl<'a> CheckerState<'a> {
                 match unary.operator {
                     op if op == SyntaxKind::MinusToken as u16 => Some(-operand),
                     op if op == SyntaxKind::PlusToken as u16 => Some(operand),
-                    op if op == SyntaxKind::TildeToken as u16 => Some(!(operand as i32) as f64),
+                    op if op == SyntaxKind::TildeToken as u16 => {
+                        Some(f64::from(!to_int32(operand)))
+                    }
                     _ => None,
                 }
             }
@@ -393,22 +396,22 @@ impl<'a> CheckerState<'a> {
                     op if op == SyntaxKind::SlashToken as u16 => Some(left / right),
                     op if op == SyntaxKind::PercentToken as u16 => Some(left % right),
                     op if op == SyntaxKind::BarToken as u16 => {
-                        Some((left as i32 | right as i32) as f64)
+                        Some(f64::from(to_int32(left) | to_int32(right)))
                     }
                     op if op == SyntaxKind::AmpersandToken as u16 => {
-                        Some((left as i32 & right as i32) as f64)
+                        Some(f64::from(to_int32(left) & to_int32(right)))
                     }
                     op if op == SyntaxKind::CaretToken as u16 => {
-                        Some((left as i32 ^ right as i32) as f64)
+                        Some(f64::from(to_int32(left) ^ to_int32(right)))
                     }
                     op if op == SyntaxKind::LessThanLessThanToken as u16 => {
-                        Some(((left as i32) << (right as u32 & 0x1f)) as f64)
+                        Some(f64::from(to_int32(left) << (to_uint32(right) & 0x1f)))
                     }
                     op if op == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
-                        Some(((left as i32) >> (right as u32 & 0x1f)) as f64)
+                        Some(f64::from(to_int32(left) >> (to_uint32(right) & 0x1f)))
                     }
                     op if op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
-                        Some(((left as u32) >> (right as u32 & 0x1f)) as f64)
+                        Some(f64::from(to_uint32(left) >> (to_uint32(right) & 0x1f)))
                     }
                     op if op == SyntaxKind::AsteriskAsteriskToken as u16 => Some(left.powf(right)),
                     _ => None,
