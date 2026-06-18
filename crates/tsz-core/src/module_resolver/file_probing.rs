@@ -282,18 +282,35 @@ impl ModuleResolver {
             return None;
         }
 
-        // In Node16/NodeNext mode, extensionless export targets (e.g. from
-        // `"./": "./"` directory exports) must NOT probe for extensions.
-        // Node.js resolves exports targets literally — `./other` must exist as a
-        // file with that exact name. tsc mirrors this: it does not add .ts/.d.ts
-        // etc. when the target has no extension. Without this guard,
-        // `import "pkg/other"` would silently resolve to `pkg/other.d.ts`, which
-        // contradicts the ESM requirement for explicit extensions in specifiers.
+        // In the `exports`/`imports`-aware modes (Node16, NodeNext, Bundler),
+        // extensionless runtime targets (e.g. from `"./": "./"` directory
+        // exports or a wildcard `"#core/*": "./src/core/*"` whose specifier
+        // omits the extension) must NOT gain an extension or a directory
+        // `index` lookup. Node.js resolves `exports`/`imports` targets via
+        // PACKAGE_TARGET_RESOLVE, which returns the target verbatim — no
+        // extension substitution, no directory index. tsc mirrors this for
+        // these three modes: it only remaps a target carrying an explicit
+        // `.js`/`.mjs`/`.cjs` extension to its `.ts` sibling (handled above),
+        // and otherwise refuses to invent an extension for an extensionless
+        // target. Without this guard `import "pkg/other"` would silently
+        // resolve to `pkg/other.ts`/`pkg/other/index.ts`, contradicting both
+        // the runtime and tsc.
+        //
+        // The legacy `Node` (node10) and `Classic` modes predate the spec'd
+        // target algorithm and DO apply classic file/directory probing to an
+        // extensionless `exports` target (verified against tsc with
+        // `resolvePackageJsonExports`), so they fall through to the normal
+        // file/directory lookup below.
         let skip_extension_probing = matches!(
             self.resolution_kind,
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
         );
-        if !skip_extension_probing && let Some(resolved) = self.try_file(path, package_type) {
+        if skip_extension_probing {
+            return None;
+        }
+        if let Some(resolved) = self.try_file(path, package_type) {
             return Some(resolved);
         }
         if cached_is_dir(path) {

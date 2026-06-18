@@ -354,7 +354,21 @@ pub(crate) fn resolve_package_imports_specifier(
             && let Some(imports) = package_json.imports.as_ref()
         {
             let package_type = package_type_from_json(Some(&package_json));
-            for target in resolve_imports_subpath_candidates(
+            // Node.js (and tsc) resolve `imports`/`exports` targets via
+            // PACKAGE_TARGET_RESOLVE: the target is taken verbatim, with no
+            // directory-index lookup and no extension invention. tsc only
+            // remaps an explicit `.js`/`.mjs`/`.cjs` target to its `.ts`
+            // sibling. Under the `exports`/`imports`-aware modes
+            // (Node16/NodeNext/Bundler) an EXTENSIONLESS runtime target must
+            // therefore NOT resolve. The legacy `Node`(node10)/`Classic`
+            // modes predate this and keep classic extension/index probing.
+            let strict_extensionless = matches!(
+                options.effective_module_resolution(),
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
+            );
+            for (target, is_types_condition) in resolve_imports_subpath_candidates_with_flavor(
                 imports,
                 module_specifier,
                 &conditions,
@@ -368,6 +382,30 @@ pub(crate) fn resolve_package_imports_specifier(
                 } else if !is_valid_bare_imports_target(target) {
                     continue;
                 }
+
+                // An extensionless relative target under a spec'd mode does not
+                // gain a `.ts`/`index.*` lookup — unless the value came through
+                // a types-flavored condition, which keeps declaration-aware
+                // probing (`./types/api` -> `./types/api.d.ts`) exactly like the
+                // `exports` field and `typesVersions`.
+                if strict_extensionless
+                    && target.starts_with("./")
+                    && split_path_extension(Path::new(target)).is_none()
+                {
+                    if is_types_condition
+                        && let Some(resolved) = resolve_declaration_package_entry(
+                            current,
+                            target,
+                            options,
+                            package_type,
+                            resolution_cache,
+                        )
+                    {
+                        return Some(resolved);
+                    }
+                    continue;
+                }
+
                 if let Some(resolved) =
                     resolve_package_entry(current, target, options, package_type, resolution_cache)
                 {
