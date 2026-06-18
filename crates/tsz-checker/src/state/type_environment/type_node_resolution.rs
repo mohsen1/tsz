@@ -227,11 +227,10 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         // Route through wrong-meaning boundary: primitive keyword type-only
-                        use crate::query_boundaries::name_resolution::NameLookupKind;
                         self.report_wrong_meaning_diagnostic(
                             &name,
                             type_ref.type_name,
-                            NameLookupKind::Type,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
                         );
                         self.ctx.node_types.insert(idx.0, TypeId::ERROR);
                         return TypeId::ERROR;
@@ -444,11 +443,10 @@ impl<'a> CheckerState<'a> {
                             };
                             if let Some(keyword_name) = keyword_name {
                                 // Route through wrong-meaning boundary: keyword type-only
-                                use crate::query_boundaries::name_resolution::NameLookupKind;
                                 self.report_wrong_meaning_diagnostic(
                                     keyword_name,
                                     array_type.element_type,
-                                    NameLookupKind::Type,
+                                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
                                 );
                                 self.ctx.node_types.insert(idx.0, TypeId::ERROR);
                                 return TypeId::ERROR;
@@ -1009,6 +1007,32 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().callable(callable_shape)
     }
 
+    /// Resolve `name` to a lib-declared global value (`declare var`/`function`/
+    /// `class`) and return its value type, if any. Used as the recovery path
+    /// for `globalThis.<name>` accesses when the in-scope `<name>` is a
+    /// module-local binding that does not contribute a global value (a
+    /// block-scoped `const`/`let`, a type-only `import type` alias, or a symbol
+    /// without value meaning). `globalThis` exposes only the ambient global
+    /// scope, so such module-local bindings must never shadow a real lib global.
+    fn resolve_lib_global_var_value_type(&mut self, name: &str) -> Option<TypeId> {
+        let lib_sym_id = self.resolve_lib_global_var_symbol(name)?;
+        let lib_sym = self.ctx.binder.get_symbol(lib_sym_id).cloned()?;
+        for &decl_idx in &lib_sym.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let vt = self.type_of_value_declaration_for_symbol(lib_sym_id, decl_idx);
+            if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+                return Some(self.augment_js_global_value_type_with_expandos(name, lib_sym_id, vt));
+            }
+        }
+        let vt = self.get_type_of_symbol(lib_sym_id);
+        if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+            return Some(self.augment_js_global_value_type_with_expandos(name, lib_sym_id, vt));
+        }
+        None
+    }
+
     pub(crate) fn resolve_global_this_property_type(
         &mut self,
         name: &str,
@@ -1035,16 +1059,35 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = self.resolve_global_value_symbol(name) {
             if self.alias_resolves_to_type_only(sym_id) {
+                // A module-local `import type X` binding never shadows `globalThis.X`:
+                // `globalThis` exposes only the ambient global scope. Prefer the lib
+                // global `var`/`function`/`class` of the same name if one exists.
+                // E.g. `import type Symbol from "./Symbol"` then `globalThis.Symbol()`.
+                if let Some(vt) = self.resolve_lib_global_var_value_type(name) {
+                    return vt;
+                }
                 // Route through wrong-meaning boundary: alias resolves to type-only
-                use crate::query_boundaries::name_resolution::NameLookupKind;
-                self.report_wrong_meaning_diagnostic(name, error_node, NameLookupKind::Type);
+                self.report_wrong_meaning_diagnostic(
+                    name,
+                    error_node,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return TypeId::ERROR;
             }
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 if !symbol.has_any_flags(symbol_flags::VALUE) {
+                    // A type-only module-local binding (e.g. an interface or a
+                    // type-only import) does not contribute a global value. Prefer
+                    // the lib global value of the same name before erroring.
+                    if let Some(vt) = self.resolve_lib_global_var_value_type(name) {
+                        return vt;
+                    }
                     // Route through wrong-meaning boundary: symbol has no value meaning
-                    use crate::query_boundaries::name_resolution::NameLookupKind;
-                    self.report_wrong_meaning_diagnostic(name, error_node, NameLookupKind::Type);
+                    self.report_wrong_meaning_diagnostic(
+                        name,
+                        error_node,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
                     return TypeId::ERROR;
                 }
                 // In TypeScript, `typeof globalThis` only exposes `var`-declared
@@ -1057,26 +1100,8 @@ impl<'a> CheckerState<'a> {
                     // E.g. `const Symbol = globalThis.Symbol` — the local const shadows
                     // the lib `declare var Symbol: SymbolConstructor`, but globalThis
                     // should still resolve to the lib var.
-                    if let Some(lib_sym_id) = self.resolve_lib_global_var_symbol(name)
-                        && let Some(lib_sym) = self.ctx.binder.get_symbol(lib_sym_id).cloned()
-                    {
-                        for &decl_idx in &lib_sym.declarations {
-                            if decl_idx.is_none() {
-                                continue;
-                            }
-                            let vt =
-                                self.type_of_value_declaration_for_symbol(lib_sym_id, decl_idx);
-                            if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
-                                return self.augment_js_global_value_type_with_expandos(
-                                    name, lib_sym_id, vt,
-                                );
-                            }
-                        }
-                        let vt = self.get_type_of_symbol(lib_sym_id);
-                        if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
-                            return self
-                                .augment_js_global_value_type_with_expandos(name, lib_sym_id, vt);
-                        }
+                    if let Some(vt) = self.resolve_lib_global_var_value_type(name) {
+                        return vt;
                     }
                     self.error_property_not_exist_on_global_this(name, error_node, base_display);
                     return TypeId::ERROR;
