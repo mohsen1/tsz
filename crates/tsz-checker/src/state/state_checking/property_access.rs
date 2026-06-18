@@ -11,6 +11,43 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Maximum nesting depth for environment-aware property access before the
+/// resolver treats the receiver as cyclic. A self-referential receiver (e.g. a
+/// malformed cross-arena generic alias whose instantiated body transitively
+/// contains itself, `type Out<T> = Iface<T> & {…}` where `Iface` mis-resolves
+/// back to `Out`) would otherwise recurse until the stack overflows and aborts
+/// the whole compile. The limit is far above any legitimate finite nesting
+/// (which is only a handful deep) and far below the stack-exhaustion frontier,
+/// so it never trips on valid code. Refs #13212.
+const MAX_PROPERTY_ACCESS_DEPTH: u32 = 350;
+
+thread_local! {
+    static PROPERTY_ACCESS_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII depth counter for [`CheckerState::resolve_property_access_with_env`].
+struct PropertyAccessDepthGuard;
+
+impl PropertyAccessDepthGuard {
+    /// Enters one recursion level; returns `None` once the depth cap is hit.
+    fn enter() -> Option<Self> {
+        PROPERTY_ACCESS_DEPTH.with(|depth| {
+            if depth.get() >= MAX_PROPERTY_ACCESS_DEPTH {
+                None
+            } else {
+                depth.set(depth.get() + 1);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for PropertyAccessDepthGuard {
+    fn drop(&mut self) {
+        PROPERTY_ACCESS_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 impl<'a> CheckerState<'a> {
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::query_boundaries::{assignability, common, property_access};
@@ -243,6 +280,22 @@ impl<'a> CheckerState<'a> {
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
         let original_object_type = object_type;
+
+        // Cycle breaker: a self-referential receiver (typically a malformed
+        // cross-arena generic alias whose instantiated body transitively
+        // contains itself) would recurse here until the stack overflows and
+        // aborts the entire compile. Bail to a degenerate `any` once nesting
+        // passes the depth cap instead of crashing. Refs #13212.
+        let _depth_guard = match PropertyAccessDepthGuard::enter() {
+            Some(guard) => guard,
+            None => {
+                return tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    write_type: None,
+                    from_index_signature: false,
+                };
+            }
+        };
 
         // Lazy single-member fast path: when the receiver is a bare
         // `Lazy(DefId)` reference to a simple lib interface, resolve only the
