@@ -351,3 +351,95 @@ use(assign((x) => {
         ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+/// Contextual `new`-expression inference must infer a class type parameter that
+/// occurs **only inside a generic method member** of the contextual interface.
+///
+/// `refine` returns `Builder<DB, TB, O>` and is the only place `DB`/`TB` appear
+/// in `Builder`. When `new BuilderImpl(0)` is checked against the contextual
+/// `Builder<DB, TB, O>`, the constraint walker must descend through the generic
+/// `refine` signature (erasing its own `LRE` type parameter, tsc's
+/// `getErasedSignature`) so its return position `Builder<DB, TB, O>` seeds
+/// `DB`/`TB`. Without erasure the generic target method was skipped, leaving
+/// `DB`/`TB` defaulted to `unknown` and producing a false `TS2322`.
+#[test]
+fn contextual_new_infers_type_params_only_present_in_generic_method_member() {
+    let diags = check_source_diagnostics(
+        r#"
+type AnyColumn<DB, TB extends keyof DB> = { [T in TB]: keyof DB[T] }[TB] & string;
+type RefExpr<DB, TB extends keyof DB> = AnyColumn<DB, TB> | ((db: DB) => TB);
+interface Builder<DB, TB extends keyof DB, O> {
+  get expressionType(): O | undefined;
+  get isBuilder(): true;
+  refine<LRE extends RefExpr<DB, TB>>(lhs: LRE): Builder<DB, TB, O>;
+}
+class BuilderImpl<DB, TB extends keyof DB, O> implements Builder<DB, TB, O> {
+  constructor(x: number) {}
+  get expressionType(): O | undefined { return undefined; }
+  get isBuilder(): true { return true; }
+  refine(lhs: RefExpr<DB, TB>): Builder<DB, TB, O> { return new BuilderImpl(0); }
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 — DB/TB must be inferred through the generic `refine` member return, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+/// Same structural defect, renamed binders and a non-mapped constraint, to lock
+/// the fix to the structural rule rather than the original witness names.
+#[test]
+fn contextual_new_infers_method_only_type_params_with_renamed_binders() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Svc<In, Out> {
+  run(x: In): Out;
+  pipe<Z extends keyof Out>(k: Z): Svc<In, Out>;
+}
+class SvcImpl<In, Out> implements Svc<In, Out> {
+  run(x: In): Out { return undefined as any; }
+  pipe(k: keyof Out): Svc<In, Out> { return new SvcImpl(); }
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 — In/Out must be inferred through the generic `pipe` member, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+/// Negative control: erasing generic target method signatures during inference
+/// must not mask a genuine type mismatch. A `Box<string>` assigned where
+/// `Box<number>` is expected must still report `TS2322`.
+#[test]
+fn generic_method_member_inference_still_reports_genuine_mismatch() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Box<T> {
+  get(): T;
+  map<U>(f: (x: T) => U): Box<U>;
+}
+class BoxImpl<T> implements Box<T> {
+  constructor(private v: T) {}
+  get(): T { return this.v; }
+  map<U>(f: (x: T) => U): Box<U> { return new BoxImpl(f(this.v)); }
+}
+const b: Box<number> = new BoxImpl<string>("x");
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 — Box<string> is not assignable to Box<number>"
+    );
+}
