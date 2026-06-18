@@ -331,6 +331,9 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        let Ok(owner_file_idx_u32) = u32::try_from(owner_file_idx) else {
+            return false;
+        };
         let Some(owner_binder) = self.ctx.get_binder_for_file(owner_file_idx) else {
             return false;
         };
@@ -370,10 +373,11 @@ impl<'a> CheckerState<'a> {
                 arena: owner_arena,
                 binder: owner_binder,
                 lib_binders: &lib_binders,
+                owner_file_idx: owner_file_idx_u32,
                 module_exports,
                 tp_names: &tp_names,
             };
-            scan.body_references_private(type_alias.type_node, 0)
+            scan.body_has_private_extends_operand(type_alias.type_node, 0)
         })
     }
 }
@@ -392,6 +396,7 @@ struct ProviderPrivateTypeScan<'a> {
     arena: &'a NodeArena,
     binder: &'a BinderState,
     lib_binders: &'a [Arc<BinderState>],
+    owner_file_idx: u32,
     module_exports: Option<&'a SymbolTable>,
     tp_names: &'a FxHashSet<String>,
 }
@@ -408,22 +413,150 @@ impl ProviderPrivateTypeScan<'_> {
         }
         self.binder
             .resolve_name_with_filter(name, self.arena, name_node, self.lib_binders, |sym| {
-                self.binder.get_symbol(sym).is_some_and(|resolved| {
+                self.binder.symbols.get(sym).is_some_and(|resolved| {
                     resolved.has_any_flags(
                         symbol_flags::TYPE_ALIAS
                             | symbol_flags::INTERFACE
                             | symbol_flags::CLASS
                             | symbol_flags::ENUM,
                     ) && !resolved.has_any_flags(symbol_flags::TYPE_PARAMETER)
+                        && (resolved.decl_file_idx == self.owner_file_idx
+                            || resolved
+                                .stable_declarations
+                                .iter()
+                                .any(|stable| stable.file_idx == self.owner_file_idx))
                 })
             })
             .is_some()
     }
 
+    /// Search `node_idx` for conditional types whose `extends` operand
+    /// references a provider-private type. Provider-private references in
+    /// branch/result positions are not enough to delegate: library helpers such
+    /// as React's `LibraryManagedAttributes` compose private branch helpers but
+    /// still require consumer-arena instantiation of their caller-provided type
+    /// parameter. The unsafe-to-lower-in-consumer shape is the conditional test
+    /// itself depending on a provider-private type.
+    fn body_has_private_extends_operand(&self, node_idx: NodeIndex, depth: u32) -> bool {
+        if node_idx == NodeIndex::NONE || depth > PROVIDER_PRIVATE_SCAN_MAX_DEPTH {
+            return false;
+        }
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        let next = depth + 1;
+        match node.kind {
+            syntax_kind_ext::CONDITIONAL_TYPE => {
+                self.arena.get_conditional_type(node).is_some_and(|cond| {
+                    self.body_references_private(cond.extends_type, next)
+                        || self.body_has_private_extends_operand(cond.check_type, next)
+                        || self.body_has_private_extends_operand(cond.true_type, next)
+                        || self.body_has_private_extends_operand(cond.false_type, next)
+                })
+            }
+            syntax_kind_ext::TYPE_REFERENCE => {
+                self.arena.get_type_ref(node).is_some_and(|type_ref| {
+                    type_ref.type_arguments.as_ref().is_some_and(|args| {
+                        args.nodes
+                            .iter()
+                            .any(|&arg| self.body_has_private_extends_operand(arg, next))
+                    })
+                })
+            }
+            syntax_kind_ext::UNION_TYPE | syntax_kind_ext::INTERSECTION_TYPE => self
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    composite
+                        .types
+                        .nodes
+                        .iter()
+                        .any(|&member| self.body_has_private_extends_operand(member, next))
+                }),
+            syntax_kind_ext::ARRAY_TYPE => self.arena.get_array_type(node).is_some_and(|array| {
+                self.body_has_private_extends_operand(array.element_type, next)
+            }),
+            syntax_kind_ext::TUPLE_TYPE => self.arena.get_tuple_type(node).is_some_and(|tuple| {
+                tuple
+                    .elements
+                    .nodes
+                    .iter()
+                    .any(|&elem| self.body_has_private_extends_operand(elem, next))
+            }),
+            syntax_kind_ext::PARENTHESIZED_TYPE
+            | syntax_kind_ext::OPTIONAL_TYPE
+            | syntax_kind_ext::REST_TYPE => {
+                self.arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    self.body_has_private_extends_operand(wrapped.type_node, next)
+                })
+            }
+            syntax_kind_ext::NAMED_TUPLE_MEMBER => self
+                .arena
+                .get_named_tuple_member(node)
+                .is_some_and(|member| {
+                    self.body_has_private_extends_operand(member.type_node, next)
+                }),
+            syntax_kind_ext::INFER_TYPE => self.arena.get_infer_type(node).is_some_and(|infer| {
+                self.type_parameter_has_private_extends_operand(infer.type_parameter, next)
+            }),
+            syntax_kind_ext::TYPE_OPERATOR => self
+                .arena
+                .get_type_operator(node)
+                .is_some_and(|op| self.body_has_private_extends_operand(op.type_node, next)),
+            syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                self.arena.get_indexed_access_type(node).is_some_and(|ia| {
+                    self.body_has_private_extends_operand(ia.object_type, next)
+                        || self.body_has_private_extends_operand(ia.index_type, next)
+                })
+            }
+            syntax_kind_ext::MAPPED_TYPE => {
+                self.arena.get_mapped_type(node).is_some_and(|mapped| {
+                    self.type_parameter_has_private_extends_operand(mapped.type_parameter, next)
+                        || self.body_has_private_extends_operand(mapped.name_type, next)
+                        || self.body_has_private_extends_operand(mapped.type_node, next)
+                })
+            }
+            syntax_kind_ext::TYPE_LITERAL => self.arena.get_type_literal(node).is_some_and(|lit| {
+                lit.members
+                    .nodes
+                    .iter()
+                    .any(|&member| self.member_has_private_extends_operand(member, next))
+            }),
+            syntax_kind_ext::FUNCTION_TYPE | syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                self.arena.get_function_type(node).is_some_and(|func| {
+                    self.body_has_private_extends_operand(func.type_annotation, next)
+                        || self.params_have_private_extends_operand(&func.parameters.nodes, next)
+                })
+            }
+            syntax_kind_ext::TEMPLATE_LITERAL_TYPE => self
+                .arena
+                .get_template_literal_type(node)
+                .is_some_and(|template| {
+                    template.template_spans.nodes.iter().any(|&span_idx| {
+                        self.arena
+                            .get(span_idx)
+                            .and_then(|span_node| self.arena.get_template_span(span_node))
+                            .is_some_and(|span| {
+                                self.body_has_private_extends_operand(span.expression, next)
+                            })
+                    })
+                }),
+            syntax_kind_ext::TYPE_PREDICATE => {
+                self.arena
+                    .get_type_predicate(node)
+                    .is_some_and(|predicate| {
+                        self.body_has_private_extends_operand(predicate.type_node, next)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// Recurse into every nested type slot of `node_idx`, returning `true` as
     /// soon as a provider-private named reference is found. Walks the type-node
-    /// shapes that can hold a reference; kinds it does not descend (e.g. `typeof`
-    /// value queries) only cause safe under-detection.
+    /// shapes that can hold a reference. This is used only after entering a
+    /// conditional `extends` operand; references found elsewhere do not by
+    /// themselves trigger cross-arena delegation.
     fn body_references_private(&self, node_idx: NodeIndex, depth: u32) -> bool {
         if node_idx == NodeIndex::NONE || depth > PROVIDER_PRIVATE_SCAN_MAX_DEPTH {
             return false;
@@ -584,6 +717,47 @@ impl ProviderPrivateTypeScan<'_> {
                 .and_then(|node| self.arena.get_parameter(node))
                 .is_some_and(|parameter| {
                     self.body_references_private(parameter.type_annotation, depth)
+                })
+        })
+    }
+
+    fn type_parameter_has_private_extends_operand(&self, tp_idx: NodeIndex, depth: u32) -> bool {
+        self.arena
+            .get(tp_idx)
+            .and_then(|node| self.arena.get_type_parameter(node))
+            .is_some_and(|tp| {
+                self.body_has_private_extends_operand(tp.constraint, depth)
+                    || self.body_has_private_extends_operand(tp.default, depth)
+            })
+    }
+
+    fn member_has_private_extends_operand(&self, member_idx: NodeIndex, depth: u32) -> bool {
+        let Some(member) = self.arena.get(member_idx) else {
+            return false;
+        };
+        match member.kind {
+            syntax_kind_ext::INDEX_SIGNATURE => {
+                self.arena.get_index_signature(member).is_some_and(|index| {
+                    self.body_has_private_extends_operand(index.type_annotation, depth)
+                        || self.params_have_private_extends_operand(&index.parameters.nodes, depth)
+                })
+            }
+            _ => self.arena.get_signature(member).is_some_and(|sig| {
+                self.body_has_private_extends_operand(sig.type_annotation, depth)
+                    || sig.parameters.as_ref().is_some_and(|params| {
+                        self.params_have_private_extends_operand(&params.nodes, depth)
+                    })
+            }),
+        }
+    }
+
+    fn params_have_private_extends_operand(&self, params: &[NodeIndex], depth: u32) -> bool {
+        params.iter().any(|&param| {
+            self.arena
+                .get(param)
+                .and_then(|node| self.arena.get_parameter(node))
+                .is_some_and(|parameter| {
+                    self.body_has_private_extends_operand(parameter.type_annotation, depth)
                 })
         })
     }
