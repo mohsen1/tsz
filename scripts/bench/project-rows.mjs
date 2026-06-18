@@ -786,8 +786,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "INFISICAL_REF",
     repo: "https://github.com/Infisical/infisical.git",
     ref: "704c8cf7e76f1ce49301a5f943e51303c0db0058",
-    guard_set: "canary",
-    benchmark_set: "canary",
+    guard_set: "required",
+    benchmark_set: "required",
     category: "application",
   },
   {
