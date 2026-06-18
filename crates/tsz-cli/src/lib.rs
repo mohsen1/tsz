@@ -62,6 +62,9 @@ mod reporter_tests;
 #[path = "../tests/reserved_word_emit_tests.rs"]
 mod reserved_word_emit_tests;
 #[cfg(test)]
+#[path = "../tests/symbol_keyed_member_cross_arena_cli_tests.rs"]
+mod symbol_keyed_member_cross_arena_cli_tests;
+#[cfg(test)]
 #[path = "../tests/tsc_compat_tests.rs"]
 mod tsc_compat_tests;
 #[cfg(test)]
