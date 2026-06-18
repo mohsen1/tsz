@@ -1016,6 +1016,94 @@ fn test_narrow_excluding_type() {
 }
 
 #[test]
+fn test_narrow_excluding_positive_subset_filters_union_members() {
+    // tsc's false-branch predicate exclusion: filterType(type, t =>
+    // !isTypeSubsetOf(t, trueType)). Members that are subsets of (here equal to,
+    // or contained in) the positive type are dropped; the rest survive — a
+    // shallow identity/containment pass, no structural subtype walk.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    // Exclude the positive `string` -> number | boolean.
+    let excluded = ctx
+        .narrow_excluding_positive_subset(union, TypeId::STRING)
+        .expect("a reducible member exists");
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    assert_eq!(excluded, expected);
+
+    // Exclude a positive `string | number` -> boolean (multi-member positive).
+    let positive = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let excluded = ctx
+        .narrow_excluding_positive_subset(union, positive)
+        .expect("two members are subsets of the positive");
+    assert_eq!(excluded, TypeId::BOOLEAN);
+}
+
+#[test]
+fn test_narrow_excluding_positive_subset_filters_structural_member() {
+    // A predicate true branch may be freshly materialized and structurally cover
+    // a source member without sharing identity with it. The false branch should
+    // still drop only that top-level member.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let type_name = interner.intern_string("type");
+    let extra_name = interner.intern_string("extra");
+    let lit_a = interner.literal_string("A");
+    let lit_b = interner.literal_string("B");
+
+    let member_a = interner.object(vec![PropertyInfo::new(type_name, lit_a)]);
+    let member_b = interner.object(vec![
+        PropertyInfo::new(type_name, lit_b),
+        PropertyInfo::new(extra_name, TypeId::NUMBER),
+    ]);
+    let positive_b = interner.object(vec![PropertyInfo::new(type_name, lit_b)]);
+    let union = interner.union2(member_a, member_b);
+
+    let excluded = ctx
+        .narrow_excluding_positive_subset(union, positive_b)
+        .expect("structurally covered member should be filtered");
+    assert_eq!(excluded, member_a);
+}
+
+#[test]
+fn test_narrow_excluding_positive_subset_no_reduction_returns_none() {
+    // When no source member is a subset of the positive type, the shallow filter
+    // cannot reduce the source and returns None so the caller can fall back to
+    // the structural exclusion path.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let union = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    // `string` is not a member of the source, so nothing is filtered.
+    assert_eq!(
+        ctx.narrow_excluding_positive_subset(union, TypeId::STRING),
+        None
+    );
+}
+
+#[test]
+fn test_narrow_excluding_positive_subset_non_union_source() {
+    // A non-union source collapses to `never` iff it is a subset of the positive
+    // type, mirroring tsc's `type.flags & Never || f(type) ? type : neverType`.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `string` is a subset of positive `string` -> never.
+    assert_eq!(
+        ctx.narrow_excluding_positive_subset(TypeId::STRING, TypeId::STRING),
+        Some(TypeId::NEVER)
+    );
+    // `string` is unrelated to positive `number` -> not reduced (None).
+    assert_eq!(
+        ctx.narrow_excluding_positive_subset(TypeId::STRING, TypeId::NUMBER),
+        None
+    );
+}
+
+#[test]
 fn test_narrow_excluding_type_param_with_union_constraint() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
