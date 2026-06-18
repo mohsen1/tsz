@@ -1054,6 +1054,39 @@ impl CheckerState<'_> {
         let name = decl_arena.get_identifier_text(type_ref.type_name)?;
         let target_sym_id =
             self.resolve_declaration_file_type_symbol_for_lowering(name, effective_file_idx)?;
+        // Cycle guard: expanding `target_sym_id`'s own defaults re-enters
+        // `get_reference_type_params_for_symbol` below, which can recurse back to
+        // a symbol already being expanded (self/mutually referential generic
+        // registries — the fp-ts `URItoKind`/`Kind` HKT family). Leave the
+        // constraint un-defaulted on re-entry instead of looping; the
+        // `ref_type_params` cache populated by the outermost frame still yields
+        // the fully-expanded form for non-cyclic references.
+        if !self
+            .ctx
+            .omitted_default_constraint_stack
+            .borrow_mut()
+            .insert(target_sym_id.0)
+        {
+            return None;
+        }
+        let result = self.cross_file_omitted_default_constraint_reference_inner(
+            name,
+            target_sym_id,
+            effective_file_idx,
+        );
+        self.ctx
+            .omitted_default_constraint_stack
+            .borrow_mut()
+            .remove(&target_sym_id.0);
+        result
+    }
+
+    fn cross_file_omitted_default_constraint_reference_inner(
+        &mut self,
+        name: &str,
+        target_sym_id: SymbolId,
+        effective_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
         let target_name = self
             .get_symbol_from_registered_file_target(target_sym_id)
             .or_else(|| self.get_cross_file_symbol(target_sym_id))
