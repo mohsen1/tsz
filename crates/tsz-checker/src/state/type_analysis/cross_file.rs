@@ -111,6 +111,34 @@ impl CheckerState<'_> {
         None
     }
 
+    /// Fetch the declaration data of a *resolved import target* `sym_id` from
+    /// the file that actually declares it, bypassing the local-import-alias pin.
+    ///
+    /// `get_symbol_globally` / `get_cross_file_symbol` deliberately pin a raw
+    /// `SymbolId` to a local `import ... from "./m"` alias when one exists,
+    /// because per-file binders mint colliding raw ids (no `base_offset` in
+    /// production) and a blind cross-file lookup could pick up an unrelated
+    /// same-id decl. That pin is correct while resolving the *alias itself*, but
+    /// wrong once the alias has already been followed to its target via
+    /// `resolve_import_alias_and_register` and the target's raw id happens to
+    /// collide with the local alias: there we must read the *target's* real
+    /// flags/declarations from its owning binder, not the alias's. Falls back to
+    /// `get_symbol_globally` when the target has no distinct owning file
+    /// (same-file targets, libs).
+    pub(crate) fn resolved_import_target_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<&tsz_binder::Symbol> {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
+        }
+        self.get_symbol_globally(sym_id)
+    }
+
     /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
     /// Resolves through `cross_file_symbol_targets` first to avoid same-raw-id
     /// collisions with the local binder; import aliases are pinned local (see
