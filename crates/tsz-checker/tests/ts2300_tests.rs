@@ -1096,9 +1096,9 @@ export interface foo {}
     );
 }
 
-/// When a const conflicts with a var, tsc uses TS2451 ("Cannot redeclare
-/// block-scoped variable") on both: a block-scoped variable can never be
-/// redeclared, and the verdict does not depend on declaration order.
+/// When a const conflicts with a later var, tsc uses TS2451 ("Cannot redeclare
+/// block-scoped variable") on both because the first conflicting declaration is
+/// block-scoped.
 #[test]
 fn const_var_conflict_emits_ts2451() {
     // const before var in pure 2-way variable conflict → TS2451
@@ -1185,25 +1185,22 @@ fn let_var_function_same_scope_ts2300() {
     assert_eq!(ts2300, 3, "All three should be TS2300 at same scope");
 }
 
-/// A `var` redeclared alongside a `let`/`const` in the same scope is a
-/// block-scoped redeclaration: tsc reports TS2451 on every declaration
-/// regardless of source order (the verdict is a property of the merged symbol's
-/// declarations, not which one is written first). `var x; let x;` and
-/// `let x; var x;` both produce two TS2451s. Confirmed against
-/// `letAndVarRedeclaration.ts` (`x`/`x11`: `let` then `var` → TS2451).
+/// Same-file `var` + `let`/`const` follows tsc's source-position split:
+/// `var` first reports TS2300, while `let`/`const` first reports TS2451. This
+/// matches `letDeclarations-scopes-duplicates.ts` (`var5` versus `var6`).
 #[test]
-fn var_before_let_same_scope_ts2451() {
+fn var_before_let_same_scope_ts2300() {
     let diagnostics = verify_errors(
         "var x = 0;\nlet x = 0;",
         &[
-            (1, 5, "Cannot redeclare block-scoped variable 'x'."),
-            (2, 5, "Cannot redeclare block-scoped variable 'x'."),
+            (1, 5, "Duplicate identifier 'x'."),
+            (2, 5, "Duplicate identifier 'x'."),
         ],
     );
     let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
     let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
-    assert_eq!(ts2451, 2, "var-before-let should be TS2451");
-    assert_eq!(ts2300, 0, "var-before-let should not emit TS2300");
+    assert_eq!(ts2451, 0, "var-before-let should not emit TS2451");
+    assert_eq!(ts2300, 2, "var-before-let should be TS2300");
 }
 
 /// When an interface default export conflicts with a non-function/non-class

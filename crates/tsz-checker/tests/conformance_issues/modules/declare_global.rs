@@ -401,10 +401,8 @@ import { nonExistent } from "./thisModule";
 }
 
 /// A `let`+`var` redeclaration for the same name emits TS2451 ("Cannot
-/// redeclare block-scoped variable") on both declarations, not TS2300
-/// ("Duplicate identifier"): a block-scoped variable can never be redeclared.
-/// Order-independent — see `test_ts2451_var_before_let_emits_block_scoped_error`
-/// for the mirror case.
+/// redeclare block-scoped variable") on both declarations because the first
+/// conflicting declaration is block-scoped.
 #[test]
 fn test_ts2451_let_before_var_emits_block_scoped_error() {
     let diagnostics = compile_and_get_diagnostics(
@@ -432,12 +430,11 @@ var x = 2;
     );
 }
 
-/// A `var`+`let` redeclaration is a block-scoped redeclaration regardless of
-/// which declaration is written first: tsc emits TS2451 on both. The verdict is
-/// a property of the merged symbol (does it have a block-scoped declaration?),
-/// not source order. Confirmed against `letAndVarRedeclaration.ts`.
+/// A `var`+`let` redeclaration in the same file emits TS2300 ("Duplicate
+/// identifier") when the first conflicting declaration is the `var`. This is
+/// the source-order split in `letDeclarations-scopes-duplicates.ts`.
 #[test]
-fn test_ts2451_var_before_let_emits_block_scoped_error() {
+fn test_ts2300_var_before_let_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 var x = 1;
@@ -451,11 +448,10 @@ let x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // Both declarations get TS2451 (block-scoped redeclaration), same as the
-    // `let`-before-`var` ordering.
+    // Both declarations get TS2300 in the var-before-let ordering.
     assert!(
-        codes.iter().all(|&c| c == 2451),
-        "Expected all TS2451 (var-first + let conflict), got codes: {codes:?}"
+        codes.iter().all(|&c| c == 2300),
+        "Expected all TS2300 (var-first + let conflict), got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,

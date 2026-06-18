@@ -1453,12 +1453,11 @@ function foo() {}
 
 #[test]
 fn test_duplicate_identifier_var_let_2300() {
-    // tsc emits TS2451 (Cannot redeclare block-scoped variable) for var/let
-    // conflicts: the `let` declaration introduces block-scoping, so neither
-    // declaration may redeclare it.
+    // Same-file `var` before `let` follows tsc's source-position split and
+    // emits TS2300, matching `letDeclarations-scopes-duplicates.ts` (`var5`).
     let (ts2451, ts2300) = count_redeclaration_diagnostics("var foo = 1;\nlet foo = 2;\n");
-    assert_eq!(ts2451, 2, "Expected 2 TS2451 for var followed by let");
-    assert_eq!(ts2300, 0, "Expected no TS2300 for pure var/let redeclaration");
+    assert_eq!(ts2451, 0, "Expected no TS2451 for var followed by let");
+    assert_eq!(ts2300, 2, "Expected 2 TS2300 for var followed by let");
 }
 
 /// Compile `source` and return `(ts2451_count, ts2300_count)` for the
@@ -1506,18 +1505,18 @@ fn count_redeclaration_diagnostics(source: &str) -> (usize, usize) {
 
 #[test]
 fn test_duplicate_identifier_let_var_2451() {
-    // Reverse order of the var/let case: a block-scoped variable can never be
-    // redeclared, so order does not matter — tsc emits two TS2451 here too.
+    // Reverse order of the var/let case: the first conflicting declaration is
+    // block-scoped, so tsc emits TS2451.
     let (ts2451, ts2300) = count_redeclaration_diagnostics("let foo = 1;\nvar foo = 2;\n");
     assert_eq!(ts2451, 2, "Expected 2 TS2451 for let followed by var");
     assert_eq!(ts2300, 0, "Expected no TS2300 for pure let/var redeclaration");
 }
 
 #[test]
-fn test_duplicate_identifier_var_const_2451() {
+fn test_duplicate_identifier_var_const_2300() {
     let (ts2451, ts2300) = count_redeclaration_diagnostics("var bar = 1;\nconst bar = 2;\n");
-    assert_eq!(ts2451, 2, "Expected 2 TS2451 for var followed by const");
-    assert_eq!(ts2300, 0, "Expected no TS2300 for pure var/const redeclaration");
+    assert_eq!(ts2451, 0, "Expected no TS2451 for var followed by const");
+    assert_eq!(ts2300, 2, "Expected 2 TS2300 for var followed by const");
 }
 
 #[test]
@@ -1528,11 +1527,13 @@ fn test_duplicate_identifier_const_var_2451() {
 }
 
 #[test]
-fn test_duplicate_identifier_three_way_var_let_var_2451() {
-    // Three pure-variable declarations (one block-scoped) → TS2451 on each.
-    let (ts2451, _ts2300) =
+fn test_duplicate_identifier_three_way_var_let_var_2300() {
+    // The first conflicting declaration is `var`, so tsc reports TS2300 on
+    // each declaration in this same-file mixed set.
+    let (ts2451, ts2300) =
         count_redeclaration_diagnostics("var q = 1;\nlet q = 2;\nvar q = 3;\n");
-    assert_eq!(ts2451, 3, "Expected 3 TS2451 for var/let/var redeclaration");
+    assert_eq!(ts2451, 0, "Expected no TS2451 for var/let/var redeclaration");
+    assert_eq!(ts2300, 3, "Expected 3 TS2300 for var/let/var redeclaration");
 }
 
 #[test]
@@ -1830,4 +1831,3 @@ f(true);
         "Expected TS2345 or TS2769 for overload call mismatch, got: {codes:?}"
     );
 }
-
