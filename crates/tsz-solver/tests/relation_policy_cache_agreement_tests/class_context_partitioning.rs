@@ -74,6 +74,76 @@ fn subtype_cache_skips_class_check_context() {
 }
 
 #[test]
+fn class_check_context_verdict_uses_instance_local_memo_not_shared_cache() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source_symbol = SymbolId(44);
+    let class_ref = crate::SymbolRef(source_symbol.0);
+    let is_class = |symbol: crate::SymbolRef| symbol == class_ref;
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(source_symbol),
+    );
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner)
+        .with_query_db(&db)
+        .with_class_check(&is_class);
+    let key = checker.debug_cache_key_for(source, target);
+
+    // A class-context verdict is excluded from the cross-checker shared cache
+    // (it depends on the `is_class_symbol` closure), so the first check
+    // populates the instance-local fallback memo instead (issue #13828).
+    assert!(!checker.is_subtype_of(source, target));
+    assert_eq!(
+        db.lookup_subtype_cache(key),
+        None,
+        "class-context verdict must not populate the shared class-agnostic slot",
+    );
+    assert_eq!(
+        checker.local_relation_cache.get(&key),
+        Some(&false),
+        "class-context verdict must be memoized in the instance-local fallback",
+    );
+
+    // A repeat comparison on the same instance is served from the local memo
+    // and preserves the verdict.
+    assert!(!checker.is_subtype_of(source, target));
+
+    // `reset` clears the instance-local memo so a reused checker never carries a
+    // context-bound verdict into a fresh context.
+    checker.reset();
+    assert!(
+        checker.local_relation_cache.is_empty(),
+        "reset must clear the instance-local relation memo",
+    );
+
+    // A separate structural checker (no class context) computes the ordinary
+    // structural answer, unaffected by the per-instance memo — the verdict is
+    // never shared across instances.
+    let mut structural = SubtypeChecker::new(&interner).with_query_db(&db);
+    assert!(structural.is_subtype_of(source, target));
+}
+
+#[test]
 fn assignability_relation_context_propagates_class_check_without_shared_cache() {
     use tsz_binder::SymbolId;
 

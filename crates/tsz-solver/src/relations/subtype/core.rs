@@ -21,8 +21,8 @@ use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, SymbolRef, TemplateSpan,
-    TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationCacheKey,
+    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -321,6 +321,27 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// parity, issue #13241). See `cache::MaybeRelationEntry` and
     /// `finish_relation_frame` in the `cache` module.
     pub(crate) maybe_keys: Vec<super::cache::MaybeRelationEntry>,
+    /// Instance-local fallback memo for definitive relation verdicts that the
+    /// cross-checker shared cache must skip (issue #13828).
+    ///
+    /// A pair whose source/target carries a polymorphic `this`, or that is
+    /// checked inside a class-check context (`is_class_symbol` set), is
+    /// context-dependent: its verdict depends on the resolver's current `this`
+    /// binding (`resolve_this_type`) and on the class-symbol classification
+    /// callback. Those inputs cannot be encoded in the flag-agnostic
+    /// [`RelationCacheKey`], so such verdicts are excluded from the shared
+    /// `QueryCache` to avoid cross-checker poisoning.
+    ///
+    /// They are, however, stable for the lifetime of one [`SubtypeChecker`]
+    /// instance: a fresh checker is built per top-level relation query, the
+    /// resolver is borrowed immutably for that whole lifetime (so the
+    /// `this` binding cannot shift mid-query), and the `is_class_symbol`
+    /// closure is fixed at construction. Memoizing them here therefore serves
+    /// the repeated comparisons of the same pair inside one query's recursive
+    /// structural walk (the dominant redundancy on class-heavy code such as
+    /// `ts-morph`) without ever leaking a context-bound verdict to a later
+    /// query under a different context. Cleared by [`SubtypeChecker::reset`].
+    pub(crate) local_relation_cache: FxHashMap<RelationCacheKey, bool>,
 }
 
 /// Operation-local cache statistics for [`SubtypeChecker`].
@@ -394,6 +415,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
+            local_relation_cache: FxHashMap::default(),
         }
     }
 }
@@ -444,6 +466,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
+            local_relation_cache: FxHashMap::default(),
         }
     }
 
@@ -572,14 +595,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.sym_visiting.clear();
         self.eval_cache.clear();
         self.maybe_keys.clear();
+        self.local_relation_cache.clear();
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.
     #[must_use]
     pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
         let eval_entries = self.eval_cache.len();
-        let estimated_size_bytes =
-            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), (TypeId, bool))>());
+        let estimated_size_bytes = eval_entries
+            .saturating_mul(std::mem::size_of::<((TypeId, bool), (TypeId, bool))>())
+            .saturating_add(
+                self.local_relation_cache
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(RelationCacheKey, bool)>()),
+            );
         SubtypeCheckerCacheStatistics {
             eval_entries,
             estimated_size_bytes,
