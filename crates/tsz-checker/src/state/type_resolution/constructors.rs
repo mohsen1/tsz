@@ -873,9 +873,11 @@ impl<'a> CheckerState<'a> {
                 return self.cache_base_instance_result(expr_idx, should_cache, Some(array_base));
             }
 
-            if let Some(lib_base) =
-                self.actual_or_cloned_lib_instance_type_for_heritage(base_sym_id, type_arguments)
-            {
+            Self::enter_class_heritage_base();
+            let lib_base =
+                self.actual_or_cloned_lib_instance_type_for_heritage(base_sym_id, type_arguments);
+            Self::leave_class_heritage_base();
+            if let Some(lib_base) = lib_base {
                 return self.cache_base_instance_result(expr_idx, should_cache, Some(lib_base));
             }
 
