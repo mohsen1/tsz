@@ -19,6 +19,16 @@ use std::cell::RefCell;
 
 thread_local! {
     static COLLECT_PROPERTIES_STACK: RefCell<Vec<TypeId>> = const { RefCell::new(Vec::new()) };
+    /// Lowest cross-collector stack index at which the active subtree truncated
+    /// a member against a type that was *already* in flight (a `stack.contains`
+    /// hit in [`CollectPropertiesDepthGuard::enter`]). Initialized to
+    /// `usize::MAX` ("no outer-frame truncation seen"). Used by
+    /// `collect_properties_cached` to decide whether a result is context-free:
+    /// see its cache contract. Each invocation scopes this to its own subtree
+    /// (save/restore + merge into the parent) so sibling subtrees never
+    /// over-taint each other.
+    static COLLECT_PROPERTIES_MIN_TRUNCATION: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(usize::MAX) };
 }
 
 // Nested public collect_properties calls can reset TypeEvaluator-local guards while
@@ -34,13 +44,36 @@ struct CollectPropertiesDepthGuard {
 impl CollectPropertiesDepthGuard {
     fn enter(type_id: TypeId) -> Option<Self> {
         COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
-            if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH || stack.contains(&type_id) {
+            if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH {
+                return None;
+            }
+            // A `stack.contains` hit means `type_id` is already being collected
+            // by *some* frame up the chain. Record the position so the owning
+            // `collect_properties_cached` invocation(s) can tell whether the
+            // truncation was against one of their *own* in-flight entries (would
+            // also happen on a standalone collection, result still context-free)
+            // or against an *outer ancestor* frame (context-dependent, partial
+            // closure — must not be cached; the #12142 pitfall). Any active
+            // invocation whose entry floor is strictly greater than `pos`
+            // experienced an ancestor truncation.
+            if let Some(pos) = stack.iter().position(|&active| active == type_id) {
+                COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| min.set(min.get().min(pos)));
                 return None;
             }
             stack.push(type_id);
             Some(Self { type_id })
         })
     }
+}
+
+/// Current depth of the active cross-collector property stack.
+fn collect_properties_stack_depth() -> usize {
+    COLLECT_PROPERTIES_STACK.with_borrow(Vec::len)
+}
+
+/// Whether `type_id` is already in flight on an ancestor collector frame.
+fn collect_properties_stack_contains(type_id: TypeId) -> bool {
+    COLLECT_PROPERTIES_STACK.with_borrow(|stack| stack.contains(&type_id))
 }
 
 impl Drop for CollectPropertiesDepthGuard {
@@ -79,27 +112,30 @@ pub enum PropertyCollectionResult {
     },
 }
 
-/// Cross-call memo surface for top-level `collect_properties_cached` results.
+/// Cross-call memo surface for context-free `collect_properties_cached` results.
 ///
 /// A supertrait of `QueryDatabase` so the result memo can be reached through a
 /// `&dyn QueryDatabase` without growing the (already at-cap) `caches::db`
 /// module. The real storage lives in `QueryCache`; every other implementor
 /// keeps the no-op defaults (no caching).
 pub trait CollectPropertiesResultCache {
-    /// Look up a cached top-level `collect_properties_cached(type_id)` result.
-    /// Default `None`. Only completed top-level collections are stored (see the
-    /// soundness note in `collect_properties_cached`).
+    /// Look up a cached context-free `collect_properties_cached(type_id)` result.
+    /// Default `None`. The resolver generation prevents reusing a result after
+    /// lazy `DefId` resolution can change.
     fn collect_properties_result_cached(
         &self,
         _type_id: TypeId,
+        _resolver_generation: u64,
     ) -> Option<PropertyCollectionResult> {
         None
     }
 
-    /// Record a completed top-level `collect_properties_cached` result. Default no-op.
+    /// Record a completed context-free `collect_properties_cached` result.
+    /// Default no-op.
     fn set_collect_properties_result_cache(
         &self,
         _type_id: TypeId,
+        _resolver_generation: u64,
         _result: PropertyCollectionResult,
     ) {
     }
@@ -152,28 +188,73 @@ pub fn collect_properties_cached<'a, R>(
 where
     R: TypeResolver,
 {
-    // Result memo (top-level calls only). `collect_properties_cached` is invoked
-    // hundreds of times for the same `type_id` during subtype/evaluation descent
-    // — on TypeBox, ~51% of all calls are top-level (stack empty) over only a few
-    // hundred distinct types (~277:1 redundancy). A top-level result memo on the
-    // shared `QueryCache` collapses that: a cached hit skips re-walking the whole
-    // property subtree.
+    // Context-free result memo (issue #13242, workstream B).
     //
-    // SOUNDNESS: the cache is consulted only when this is a *top-level* call
-    // (`COLLECT_PROPERTIES_STACK` empty at entry). Interior calls are skipped
-    // because the cross-call `CollectPropertiesDepthGuard` returns a *partial*
-    // result whenever a type already on the active stack is re-entered; caching
-    // such a partial result would poison the entry. At top level no outer type
-    // can be on the stack, so the computed result is complete. The cache lives in
-    // `QueryCache` and shares its lifecycle/`clear()` envelope (same as
-    // `object_spread_properties_cache`), so a resolver/program change rebuilds it.
-    let is_top_level = COLLECT_PROPERTIES_STACK.with_borrow(Vec::is_empty);
-    if is_top_level
-        && let Some(qdb) = query_db
-        && let Some(cached) = qdb.collect_properties_result_cached(type_id)
+    // A `collect_properties` result is a pure function of `(resolved TypeId,
+    // resolver_generation)` — and therefore safe to reuse — exactly when the
+    // collection's recursion truncation depended only on the type's *own*
+    // structure, not on which outer frames happened to be in flight. The
+    // cross-collector `COLLECT_PROPERTIES_STACK` lets a *nested* collection
+    // (e.g. a union member re-collected by `collect_union_common`) be truncated
+    // against an *ancestor* frame's in-flight type. Such a result is a partial
+    // closure and must NOT be cached (the #12142 pitfall — a truncated closure
+    // served out of context yields wrong types).
+    //
+    // We detect this precisely instead of conservatively gating on depth 0:
+    // `entry_floor` is this invocation's stack length at entry; the subtree it
+    // runs records, in `COLLECT_PROPERTIES_MIN_TRUNCATION`, the *lowest* stack
+    // index at which any member truncated against an already-in-flight type. If
+    // that lowest index is below `entry_floor`, the truncation was against an
+    // outer ancestor (context-dependent) and the result is not cacheable;
+    // otherwise every truncation was against one of this collection's own
+    // in-flight entries — identical to what a standalone (depth-0) collection
+    // would produce — so the result is context-free. Depth 0 is just the
+    // special case `entry_floor == 0`, where no ancestor exists and `>= 0`
+    // always holds. Recursive-schema canary rows (typebox/kysely/ts-morph)
+    // re-collect the same generic-application/intersection shapes thousands of
+    // times across relation and member-access touches; this lets the cache
+    // absorb the deeply *nested* re-collections (the dominant frame), not only
+    // top-level ones.
+    //
+    // The generation is taken from the *resolver actually used to resolve the
+    // members* (`resolver`), not the `query_db`: when the two differ (e.g. a
+    // `NOOP` resolver paired with a real query database) the lazy members
+    // resolve through `resolver`, so the result is a function of its generation.
+    // Both production resolvers (`TypeEnvironment`) bump on every write that can
+    // change a resolution outcome; `NOOP` is generation-0 and stable, and a
+    // generation-0 result is only ever served back to another generation-0
+    // (same `NOOP`) collection.
+    let entry_floor = collect_properties_stack_depth();
+    let generation = if query_db.is_some() {
+        resolver.resolver_generation()
+    } else {
+        0
+    };
+    // Only serve the cache when this `type_id` is not itself already in flight on
+    // an ancestor frame. The stored result is the type's full (context-free)
+    // closure; in the not-in-flight case it can only *replace* a fresh standalone
+    // computation, so behavior is unchanged. Were `type_id` already on the stack,
+    // the legacy path would truncate it to break the recursion, and returning the
+    // full closure there would change that frame's merge — so we skip the cache
+    // and let the existing cross-collector guard truncate as before.
+    if let Some(db) = query_db
+        && !collect_properties_stack_contains(type_id)
+        && let Some(cached) = db.collect_properties_result_cached(type_id, generation)
     {
         return cached;
     }
+
+    // Scope the truncation observation to this invocation's subtree: save the
+    // parent's running minimum, start fresh at `usize::MAX`, then on the way out
+    // decide cacheability from our own subtree and merge our minimum back into
+    // the parent (so an ancestor truncation we observed still taints the
+    // ancestors that own it). Sibling subtrees therefore never over-taint each
+    // other.
+    let saved_min = COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| {
+        let prev = min.get();
+        min.set(usize::MAX);
+        prev
+    });
 
     let mut collector = PropertyCollector {
         interner,
@@ -187,6 +268,18 @@ where
         found_any: false,
     };
     collector.collect(type_id);
+
+    let subtree_min = COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| {
+        let subtree = min.get();
+        // Merge our subtree's minimum into the parent for any ancestor-level
+        // truncation we witnessed (positions below our own floor concern frames
+        // above us).
+        min.set(saved_min.min(subtree));
+        subtree
+    });
+    // Cacheable iff every truncation this subtree saw was against one of our own
+    // in-flight entries (>= our entry floor), never an outer ancestor.
+    let cacheable = query_db.is_some() && subtree_min >= entry_floor;
 
     let result = if collector.found_any {
         // If we encountered Any at any point, the result is Any (commutative)
@@ -207,9 +300,10 @@ where
         }
     };
 
-    // Memoize the completed top-level result (see soundness note at entry).
-    if is_top_level && let Some(qdb) = query_db {
-        qdb.set_collect_properties_result_cache(type_id, result.clone());
+    // Store only context-free results (no outer-ancestor truncation); see the
+    // cache contract at the top of this function.
+    if cacheable && let Some(db) = query_db {
+        db.set_collect_properties_result_cache(type_id, generation, result.clone());
     }
 
     result
