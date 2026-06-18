@@ -9,8 +9,8 @@ use crate::def::DefId;
 use crate::intern::type_factory::TypeFactory;
 use crate::intern::{PredicateCacheKind, TypeInterner};
 use crate::narrowing;
-use crate::objects::ObjectLiteralBuilder;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::objects::{CollectPropertiesResultCache, ObjectLiteralBuilder};
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
@@ -1374,7 +1374,7 @@ impl TypeResolver for TypeInterner {
 ///
 /// This is the incremental boundary where caching and (future) salsa hooks live.
 /// Inherits from `TypeResolver` to enable Lazy/Ref type resolution through `evaluate_type()`.
-pub trait QueryDatabase: TypeDatabase + TypeResolver {
+pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCache {
     /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 

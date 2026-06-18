@@ -304,6 +304,16 @@ impl<'a> CheckerState<'a> {
             && !is_generic_self_circular
             && !has_deferred_self_reference
             && self.type_alias_body_allows_lazy_generic_semantic_body(alias.type_node);
+        // Register value-space types for `typeof <merged interface+value>` query
+        // operands BEFORE eager body resolution. Body resolution evaluates a
+        // nested indexed-access / conditional over a deferred `TypeQuery`, and
+        // the resolver's `resolve_type_query` must already see the value side at
+        // that point (otherwise it falls back to the instance type and reports
+        // phantom TS2339s). This only populates the dedicated `typeof_value_types`
+        // map; flow narrowing for `typeof` in alias bodies is still computed by
+        // `precompute_type_query_flow_types` after validation.
+        self.register_type_query_value_types(alias.type_node);
+
         let body_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();

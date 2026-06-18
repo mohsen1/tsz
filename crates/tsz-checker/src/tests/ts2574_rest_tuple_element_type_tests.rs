@@ -299,3 +299,62 @@ declare function f<S extends SelTuple>(...args: [...selectors: S, last: Sel]): v
         "TS2574 should not fire for `[...S]` with `S extends SelTuple` (array alias): {codes:?}"
     );
 }
+
+// ── Deferred conditional indexed-access bases ────────────────────────────────
+// A spread of `Cond<T>[k]` where `Cond<T>` is a deferred conditional indexes the
+// conditional's branch-union constraint by `k` (tsc's
+// `getConstraintOfIndexedAccessType`) and classifies array-like-ness from that
+// apparent type — tuple-valued branches are accepted, non-array branches still
+// flag. The binder names vary so no fixture name drives the decision.
+
+/// `[...Cond<T>["suffix"]]` where both branches give a tuple at `suffix` — the
+/// apparent type (`[] | [string]`) is array-like, so no TS2574. Matches tsc.
+#[test]
+fn rest_deferred_conditional_indexed_tuple_branch_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Shape<T extends ReadonlyArray<unknown>> = T extends readonly []
+  ? { suffix: [] }
+  : { suffix: [string] };
+type Spread<T extends ReadonlyArray<unknown>> = [...Shape<T>["suffix"]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for `[...Shape<T>[\"suffix\"]]` with tuple branches: {codes:?}"
+    );
+}
+
+/// Inline deferred conditional (no alias indirection) — same acceptance.
+#[test]
+fn rest_inline_deferred_conditional_indexed_tuple_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Spread<U extends ReadonlyArray<unknown>> =
+  [...(U extends readonly [] ? { rest: [1] } : { rest: [2] })["rest"]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for inline deferred conditional indexed tuple spread: {codes:?}"
+    );
+}
+
+/// Negative: `[...Cond<T>[k]]` where the indexed branch is a *non-array* (string
+/// literals) must STILL flag TS2574 (the apparent type `"x" | "y"` is not
+/// array-like). Guards against over-suppression.
+#[test]
+fn rest_deferred_conditional_indexed_nonarray_branch_emits_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Shape<T extends ReadonlyArray<unknown>> = T extends readonly []
+  ? { val: "x" }
+  : { val: "y" };
+type Spread<T extends ReadonlyArray<unknown>> = [...Shape<T>["val"]];
+"#,
+    );
+    assert!(
+        codes.contains(&2574),
+        "TS2574 expected for `[...Shape<T>[\"val\"]]` with string-literal branches: {codes:?}"
+    );
+}
