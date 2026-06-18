@@ -26,6 +26,18 @@ pub trait TypeResolver {
         0
     }
 
+    /// Whether this resolver carries no definition/symbol context (the
+    /// [`NoopResolver`] sentinel used by `SubtypeChecker::new`).
+    ///
+    /// Relation rules that need to distinguish "no nominal context is
+    /// available" (treat shapes structurally) from "a real resolver is present
+    /// but a particular symbol/type is simply not mapped here" use this. It
+    /// must stay `false` for every resolver that can answer any
+    /// `symbol_to_def_id`/`def_for_type`/`get_def_kind` query.
+    fn is_noop(&self) -> bool {
+        false
+    }
+
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
     ///
@@ -355,6 +367,10 @@ pub trait TypeResolver {
 pub struct NoopResolver;
 
 impl TypeResolver for NoopResolver {
+    fn is_noop(&self) -> bool {
+        true
+    }
+
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
@@ -367,6 +383,10 @@ impl TypeResolver for NoopResolver {
 impl<T: TypeResolver + ?Sized> TypeResolver for &T {
     fn resolver_generation(&self) -> u64 {
         (**self).resolver_generation()
+    }
+
+    fn is_noop(&self) -> bool {
+        (**self).is_noop()
     }
 
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
