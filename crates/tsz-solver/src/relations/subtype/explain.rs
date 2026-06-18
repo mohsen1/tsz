@@ -1748,178 +1748,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_shape_id: ObjectShapeId,
         target_props: &[PropertyInfo],
     ) -> Option<SubtypeFailureReason> {
-        for t_prop in target_props {
-            if let Some(sp) =
-                self.lookup_property(&source_shape.properties, Some(source_shape_id), t_prop.name)
-            {
-                // Check nominal identity for private/protected properties.
-                // `private` requires the same declaration; `protected` is
-                // hierarchical (a derived class may widen it to public) —
-                // decided by the shared `nominal_member_origin_ok`.
-                if t_prop.visibility != Visibility::Public {
-                    if !self.nominal_member_origin_ok(
-                        t_prop.name,
-                        sp.parent_id,
-                        t_prop.parent_id,
-                        t_prop.visibility,
-                    ) {
-                        return Some(SubtypeFailureReason::PropertyNominalMismatch {
-                            property_name: t_prop.name,
-                        });
-                    }
-                }
-                // Cannot assign private/protected source to public target
-                else if sp.visibility != Visibility::Public {
-                    return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
-                        property_name: t_prop.name,
-                        source_visibility: sp.visibility,
-                        target_visibility: t_prop.visibility,
-                    });
-                }
-
-                // NOTE: TypeScript allows readonly source to satisfy mutable target
-                // (readonly is a constraint on the reference, not structural compatibility)
-
-                // Check property type compatibility before the optional/required
-                // mismatch: TS2327 ("Property 'x' is optional ... but required ...")
-                // only applies when the read types are compatible and optionality is
-                // the sole failure. An incompatible read type must surface the
-                // "Types of property 'x' are incompatible." chain instead.
-                let source_type = self.optional_property_type(sp);
-                let target_type = self.optional_property_type(t_prop);
-                let allow_bivariant = sp.is_method || t_prop.is_method;
-                if !self
-                    .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
-                    .is_true()
-                {
-                    let nested = self.explain_failure_with_method_variance(
-                        source_type,
-                        target_type,
-                        allow_bivariant,
-                    );
-                    return Some(SubtypeFailureReason::PropertyTypeMismatch {
-                        property_name: t_prop.name,
-                        source_property_type: source_type,
-                        target_property_type: target_type,
-                        nested_reason: nested.map(Box::new),
-                    });
-                }
-
-                if sp.optional && !t_prop.optional {
-                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: t_prop.name,
-                    });
-                }
-                // Sound Mode only: tsc never relates split-accessor write
-                // types (mirrors the gate in check_property_types).
-                if self.check_split_accessor_writes
-                    && !t_prop.readonly
-                    && !sp.readonly
-                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
-                {
-                    let source_write = self.optional_property_write_type(sp);
-                    let target_write = self.optional_property_write_type(t_prop);
-                    if !self
-                        .check_subtype_with_method_variance(
-                            target_write,
-                            source_write,
-                            allow_bivariant,
-                        )
-                        .is_true()
-                    {
-                        let nested = self.explain_failure_with_method_variance(
-                            target_write,
-                            source_write,
-                            allow_bivariant,
-                        );
-                        return Some(SubtypeFailureReason::PropertyTypeMismatch {
-                            property_name: t_prop.name,
-                            source_property_type: source_write,
-                            target_property_type: target_write,
-                            nested_reason: nested.map(Box::new),
-                        });
-                    }
-                }
-                continue;
-            }
-
-            let mut checked = false;
-            let target_type = self.optional_property_type(t_prop);
-
-            if utils::is_numeric_property_name(self.interner, t_prop.name)
-                && let Some(number_idx) = &source_shape.number_index
-            {
-                checked = true;
-                if number_idx.readonly && !t_prop.readonly {
-                    return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                        property_name: t_prop.name,
-                    });
-                }
-                if !self
-                    .check_subtype_with_method_variance(
-                        number_idx.value_type,
-                        target_type,
-                        t_prop.is_method,
-                    )
-                    .is_true()
-                {
-                    let nested_reason = self
-                        .explain_failure_with_method_variance(
-                            number_idx.value_type,
-                            target_type,
-                            t_prop.is_method,
-                        )
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "number",
-                        source_value_type: number_idx.value_type,
-                        target_value_type: target_type,
-                        nested_reason,
-                    });
-                }
-            }
-
-            if let Some(string_idx) = &source_shape.string_index {
-                checked = true;
-                if string_idx.readonly && !t_prop.readonly {
-                    return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                        property_name: t_prop.name,
-                    });
-                }
-                if !self
-                    .check_subtype_with_method_variance(
-                        string_idx.value_type,
-                        target_type,
-                        t_prop.is_method,
-                    )
-                    .is_true()
-                {
-                    let nested_reason = self
-                        .explain_failure_with_method_variance(
-                            string_idx.value_type,
-                            target_type,
-                            t_prop.is_method,
-                        )
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "string",
-                        source_value_type: string_idx.value_type,
-                        target_value_type: target_type,
-                        nested_reason,
-                    });
-                }
-            }
-
-            if !checked && !t_prop.optional {
-                return Some(SubtypeFailureReason::MissingProperty {
-                    property_name: t_prop.name,
-                    source_type: source,
-                    target_type: target,
-                });
-            }
-        }
-
-        None
+        // The source's index signatures never participate in satisfying the
+        // target's *named* members (`tsc`'s `getPropertyOfType` does not
+        // synthesize a member from an index signature), and a plain object
+        // target declares no index signature for the source index to relate
+        // against. Every failure on this path is therefore a named-member
+        // failure — explained exactly as for a plain object source, which also
+        // yields the correct `TS2739`/`TS2741`/property-mismatch selection.
+        self.explain_object_failure(
+            source,
+            target,
+            &source_shape.properties,
+            Some(source_shape_id),
+            target_props,
+        )
     }
 
     fn explain_properties_against_index_signatures(

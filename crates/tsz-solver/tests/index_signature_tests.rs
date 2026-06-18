@@ -884,3 +884,138 @@ fn test_anonymous_plain_object_still_assignable_to_string_indexed_target_when_co
         "Anonymous object with compatible props should still satisfy {{ [k: string]: number }}"
     );
 }
+
+// =============================================================================
+// Source index signatures vs target NAMED members (tsc parity)
+// -----------------------------------------------------------------------------
+// A source index signature is related only against a target's *index*
+// signatures, never against the target's named members. `tsc`'s
+// `getPropertyOfType` does not synthesize a named member from an index
+// signature, so:
+//   - a required target member absent from the source's named members is
+//     missing (TS2741/TS2739) even when the source declares an index, and
+//   - an optional target member imposes no constraint at all, regardless of
+//     the source index value type.
+// =============================================================================
+
+/// A `{ [k: string]: string }` source must NOT satisfy a required named member
+/// `{ a: string }` — even though the index value type would be compatible. tsc
+/// reports `a` as missing (TS2741).
+#[test]
+fn test_string_index_source_does_not_supply_required_named_member() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+
+    assert!(
+        !is_subtype_of(&interner, source, target),
+        "string index source must not supply required named member 'a'"
+    );
+}
+
+/// A `{ [k: string]: string }` source IS assignable to `{ a?: number }`: the
+/// optional member imposes no constraint, and the source index value type
+/// (`string`) is irrelevant to target named members. Previously tsz wrongly
+/// related the index value against the optional member and rejected (false
+/// TS2322).
+#[test]
+fn test_string_index_source_satisfies_optional_named_member_regardless_of_value() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    let target = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "string index source should satisfy optional member 'a?: number' (index value is irrelevant)"
+    );
+}
+
+/// A `{ [n: number]: string }` source IS assignable to `{ 0?: number }`: the
+/// numeric optional member imposes no constraint, and the number index value
+/// type is irrelevant to target named members.
+#[test]
+fn test_number_index_source_satisfies_optional_numeric_member_regardless_of_value() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+    let target = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("0"),
+        TypeId::NUMBER,
+    )]);
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "number index source should satisfy optional numeric member '0?: number'"
+    );
+}
+
+/// Regression guard: a `{ [k: string]: string }` source still satisfies a
+/// matching optional member `{ a?: string }` (this case was already accepted,
+/// but only incidentally because the index value matched).
+#[test]
+fn test_string_index_source_satisfies_matching_optional_named_member() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    let target = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "string index source should satisfy matching optional member 'a?: string'"
+    );
+}

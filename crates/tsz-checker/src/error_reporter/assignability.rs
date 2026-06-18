@@ -63,6 +63,14 @@ impl<'a> CheckerState<'a> {
                             .cloned()
                     })
             })
+            .or_else(|| {
+                crate::query_boundaries::diagnostics::intersection_members(self.ctx.types, ty)
+                    .and_then(|members| {
+                        members
+                            .iter()
+                            .find_map(|member| self.property_info_for_display(*member, name))
+                    })
+            })
     }
 
     fn should_suppress_outer_callback_return_assignability(

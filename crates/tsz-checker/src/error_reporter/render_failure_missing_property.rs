@@ -713,6 +713,39 @@ impl<'a> CheckerState<'a> {
         diag.push_elaboration_in_span(start, length, message, code, 0);
     }
 
+    fn type_or_display_alias_is_intersection(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::diagnostics::is_intersection_type(self.ctx.types, type_id)
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::diagnostics::is_intersection_type(
+                        self.ctx.types,
+                        alias,
+                    )
+                })
+    }
+
+    fn common_missing_property_declaring_type_name(
+        &self,
+        target_type: TypeId,
+        property_names: &[tsz_common::interner::Atom],
+    ) -> Option<String> {
+        let mut common_parent = None;
+        for property_name in property_names {
+            let parent = self
+                .property_info_for_display(target_type, *property_name)?
+                .parent_id?;
+            if common_parent.is_some_and(|common| common != parent) {
+                return None;
+            }
+            common_parent = Some(parent);
+        }
+        let symbol = self.ctx.binder.get_symbol(common_parent?)?;
+        Some(symbol.escaped_name.clone())
+    }
+
     /// For TS2739 source display, unfold wrapper aliases like
     /// `type B = A<X>` to the body application `A<X>`. Other shapes keep
     /// normal formatting.
@@ -1395,14 +1428,28 @@ impl<'a> CheckerState<'a> {
             let (src, _) = self.format_type_pair_diagnostic(widened_source, target_type);
             src
         };
+        let ordered_names =
+            self.sort_missing_property_names_for_display(target_type, &filtered_names);
         let tgt_str = if depth == 0 {
             self.checked_js_global_element_access_fallback_target_display(idx)
-                .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
+                .unwrap_or_else(|| {
+                    if self.type_or_display_alias_is_intersection(target_type)
+                        || self.type_or_display_alias_is_intersection(target)
+                    {
+                        self.common_missing_property_declaring_type_name(
+                            target_type,
+                            &ordered_names,
+                        )
+                        .unwrap_or_else(|| {
+                            self.format_assignability_type_for_message(target, source)
+                        })
+                    } else {
+                        self.format_assignability_type_for_message(target, source)
+                    }
+                })
         } else {
             self.format_type_diagnostic(target_type)
         };
-        let ordered_names =
-            self.sort_missing_property_names_for_display(target_type, &filtered_names);
         let (props_joined, more) = self.truncated_missing_property_list(&ordered_names);
         if let Some(more_count) = more {
             let more_count = more_count.to_string();

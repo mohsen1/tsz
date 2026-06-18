@@ -277,6 +277,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .cloned()
     }
 
+    /// Decide whether a target property that is *absent* from the source's named
+    /// properties is nevertheless satisfied.
+    ///
+    /// This is the single rule shared by every object-subtype path (plain
+    /// objects, the merge-scan fast path, and objects carrying index
+    /// signatures). The source's index signatures play **no** role here:
+    /// `tsc`'s `getPropertyOfType` never synthesizes a named member from an
+    /// index signature, so `getUnmatchedProperty` reports a required named
+    /// member as missing (`TS2741`/`TS2739`/`TS2740`) even when the source
+    /// declares a `[k: string]: …` / `[n: number]: …` signature, and an
+    /// *optional* named member imposes no constraint at all. A source index
+    /// signature participates only in index-to-index relations
+    /// (`check_string_index_compatibility` / `check_number_index_compatibility`).
+    ///
+    /// An absent target member is therefore satisfied iff it is:
+    /// - optional and public (no constraint); or
+    /// - required and public but supplied — compatibly — by the implicit
+    ///   `Object.prototype` members every object type carries.
+    ///
+    /// A private/protected member can never be satisfied while absent, so any
+    /// non-public member returns `False`.
+    fn check_absent_target_property(
+        &mut self,
+        target_prop: &PropertyInfo,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Private/Protected properties cannot be satisfied while absent.
+        if target_prop.visibility != Visibility::Public {
+            return SubtypeResult::False;
+        }
+        if target_prop.optional {
+            return SubtypeResult::True;
+        }
+        // `Object.prototype` fallback: TypeScript treats every object type as
+        // implicitly carrying the global `Object` members.
+        if let Some(obj_prop) = self.get_object_base_property(target_prop.name) {
+            self.check_property_compatibility(
+                &obj_prop,
+                target_prop,
+                source_receiver,
+                target_receiver,
+            )
+        } else {
+            SubtypeResult::False
+        }
+    }
+
     /// Check object subtyping (structural with nominal optimization).
     ///
     /// Validates that source object is a subtype of target object by checking:
@@ -395,30 +443,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 Some(sp) => {
                     self.check_property_compatibility(sp, t_prop, source_receiver, target_receiver)
                 }
-                None => {
-                    // Private/Protected properties cannot be missing, even if optional
-                    if t_prop.visibility != Visibility::Public {
-                        return SubtypeResult::False;
-                    }
-
-                    // Property missing - only OK if target property is optional
-                    if t_prop.optional {
-                        SubtypeResult::True
-                    } else {
-                        // Object.prototype fallback: TypeScript treats all object interface
-                        // types as implicitly having Object.prototype methods.
-                        if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
-                            self.check_property_compatibility(
-                                &obj_prop,
-                                t_prop,
-                                source_receiver,
-                                target_receiver,
-                            )
-                        } else {
-                            SubtypeResult::False
-                        }
-                    }
-                }
+                None => self.check_absent_target_property(t_prop, source_receiver, target_receiver),
             };
 
             if !result.is_true() {
@@ -463,25 +488,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            // Property missing - only OK if target property is optional and public
-            if t_prop.visibility != Visibility::Public {
-                return SubtypeResult::False;
-            }
-            if !t_prop.optional {
-                // Object.prototype fallback: TypeScript treats all object interface
-                // types as implicitly having Object.prototype methods.
-                if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
-                    let compat = self.check_property_compatibility(
-                        &obj_prop,
-                        t_prop,
-                        source_receiver,
-                        target_receiver,
-                    );
-                    if compat.is_true() {
-                        continue;
-                    }
-                }
-                return SubtypeResult::False;
+            // Property missing - resolved by the shared absent-member rule
+            // (optional, or provided by Object.prototype; source index
+            // signatures are irrelevant to target named members).
+            let result =
+                self.check_absent_target_property(t_prop, source_receiver, target_receiver);
+            if !result.is_true() {
+                return result;
             }
         }
 
@@ -1444,107 +1457,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::False;
                     }
                 }
-            } else if !self
-                .check_missing_property_against_index_signatures(
-                    source,
-                    source_receiver,
-                    t_prop,
-                    target_receiver,
-                )
-                .is_true()
-            {
-                return SubtypeResult::False;
+            } else {
+                // Property absent from the source's named members. The source's
+                // index signatures never supply a target *named* member (they
+                // only participate in index-to-index relations), so this is
+                // resolved by the shared absent-member rule exactly as for a
+                // plain object source.
+                let result =
+                    self.check_absent_target_property(t_prop, source_receiver, target_receiver);
+                if !result.is_true() {
+                    return result;
+                }
             }
         }
 
         SubtypeResult::True
-    }
-
-    /// Check if a missing target property can be satisfied by source index signatures.
-    ///
-    /// When a target property doesn't exist in the source object, the source's index
-    /// signatures can potentially satisfy it:
-    /// - If property name is numeric, check against number index signature
-    /// - Always check against string index signature (since numbers convert to strings)
-    pub(crate) fn check_missing_property_against_index_signatures(
-        &mut self,
-        source: &ObjectShape,
-        source_receiver: Option<TypeId>,
-        target_prop: &PropertyInfo,
-        target_receiver: Option<TypeId>,
-    ) -> SubtypeResult {
-        // Required properties cannot be satisfied by index signatures (soundness).
-        // An index signature { [k: string]: V } admits the empty object {},
-        // but a required property means the target does NOT admit {}.
-        // This is a fundamental set-theoretic mismatch, not just a TS compatibility rule.
-        if !target_prop.optional {
-            return SubtypeResult::False;
-        }
-
-        // Private/Protected properties cannot be satisfied by index signatures.
-        // They must be explicitly present in the source and match nominally.
-        if target_prop.visibility != Visibility::Public {
-            return SubtypeResult::False;
-        }
-
-        // Check if property name matches index signatures
-        // Numeric property names can match number index signatures
-        // All property names can match string index signatures (numbers convert to strings)
-        let target_type = self
-            .bind_property_receiver_this(target_receiver, self.optional_property_type(target_prop));
-
-        if utils::is_numeric_property_name(self.interner, target_prop.name)
-            && let Some(number_idx) = &source.number_index
-        {
-            if number_idx.readonly && !target_prop.readonly {
-                return SubtypeResult::False;
-            }
-            let source_value =
-                self.bind_property_receiver_this(source_receiver, number_idx.value_type);
-            if !self
-                .check_subtype_with_method_variance(
-                    source_value,
-                    target_type,
-                    target_prop.is_method,
-                )
-                .is_true()
-            {
-                return SubtypeResult::False;
-            }
-            return SubtypeResult::True;
-        }
-
-        if let Some(string_idx) = source
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL)
-        {
-            if string_idx.readonly && !target_prop.readonly {
-                return SubtypeResult::False;
-            }
-            let source_value =
-                self.bind_property_receiver_this(source_receiver, string_idx.value_type);
-            if !self
-                .check_subtype_with_method_variance(
-                    source_value,
-                    target_type,
-                    target_prop.is_method,
-                )
-                .is_true()
-            {
-                return SubtypeResult::False;
-            }
-            return SubtypeResult::True;
-        }
-
-        // No matching index signature
-        // For optional properties, this is OK
-        // For required properties, this is an error
-        if !target_prop.optional {
-            SubtypeResult::False
-        } else {
-            SubtypeResult::True
-        }
     }
 
     fn is_symbol_named_property(&self, name: Atom) -> bool {
