@@ -600,4 +600,141 @@ impl TypeInterner {
                 | (LiteralDomain::Bigint, PrimitiveClass::Bigint)
         )
     }
+
+    /// Coarse structural bucket for a single union member, used to skip
+    /// `is_subtype_shallow` calls on pairs that provably cannot relate.
+    ///
+    /// Each variant mirrors exactly one branch of `is_subtype_shallow_depth`,
+    /// so `ShallowReduceKind::may_relate` is a sound over-approximation of that
+    /// relation: it returns `true` for every pair the shallow engine could ever
+    /// answer `true` on, and `false` only for pairs the engine answers `false`
+    /// on in both directions. `Wildcard` is the conservative catch-all for any
+    /// member that participates in a non-local branch (unions, or any leaf the
+    /// engine could traverse that this classifier does not model precisely), so
+    /// an unmodeled member never skips a check.
+    ///
+    /// Callers must classify a union **after** normalization has run its
+    /// sentinel removal, literal absorption, and sort+dedup passes (i.e. exactly
+    /// the input `reduce_union_subtypes` operates on). In that state
+    /// `any`/`unknown`/`never` are gone and identical members are deduped, so
+    /// the early identity / top / bottom branches of `is_subtype_shallow_depth`
+    /// never fire across a distinct pair.
+    pub(super) fn shallow_reduce_kind(&self, id: TypeId) -> ShallowReduceKind {
+        // A widened builtin primitive (string/number/... and the boolean-literal
+        // intrinsics) only relates upward into a union target, which is modeled
+        // as `Wildcard` on the other endpoint. Against any non-union peer it is
+        // disjoint, so it only ever needs a check versus a literal of its own
+        // domain (handled by `Literal -> Primitive`) or a `Wildcard`.
+        if let Some(class) = self.builtin_primitive_class(id) {
+            return ShallowReduceKind::Primitive(class);
+        }
+        match self.lookup(id) {
+            Some(TypeData::Literal(literal)) => {
+                let domain = match literal {
+                    LiteralValue::String(_) => LiteralDomain::String,
+                    LiteralValue::Number(_) => LiteralDomain::Number,
+                    LiteralValue::Boolean(_) => LiteralDomain::Boolean,
+                    LiteralValue::BigInt(_) => LiteralDomain::Bigint,
+                };
+                ShallowReduceKind::Literal(domain)
+            }
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => ShallowReduceKind::Object,
+            Some(TypeData::Function(_)) => ShallowReduceKind::Function,
+            Some(TypeData::TemplateLiteral(_)) => ShallowReduceKind::Template,
+            // A union member recurses both directions in the shallow engine, and
+            // any leaf the classifier does not model (Array/Tuple/Enum/
+            // Application/Callable/intrinsics other than primitives/Readonly/
+            // NoInfer/...) is treated conservatively as relatable so a real
+            // relation is never skipped. These are rare relative to the
+            // object/primitive/literal members that dominate the large-row shape.
+            _ => ShallowReduceKind::Wildcard,
+        }
+    }
+
+    /// Classify the builtin widened primitives (and the boolean-literal
+    /// intrinsics) the shallow engine treats as absorbing targets for matching
+    /// literals. Returns `None` for everything else, including bare
+    /// `TypeData::Literal` (those are `ShallowReduceKind::Literal`).
+    const fn builtin_primitive_class(&self, id: TypeId) -> Option<PrimitiveClass> {
+        match id {
+            TypeId::STRING => Some(PrimitiveClass::String),
+            TypeId::NUMBER => Some(PrimitiveClass::Number),
+            TypeId::BIGINT => Some(PrimitiveClass::Bigint),
+            TypeId::SYMBOL => Some(PrimitiveClass::Symbol),
+            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => {
+                Some(PrimitiveClass::Boolean)
+            }
+            TypeId::VOID | TypeId::UNDEFINED => Some(PrimitiveClass::Undefined),
+            TypeId::NULL => Some(PrimitiveClass::Null),
+            _ => None,
+        }
+    }
+}
+
+/// Coarse structural bucket used to skip provably-disjoint pairs in union
+/// subtype reduction. See `TypeInterner::shallow_reduce_kind`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum ShallowReduceKind {
+    /// A bare `TypeData::Literal` of the given domain.
+    Literal(LiteralDomain),
+    /// A widened builtin primitive (or boolean-literal intrinsic) of the class.
+    Primitive(PrimitiveClass),
+    /// `Object` / `ObjectWithIndex`.
+    Object,
+    /// `Function`.
+    Function,
+    /// `TemplateLiteral`.
+    Template,
+    /// Union, or any member not modeled precisely: always needs a real check.
+    Wildcard,
+}
+
+impl ShallowReduceKind {
+    /// Sound over-approximation of `is_subtype_shallow(source, target)` for a
+    /// distinct, post-normalization pair: `false` only when the shallow engine
+    /// provably answers `false` in this direction.
+    ///
+    /// The direction matters — `Literal(String)` as a *source* can be a subtype
+    /// of `Primitive(String)` / `Template`, but as a *target* a literal is only
+    /// matched by an identical literal (already deduped). Modeling the source
+    /// role lets the symmetric quadratic loop skip the reverse direction too.
+    pub(super) const fn may_relate(source: Self, target: Self) -> bool {
+        // Any union (or unmodeled leaf) on either side keeps the real check:
+        // the shallow engine recurses into unions both as source and target.
+        if matches!(source, Self::Wildcard) || matches!(target, Self::Wildcard) {
+            return true;
+        }
+        match source {
+            Self::Wildcard => true,
+            // A literal source relates to a same-domain primitive, or (string
+            // only) to a template literal. Never to another literal, object, or
+            // function.
+            Self::Literal(domain) => match target {
+                Self::Primitive(class) => primitive_class_matches_domain(class, domain),
+                Self::Template => matches!(domain, LiteralDomain::String),
+                _ => false,
+            },
+            // Objects relate only to objects; functions only to functions.
+            Self::Object => matches!(target, Self::Object),
+            Self::Function => matches!(target, Self::Function),
+            // A widened primitive source only relates upward into a union
+            // (Wildcard, handled above), and a template source is only a subtype
+            // by identity (already deduped) — the shallow engine has no
+            // template-as-source relation. Versus any concrete peer both are
+            // disjoint.
+            Self::Primitive(_) | Self::Template => false,
+        }
+    }
+}
+
+/// Domain/class match used by `ShallowReduceKind::may_relate`. Kept as a free
+/// function so the const matrix is shared without borrowing the interner.
+const fn primitive_class_matches_domain(class: PrimitiveClass, domain: LiteralDomain) -> bool {
+    matches!(
+        (domain, class),
+        (LiteralDomain::String, PrimitiveClass::String)
+            | (LiteralDomain::Number, PrimitiveClass::Number)
+            | (LiteralDomain::Boolean, PrimitiveClass::Boolean)
+            | (LiteralDomain::Bigint, PrimitiveClass::Bigint)
+    )
 }
