@@ -1058,6 +1058,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Visitor pattern: dispatch to appropriate visit_* method
         let result = self.visit_type_key(type_id, &key);
 
+        // Measurement-only (issue #13250): quantify recursive-eval
+        // materialization headroom for conditional/mapped/application inputs.
+        // No-op (single branch) unless `TSZ_PERF_COUNTERS` is set; the lookup
+        // of the result's `TypeData` is only performed under that gate.
+        if tsz_common::perf_counters::enabled_fast() {
+            let result_key = self.interner.lookup(result);
+            crate::evaluation::eval_materialization_probe::record_compute(
+                type_id,
+                &key,
+                result,
+                result_key.as_ref(),
+            );
+        }
+
         // Symmetric cleanup: leave guard and cache result
         self.guard.leave(type_id);
         self.memo_insert(limit_epoch_at_entry, type_id, result);

@@ -12,7 +12,7 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;
 use tracing::{Level, span, trace};
@@ -340,6 +340,9 @@ pub struct NarrowingCacheStatistics {
     pub contextual_resolve_cache_entries: usize,
     pub discriminant_index_entries: usize,
     pub narrow_type_cache_entries: usize,
+    pub narrow_excluding_cache_entries: usize,
+    pub narrow_assignable_cache_entries: usize,
+    pub narrow_subtype_cache_entries: usize,
     pub estimated_size_bytes: usize,
 }
 
@@ -356,6 +359,9 @@ impl NarrowingCacheStatistics {
             + self.contextual_resolve_cache_entries
             + self.discriminant_index_entries
             + self.narrow_type_cache_entries
+            + self.narrow_excluding_cache_entries
+            + self.narrow_assignable_cache_entries
+            + self.narrow_subtype_cache_entries
     }
 }
 
@@ -412,61 +418,110 @@ pub struct NarrowingCache {
     /// paths because their results depend on structural lookups that are already
     /// cached at narrower query boundaries.
     pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
-    /// Result memo for [`NarrowingContext::narrow_excluding_type`].
+    /// Memo for [`NarrowingContext::narrow_excluding_type`] keyed by
+    /// `(source, excluded, resolver_generation)`.
     ///
-    /// Keyed by `(source, excluded, resolver_generation)`. The narrowing-by-
-    /// exclusion algorithm is a pure structural transform that re-derives the
-    /// same `(source, excluded)` pairs repeatedly during constraint /
-    /// union-member descent; this memo eliminates that redundant recomputation.
-    /// `resolver_generation` is folded into the key (mirroring
-    /// `narrow_type_cache`) so a lazy alias change cannot serve a stale result.
-    pub(crate) narrow_excluding_cache: RefCell<FxHashMap<(TypeId, TypeId, u64), TypeId>>,
+    /// False-branch type-predicate narrowing over a recursive-schema union
+    /// (typebox / ts-morph `value is T` guards) drives `narrow_excluding_type`
+    /// into an exponential self-recursion: every intersection / type-parameter
+    /// member re-enters the function on `(member, excluded)`, and the recursive
+    /// alias members expand the same `(source, excluded)` subtree at each depth.
+    /// Memoizing collapses that re-expansion to linear; combined with
+    /// `narrow_excluding_visiting` it is the structural fix for the
+    /// non-terminating typebox row (issue #13242 / #13250).
+    pub(crate) narrow_excluding_cache: RefCell<FxHashMap<NarrowExcludingKey, TypeId>>,
+    /// In-progress `(source, excluded, resolver_generation)` set for
+    /// `narrow_excluding_type`. A recursive-alias member whose resolution
+    /// re-enters the same `(source, excluded)` pair is a cycle; returning the
+    /// source unchanged on re-entry mirrors tsc, which does not exhaustively
+    /// re-expand a recursive union during exclusion narrowing.
+    pub(crate) narrow_excluding_visiting: RefCell<FxHashSet<NarrowExcludingKey>>,
+    /// Memo for the narrowing-boundary assignability check
+    /// ([`NarrowingContext::is_assignable_to`]) keyed by
+    /// `(source, target, resolver_generation)`.
+    ///
+    /// Positive-branch type-predicate narrowing (`narrow_to_type`) filters each
+    /// union member with `is_assignable_to(member, target)`, which falls into a
+    /// full `SubtypeChecker` whose structural comparison of recursive-schema
+    /// interfaces re-materializes the recursive property closure via
+    /// `collect_properties_cached` at each depth. The same `(member, target)`
+    /// pair recurs across the many `IsXxx(s)` guards a typebox/ts-morph file runs
+    /// over one recursive `TSchema`, so memoizing the boolean collapses the
+    /// repeated deep materialization (issue #13242 / #13250).
+    pub(crate) narrow_assignable_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+    /// Memo for the narrowing-boundary subtype check
+    /// ([`NarrowingContext::is_subtype_for_narrowing`]) keyed by
+    /// `(source, target, resolver_generation)`.
+    ///
+    /// This is the single chokepoint that constructs a fresh `SubtypeChecker`
+    /// for narrowing; both the positive type-predicate branch and
+    /// `is_assignable_to` funnel here, so it is the deepest point at which the
+    /// recursive-schema `collect_properties_cached` walk can be cached once per
+    /// `(source, target)` pair (issue #13242 / #13250).
+    pub(crate) narrow_subtype_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+}
+
+/// Cache key for [`NarrowingContext::narrow_excluding_type`] and
+/// [`NarrowingContext::is_assignable_to`].
+///
+/// A `(source, target, resolver_generation)` triple. `resolver_generation` is
+/// folded in so a later resolver that resolves a Lazy alias differently cannot
+/// reuse a stale result, matching the keying discipline of
+/// [`NarrowTypeCacheKey`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub(crate) struct NarrowExcludingKey {
+    source: TypeId,
+    excluded: TypeId,
+    resolver_generation: u64,
 }
 
 impl NarrowingCache {
     pub fn new() -> Self {
         Self {
-            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                1024,
-                Default::default(),
-            )),
+            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(1024, FxBuildHasher)),
             resolve_visiting: RefCell::new(FxHashSet::default()),
-            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                Default::default(),
-            )),
+            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(512, FxBuildHasher)),
             required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
-                Default::default(),
+                FxBuildHasher,
             )),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             contains_type_parameters_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
-                Default::default(),
+                FxBuildHasher,
             )),
             optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
-                Default::default(),
+                FxBuildHasher,
             )),
             contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
-                Default::default(),
+                FxBuildHasher,
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
             narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
-                Default::default(),
+                FxBuildHasher,
             )),
             narrow_excluding_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                1024,
-                Default::default(),
+                256,
+                FxBuildHasher,
+            )),
+            narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
+            narrow_assignable_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                FxBuildHasher,
+            )),
+            narrow_subtype_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                FxBuildHasher,
             )),
         }
     }
@@ -490,6 +545,9 @@ impl NarrowingCache {
             contextual_resolve_cache_entries: self.contextual_resolve_cache.borrow().len(),
             discriminant_index_entries: self.discriminant_index.borrow().len(),
             narrow_type_cache_entries: self.narrow_type_cache.borrow().len(),
+            narrow_excluding_cache_entries: self.narrow_excluding_cache.borrow().len(),
+            narrow_assignable_cache_entries: self.narrow_assignable_cache.borrow().len(),
+            narrow_subtype_cache_entries: self.narrow_subtype_cache.borrow().len(),
             estimated_size_bytes: self.estimated_size_bytes(),
         }
     }
@@ -578,6 +636,31 @@ impl NarrowingCache {
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<NarrowTypeCacheKey>()
                     + std::mem::size_of::<TypeId>());
+        }
+        {
+            let map = self.narrow_excluding_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowExcludingKey>()
+                    + std::mem::size_of::<TypeId>());
+        }
+        {
+            let set = self.narrow_excluding_visiting.borrow();
+            size += set.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<NarrowExcludingKey>());
+        }
+        {
+            let map = self.narrow_assignable_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowExcludingKey>()
+                    + std::mem::size_of::<bool>());
+        }
+        {
+            let map = self.narrow_subtype_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowExcludingKey>()
+                    + std::mem::size_of::<bool>());
         }
 
         size
@@ -1322,33 +1405,152 @@ impl<'a> NarrowingContext<'a> {
         self.narrow_to_type(literal, target) != TypeId::NEVER
     }
 
-    /// Narrow a type to exclude members assignable to target.
-    /// Narrow `source_type` by excluding `excluded_type`.
+    /// Exclude the positive (true-branch) narrowing from a source for the
+    /// false branch of a type-predicate guard, mirroring tsc's
+    /// `getNarrowedTypeWorker(assumeTrue=false)`:
+    /// `filterType(type, t => !isTypeSubsetOf(t, trueType))`.
     ///
-    /// Thin memoizing wrapper over [`Self::narrow_excluding_type_uncached`].
-    /// The uncached body is a pure structural transform of
-    /// `(source_type, excluded_type)` over the type database (it deliberately
-    /// does not resolve `Lazy`/`Application` types, and its only `self`-state
-    /// reads are other content caches), so the result is stable for a fixed
-    /// resolver generation. Recursive descent through type-parameter constraints
-    /// and union/intersection members re-derives the same `(source, excluded)`
-    /// pairs hundreds of times on deeply generic corpora (measured ~220:1
-    /// call-to-distinct-pair ratio on `TypeBox`); the `(source, excluded,
-    /// resolver_generation)` memo collapses that redundancy. The
-    /// `resolver_generation` component mirrors `narrow_type_cache` so a lazy
-    /// alias change cannot reuse a stale result.
-    pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
-        let key = (source_type, excluded_type, self.resolver_generation());
-        if let Some(cached) = self
-            .cache
-            .narrow_excluding_cache
-            .borrow()
-            .get(&key)
+    /// tsc's `filterType` is a *shallow* pass over the source union's top-level
+    /// members, and `isTypeSubsetOf` is a pure identity/containment test (no
+    /// structural subtype walk, no descent into a member's intersection
+    /// sub-structure). The general [`Self::narrow_excluding_type`] instead
+    /// recurses into every intersection/union member and runs a deep
+    /// `is_assignable_to` per member; over a recursive-schema union (typebox /
+    /// ts-morph `value is T` guards, where each nested schema instantiates to a
+    /// distinct `TypeId` so the `(source, excluded)` memo never hits) that
+    /// recursion is exponential and was the dominant non-termination frame.
+    ///
+    /// This boundary keeps the false-branch predicate exclusion on tsc's cheap
+    /// O(N) shallow path. It returns `None` when the shallow filter cannot
+    /// reduce the source (every member survives `isTypeSubsetOf`), so the caller
+    /// can fall back to its structural-assignability member pass for the cases
+    /// tsc covers through `directlyRelated`/intersection construction.
+    pub fn narrow_excluding_positive_subset(
+        &self,
+        source_type: TypeId,
+        positive_type: TypeId,
+    ) -> Option<TypeId> {
+        // `any`/`unknown` are never reduced by exclusion (tsc returns the source
+        // unchanged), so there is nothing for the shallow filter to do.
+        if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
+            return None;
+        }
+
+        let resolved_source = self.resolve_type(source_type);
+        let Some(members) = union_list_id(self.db, resolved_source) else {
+            // A non-union source is dropped to `never` iff it is a subset of the
+            // positive type; otherwise it is unrelated and kept. tsc:
+            // `type.flags & Never || f(type) ? type : neverType`.
+            return self
+                .is_type_subset_of(resolved_source, positive_type)
+                .then_some(TypeId::NEVER);
+        };
+
+        let members = self.db.type_list(members);
+        let remaining: Vec<TypeId> = members
+            .iter()
             .copied()
+            .filter(|&member| !self.is_type_subset_of(member, positive_type))
+            .collect();
+
+        if remaining.len() == members.len()
+            || remaining
+                .iter()
+                .any(|&member| self.is_assignable_to(member, positive_type))
         {
+            // Identity/containment did not catch every positive-branch member.
+            // Keep the pass top-level-only, but allow structural equivalence
+            // against the already-computed positive type. This covers freshly
+            // materialized true-branch shapes such as #52984 deep-path
+            // predicates without returning to recursive intersection descent.
+            let structurally_remaining: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| !self.is_assignable_to(member, positive_type))
+                .collect();
+            if structurally_remaining.len() == members.len() {
+                return None;
+            }
+            return Some(match structurally_remaining.as_slice() {
+                [] => TypeId::NEVER,
+                [single] => *single,
+                _ => self.db.union(structurally_remaining),
+            });
+        }
+        // The pure identity/containment filter handled the positive members.
+        Some(match remaining.as_slice() {
+            [] => TypeId::NEVER,
+            [single] => *single,
+            _ => self.db.union(remaining),
+        })
+    }
+
+    /// tsc's `isTypeSubsetOf`: a pure identity/containment relation used by
+    /// false-branch predicate exclusion. `source` is a subset of `target` when
+    /// it is identical, is `never`, or — when `target` is a union — every
+    /// constituent of `source` is one of `target`'s constituents. No structural
+    /// subtype walk is performed (that is the divergence this avoids).
+    fn is_type_subset_of(&self, source: TypeId, target: TypeId) -> bool {
+        if source == target || source == TypeId::NEVER {
+            return true;
+        }
+        let Some(target_members) = union_list_id(self.db, target) else {
+            return false;
+        };
+        let target_members = self.db.type_list(target_members);
+        if let Some(source_members) = union_list_id(self.db, source) {
+            let source_members = self.db.type_list(source_members);
+            source_members.iter().all(|s| target_members.contains(s))
+        } else {
+            target_members.contains(&source)
+        }
+    }
+
+    /// Narrow a type to exclude members assignable to target.
+    ///
+    /// Memoizing entry point. The recursive body (`narrow_excluding_type_uncached`)
+    /// re-enters on every intersection / type-parameter / union-intersection
+    /// member, so a recursive-schema union (typebox / ts-morph `value is T`
+    /// false-branch guards) expands the same `(source, excluded)` subtree
+    /// exponentially. The memo collapses that to linear and the visiting set
+    /// breaks the `Lazy`-alias resolution cycle — returning the source unchanged
+    /// on re-entry, which matches tsc's non-exhaustive exclusion over a recursive
+    /// union (issue #13242 / #13250).
+    pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
+        // Intrinsics and identity pairs are answered without recursion; skip the
+        // memo bookkeeping for them so the common shallow path stays allocation-
+        // and borrow-free.
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if source_type.is_intrinsic() && excluded_type.is_intrinsic() {
+            return self.narrow_excluding_type_uncached(source_type, excluded_type);
+        }
+
+        let key = NarrowExcludingKey {
+            source: source_type,
+            excluded: excluded_type,
+            resolver_generation: self.resolver_generation(),
+        };
+        if let Some(&cached) = self.cache.narrow_excluding_cache.borrow().get(&key) {
             return cached;
         }
+        // Re-entry on the same `(source, excluded)` pair is a recursive-alias
+        // cycle: leave the source unchanged so the in-flight outer frame owns the
+        // result, mirroring tsc's bounded exclusion over a recursive union.
+        if !self
+            .cache
+            .narrow_excluding_visiting
+            .borrow_mut()
+            .insert(key)
+        {
+            return source_type;
+        }
         let result = self.narrow_excluding_type_uncached(source_type, excluded_type);
+        self.cache
+            .narrow_excluding_visiting
+            .borrow_mut()
+            .remove(&key);
         self.cache
             .narrow_excluding_cache
             .borrow_mut()
@@ -2031,6 +2233,35 @@ impl<'a> NarrowingContext<'a> {
                             let resolved_source = self.resolve_for_exclusion_narrowing(source_type);
                             let resolved_target =
                                 self.resolve_for_exclusion_narrowing(*target_type);
+
+                            // tsc's `getNarrowedTypeWorker(assumeTrue=false)` first
+                            // computes the true-branch type, then shallow-filters the
+                            // source: `filterType(type, t => !isTypeSubsetOf(t,
+                            // trueType))`. `filterType`/`isTypeSubsetOf` are a pure
+                            // identity/containment pass over the source union's
+                            // top-level members — no descent into a member's
+                            // intersection sub-structure and no structural subtype
+                            // walk. Take that cheap path when it reduces the source:
+                            // the general `narrow_excluding_type` recurses into every
+                            // member with a deep `is_assignable_to`, which explodes on
+                            // recursive-schema unions (typebox / ts-morph `value is T`,
+                            // where each nested schema instantiates to a distinct
+                            // `TypeId` so the `(source, excluded)` memo never hits).
+                            // The positive (true-branch) type is the union members of
+                            // the source that overlap the target, so filtering members
+                            // that are subsets of it matches tsc. When the shallow
+                            // filter cannot reduce the source (no member is a clean
+                            // subset — e.g. type-parameter / single-intersection
+                            // sources tsc handles via its intersection step), fall back
+                            // to the existing structural exclusion.
+                            let positive = self.narrow_to_type(resolved_source, resolved_target);
+                            if positive != TypeId::NEVER
+                                && positive != resolved_source
+                                && let Some(excluded) =
+                                    self.narrow_excluding_positive_subset(resolved_source, positive)
+                            {
+                                return excluded;
+                            }
                             self.narrow_excluding_type(resolved_source, resolved_target)
                         }
                     }
