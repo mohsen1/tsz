@@ -1434,7 +1434,17 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `is_generic_application`, `is_index_access_type`) already called from
         # `common` in the very same expressions — no new quarantine entry.
         # Removal condition remains #8225 narrowing this quarantine.
-        3072,
+        #
+        # Bumped by 1 for the nested deferred-conditional indexed-access parity
+        # fix (#13792): the new `indexed_access/deferred_conditional_index.rs`
+        # module resolves a deferred `B[K1]` apparent type through the existing
+        # `query_boundaries::common` structural predicates (`is_conditional_type`,
+        # `is_generic_application`, `is_index_access_type`, `is_keyof_type`,
+        # `conditional_branch_union_constraint`). These join the sibling
+        # predicates already routed through `common`; the net live count rises by
+        # one over current main — no new quarantine entry.
+        # Removal condition remains #8225 narrowing this quarantine.
+        3073,
     ),
 ]
 
