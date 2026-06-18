@@ -331,9 +331,48 @@ impl<'a> CheckerState<'a> {
                 // assignable to `string`.
                 let type_arg_contains_type_parameters =
                     query::contains_type_parameters(self.ctx.types, type_arg);
-                if type_arg_contains_type_parameters
-                    && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
-                {
+                let type_arg_is_application =
+                    query::is_application_type(self.ctx.types.as_type_database(), type_arg);
+                if type_arg_contains_type_parameters && type_arg_is_application {
+                    // Application type arguments that still contain type parameters
+                    // are generally deferred to instantiation time. Check the cheap
+                    // callable/indexed-access exception before proving positive
+                    // conditional/object-map cases, since those proofs can expand
+                    // recursive helper aliases for libraries like ts-toolbelt.
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let constraint_is_callable = query::is_callable_type(
+                        self.ctx.types.as_type_database(),
+                        constraint_resolved,
+                    ) || query::constraint_expands_to_callable_union(
+                        self.ctx.types.as_type_database(),
+                        constraint_resolved,
+                    ) || self
+                        .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
+                    let constraint_is_object_like = constraint_resolved == TypeId::OBJECT
+                        || query::get_object_shape(
+                            self.ctx.types.as_type_database(),
+                            constraint_resolved,
+                        )
+                        .is_some();
+                    let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
+                    let keep_eager_check = constraint_is_callable
+                        && generic_indexed_type_arg.is_some()
+                        && !self.indexed_access_resolves_to_callable(
+                            generic_indexed_type_arg.unwrap_or(type_arg),
+                        );
+                    let is_infer_result_conditional_application = self
+                        .type_arg_evaluates_to_infer_result_conditional(type_arg)
+                        || self
+                            .type_alias_application_infer_result_conditional_components(type_arg)
+                            .is_some();
+                    if !constraint_is_object_like
+                        && !keep_eager_check
+                        && !is_infer_result_conditional_application
+                    {
+                        continue;
+                    }
+                }
+                if type_arg_contains_type_parameters && type_arg_is_application {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     let inst_constraint = self
                         .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
@@ -341,6 +380,13 @@ impl<'a> CheckerState<'a> {
                         type_arg,
                         inst_constraint,
                     ) {
+                        continue;
+                    }
+                    if self
+                        .conditional_result_branches_satisfy_constraint(type_arg, inst_constraint)
+                        || self
+                            .type_alias_application_filters_to_constraint(type_arg, inst_constraint)
+                    {
                         continue;
                     }
                     let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
@@ -380,39 +426,6 @@ impl<'a> CheckerState<'a> {
                                 arg_idx,
                             );
                         }
-                        continue;
-                    }
-                }
-                if type_arg_contains_type_parameters
-                    && !query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg)
-                    && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
-                {
-                    // Application type arguments that still contain type parameters
-                    // are generally deferred to instantiation time. Check the cheap
-                    // callable/indexed-access exception before computing a base
-                    // constraint, since base-constraint evaluation can expand the
-                    // alias body recursively for helper-heavy libraries.
-                    let constraint_resolved = self.resolve_lazy_type(constraint);
-                    let constraint_is_callable = query::is_callable_type(
-                        self.ctx.types.as_type_database(),
-                        constraint_resolved,
-                    ) || query::constraint_expands_to_callable_union(
-                        self.ctx.types.as_type_database(),
-                        constraint_resolved,
-                    ) || self
-                        .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
-                    let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
-                    let keep_eager_check = constraint_is_callable
-                        && generic_indexed_type_arg.is_some()
-                        && !self.indexed_access_resolves_to_callable(
-                            generic_indexed_type_arg.unwrap_or(type_arg),
-                        );
-                    let is_infer_result_conditional_application = self
-                        .type_arg_evaluates_to_infer_result_conditional(type_arg)
-                        || self
-                            .type_alias_application_infer_result_conditional_components(type_arg)
-                            .is_some();
-                    if !keep_eager_check && !is_infer_result_conditional_application {
                         continue;
                     }
                 }

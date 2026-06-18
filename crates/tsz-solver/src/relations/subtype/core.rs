@@ -16,7 +16,7 @@ use crate::construction::TypeDatabase;
 use crate::def::DefId;
 #[cfg(test)]
 use crate::diagnostics::SubtypeFailureReason;
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
@@ -515,10 +515,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
         let target_shape = self.interner.object_shape(target_shape_id);
+        // Route the source-intersection property collection through the
+        // context-free memo (issue #13242, workstream B) by threading this
+        // checker's `query_db`. Without it the bare `collect_properties`
+        // (`query_db = None`) re-walks the entire recursive-schema closure on
+        // every incompatible-property probe — the typebox hotspot-3 explosion,
+        // where this frame and the sibling `visit_intersection` merge path (which
+        // already passes `query_db`) re-collect the same deeply nested
+        // intersection thousands of times. The memo only serves a result when the
+        // `type_id` is not itself in flight and every truncation was against the
+        // collection's own entries (the #12142 partial-closure guard lives inside
+        // `collect_properties_cached`), so this is a pure cache-activation with no
+        // change to the collected closure.
         let PropertyCollectionResult::Properties {
             properties: source_props,
             ..
-        } = collect_properties(source_intersection, self.interner, self.resolver)
+        } = collect_properties_cached(
+            source_intersection,
+            self.interner,
+            self.resolver,
+            self.query_db,
+        )
         else {
             return false;
         };

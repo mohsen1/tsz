@@ -4,7 +4,7 @@
 
 use crate::types::{ConditionalType, ConditionalTypeId, TypeData, TypeId};
 
-use super::{TypeInstantiator, instantiate_type, instantiate_type_preserving};
+use super::{TypeInstantiator, instantiate_type_cached, instantiate_type_preserving_cached};
 
 impl<'a> TypeInstantiator<'a> {
     /// Instantiate a conditional type: instantiate all parts.
@@ -36,16 +36,25 @@ impl<'a> TypeInstantiator<'a> {
                     let mut member_subst = self.substitution.clone();
                     member_subst.insert(info.name, member);
                     let instantiated = if self.preserve_unsubstituted_type_params {
-                        instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                        instantiate_type_preserving_cached(
+                            self.interner,
+                            self.query_db,
+                            cond_type,
+                            &member_subst,
+                        )
                     } else {
-                        instantiate_type(self.interner, cond_type, &member_subst)
+                        instantiate_type_cached(
+                            self.interner,
+                            self.query_db,
+                            cond_type,
+                            &member_subst,
+                        )
                     };
                     if instantiated == TypeId::ERROR {
                         self.depth_exceeded = true;
                         return TypeId::ERROR;
                     }
-                    let evaluated =
-                        crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+                    let evaluated = self.evaluate_type(instantiated);
                     if evaluated == TypeId::ERROR {
                         self.depth_exceeded = true;
                         return TypeId::ERROR;
@@ -56,7 +65,7 @@ impl<'a> TypeInstantiator<'a> {
             }
             let distribution_source = match self.interner.lookup(substituted) {
                 Some(TypeData::Union(_)) => substituted,
-                _ => crate::evaluation::evaluate::evaluate_type(self.interner, substituted),
+                _ => self.evaluate_type(substituted),
             };
             if let Some(TypeData::Union(members)) = self.interner.lookup(distribution_source) {
                 let members = self.interner.type_list(members);
@@ -85,9 +94,19 @@ impl<'a> TypeInstantiator<'a> {
                     }
                     member_subst.insert(info.name, member);
                     let instantiated = if self.preserve_unsubstituted_type_params {
-                        instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                        instantiate_type_preserving_cached(
+                            self.interner,
+                            self.query_db,
+                            cond_type,
+                            &member_subst,
+                        )
                     } else {
-                        instantiate_type(self.interner, cond_type, &member_subst)
+                        instantiate_type_cached(
+                            self.interner,
+                            self.query_db,
+                            cond_type,
+                            &member_subst,
+                        )
                     };
                     // Check if instantiation hit depth limit
                     if instantiated == TypeId::ERROR {

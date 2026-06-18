@@ -534,7 +534,13 @@ jobs:
   lint:
     name: lint
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    # lint is `cargo clippy` (Rust-only). Gate it on compiler_checks_required so
+    # non-Rust PRs (bench/CI scripts, docs, workflow yaml) don't wait ~15-20m on
+    # a full clippy compile that lints nothing — that wait made ci-summary (which
+    # required lint) sit "Expected" while no relevant job ran. should_run can be
+    # true for non-compiler diffs (e.g. to run project-row-drift), so it is the
+    # wrong gate for lint.
+    if: needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1728,8 +1734,12 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "project-row-drift"}
+          required = {"cargo-shear", "cargo-deny", "project-row-drift"}
           if compiler_checks_required:
+              # lint (cargo clippy) is Rust-only and now gated on
+              # compiler_checks_required, so it is required only when the diff
+              # touches Rust/Cargo. Non-compiler PRs skip it and must not require it.
+              required.add("lint")
               required.update({"dist-binaries", "unit", "unit-checker-integration"})
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
