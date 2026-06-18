@@ -1422,25 +1422,17 @@ impl<'a> FlowAnalyzer<'a> {
             // when the assignment's root symbol is provably disjoint from the
             // reference's, it is irrelevant and skippable. Only fall back to the
             // deep AST predicates (which the worklist's ASSIGNMENT branch also runs)
-            // when the roots may overlap.
-            let relevant =
-                if !self.assignment_root_symbols_may_overlap(flow.node, reference, symbol_id) {
-                    false
-                } else if let Some(target_sym) = symbol_id {
-                    let assignment_sym = self.reference_symbol(flow.node);
-                    if assignment_sym.is_some() && assignment_sym != Some(target_sym) {
-                        // Different binder symbol: cannot target the reference. It may
-                        // still *affect* a property/element path of the reference.
-                        self.assignment_affects_reference_node(flow.node, reference)
-                    } else {
-                        self.assignment_targets_reference_node(flow.node, reference)
-                            || self.assignment_affects_reference_node(flow.node, reference)
-                    }
-                } else {
-                    self.assignment_targets_reference_node(flow.node, reference)
-                        || self.assignment_affects_reference_node(flow.node, reference)
-                };
-            if relevant {
+            // when the roots may overlap. The classification is a per-walk-pure
+            // function of the node, re-derived on every overlapping chase re-scan,
+            // so it is memoized by flow-node id alongside the defer / call-divert
+            // memos — one classification per node per walk, byte-identical in value.
+            if self.assignment_relevant_to_reference_cached(
+                current,
+                flow.node,
+                reference,
+                symbol_id,
+                &mut memos.assignment_relevant,
+            ) {
                 return current;
             }
 
