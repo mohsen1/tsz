@@ -1698,7 +1698,7 @@ impl<'a> CheckerState<'a> {
                         .map(|p| p.name)
                         .eq(owner_params.iter().map(|c| c.name));
                 let resolved_params = if same_arity_collision {
-                    owner_params.clone()
+                    owner_params
                 } else {
                     params
                 };
@@ -1706,7 +1706,7 @@ impl<'a> CheckerState<'a> {
                     let reg_params = if same_arity_collision {
                         resolved_params.clone()
                     } else if prefer_canonical {
-                        canonical_params.clone()
+                        canonical_params
                     } else {
                         resolved_params.clone()
                     };
