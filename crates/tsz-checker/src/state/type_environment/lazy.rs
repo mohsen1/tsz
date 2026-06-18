@@ -11,7 +11,9 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
 use super::property_access_visited::PropertyAccessVisited;
-use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
+use crate::query_boundaries::state::type_environment::{
+    CacheEntryCollection, EvaluateTypeWithCacheOptions, for_each_direct_referenced_type,
+};
 
 pub(crate) use super::lazy_fuel::{
     global_resolution_fuel_exhausted, global_resolution_fuel_value,
@@ -189,21 +191,13 @@ impl<'a> CheckerState<'a> {
                 type_id,
                 seed_iter.into_iter(),
                 has_seed,
-                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                // Pass 1 uses the limited `TypeEnvironment` resolver. It now
-                // participates in the cross-call application-eval/instantiation
-                // caches (`query_db`) so recursive utility-alias expansion
-                // reuses shared sub-applications across sibling positions
-                // instead of re-expanding them at every use site. The
-                // `authoritative = false` flag keeps it from writing the
-                // `closed_eval_cache` and restricts its application-eval writes
-                // to fully-materialized results, so the limited resolver can
-                // never shadow an answer the authoritative pass would refine.
-                Some(self.ctx.types),
-                /* authoritative */ false,
-                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
-                    seed_persist,
-                ),
+                EvaluateTypeWithCacheOptions {
+                    expand_application_display_alias_args: self.ctx.is_declaration_file()
+                        || self.ctx.emit_declarations(),
+                    query_db: Some(self.ctx.types),
+                    authoritative: false,
+                    cache_entry_collection: CacheEntryCollection::when_enabled(seed_persist),
+                },
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -308,15 +302,15 @@ impl<'a> CheckerState<'a> {
                 },
                 seed_iter.into_iter(),
                 has_seed,
-                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                // Second pass uses the authoritative full `CheckerContext`
-                // resolver, so its application expansions are safe to memoize in
-                // the per-file application-eval cache.
-                Some(self.ctx.types),
-                /* authoritative */ true,
-                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
-                    second_pass_seed_persist,
-                ),
+                EvaluateTypeWithCacheOptions {
+                    expand_application_display_alias_args: self.ctx.is_declaration_file()
+                        || self.ctx.emit_declarations(),
+                    query_db: Some(self.ctx.types),
+                    authoritative: true,
+                    cache_entry_collection: CacheEntryCollection::when_enabled(
+                        second_pass_seed_persist,
+                    ),
+                },
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
