@@ -572,6 +572,22 @@ pub struct TypeEnvironment {
     /// Populated by checker-side computed-property resolution and consumed by
     /// solver-side `keyof` evaluation to preserve unique-symbol key identity.
     well_known_symbol_name_to_ref: FxHashMap<String, SymbolRef>,
+    /// Maps a merged interface+value `SymbolRef` to its VALUE-space type for
+    /// `typeof` queries.
+    ///
+    /// A symbol declared as both an interface and a value (declaration merging,
+    /// e.g. `interface Date {} declare var Date: DateConstructor`, or
+    /// `interface Foo {} declare var Foo: {...}`) stores its TYPE-space
+    /// (instance) type under the shared `SymbolRef`/`DefId`, because that is
+    /// what type-position references (`x: Date`) need. A `typeof X` query on
+    /// such a symbol needs the VALUE-space type (the var's type) instead. The
+    /// checker computes that value type via its value-space identifier path and
+    /// records it here so `resolve_type_query` returns it for the deferred
+    /// `TypeQuery(SymbolRef)` shape produced by nested `typeof` positions
+    /// (indexed-access, conditional, tuple). Consulted only by
+    /// `resolve_type_query`, leaving `resolve_lazy`/`resolve_ref`
+    /// (type-position) on the instance type.
+    typeof_value_types: FxHashMap<u32, TypeId>,
 }
 
 impl TypeEnvironment {
@@ -602,6 +618,7 @@ impl TypeEnvironment {
             this_type: None,
             unresolved_name_resolutions: FxHashMap::default(),
             well_known_symbol_name_to_ref: FxHashMap::default(),
+            typeof_value_types: FxHashMap::default(),
         }
     }
 
@@ -801,6 +818,22 @@ impl TypeEnvironment {
     /// Get a symbol's resolved type.
     pub fn get(&self, symbol: SymbolRef) -> Option<TypeId> {
         self.types.get(&symbol.0).copied()
+    }
+
+    /// Register the VALUE-space type a `typeof X` query should resolve to for a
+    /// merged interface+value symbol. See `typeof_value_types`.
+    pub fn insert_typeof_value_type(&mut self, symbol: SymbolRef, type_id: TypeId) {
+        if self.typeof_value_types.get(&symbol.0) == Some(&type_id) {
+            return;
+        }
+        self.typeof_value_types.insert(symbol.0, type_id);
+        self.bump_generation();
+    }
+
+    /// Get the registered `typeof` value-space type for a merged interface+value
+    /// symbol, if any.
+    pub fn get_typeof_value_type(&self, symbol: SymbolRef) -> Option<TypeId> {
+        self.typeof_value_types.get(&symbol.0).copied()
     }
 
     /// Get a symbol's type parameters.
@@ -1049,6 +1082,7 @@ impl TypeEnvironment {
         fill_map!(instance_type_to_class, copy);
         fill_map!(unresolved_name_resolutions, copy);
         fill_map!(well_known_symbol_name_to_ref, copy);
+        fill_map!(typeof_value_types, copy);
 
         for value in &source.numeric_enums {
             if self.numeric_enums.insert(*value) {
@@ -1338,6 +1372,13 @@ impl TypeResolver for TypeEnvironment {
         // The SymbolRef entry may contain the instance type (inserted by
         // type_reference_symbol_type via insert_type_env_symbol), but the DefId
         // entry always has the constructor type (inserted by get_type_of_symbol).
+        // A merged interface+value symbol stores its instance (type-space) type
+        // under the shared `DefId`. When the checker has recorded the distinct
+        // value-space type for the `typeof` query, prefer it so nested
+        // `typeof X` positions resolve to the value/constructor side.
+        if let Some(&value_ty) = self.typeof_value_types.get(&symbol.0) {
+            return Some(value_ty);
+        }
         if let Some(&def_id) = self.symbol_to_def.get(&symbol.0)
             && let Some(ty) = self.get_def(DefId(def_id.0))
         {
