@@ -1533,3 +1533,73 @@ if (f(item, 1)) {
         "both arities resolve to `value is string`; got {diagnostics:#?}"
     );
 }
+
+/// Regression (#10663 F7): a second user-defined type-predicate guard must
+/// *intersect* with — not replace — the type the first guard narrowed to. After
+/// `isBag(v) && isMarker(v)`, `v` keeps the first guard's `{ [k: string]: V }`
+/// index signature *and* gains the named interface's members, matching tsc
+/// (which narrows to `Bag<string, unknown> & Marker`).
+///
+/// Root cause was a subtype-relation defect: a named interface with no explicit
+/// index signature was wrongly judged a subtype of `{ [k: string]: unknown }`,
+/// so the positive predicate narrowing replaced the record with the interface
+/// and dropped the index signature (false `TS7053` on `v['anyKey']`). Binder
+/// names differ from the original kysely witness to keep the fix structural.
+#[test]
+fn successive_type_predicate_guards_intersect_index_signature() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface Marker { tag(): string }
+type Bag<K extends keyof any, V> = { [P in K]: V };
+declare function isBag(v: unknown): v is Bag<string, unknown>;
+declare function isMarker(v: unknown): v is Marker;
+function probe(v: unknown) {
+    if (isBag(v) && isMarker(v)) {
+        const a = v.tag();
+        const b = v['anyKey'];
+        return [a, b];
+    }
+    return [];
+}
+"#,
+    );
+    let leaked: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 7053 || *c == 2339)
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "second predicate guard must intersect, preserving the first guard's index signature; got {diagnostics:#?}"
+    );
+}
+
+/// Regression (#10663): a named class/interface without an explicit index
+/// signature is NOT a subtype of `{ [k: string]: unknown }` — it lacks the
+/// required index signature — so a conditional `Named extends Record<…>` takes
+/// the false branch, matching tsc. An anonymous object literal keeps its
+/// implicit index signature and takes the true branch. This guards the subtype
+/// relation directly (the narrowing fix above shares the same defect).
+#[test]
+fn named_type_without_index_is_not_string_record_subtype() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface Named { run(): number }
+class Klass { run(): number { return 1; } }
+type Rec = { [k: string]: unknown };
+type NamedExtends = Named extends Rec ? 1 : 0;
+type ClassExtends = Klass extends Rec ? 1 : 0;
+type AnonExtends = ({ run(): number }) extends Rec ? 1 : 0;
+declare const ne: NamedExtends;
+declare const ce: ClassExtends;
+declare const ae: AnonExtends;
+const named: 0 = ne;
+const klass: 0 = ce;
+const anon: 1 = ae;
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "named interface/class must not extend a string-index record, while an anonymous literal must; got {diagnostics:#?}"
+    );
+}

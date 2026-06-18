@@ -69,6 +69,106 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .is_some_and(|shape| is_named_non_enum(&shape))
     }
 
+    /// Like [`Self::requires_explicit_declared_index_signature`], but also
+    /// recovers nominal identity from the `receiver`'s type->def registration.
+    ///
+    /// Resolving a `Lazy(DefId)` class/interface to its structural shape (during
+    /// conditional `extends` evaluation, type-predicate narrowing, etc.)
+    /// re-interns a shape whose `symbol` is `None`, even though the type stays
+    /// registered to its `DefId` in the definition store — the same source
+    /// diagnostics use to recover the interface/class *name*. Without this, such
+    /// a resolved class/interface looks anonymous and is wrongly accepted as a
+    /// subtype of a `{ [k: string]: T }` record (it would satisfy the index
+    /// signature structurally), dropping the requirement that a named nominal
+    /// type declare an explicit index signature.
+    ///
+    /// Only `Class`/`Interface` def-kinds trigger the requirement: anonymous
+    /// object literals and object-typed `TypeAlias`es are not registered as
+    /// nominal types (so they keep their implicit-index behaviour, matching
+    /// tsc), and namespace value objects / enums resolve to other def-kinds and
+    /// stay structurally compatible.
+    pub(crate) fn requires_explicit_declared_index_signature_for(
+        &self,
+        shape: &ObjectShape,
+        receiver: Option<TypeId>,
+    ) -> bool {
+        if self.requires_explicit_declared_index_signature(shape) {
+            return true;
+        }
+        if receiver.is_some_and(|receiver| self.receiver_is_named_class_or_interface(receiver)) {
+            return true;
+        }
+
+        // Fallback for a named shape whose nominal `DefId`/`DefKind` is not
+        // mapped in this resolver. When a `Lazy(DefId)` class/interface is
+        // resolved to its structural shape during conditional `extends`
+        // evaluation or type-predicate narrowing, the shape keeps a `symbol`
+        // but neither `symbol_to_def_id` nor the type->def index resolves it in
+        // the relation's resolver view, so the two checks above can't confirm it
+        // is nominal. A `symbol`-bearing, non-enum shape is nevertheless a named
+        // declaration (interface/class/namespace/enum/…); only `Class`/
+        // `Interface` must declare an explicit index signature to satisfy a
+        // `{ [k: string]: T }` target. Treat such a shape as requiring one
+        // unless the resolver positively classifies it as a structurally
+        // index-compatible kind (namespace value object, enum, alias, …).
+        //
+        // Gated on a real resolver (`!is_noop`): with the `NoopResolver`
+        // sentinel there is no nominal context at all, so a symbol-bearing shape
+        // stays an ordinary structural object (preserving the no-resolver
+        // contract relied on by callers that intentionally check structurally).
+        if self.resolver.is_noop() {
+            return false;
+        }
+        let Some(symbol) = shape.symbol else {
+            return false;
+        };
+        if shape.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
+            return false;
+        }
+        match self
+            .resolver
+            .symbol_to_def_id(SymbolRef(symbol.0))
+            .and_then(|def_id| self.resolver.get_def_kind(def_id))
+        {
+            // Positively non-nominal kinds keep their structural index
+            // compatibility (a namespace's exported members / an enum / an
+            // object-typed alias can satisfy the index signature directly).
+            Some(
+                crate::def::DefKind::Namespace
+                | crate::def::DefKind::Enum
+                | crate::def::DefKind::TypeAlias
+                | crate::def::DefKind::Function
+                | crate::def::DefKind::Variable,
+            ) => false,
+            // `Class`/`Interface` (or an unmapped named declaration, which in a
+            // real resolver context is an interface/class whose symbol simply
+            // isn't registered here) require an explicit index signature.
+            _ => true,
+        }
+    }
+
+    /// True when `receiver` (or, for a generic reference, its application base)
+    /// resolves through the definition store to a `Class` or `Interface` `DefId`.
+    /// Used to apply the explicit-index-signature requirement to named nominal
+    /// types whose resolved structural shape no longer carries a `symbol`.
+    fn receiver_is_named_class_or_interface(&self, receiver: TypeId) -> bool {
+        let is_class_or_interface = |candidate: TypeId| {
+            self.resolver.def_for_type(candidate).is_some_and(|def_id| {
+                matches!(
+                    self.resolver.get_def_kind(def_id),
+                    Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+                )
+            })
+        };
+        if is_class_or_interface(receiver) {
+            return true;
+        }
+        // For a generic reference `C<…>`, fall back to the application base `C`.
+        application_id(self.interner, receiver)
+            .map(|app_id| self.interner.type_application(app_id).base)
+            .is_some_and(|base| base != receiver && is_class_or_interface(base))
+    }
+
     fn has_compatible_symbol_iterator_methods(
         &mut self,
         source: &PropertyInfo,
@@ -975,7 +1075,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //
                 // Namespace-like value objects and anonymous types can still
                 // satisfy the target structurally through their exported members.
-                if self.requires_explicit_declared_index_signature(source) {
+                if self.requires_explicit_declared_index_signature_for(source, source_receiver) {
                     return SubtypeResult::False;
                 }
 
@@ -1682,7 +1782,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if target.string_index.as_ref().is_some_and(|idx| {
             idx.key_type != TypeId::SYMBOL
                 && (self.disable_method_bivariance || !idx.value_type.is_any())
-        }) && self.requires_explicit_declared_index_signature(&source_shape)
+        }) && self.requires_explicit_declared_index_signature_for(&source_shape, source_receiver)
         {
             return SubtypeResult::False;
         }
