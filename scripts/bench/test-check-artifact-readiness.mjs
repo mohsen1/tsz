@@ -7,14 +7,17 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   REQUIRED_PROJECT_ROWS as ALL_REQUIRED_PROJECT_ROWS,
+  PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 
-// The readiness gate checks only required rows that are actually measured (it
-// subtracts BENCH_RUNNER_EXCLUDED_ROWS). Mirror that here so the synthesized
-// artifacts and row counts match the gate's effective required-set.
+// The readiness gate checks only required rows the bench runner actually
+// measures: it subtracts BENCH_RUNNER_EXCLUDED_ROWS and category:"application"
+// rows. Mirror that here so the synthesized artifacts and row counts match.
 const REQUIRED_PROJECT_ROWS = ALL_REQUIRED_PROJECT_ROWS.filter(
-  (name) => !BENCH_RUNNER_EXCLUDED_ROWS.has(name),
+  (name) =>
+    !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
+    PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
