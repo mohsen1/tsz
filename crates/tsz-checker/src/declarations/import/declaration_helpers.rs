@@ -53,69 +53,6 @@ pub(crate) fn declaration_file_extension(
     }
 }
 
-/// Check if a module specifier refers to a Node.js built-in module.
-/// Handles both bare names ("fs") and the `node:` prefix ("node:fs").
-pub(crate) fn is_node_builtin_module(name: &str) -> bool {
-    let bare = name.strip_prefix("node:").unwrap_or(name);
-    matches!(
-        bare,
-        "assert"
-            | "assert/strict"
-            | "async_hooks"
-            | "buffer"
-            | "child_process"
-            | "cluster"
-            | "console"
-            | "constants"
-            | "crypto"
-            | "dgram"
-            | "diagnostics_channel"
-            | "dns"
-            | "dns/promises"
-            | "domain"
-            | "events"
-            | "fs"
-            | "fs/promises"
-            | "http"
-            | "http2"
-            | "https"
-            | "inspector"
-            | "inspector/promises"
-            | "module"
-            | "net"
-            | "os"
-            | "path"
-            | "path/posix"
-            | "path/win32"
-            | "perf_hooks"
-            | "process"
-            | "punycode"
-            | "querystring"
-            | "readline"
-            | "readline/promises"
-            | "repl"
-            | "stream"
-            | "stream/consumers"
-            | "stream/promises"
-            | "stream/web"
-            | "string_decoder"
-            | "sys"
-            | "timers"
-            | "timers/promises"
-            | "tls"
-            | "trace_events"
-            | "tty"
-            | "url"
-            | "util"
-            | "util/types"
-            | "v8"
-            | "vm"
-            | "wasi"
-            | "worker_threads"
-            | "zlib"
-    )
-}
-
 pub(crate) fn imported_types_package_target(module_name: &str) -> Option<String> {
     let package = module_name.strip_prefix("@types/")?;
     if package.is_empty() {
