@@ -74,11 +74,22 @@ default_cargo_build_jobs() {
       ;;
     dist-binaries)
       # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
-      # GitHub CI) so every codegen unit compiles from scratch. Keep the
-      # default 7168 MiB/job budget so the 8 vCPU x 32 GiB Cloud Run runner can
-      # build at -j4; -j3 has repeatedly finished cargo just after the runner's
-      # external cancellation window and before artifact upload.
-      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-7168}"
+      # GitHub CI) so every codegen unit compiles from scratch.
+      #
+      # The old 7168 MiB/job budget (→ -j4 on a 32 GiB runner) assumed each
+      # parallel rustc holds ~7 GiB simultaneously. Direct measurement on a
+      # 16 vCPU / 128 GiB box (dist-fast workspace recompile, warm deps —
+      # i.e. CI's post-restore state) refutes that: system-wide peak RSS is
+      # ~7.9 GiB at -j4, -j8, AND -j16 (flat). The peak is one big crate
+      # (tsz-core/tsz-checker) at link time, NOT N parallel rustc each at
+      # 7 GiB. Wall time: -j4 423s → -j8 335s (-88s, -21%); peak unchanged.
+      # The documented SIGKILL history is the `unit` lib-test compile
+      # (>16 GiB/rustc), never dist. So budget for -j8 on the 8 vCPU runner
+      # (3584 MiB/job → min(8 cpu, ~8 mem) = 8). safe-run.sh --limit 88%
+      # remains the backstop: if real peak (incl. any tmpfs target dir) ever
+      # approaches the limit it kills cargo gracefully rather than letting the
+      # kernel OOM-kill the runner.
+      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-3584}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
