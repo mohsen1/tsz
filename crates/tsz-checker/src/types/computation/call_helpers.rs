@@ -953,11 +953,26 @@ impl<'a> CheckerState<'a> {
             return cached_type;
         }
 
+        let declaration_cache_mode = if apply_module_augmentations { 1 } else { 2 };
         if let Some(cached) = self.ctx.lib_delegation_cache.declaration_node_type(
             decl_arena.as_ref(),
             decl_idx,
-            if apply_module_augmentations { 1 } else { 2 },
+            declaration_cache_mode,
         ) {
+            return cached;
+        }
+
+        let shared_actual_lib_value_name = apply_module_augmentations
+            .then(|| self.shared_actual_lib_value_declaration_name(sym_id, decl_arena.as_ref()))
+            .flatten();
+        if let Some(shared_name) = shared_actual_lib_value_name.as_deref()
+            && let Some(cached) = self.cached_shared_actual_lib_value_declaration(
+                shared_name,
+                decl_arena.as_ref(),
+                decl_idx,
+                declaration_cache_mode,
+            )
+        {
             return cached;
         }
 
@@ -1038,9 +1053,18 @@ impl<'a> CheckerState<'a> {
             self.ctx.lib_delegation_cache.insert_declaration_node_type(
                 decl_arena.as_ref(),
                 decl_idx,
-                if apply_module_augmentations { 1 } else { 2 },
+                declaration_cache_mode,
                 result,
             );
+            if let Some(shared_name) = shared_actual_lib_value_name.as_deref() {
+                self.cache_shared_actual_lib_value_declaration(
+                    shared_name,
+                    decl_arena.as_ref(),
+                    decl_idx,
+                    declaration_cache_mode,
+                    result,
+                );
+            }
         }
         result
     }

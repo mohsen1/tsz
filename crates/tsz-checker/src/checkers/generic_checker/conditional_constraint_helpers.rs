@@ -479,6 +479,15 @@ impl<'a> CheckerState<'a> {
 
                 if true_type == check {
                     let extends_resolved = self.resolve_lazy_type(extends_type);
+                    if self
+                        .conditional_constraint_component_relation_outcome(
+                            extends_resolved,
+                            constraint,
+                        )
+                        .related
+                    {
+                        return true;
+                    }
                     let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
                     let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
                     return self
@@ -486,16 +495,18 @@ impl<'a> CheckerState<'a> {
                             extends_evaluated,
                             constraint_evaluated,
                         )
-                        .related
-                        || self
-                            .conditional_constraint_component_relation_outcome(
-                                extends_resolved,
-                                constraint,
-                            )
-                            .related;
+                        .related;
                 }
 
                 let true_resolved = self.resolve_lazy_type(true_type);
+                if self
+                    .conditional_constraint_component_relation_outcome(true_resolved, constraint)
+                    .related
+                    || self
+                        .indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
+                {
+                    return true;
+                }
                 let true_evaluated = self.evaluate_type_for_assignability(true_resolved);
                 let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
                 if self
@@ -504,14 +515,6 @@ impl<'a> CheckerState<'a> {
                         constraint_evaluated,
                     )
                     .related
-                    || self
-                        .conditional_constraint_component_relation_outcome(
-                            true_resolved,
-                            constraint,
-                        )
-                        .related
-                    || self
-                        .indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
                 {
                     return true;
                 }
