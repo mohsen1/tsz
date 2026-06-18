@@ -55,14 +55,24 @@ impl<'a> CheckerState<'a> {
         // arena. `symbol_has_local_type_alias_declaration` returns `false`
         // exactly when the alias is NOT declared in the current arena
         // (distinguishing a real import from a same-`SymbolId` local collision,
-        // still handled by the name/def heuristics below), and
-        // `cross_file_alias_body_is_private_extends_conditional` confirms the
-        // imported body is the #13618 shape — a conditional whose `extends`
-        // operand is a bare named reference. `delegate_cross_arena_symbol_resolution`
+        // still handled by the name/def heuristics below), and either delegation
+        // predicate then confirms the imported body genuinely depends on the
+        // provider's own scope:
+        //   - `cross_file_alias_body_is_private_extends_conditional` — the
+        //     original narrow #13618 shape: a top-level conditional whose
+        //     `extends` operand is a bare named reference; and
+        //   - `cross_file_alias_body_references_provider_private_type` — the
+        //     general form: any body shape (conditional with a parameterized
+        //     `extends` operand, mapped type with a private key filter, …) that
+        //     references a **non-exported** type declared in the provider module.
+        // Both exclude library helpers (those reference only the caller's type
+        // parameter, globals, or *exported* types), so neither widens delegation
+        // to the JSX-regressing cases. `delegate_cross_arena_symbol_resolution`
         // re-checks the same locality predicate, so requesting delegation here is
         // safe.
         if !self.symbol_has_local_type_alias_declaration(local_symbol, sym_id)
-            && self.cross_file_alias_body_is_private_extends_conditional(sym_id)
+            && (self.cross_file_alias_body_is_private_extends_conditional(sym_id)
+                || self.cross_file_alias_body_references_provider_private_type(sym_id))
         {
             return true;
         }
