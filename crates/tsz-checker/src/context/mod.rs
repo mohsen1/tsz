@@ -38,6 +38,7 @@ pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, Wor
 mod def_mapping;
 mod def_mapping_formatters;
 mod deferred_flow_env_write;
+mod unresolved_import;
 pub use deferred_flow_env_write::DeferredFlowEnvWrite;
 mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};

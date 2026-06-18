@@ -1444,7 +1444,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # predicates already routed through `common`; the net live count rises by
         # one over current main — no new quarantine entry.
         # Removal condition remains #8225 narrowing this quarantine.
-        3073,
+        #
+        # Bumped 3073→3076 for the remeda error-type-contagion fix (#13512):
+        # the `indexed_access/error_contagion.rs` spine walk adds an
+        # `application_info` + `index_access_types` peel and the
+        # `context/unresolved_import.rs` detector adds a `lazy_def_id` lookup,
+        # all through the existing `query_boundaries::common` gateway joining the
+        # sibling structural predicates already used in the same expressions —
+        # no new quarantine entry. Removal condition remains #8225.
+        3076,
     ),
 ]
 

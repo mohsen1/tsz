@@ -5,6 +5,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 mod deferred_conditional_index;
+mod error_contagion;
 mod indexed_access_helpers;
 mod infer_node_walk;
 mod mapped_key_check;
@@ -817,6 +818,18 @@ impl<'a> CheckerState<'a> {
             data.object_type,
             index_type_for_check,
         ) {
+            return;
+        }
+        // Error-type contagion: when the indexed-access object type references an
+        // *unresolved imported alias* (e.g. `TupleParts<T>["required"]` where
+        // `TupleParts` comes from a module that failed to resolve — already
+        // flagged TS2307), tsc gives the object the permissive `error` apparent
+        // type, whose key space is universal, so the access accepts any key (and a
+        // further `[K2]` / `[...spread]` over it is also accepted). Suppress
+        // TS2536 here to match — the import-failure diagnostic is the only error
+        // tsc reports for these positions.
+        if self.indexed_access_object_is_unresolved_import_error(object_type, object_type_for_check)
+        {
             return;
         }
         // A deferred conditional object base has no key space of its own; tsc
