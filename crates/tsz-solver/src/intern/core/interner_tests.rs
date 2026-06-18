@@ -95,22 +95,26 @@ fn union_normalize_memo_shares_order_permuted_member_lists() {
     // A non-order-preserving union's normalized result is a pure function of
     // its member multiset, so rebuilding the same multiset with members in a
     // different order must reuse the memo instead of re-running the O(N^2)
-    // `reduce_union_subtypes` sweep (issue #13240). Three disjoint primitives
-    // are non-reducible against each other, so the union keeps all members and
-    // its identity is stable across orderings.
+    // `reduce_union_subtypes` sweep (issue #13240). The canonical-key path is
+    // limited to unions large enough to make that O(N²) avoidance worthwhile,
+    // so use enough disjoint literal members to exercise that path.
     tsz_common::perf_counters::force_enable_perf_counters_for_tests();
 
     let interner = TypeInterner::new();
+    let members: Vec<TypeId> = (0..9)
+        .map(|idx| interner.literal_string(&format!("member_{idx}")))
+        .collect();
+    let mut permuted_members = members.clone();
+    permuted_members.reverse();
 
-    let first_order = interner.union_from_slice(&[TypeId::BOOLEAN, TypeId::NUMBER, TypeId::STRING]);
+    let first_order = interner.union_from_slice(&members);
 
     // After the first build the canonical (sorted) key is memoized. A rebuild
     // in a different member order must hit that entry without recomputing.
     let before = tsz_common::perf_counters::PerfCounters::snapshot()
         .solver_materialization
         .union_subtype_reduction_calls;
-    let permuted_order =
-        interner.union_from_slice(&[TypeId::STRING, TypeId::BOOLEAN, TypeId::NUMBER]);
+    let permuted_order = interner.union_from_slice(&permuted_members);
     let after = tsz_common::perf_counters::PerfCounters::snapshot()
         .solver_materialization
         .union_subtype_reduction_calls;

@@ -773,6 +773,14 @@ impl TypeInterner {
         max_len
     };
 
+    /// Minimum input length for the canonical union-normalize memo spelling.
+    ///
+    /// Canonical lookup sorts and dedups the raw miss before the full normalize
+    /// pipeline runs. That extra O(N log N) work is only worth paying when it
+    /// can avoid a meaningful O(N²) subtype-reduction repeat; small unions stay
+    /// on the raw-only memo path that serves exact repeats without extra work.
+    const UNION_NORMALIZE_CANONICAL_CACHE_MIN_LEN: usize = TYPE_LIST_INLINE + 1;
+
     /// Memoized union normalization.
     ///
     /// The full pipeline (callable-order probe, semantic sort, dedup, literal
@@ -782,18 +790,19 @@ impl TypeInterner {
     /// constantly (the interner sees ~97% repeat hits on type-level-heavy
     /// projects).
     ///
-    /// Two key spellings share one memo:
+    /// Large non-order-preserving inputs may share two memo spellings:
     /// - The **raw** pre-normalization member list is the fast path, taken
     ///   first at zero canonicalization cost, and serves exact repeats.
-    /// - For non-order-preserving unions the normalized result is a pure
-    ///   function of the member *multiset* (the pipeline sorts+dedups
-    ///   internally before doing any reduction), so on a raw miss the
-    ///   **canonical** (sorted, deduped) member list is consulted too. Generic
-    ///   instantiation and conditional distribution rebuild the same multiset
-    ///   with members in varying orders; canonical keying lets those
+    /// - For sufficiently large non-order-preserving unions the normalized
+    ///   result is a pure function of the member *multiset* (the pipeline
+    ///   sorts+dedups internally before doing any reduction), so on a raw miss
+    ///   the **canonical** (sorted, deduped) member list is consulted too.
+    ///   Generic instantiation and conditional distribution rebuild the same
+    ///   multiset with members in varying orders; canonical keying lets those
     ///   order-permuted reconstructions share one entry instead of each
     ///   re-running the O(N²) `reduce_union_subtypes` sweep (issue #13240 /
-    ///   #12271 / #13250).
+    ///   #12271 / #13250). Small raw misses stay raw-only because the extra
+    ///   canonical sort costs more than the pairwise work it could skip.
     ///
     /// `should_preserve_callable_union_order` is a function of the member set,
     /// so a given multiset is deterministically order-preserving or not: an
@@ -808,6 +817,13 @@ impl TypeInterner {
         // the dominant case and pays only one hash lookup.
         if let Some(hit) = self.union_normalize_cache.get(flat.as_slice()) {
             return *hit;
+        }
+
+        if flat.len() < Self::UNION_NORMALIZE_CANONICAL_CACHE_MIN_LEN {
+            let key: Box<[TypeId]> = flat.as_slice().into();
+            let result = self.normalize_union_uncached(flat);
+            self.union_normalize_cache.insert(key, result);
+            return result;
         }
 
         // Order-preserving callable unions retain their input member order, so
