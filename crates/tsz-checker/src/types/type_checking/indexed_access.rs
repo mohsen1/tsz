@@ -1315,6 +1315,21 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
+            // A nested deferred indexed access `Cond<T>[k1][k2]`: the inner
+            // `Cond<T>[k1]` is a generic indexed access whose apparent type (the
+            // conditional's branch-union constraint indexed by `k1`) carries a
+            // concrete key space. Validate the outer literal key `k2` against it,
+            // matching tsc's `getConstraintOfIndexedAccessType` — `length`/`0`/
+            // array methods are accepted, a missing key still emits TS2536.
+            if !foreign_keyof_indexed_constraint
+                && self.deferred_indexed_access_conditional_key_is_valid(
+                    object_type,
+                    object_type_for_check,
+                    index_type_for_check,
+                )
+            {
+                return;
+            }
             if self.index_has_keyof_constraint_from_declaration(
                 data.index_type,
                 data.object_type,
