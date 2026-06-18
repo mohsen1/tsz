@@ -8,9 +8,10 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 
+use super::declaration_helpers::imported_types_package_target;
 use super::declaration_helpers::should_rewrite_module_specifier;
 use super::declaration_helpers::{declaration_file_extension, ts_extension_suffix};
-use super::declaration_helpers::{imported_types_package_target, is_node_builtin_module};
+use crate::query_boundaries::capabilities::is_known_node_module;
 
 impl<'a> CheckerState<'a> {
     /// Shared TS2846/TS5097 module-specifier extension diagnostics.
@@ -401,8 +402,8 @@ impl<'a> CheckerState<'a> {
         // trigger TS2307/TS2882 when using Node module resolution. TSC resolves
         // these via @types/node; our single-file checker lacks this, so we
         // suppress resolution errors for known built-in names.
-        let is_node_builtin = self.ctx.compiler_options.module.is_node_module()
-            && is_node_builtin_module(module_name);
+        let is_node_builtin =
+            self.ctx.compiler_options.module.is_node_module() && is_known_node_module(module_name);
 
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
