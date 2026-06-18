@@ -713,6 +713,18 @@ impl<'a> CheckerState<'a> {
             | syntax_kind_ext::CLASS_EXPRESSION => {
                 return;
             }
+            // A property access `obj.name` only references the parameter through
+            // its object expression. The `.name` part is a member name resolved
+            // in the object's namespace, never a reference to the sibling
+            // parameter, so recursing into it would mis-flag `f(x, name = \`${x.name}\`)`
+            // as a self-reference (TS2372/TS7022). Walk only the object side;
+            // tsc resolves the property name to a member symbol, not the param.
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    self.collect_self_references_recursive(access.expression, name, refs);
+                }
+                return;
+            }
             _ => {}
         }
 

@@ -931,8 +931,19 @@ impl<'a> FlowAnalyzer<'a> {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
-                        // Remove null/undefined (truthy narrowing)
-                        return flow_boundary::narrow_non_nullish(self.interner, type_id);
+                        // Full truthiness narrowing (same as a symbol reference):
+                        // tsc's narrowTypeByTruthiness does not special-case
+                        // member-access references. Besides stripping null/undefined
+                        // it also narrows `unknown` to `{}` and `boolean` to `true`,
+                        // which a bare non-nullish observation misses (witnessed by
+                        // ts-rest `standard-schema-utils.ts`: `if (result.value)`
+                        // then `{ ...result.value }` must spread a `{}`, not the
+                        // un-narrowed `unknown`).
+                        return flow_query::narrow_to_truthy_in_context(
+                            &narrowing,
+                            type_id,
+                            is_true_branch,
+                        );
                     }
                     // False branch - keep only falsy types (use Solver for NaN handling)
                     return self.narrow_to_falsy_via_flow_boundary(type_id);
