@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-import { REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import { PROJECT_ROW_DEFINITIONS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
@@ -79,8 +79,15 @@ assert.doesNotMatch(
 
 const shardFilters = [...workflow.matchAll(/^\s+filter: '([^']+)'/gm)]
   .map((match) => new RegExp(match[1]));
+// Application rows are compile-guard parity rows only; they are not
+// perf-benchmarked in bench-vs-tsgo (see test-project-rows.mjs), so they are
+// not expected to appear in any bench matrix shard filter.
+const applicationRowNames = new Set(
+  PROJECT_ROW_DEFINITIONS.filter((row) => row.category === "application").map((row) => row.name),
+);
 const missingRequiredProjectRows = REQUIRED_PROJECT_ROWS
   .filter((row) => !BENCH_RUNNER_EXCLUDED_ROWS.has(row))
+  .filter((row) => !applicationRowNames.has(row))
   .filter((row) => !shardFilters.some((filter) => filter.test(row)));
 assert.deepEqual(
   missingRequiredProjectRows,
