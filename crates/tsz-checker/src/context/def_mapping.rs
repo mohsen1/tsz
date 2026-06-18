@@ -857,7 +857,7 @@ impl<'a> CheckerContext<'a> {
     /// On a successful borrow, first replays any previously-deferred writes (in
     /// order) so the env catches up, then applies `op`. On a borrow conflict,
     /// `op` is queued for later replay.
-    fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
+    pub(super) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
             Ok(mut env) => {
                 self.drain_deferred_flow_env_writes_into(&mut env);
@@ -1058,48 +1058,6 @@ impl<'a> CheckerContext<'a> {
     /// Register a class instance type in **both** type environments.
     pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
         self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstance {
-            def_id,
-            instance_type,
-        });
-    }
-
-    /// Mirror a `def_id -> body` registration into the flow-analyzer env only,
-    /// leaving the evaluator env untouched.
-    ///
-    /// Resolution-time paths that write the *evaluator* env directly (during
-    /// recursive lazy resolution, where they already hold the `type_env` borrow)
-    /// must keep the flow-analyzer env's `def_types` in lock-step, or a
-    /// later-resolved body lands only in the evaluator env. The vacancy-only
-    /// file-prep reconciliation (`overlay_missing_from`) cannot repair a
-    /// present-but-stale flow entry, so the two envs silently diverge on
-    /// `def_types[def_id]` — the inconsistency the #13086 reconciliation
-    /// assertion guards against and a source of query-site-dependent wrong types
-    /// (#13942 / #13944). Unlike `register_def_*_in_envs`, this performs no
-    /// evaluator-side `DefinitionStore` write or cache invalidation: it is a pure
-    /// mirror, so evaluator resolution order and cached results are unchanged. On
-    /// a borrow conflict the write is deferred and replayed before reconciliation
-    /// rather than dropped.
-    pub fn mirror_def_to_flow_env(
-        &self,
-        def_id: DefId,
-        body: TypeId,
-        params: Vec<tsz_solver::TypeParamInfo>,
-    ) {
-        // `insert_def_with_params` with empty params is equivalent to
-        // `insert_def`, so both arities share one variant (no conditional).
-        self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertDefWithParams {
-            def_id,
-            body,
-            params,
-            variances: None,
-        });
-    }
-
-    /// Mirror a class-instance-type registration into the flow-analyzer env only.
-    /// The flow-env counterpart of an evaluator-only `insert_class_instance_type`
-    /// written during recursive resolution (see [`Self::mirror_def_to_flow_env`]).
-    pub fn mirror_class_instance_to_flow_env(&self, def_id: DefId, instance_type: TypeId) {
-        self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertClassInstance {
             def_id,
             instance_type,
         });

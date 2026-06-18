@@ -5,6 +5,7 @@ mod application;
 mod core;
 mod formatting;
 pub(crate) mod lazy;
+mod lazy_flow_mirror;
 mod lazy_fuel;
 mod property_access_visited;
 mod source_location;

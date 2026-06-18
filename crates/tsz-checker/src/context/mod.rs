@@ -36,6 +36,7 @@ mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
+mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
 mod deferred_flow_env_write;
 mod unresolved_import;

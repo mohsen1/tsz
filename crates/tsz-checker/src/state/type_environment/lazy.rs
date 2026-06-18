@@ -1615,31 +1615,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Insert `type_id` for `def_id` into both type environments, carrying type params
-    /// when present. Safe to call during recursive resolution.
-    ///
-    /// The evaluator env (`type_env`) is written directly. The flow-analyzer env
-    /// is updated through the deferred mirror rather than a direct
-    /// `try_borrow_mut`: a direct borrow that loses the race would *drop* the
-    /// mirror, leaving the flow env with a stale `def_types[def_id]` that the
-    /// vacancy-only file-prep reconciliation cannot repair. The mirror defers a
-    /// lost write and replays it before reconciliation, so the two envs never
-    /// diverge (#13086 / #13942 / #13944).
-    fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
-        // insert_def_with_params with empty params is equivalent to insert_def, so we
-        // unify both paths and avoid a conditional.
-        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        match self.ctx.type_env.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params.clone()),
-            Err(e) => tracing::warn!(
-                target_env = "type_env",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
-        self.ctx.mirror_def_to_flow_env(def_id, type_id, params);
-    }
-
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
     ///
     /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
