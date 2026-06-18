@@ -1477,6 +1477,19 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
+            // For a non-class symbol merged with an interface (declaration
+            // merging, e.g. lib `Date`/`Request` or `interface Foo {} declare
+            // var Foo: {...}`), `result` is the TYPE-space (instance) interface
+            // type, which is wrong for a `typeof` query. Compute the VALUE-space
+            // type now and register it in `typeof_value_types` so the resolver's
+            // `resolve_type_query` returns the value/constructor side for a
+            // deferred `TypeQuery(SymbolRef)` produced by nested `typeof`
+            // positions. Computed before the env borrow to avoid borrow
+            // conflicts during the value-space resolution.
+            let merged_interface_value_typeof = (class_env_entry.is_none())
+                .then(|| self.merged_interface_value_typeof_type(sym_id))
+                .flatten();
+
             // Use try_borrow_mut to avoid panic if type_env is already borrowed.
             // This can happen during recursive type resolution (e.g., class inheritance).
             // If we can't borrow, skip the cache update - the type is still computed correctly.
@@ -1613,6 +1626,12 @@ impl<'a> CheckerState<'a> {
                         env.insert_def_with_params(def_id, result, type_params);
                     }
                 }
+            }
+            // Register the merged interface+value `typeof` value type in both
+            // resolver environments so `resolve_type_query` returns the
+            // value/constructor side for `typeof X` (see `core_typeof_value`).
+            if let Some(value_type) = merged_interface_value_typeof {
+                self.register_typeof_value_type_in_envs(sym_id, value_type);
             }
             if class_env_entry.is_some()
                 && let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
