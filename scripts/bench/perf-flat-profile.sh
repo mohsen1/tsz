@@ -32,8 +32,15 @@
 # macOS only for symbol resolution (uses `atos`). On Linux, swap the resolver
 # for `llvm-symbolizer`/`addr2line` over the same lib-relative addresses.
 #
+# Attribution is to the innermost *non-inlined* function: `atos` rolls an
+# inlined leaf up to the function it was inlined into, so e.g. `main`'s body
+# reads as its enclosing symbol. Read `incl%` to find the structural entry
+# point to change; `self%` for where cycles are actually spent.
+#
 # NOTE: builds a *separate* symbol-retaining dist-fast binary; it does not touch
-# the PGO bench binary used by bench-vs-tsgo.
+# the PGO bench binary used by bench-vs-tsgo. The debug=2+strip=false artifacts
+# are large (tens of GB with deps debug info) — reclaim with
+# `rm -rf <target>/dist-fast` or `scripts/setup/clean.sh` when done.
 
 set -euo pipefail
 
@@ -95,84 +102,79 @@ samply record --save-only -o "$PROFILE_JSON" -- \
     bash -c 'for _ in $(seq "$1"); do "$2" --noEmit "${@:3}" >/dev/null 2>&1; done' \
     _ "$ITERATIONS" "$TSZ_BIN" "${TSZ_ARGS[@]}" >/dev/null 2>&1 || true
 
-# Parse the Firefox-profiler JSON: self-time by leaf frame address (reliable),
-# inclusive by function (representative address per func). Emit one line per hot
-# tsz-lib address: "<self> <incl> 0x<lib_relative_addr>".
-ADDR_TABLE="$(python3 - "$PROFILE_JSON" "$TOP" <<'PY'
-import gzip, json, sys, collections
+# Parse + symbolicate + rank entirely in Python so attribution is correct:
+#   * self  — leaf frame, aggregated by resolved name (a singular leaf can't
+#             double-count, so self is exact).
+#   * incl  — every frame's address is resolved up front, then per sample the
+#             set of *distinct names* on the stack is counted once. Deduping on
+#             the resolved name (not the frame/func index) is essential: inlining
+#             splits one source function across many frames, and counting those
+#             separately would push a function past 100% inclusive.
+python3 - "$PROFILE_JSON" "$TSZ_BIN" "$TEXT_BASE" "$TOP" <<'PY'
+import gzip, json, sys, re, subprocess, collections
 prof = json.load(gzip.open(sys.argv[1]))
-top = int(sys.argv[2])
-libs = prof.get("libs", [])
-tsz_lib = next((i for i, l in enumerate(libs) if l.get("name") == "tsz"), None)
-self_ct = collections.Counter()
-incl_ct = collections.Counter()
-func_addr = {}
-total = 0
+binary, base, top = sys.argv[2], int(sys.argv[3], 16), int(sys.argv[4])
+
+# Per-thread frame address arrays differ, so resolve names per (thread, frame).
+threads = []
+unique = set()
 for th in prof.get("threads", []):
-    fr, st, ft = th["frameTable"], th["stackTable"], th["funcTable"]
-    addr, ffunc, sframe, sprefix = fr["address"], fr["func"], st["frame"], st["prefix"]
-    fres = ft.get("resource")
-    rt = th.get("resourceTable", {}) or {}
-    rlib = rt.get("lib")
-    def in_tsz(func):
-        if tsz_lib is None or fres is None or rlib is None:
-            return True
-        if func >= len(fres) or fres[func] is None or fres[func] >= len(rlib):
-            return True
-        return rlib[fres[func]] == tsz_lib
-    for i in range(fr["length"]):
-        a = addr[i]
+    fr, st = th["frameTable"], th["stackTable"]
+    addr, sframe, sprefix = fr["address"], st["frame"], st["prefix"]
+    threads.append((addr, sframe, sprefix, th["samples"]["stack"]))
+    for a in addr:
         if a and a > 0:
-            func_addr.setdefault(ffunc[i], a)
-    for s in th["samples"]["stack"]:
+            unique.add(a)
+
+# Batch-resolve every distinct address against the binary (chunked for argv).
+addrs = sorted(unique)
+raw = {}
+for i in range(0, len(addrs), 400):
+    chunk = addrs[i:i + 400]
+    out = subprocess.run(
+        ["atos", "-o", binary, "-arch", "arm64", "-l", hex(base)]
+        + [hex(base + a) for a in chunk],
+        capture_output=True, text=True).stdout.splitlines()
+    for a, line in zip(chunk, out):
+        raw[a] = line
+
+def demangle(line):
+    n = line.split(" (in ")[0].strip()
+    n = re.sub(r"::h[0-9a-f]{16}$", "", n)
+    for a, b in (("$LT$", "<"), ("$GT$", ">"), ("$u20$", " "), ("$C$", ","),
+                 ("$RF$", "&"), ("$u7b$", "{"), ("$u7d$", "}"), ("$BP$", "*")):
+        n = n.replace(a, b)
+    return n.replace("..", "::") if ".." in n and "::" not in n else n
+
+name = {a: demangle(line) for a, line in raw.items()}
+
+self_ct, incl_ct, total = collections.Counter(), collections.Counter(), 0
+for addr, sframe, sprefix, stacks in threads:
+    for s in stacks:
         if s is None:
             continue
         total += 1
-        leaf_fr = sframe[s]
-        a = addr[leaf_fr]
-        if a and a > 0 and in_tsz(ffunc[leaf_fr]):
-            self_ct[a] += 1
-        seen = set(); cur = s
+        la = addr[sframe[s]]
+        if la and la > 0 and la in name:
+            self_ct[name[la]] += 1
+        seen, cur = set(), s
         while cur is not None:
-            fu = ffunc[sframe[cur]]
-            if fu not in seen:
-                seen.add(fu)
-                if in_tsz(fu) and fu in func_addr:
-                    incl_ct[func_addr[fu]] += 1
+            fa = addr[sframe[cur]]
+            nm = name.get(fa) if fa and fa > 0 else None
+            if nm and nm not in seen:
+                seen.add(nm)
             cur = sprefix[cur]
-print(f"#TOTAL {total}")
-addrs = [a for a, _ in self_ct.most_common(top)]
-for a in incl_ct:
-    if a not in addrs:
-        addrs.append(a)
-for a in sorted(addrs, key=lambda x: self_ct.get(x, 0), reverse=True)[:top]:
-    print(f"{self_ct.get(a,0)} {incl_ct.get(a,0)} 0x{a:x}")
+        for nm in seen:
+            incl_ct[nm] += 1
+
+if total == 0:
+    print("No samples captured — try a larger --iterations or a longer-running target.",
+          file=sys.stderr)
+    sys.exit(1)
+
+print()
+print(f"=== tsz flat profile: {total} samples (self / inclusive) ===")
+print(f"{'self%':>7} {'incl%':>7}  function")
+for nm, sc in self_ct.most_common(top):
+    print(f"{100 * sc / total:6.1f}% {100 * incl_ct.get(nm, 0) / total:6.1f}%  {nm}")
 PY
-)"
-
-TOTAL="$(echo "$ADDR_TABLE" | awk '/^#TOTAL/{print $2}')"
-if [[ -z "$TOTAL" || "$TOTAL" -eq 0 ]]; then
-    echo "No samples captured — try a larger --iterations or a longer-running target." >&2
-    exit 1
-fi
-
-# Batch-resolve all addresses with a single atos call.
-mapfile -t HEX < <(echo "$ADDR_TABLE" | awk '!/^#/{print $3}')
-declare -a VMADDRS=()
-for h in "${HEX[@]}"; do
-    VMADDRS+=("$(python3 -c "print(hex($TEXT_BASE + $h))")")
-done
-mapfile -t SYMS < <(atos -o "$TSZ_BIN" -arch arm64 -l "$TEXT_BASE" "${VMADDRS[@]}" 2>/dev/null \
-    | sed 's/::h[0-9a-f]\{16\}//g; s/\$LT\$/</g; s/\$GT\$/>/g; s/\$u20\$/ /g; s/\$C\$/,/g; s/\$RF\$/\&/g; s/ (in tsz).*//')
-
-echo
-printf '%s\n' "=== tsz flat profile: ${TOTAL} samples (self / inclusive) ==="
-printf '%7s %7s  %s\n' "self%" "incl%" "function"
-i=0
-while read -r self incl _; do
-    [[ "$self" == \#* ]] && continue
-    sym="${SYMS[$i]:-?}"; i=$((i+1))
-    sp="$(python3 -c "print(f'{100*$self/$TOTAL:.1f}')")"
-    ip="$(python3 -c "print(f'{100*$incl/$TOTAL:.1f}')")"
-    printf '%6s%% %6s%%  %s\n' "$sp" "$ip" "$sym"
-done <<< "$ADDR_TABLE"
