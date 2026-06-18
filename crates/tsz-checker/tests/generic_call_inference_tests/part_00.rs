@@ -1095,6 +1095,61 @@ layerEffect(
 }
 
 #[test]
+fn yield_star_nested_generic_call_preserves_generator_return_context() {
+    let source = r#"
+type FrozenRecord<in out Key extends string | symbol, out Value> = {
+  readonly [Prop in Key]: Value;
+};
+
+type Output<T> = T extends Task<infer Value, infer _Err, infer _Env> ? Value : never;
+
+interface TaskIterator<Item extends Task<any, any, any>> {
+  next(...args: ReadonlyArray<any>): IteratorResult<Item, Output<Item>>;
+}
+
+interface Task<out Value, out Err = never, out Env = never> {
+  value: Value;
+  error: Err;
+  env: Env;
+  [Symbol.iterator](): TaskIterator<Task<Value, Err, Env>>;
+}
+
+declare function execute<Value, Err>(task: Task<Value, Err>): Promise<Value>;
+
+declare function taskGen<Step extends Task<any, any, any>, Done>(
+  body: () => Generator<Step, Done, never>,
+): Task<Done, any, never>;
+
+declare const visit: {
+  <Input, Env, Extra, Err, Mapped>(
+    f: (value: Input) => Task<Mapped, Err, Extra>,
+  ): (
+    self: FrozenRecord<string, Input>,
+  ) => Task<FrozenRecord<string, Mapped>, Err, Extra>;
+  <Input, Extra, Err, Mapped>(
+    self: FrozenRecord<string, Input>,
+    f: (value: Input) => Task<Mapped, Err, Extra>,
+  ): Task<FrozenRecord<string, Mapped>, Err, Extra>;
+};
+
+execute(
+  taskGen(function* () {
+    yield* visit({ left: 1, right: 2 }, (count) =>
+      taskGen(function* () {
+        return count + 1;
+      }),
+    );
+  }),
+);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "Expected nested generator return context to preserve `number`, not `never`. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn speculative_tuple_listener_recheck_drops_stale_property_errors() {
     let source = r#"
 interface CloseEvent {
