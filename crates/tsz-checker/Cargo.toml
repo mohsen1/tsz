@@ -286,6 +286,9 @@ path = "tests/array_generic_shorthand_canonical_tests.rs"
 name = "array_subclass_inheritance_tests"
 path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
+name = "extends_readonly_array_assignability_tests"
+path = "tests/extends_readonly_array_assignability_tests.rs"
+[[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 [[test]]

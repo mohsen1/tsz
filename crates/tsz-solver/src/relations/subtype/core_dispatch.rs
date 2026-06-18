@@ -1013,46 +1013,72 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        // Object-like source vs (mutable) array target. An interface/class that
-        // declares `extends Array<T>` (e.g. `interface NonEmptyArray<A> extends
-        // Array<A>`) is assignable to `T[]`. Arrays are `TypeData::Array`, not
-        // object shapes, so none of the structural object branches above fire and
-        // the pair would otherwise fall through to failure.
+        // Object-like source vs array / readonly-array target. An interface or
+        // class that declares `extends Array<T>` (e.g. `interface NonEmptyArray<A>
+        // extends Array<A>`) or `extends ReadonlyArray<T>` is a heritage-flattened
+        // object shape, not a `TypeData::Array`, so none of the structural object
+        // branches above fire and the pair would otherwise fall through to failure.
         //
-        // `tsc` treats array assignability covariantly, so `S <: T[]` reduces to
-        // the element relation on the numeric element type. We therefore:
-        //   1. require the source to carry a non-`readonly` numeric index
-        //      signature — `Array<T>` declares `[n: number]: T`, and a `readonly`
-        //      source (a `ReadonlyArray`-derived shape) is not assignable to a
-        //      mutable array, matching `tsc`;
-        //   2. confirm the source genuinely provides the whole `Array` member
-        //      surface by name, distinguishing a heritage-flattened
-        //      `extends Array` shape (its inherited members are present as named
-        //      properties) from a bare `Record<number, T>` that merely shares a
-        //      numeric index. The scan walks the source's own named properties
-        //      directly rather than going through `lookup_property`, so a
-        //      `[key: string]` index signature cannot spoof every member name; and
-        //   3. decide the relation by the covariant element check.
+        // `tsc` treats array assignability covariantly, so `S <: U[]` /
+        // `S <: readonly U[]` reduces to the element relation on the numeric
+        // element type. We therefore:
+        //   1. recognize both the mutable (`U[]`) and the readonly
+        //      (`readonly U[]` / `ReadonlyArray<U>`, in either the
+        //      `ReadonlyType(Array)` syntax form or the generic-application form)
+        //      target shapes and extract the target element type;
+        //   2. gate readonly direction. A `readonly` source numeric index (a
+        //      `ReadonlyArray`-derived shape) is assignable to a readonly target
+        //      but NOT to a mutable one, while a mutable source is assignable to
+        //      either; this matches `tsc`;
+        //   3. confirm the source genuinely provides the array member surface by
+        //      name. The scan walks the registered mutable `Array<T>` base (always
+        //      available) and the source's own named properties directly rather
+        //      than going through `lookup_property`, distinguishing a
+        //      heritage-flattened shape from a bare `Record<number, T>` and
+        //      preventing a `[key: string]` index from spoofing every member name.
+        //      For a readonly target the mutable-only members (`push`/`pop`/...)
+        //      are not required: `ReadonlyArray<T>`'s surface is exactly `Array<T>`
+        //      minus those mutating methods, so a `ReadonlyArray`-derived source
+        //      legitimately omits them; and
+        //   4. decide the relation by the covariant element check.
         //
-        // This deliberately avoids materializing the instantiated `Array<T>`
-        // interface and running a full structural comparison: doing that in this
-        // hot dispatch path (a) re-enters instantiation/evaluation with observable
+        // This deliberately avoids materializing the instantiated array interface
+        // and running a full structural comparison: doing that in this hot
+        // dispatch path (a) re-enters instantiation/evaluation with observable
         // cache side effects and (b) can exhaust the relation depth limit on deep
         // generic sources, which is treated as `true` and silently over-accepts
-        // unrelated types.
-        if let Some(t_elem) = array_element_type(self.interner, target)
-            && let Some(s_shape_id) = object_with_index_shape_id(self.interner, source)
+        // unrelated types. The readonly-target arm runs *before* the readonly-peel
+        // below (which strips the target to a mutable array and would otherwise
+        // reject a legitimately readonly source). The cheap source discriminator
+        // (`object_with_index_shape_id`) is checked first so the readonly-array
+        // target extraction only runs for object-with-index sources.
+        if let Some(s_shape_id) = object_with_index_shape_id(self.interner, source)
             && let Some(array_base) = self.resolver.get_array_base_type()
             && let Some(array_shape_id) = object_shape_id(self.interner, array_base)
                 .or_else(|| object_with_index_shape_id(self.interner, array_base))
+            && let Some((t_elem, target_readonly)) = array_element_type(self.interner, target)
+                .map(|elem| (elem, false))
+                .or_else(|| {
+                    self.readonly_array_syntax_element(target)
+                        .or_else(|| self.readonly_array_application_element(target))
+                        .map(|elem| (elem, true))
+                })
         {
             let s_shape = self.interner.object_shape(s_shape_id);
+            // A `readonly` source numeric index (a `ReadonlyArray`-derived shape)
+            // is assignable to a readonly target but NOT to a mutable one; a
+            // mutable source is assignable to either.
             if let Some(num_idx) = s_shape.number_index
-                && !num_idx.readonly
+                && (target_readonly || !num_idx.readonly)
             {
                 let array_shape = self.interner.object_shape(array_shape_id);
                 let source_has_full_array_surface = array_shape.properties.iter().all(|member| {
-                    member.optional || s_shape.properties.iter().any(|p| p.name == member.name)
+                    member.optional
+                        || s_shape.properties.iter().any(|p| p.name == member.name)
+                        || (target_readonly
+                            && crate::operations::property::property_helpers::is_array_mutating_method(
+                                self.interner.resolve_atom_ref(member.name).as_ref(),
+                            ))
                 });
                 if source_has_full_array_surface {
                     return self.check_subtype(num_idx.value_type, t_elem);
