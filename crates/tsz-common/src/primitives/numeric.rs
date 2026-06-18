@@ -32,6 +32,52 @@ pub fn parse_numeric_literal_value(text: &str) -> Option<f64> {
     text.parse::<f64>().ok()
 }
 
+/// Number of distinct 32-bit integer values (`2^32`), the modulus used by the
+/// ECMAScript `ToInt32` / `ToUint32` abstract operations.
+const TWO_POW_32: f64 = 4_294_967_296.0;
+
+/// ECMAScript `ToUint32` (<https://tc39.es/ecma262/#sec-touint32>).
+///
+/// Truncates `value` toward zero and reduces it modulo `2^32` into the
+/// unsigned 32-bit range `[0, 2^32)`. `NaN`, `±0`, and `±∞` map to `0`.
+///
+/// This is the conversion JavaScript/TypeScript applies to the operands of the
+/// bitwise (`&`, `|`, `^`, `~`) and shift (`<<`, `>>`, `>>>`) operators, so any
+/// constant-expression evaluator that mirrors those operators on `f64` values
+/// must route through it. A plain `value as u32` cast is **not** equivalent:
+/// Rust's float-to-int cast *saturates* (`3e9_f64 as u32 == u32::MAX`,
+/// `-1.0_f64 as u32 == 0`), whereas ECMAScript *wraps* (`ToUint32(3e9) ==
+/// 3000000000`, `ToUint32(-1) == 4294967295`).
+#[inline]
+#[must_use]
+pub fn to_uint32(value: f64) -> u32 {
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
+    // `trunc()` is the spec's truncate-toward-zero; `rem_euclid` yields a
+    // non-negative remainder in `[0, 2^32)`, so the subsequent cast never
+    // saturates. For integer-valued inputs within `2^53` the arithmetic is
+    // exact, matching the double-precision result JS engines produce.
+    let modulo = value.trunc().rem_euclid(TWO_POW_32);
+    modulo as u32
+}
+
+/// ECMAScript `ToInt32` (<https://tc39.es/ecma262/#sec-toint32>).
+///
+/// Like [`to_uint32`] but reinterprets the wrapped value into the signed 32-bit
+/// range `[-2^31, 2^31)`. `ToInt32(2^31) == -2^31`, `ToInt32(-1) == -1`.
+///
+/// Use this — never `value as i32` — when folding the operands of JavaScript
+/// bitwise/shift operators: the saturating `as i32` cast turns
+/// `0x80000000 | 0` into `i32::MAX` instead of the correct `-2147483648`.
+#[inline]
+#[must_use]
+pub fn to_int32(value: f64) -> i32 {
+    // `u32 as i32` is a bit-pattern reinterpretation (wrapping), which is
+    // exactly the signed view of the `ToUint32` result.
+    to_uint32(value) as i32
+}
+
 /// Parse a digit sequence in the given base (2/8/10/16) as `f64`.
 ///
 /// Hex digits are case-insensitive. Underscores (numeric separators) are
@@ -133,6 +179,47 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0xDE_AD"), Some(57005.0));
         assert_eq!(parse_numeric_literal_value("0b1010_1111"), Some(175.0));
         assert_eq!(parse_numeric_literal_value("0o7_7"), Some(63.0));
+    }
+
+    #[test]
+    fn to_uint32_wraps_modulo_two_pow_32() {
+        // Small values are unchanged.
+        assert_eq!(to_uint32(0.0), 0);
+        assert_eq!(to_uint32(255.0), 255);
+        // `2^31` stays in unsigned range; `2^32` wraps to 0.
+        assert_eq!(to_uint32(2_147_483_648.0), 2_147_483_648);
+        assert_eq!(to_uint32(4_294_967_296.0), 0);
+        // Negative and out-of-range values wrap rather than saturate
+        // (a plain `as u32` cast would yield 0 and u32::MAX respectively).
+        assert_eq!(to_uint32(-1.0), 4_294_967_295);
+        assert_eq!(to_uint32(3_000_000_000.0), 3_000_000_000);
+        assert_eq!(to_uint32(4_294_967_297.0), 1);
+        // Truncation is toward zero before the modulo.
+        assert_eq!(to_uint32(5.9), 5);
+        assert_eq!(to_uint32(-5.9), 4_294_967_291);
+    }
+
+    #[test]
+    fn to_uint32_maps_non_finite_to_zero() {
+        assert_eq!(to_uint32(f64::NAN), 0);
+        assert_eq!(to_uint32(f64::INFINITY), 0);
+        assert_eq!(to_uint32(f64::NEG_INFINITY), 0);
+        assert_eq!(to_uint32(-0.0), 0);
+    }
+
+    #[test]
+    fn to_int32_wraps_into_signed_range() {
+        assert_eq!(to_int32(0.0), 0);
+        assert_eq!(to_int32(255.0), 255);
+        // `0x80000000` is the canonical witness: saturating `as i32` would give
+        // i32::MAX (2147483647); ECMAScript ToInt32 wraps to -2147483648.
+        assert_eq!(to_int32(2_147_483_648.0), -2_147_483_648);
+        assert_ne!(to_int32(2_147_483_648.0), i32::MAX);
+        assert_eq!(to_int32(4_294_967_295.0), -1);
+        assert_eq!(to_int32(-1.0), -1);
+        assert_eq!(to_int32(3_000_000_000.0), -1_294_967_296);
+        assert_eq!(to_int32(4_294_967_296.0), 0);
+        assert_eq!(to_int32(f64::NAN), 0);
     }
 
     #[test]
