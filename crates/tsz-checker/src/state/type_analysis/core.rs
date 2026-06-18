@@ -1,6 +1,7 @@
 //! Core type analysis implementation: qualified name resolution, symbol type computation,
 //! type queries, and contextual literal type analysis.
 
+use crate::context::DeferredFlowEnvWrite;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::common as common_query;
@@ -1583,16 +1584,36 @@ impl<'a> CheckerState<'a> {
             // so both environments stay consistent. The type_env block above
             // handles SymbolRef + DefId writes to the evaluator env; this block
             // ensures the flow-analyzer env also has the DefId entries.
-            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
-                && let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
-            {
+            //
+            // Route through the race-safe `mirror_to_flow_env` queue rather than a
+            // direct `try_borrow_mut`: during recursive resolution the
+            // flow-analyzer holds `type_environment` borrowed (narrowing) while
+            // the evaluator mutates `type_env`, so a direct mirror would *silently
+            // drop* this write, leaving the two envs disagreeing on the def's
+            // `TypeId` — the silent #13086 divergence the file-prep reconciliation
+            // guard reports (#13944). Building the ops first keeps the applied
+            // writes byte-identical to the previous direct path; only the
+            // borrow-contended case changes, from drop to defer-and-replay.
+            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                let mut flow_ops: Vec<DeferredFlowEnvWrite> = Vec::new();
                 if let Some((instance_type, _)) = &class_env_entry {
                     if type_params.is_empty() {
-                        env.insert_def(def_id, result);
+                        flow_ops.push(DeferredFlowEnvWrite::InsertDef {
+                            def_id,
+                            body: result,
+                        });
                     } else {
-                        env.insert_def_with_params(def_id, result, type_params);
+                        flow_ops.push(DeferredFlowEnvWrite::InsertDefWithParams {
+                            def_id,
+                            body: result,
+                            params: type_params,
+                            variances: None,
+                        });
                     }
-                    env.insert_class_instance_type(def_id, *instance_type);
+                    flow_ops.push(DeferredFlowEnvWrite::InsertClassInstance {
+                        def_id,
+                        instance_type: *instance_type,
+                    });
                 } else {
                     let lib_params = if type_params.is_empty() {
                         self.ctx.get_def_type_params(def_id)
@@ -1600,12 +1621,28 @@ impl<'a> CheckerState<'a> {
                         None
                     };
                     if let Some(params) = lib_params {
-                        env.insert_def_with_params(def_id, result, params);
+                        flow_ops.push(DeferredFlowEnvWrite::InsertDefWithParams {
+                            def_id,
+                            body: result,
+                            params,
+                            variances: None,
+                        });
                     } else if type_params.is_empty() {
-                        env.insert_def(def_id, result);
+                        flow_ops.push(DeferredFlowEnvWrite::InsertDef {
+                            def_id,
+                            body: result,
+                        });
                     } else {
-                        env.insert_def_with_params(def_id, result, type_params);
+                        flow_ops.push(DeferredFlowEnvWrite::InsertDefWithParams {
+                            def_id,
+                            body: result,
+                            params: type_params,
+                            variances: None,
+                        });
                     }
+                }
+                for op in flow_ops {
+                    self.ctx.mirror_to_flow_env(op);
                 }
             }
             // Register the merged interface+value `typeof` value type in both

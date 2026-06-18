@@ -857,7 +857,11 @@ impl<'a> CheckerContext<'a> {
     /// On a successful borrow, first replays any previously-deferred writes (in
     /// order) so the env catches up, then applies `op`. On a borrow conflict,
     /// `op` is queued for later replay.
-    fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
+    ///
+    /// Exposed `pub(crate)` so the `get_type_of_symbol` caching path can mirror
+    /// its `DefId` writes through this race-safe queue instead of a direct
+    /// `try_borrow_mut` that silently drops on contention (#13086/#13944).
+    pub(crate) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
             Ok(mut env) => {
                 self.drain_deferred_flow_env_writes_into(&mut env);
@@ -1052,6 +1056,36 @@ impl<'a> CheckerContext<'a> {
             self.register_def_in_envs(def_id, body);
         } else {
             self.register_def_with_params_in_envs(def_id, body, params);
+        }
+    }
+
+    /// Register an already-resolved definition body in **both** type
+    /// environments via the race-safe deferred-write path, without touching the
+    /// shared `DefinitionStore` or running the body-rewrite cache sweeps.
+    ///
+    /// This is the env-only counterpart to [`Self::register_def_in_envs`], used
+    /// by the lazy-resolution path (`try_insert_def_in_type_env`) which
+    /// re-publishes a `DefId -> TypeId` mapping it just resolved. The crucial
+    /// difference from a direct `try_borrow_mut` write is that a mirror that
+    /// loses the `RefCell` borrow race during recursive resolution (the
+    /// flow-analyzer holds `type_environment` borrowed while the evaluator
+    /// mutates `type_env`) is *deferred and replayed* rather than silently
+    /// dropped. A dropped mirror leaves the two envs disagreeing on a shared
+    /// `DefId -> TypeId` entry — the silent #13086 divergence the file-prep
+    /// reconciliation guard reports (issue #13944). Routing through
+    /// [`Self::register_in_envs`] (the same path `register_def_in_envs` uses)
+    /// guarantees both envs converge on the authoritative latest body.
+    pub(crate) fn register_resolved_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        let params = self.get_def_type_params(def_id).unwrap_or_default();
+        if params.is_empty() {
+            self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
+        } else {
+            self.register_in_envs(DeferredFlowEnvWrite::InsertDefWithParams {
+                def_id,
+                body,
+                params,
+                variances: None,
+            });
         }
     }
 

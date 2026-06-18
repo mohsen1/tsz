@@ -1603,25 +1603,16 @@ impl<'a> CheckerState<'a> {
     /// Insert `type_id` for `def_id` into both type environments, carrying type params
     /// when present. Safe to call during recursive resolution; failed borrows are logged.
     fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
-        // insert_def_with_params with empty params is equivalent to insert_def, so we
-        // unify both paths and avoid a conditional.
-        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        match self.ctx.type_env.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params.clone()),
-            Err(e) => tracing::warn!(
-                target_env = "type_env",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
-        match self.ctx.type_environment.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
-            Err(e) => tracing::warn!(
-                target_env = "type_environment",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
+        // Route the dual-env write through the race-safe deferred-write path
+        // rather than two direct `try_borrow_mut` writes that silently DROP on a
+        // borrow race. During recursive resolution the flow-analyzer env
+        // (`type_environment`) is frequently borrowed while the evaluator mutates
+        // `type_env`; a dropped flow-analyzer mirror here leaves the two envs
+        // disagreeing on this `DefId -> TypeId` entry, which is the silent
+        // #13086 divergence the file-prep reconciliation guard reports (#13944).
+        // Deferring-then-replaying the lost mirror guarantees both envs converge
+        // on the authoritative latest body.
+        self.ctx.register_resolved_def_in_envs(def_id, type_id);
     }
 
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
