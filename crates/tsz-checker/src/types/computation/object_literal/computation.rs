@@ -7,7 +7,9 @@ use super::super::object_literal_context::ContextualPropertyPresence;
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
-use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::common::{
+    ContextualTypeContext, get_application_base, is_conditional_type, is_mapped_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -29,6 +31,14 @@ struct ObjectLiteralRequestFacts {
 }
 
 impl<'a> CheckerState<'a> {
+    fn contextual_type_requires_authoritative_evaluation(&mut self, type_id: TypeId) -> bool {
+        let Some(base) = get_application_base(self.ctx.types, type_id) else {
+            return false;
+        };
+        let base_body = self.resolve_lazy_type(base);
+        is_conditional_type(self.ctx.types, base_body) || is_mapped_type(self.ctx.types, base_body)
+    }
+
     fn collect_object_literal_request_facts(
         &mut self,
         idx: NodeIndex,
@@ -56,6 +66,20 @@ impl<'a> CheckerState<'a> {
                 {
                     contextual_type = Some(non_nullish);
                 }
+            }
+        }
+
+        // Reduce an inline instantiated generic type-alias application whose body
+        // is a computed (conditional/mapped) type to its structural form through
+        // the authoritative resolver before per-property contextual types are
+        // extracted. See `contextual_type_requires_authoritative_evaluation` for
+        // why this is gated narrowly (#13618).
+        if let Some(ctx) = contextual_type
+            && self.contextual_type_requires_authoritative_evaluation(ctx)
+        {
+            let evaluated = self.evaluate_contextual_type(ctx);
+            if evaluated != ctx {
+                contextual_type = Some(evaluated);
             }
         }
 

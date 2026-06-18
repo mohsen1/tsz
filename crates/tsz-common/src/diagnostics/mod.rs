@@ -188,6 +188,7 @@ impl Diagnostic {
         }
     }
 
+    #[must_use]
     pub fn with_related(
         mut self,
         file: impl Into<String>,
@@ -275,6 +276,7 @@ impl Diagnostic {
     }
 
     /// `Span`-based variant of [`Diagnostic::with_related`].
+    #[must_use]
     pub fn with_related_span(
         self,
         file: impl Into<String>,
