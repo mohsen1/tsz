@@ -1779,3 +1779,28 @@ jobs:
           else:
               print("Draft/light CI passed for all required checks.")
           PY
+
+      - name: Report CI Summary status for non-compiler PRs
+        # Branch protection requires the "CI Summary" status check. For light /
+        # non-compiler PRs the verdict job above reports as "CI Light Summary"
+        # (see the job-name expression), so "CI Summary" is never produced and
+        # the PR sits "Expected — waiting for status to be reported" forever —
+        # it cannot be enqueued and no job is running. Mirror this job's verdict
+        # into a "CI Summary" commit status so non-compiler PRs are mergeable.
+        # Full PRs (required_summary == 'true') already emit "CI Summary" as the
+        # job name, so this guard avoids posting a duplicate context for them.
+        if: always() && github.event_name == 'pull_request' && needs.gate.outputs.required_summary != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state="failure"
+          if [[ "${{ job.status }}" == "success" ]]; then
+            state="success"
+          fi
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -f state="$state" \
+            -f context="CI Summary" \
+            -f description="Mirrored from CI Light Summary (non-compiler PR)" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            >/dev/null
+          echo "Posted CI Summary=$state for non-compiler PR head ${{ github.event.pull_request.head.sha }}"
