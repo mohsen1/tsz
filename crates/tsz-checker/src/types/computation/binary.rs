@@ -23,6 +23,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
 
@@ -797,7 +798,6 @@ impl<'a> CheckerState<'a> {
                     }
                     _ => "true",
                 };
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let message = format_message(
                     diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN,
                     &[condition_result],
@@ -813,7 +813,6 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
                     || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16)
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let condition_result = match op_kind {
                     k if k == SyntaxKind::EqualsEqualsToken as u16
                         || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
@@ -855,7 +854,6 @@ impl<'a> CheckerState<'a> {
                     left_narrow,
                 )
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // tsc widens literal types to their base primitives when comparing
                 // types from different primitive families (e.g., string vs number).
                 // For same-family comparisons (e.g., `"foo"` vs `"bar"`), literal
