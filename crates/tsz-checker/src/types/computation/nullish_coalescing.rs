@@ -64,6 +64,18 @@ impl<'a> CheckerState<'a> {
             return right_type;
         };
 
+        // tsc's non-nullish operand for `??` is `getNonNullableType(left)`. For
+        // `unknown` (= `{} | null | undefined`) that is the empty object `{}`,
+        // not `unknown`: `unknown ?? X` is `{} | X` (e.g.
+        // `Object.entries(data ?? {})` with `data: unknown`). The nullish split
+        // deliberately keeps `unknown` whole for flow `!= null` narrowing, so the
+        // `??` result type substitutes the empty-object non-nullable form here.
+        let non_nullish = if evaluated_left == TypeId::UNKNOWN {
+            self.ctx.types.factory().object(Vec::new())
+        } else {
+            non_nullish
+        };
+
         // Match tsc's `NonNullable<D>` approximation: when D is an
         // unconstrained type parameter, `(D | undefined) ?? X` yields
         // `(D & {}) | X` rather than `D | X`.

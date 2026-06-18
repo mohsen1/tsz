@@ -5,6 +5,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 mod deferred_conditional_index;
+mod error_contagion;
 mod indexed_access_helpers;
 mod infer_node_walk;
 mod mapped_key_check;
@@ -819,6 +820,18 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        // Error-type contagion: when the indexed-access object type references an
+        // *unresolved imported alias* (e.g. `TupleParts<T>["required"]` where
+        // `TupleParts` comes from a module that failed to resolve — already
+        // flagged TS2307), tsc gives the object the permissive `error` apparent
+        // type, whose key space is universal, so the access accepts any key (and a
+        // further `[K2]` / `[...spread]` over it is also accepted). Suppress
+        // TS2536 here to match — the import-failure diagnostic is the only error
+        // tsc reports for these positions.
+        if self.indexed_access_object_is_unresolved_import_error(object_type, object_type_for_check)
+        {
+            return;
+        }
         // A deferred conditional object base has no key space of its own; tsc
         // resolves it through `getApparentType` to its default constraint (the
         // union of branch results) and validates the index key against that.
@@ -1308,6 +1321,21 @@ impl<'a> CheckerState<'a> {
             // TS2536.
             if !foreign_keyof_indexed_constraint
                 && self.deferred_conditional_index_key_is_valid(
+                    object_type,
+                    object_type_for_check,
+                    index_type_for_check,
+                )
+            {
+                return;
+            }
+            // A nested deferred indexed access `Cond<T>[k1][k2]`: the inner
+            // `Cond<T>[k1]` is a generic indexed access whose apparent type (the
+            // conditional's branch-union constraint indexed by `k1`) carries a
+            // concrete key space. Validate the outer literal key `k2` against it,
+            // matching tsc's `getConstraintOfIndexedAccessType` — `length`/`0`/
+            // array methods are accepted, a missing key still emits TS2536.
+            if !foreign_keyof_indexed_constraint
+                && self.deferred_indexed_access_conditional_key_is_valid(
                     object_type,
                     object_type_for_check,
                     index_type_for_check,

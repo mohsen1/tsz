@@ -445,3 +445,65 @@ fn array_isarray_keeps_mutable_and_readonly_array_members() {
         "Array.isArray should keep mutable and readonly array members"
     );
 }
+
+// =============================================================================
+// `in`-operator narrowing of the `object` intrinsic chained with `typeof`
+// =============================================================================
+
+/// `'k' in x` over the `object` intrinsic narrows to `object & Record<"k",
+/// unknown>`. Re-applying a `typeof x === "object"` guard to that intersection
+/// must keep it, not collapse it to `never`. The collapse came from
+/// `is_object_like_type_through_type_constraints` rejecting the `object`
+/// intrinsic member of the intersection (its intrinsic fast-path returned
+/// `false` for every intrinsic), so `narrow_to_type(_, object)` judged the
+/// whole intersection un-assignable to `object`. Witnessed by ts-rest's
+/// `response-error.ts` (`typeof body === 'object' && ... && 'message' in body
+/// && typeof body.message === 'string'`).
+#[test]
+fn test_in_then_typeof_object_keeps_intersection() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let key = interner.intern_string("message");
+    let in_narrowed = ctx.narrow_by_property_presence(TypeId::OBJECT, key, true);
+    assert!(
+        matches!(
+            interner.lookup(in_narrowed),
+            Some(crate::types::TypeData::Intersection(_))
+        ),
+        "'message' in object must narrow to object & Record<\"message\", unknown>"
+    );
+
+    let re_typeof = ctx.narrow_by_typeof(in_narrowed, "object");
+    assert_ne!(
+        re_typeof,
+        TypeId::NEVER,
+        "re-applying typeof === 'object' to (object & Record) must not collapse to never"
+    );
+
+    let to_object = ctx.narrow_to_type(in_narrowed, TypeId::OBJECT);
+    assert_ne!(
+        to_object,
+        TypeId::NEVER,
+        "(object & Record) is assignable to object; narrow_to_type must not yield never"
+    );
+}
+
+/// Name-independence: the property atom used by the `in` guard must not change
+/// the outcome (no hardcoded property name in the structural rule).
+#[test]
+fn test_in_then_typeof_object_independent_of_property_name() {
+    for prop in ["message", "a", "__brand", "status"] {
+        let interner = TypeInterner::new();
+        let ctx = NarrowingContext::new(&interner);
+
+        let key = interner.intern_string(prop);
+        let in_narrowed = ctx.narrow_by_property_presence(TypeId::OBJECT, key, true);
+        let re_typeof = ctx.narrow_by_typeof(in_narrowed, "object");
+        assert_ne!(
+            re_typeof,
+            TypeId::NEVER,
+            "typeof object after 'in' must hold for property {prop}"
+        );
+    }
+}

@@ -161,3 +161,67 @@ function classify(node: { a: 1 } | { b: 2 }) {
         "expected TS2339 for the genuinely-absent property, got: {got:?}"
     );
 }
+
+/// `"p" in x` over a non-union receiver that already declares `p` as an
+/// *optional* own property must not promote `p` to required. tsc's
+/// `narrowTypeByInKeyword` adds no structural information when the property is
+/// already known, so the property stays optional and `delete x.p` remains
+/// legal. Promoting it to required produced a false TS2790 ("operand of a
+/// 'delete' operator must be optional"), the ofetch `delete options.query`
+/// witness. Binder names vary across cases so the behavior is driven by the
+/// optional-own-property shape, not an identifier spelling.
+#[test]
+fn in_narrowing_keeps_optional_own_property_deletable() {
+    let source = r#"
+interface Opts { query?: Record<string, unknown>; headers: number; }
+function configure(opts: Opts) {
+    if ("query" in opts) {
+        delete opts.query;
+    }
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2790),
+        "expected no TS2790 after `in`-narrowing an optional own property, got: {got:?}"
+    );
+}
+
+/// The negative soundness counterpart: `"p" in x` must *not* exclude `undefined`
+/// from the value type of an already-present optional property. tsc keeps
+/// `x.p` as `T | undefined` after the check, so assigning it to `T` still
+/// reports TS2322. The earlier required-promotion wrongly stripped `undefined`,
+/// silently accepting the unsound assignment.
+#[test]
+fn in_narrowing_preserves_undefined_in_optional_property_value() {
+    let source = r#"
+interface Box { item?: { n: number }; }
+function read(box: Box) {
+    if ("item" in box) {
+        const x: { n: number } = box.item;
+    }
+}
+"#;
+    let got = codes(source);
+    assert!(
+        got.contains(&2322),
+        "expected TS2322 — `in` must not exclude undefined from an optional property, got: {got:?}"
+    );
+}
+
+/// Adjacent: a bare `delete x.p` without any preceding `in`-narrowing already
+/// worked; this pins that the fix did not disturb it.
+#[test]
+fn delete_optional_property_without_in_narrowing_is_legal() {
+    let source = r#"
+interface Config { params?: number[]; name: string; }
+function reset(config: Config) {
+    delete config.params;
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2790),
+        "expected no TS2790 deleting an optional property, got: {got:?}"
+    );
+}
