@@ -430,6 +430,16 @@ const fn resolve_checker_pool_size(
 /// global-lib gate so forced-parallel rows can be byte-compared against the
 /// sequential baseline without also changing tiny-batch policy.
 ///
+/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` is a second diagnosis-only escape
+/// hatch (`force_tiny_batch_parallel`) that *additionally* bypasses the
+/// tiny-batch floor, forcing the genuine rayon `par_iter` fresh-checker path
+/// even for a handful of files. The schedule-determinism regression guards in
+/// `parallel_sequential_agreement_tests` rely on it: their distilled witnesses
+/// are far below the [`FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`] floor, so
+/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` alone left them on the sequential arm
+/// (sequential-vs-sequential, a silent no-op). This flag never changes the
+/// production default — tiny batches still run sequentially unless it is set.
+///
 /// Large wildcard barrels are still detected and tested separately, but they
 /// no longer force the entire project onto one core: the mutation-isolation
 /// and cold-start cache work that landed before #13244 made the whole-project
@@ -478,8 +488,9 @@ const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
     has_parallel_order_sensitive_global_lib: bool,
     force_parallel_order_sensitive_global_lib: bool,
+    force_tiny_batch_parallel: bool,
 ) -> bool {
-    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+    (work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES && !force_tiny_batch_parallel)
         || (has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib)
 }
 
@@ -1401,10 +1412,16 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // env without also bypassing tiny-batch policy.
             let force_parallel_order_sensitive_global_lib =
                 std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some();
+            // Diagnosis-only: also bypass the tiny-batch floor so the
+            // schedule-determinism regression guards exercise the genuine
+            // `par_iter` fresh-checker path on their small distilled witnesses.
+            let force_tiny_batch_parallel =
+                std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY").is_some();
             let use_sequential_checking = should_use_sequential_fresh_checking(
                 work_items.len(),
                 has_parallel_order_sensitive_global_lib,
                 force_parallel_order_sensitive_global_lib,
+                force_tiny_batch_parallel,
             );
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
             // no-emit path *can* construct one `CheckerState` and re-target

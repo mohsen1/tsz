@@ -767,24 +767,40 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
     let large_project = FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1;
 
     assert!(
-        !should_use_sequential_fresh_checking(large_project, false, false),
+        !should_use_sequential_fresh_checking(large_project, false, false, false),
         "large fresh-checker batches should stay parallel-eligible even when session reuse is off"
     );
     assert!(
-        should_use_sequential_fresh_checking(10, false, false),
+        should_use_sequential_fresh_checking(10, false, false, false),
         "tiny batches stay sequential for deterministic cross-file behavior"
     );
     assert!(
-        should_use_sequential_fresh_checking(10, true, true),
+        should_use_sequential_fresh_checking(10, true, true, false),
         "the force-parallel experiment must not bypass tiny-batch policy"
     );
     assert!(
-        should_use_sequential_fresh_checking(large_project, true, false),
+        should_use_sequential_fresh_checking(large_project, true, false, false),
         "order-sensitive global libraries stay on the deterministic sequential fallback"
     );
     assert!(
-        !should_use_sequential_fresh_checking(large_project, true, true),
+        !should_use_sequential_fresh_checking(large_project, true, true, false),
         "the force-parallel experiment should bypass only the order-sensitive global-lib gate"
+    );
+    // The dedicated tiny-batch override forces the genuine `par_iter`
+    // fresh-checker path even below the small-project floor, so the
+    // schedule-determinism regression guards stop silently degrading to
+    // sequential-vs-sequential no-ops.
+    assert!(
+        !should_use_sequential_fresh_checking(10, false, false, true),
+        "TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY must force tiny batches onto the parallel path"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(10, true, false, true),
+        "the tiny-batch override must still respect the order-sensitive global-lib gate"
+    );
+    assert!(
+        !should_use_sequential_fresh_checking(10, true, true, true),
+        "both force overrides together must reach the parallel path"
     );
 }
 
