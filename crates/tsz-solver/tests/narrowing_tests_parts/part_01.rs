@@ -507,3 +507,143 @@ fn test_in_then_typeof_object_independent_of_property_name() {
         );
     }
 }
+
+// =============================================================================
+// narrow_excluding_type per-request cumulative work budget (issue #13806, theme C)
+// =============================================================================
+
+/// A constrained type parameter whose constraint loses a member is refined to
+/// `T & <narrowed constraint>` under a normal budget, but the nested constraint
+/// narrow that performs that refinement is the recursion the per-request work
+/// budget bounds. With the budget spent on the outer union narrow, the nested
+/// refinement bails to the unchanged source instead of recursing — the result
+/// still terminates and conservatively equals the un-narrowed union.
+///
+/// `narrow_type_param_excluding` re-mints a fresh `T & constraint'` intersection
+/// at each level, so the `(source, excluded)` `narrow_excluding_visiting` guard
+/// (keyed on a stable pair) cannot catch a self-referential constraint; the
+/// cumulative counter is what guarantees termination.
+#[test]
+fn test_narrow_excluding_budget_bounds_constraint_refinement() {
+    let interner = TypeInterner::new();
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+    // Default budget refines the constrained parameter: (T & number) | boolean.
+    let expected_param = interner.intersection(vec![param, TypeId::NUMBER]);
+    let expected_full = interner.union(vec![expected_param, TypeId::BOOLEAN]);
+    let full_ctx = NarrowingContext::new(&interner);
+    assert_eq!(
+        full_ctx.narrow_excluding_type(union, TypeId::STRING),
+        expected_full,
+    );
+
+    // Budget 1 is consumed by the outer union narrow, so the nested constraint
+    // narrow bails to the unchanged source. A fresh context (and therefore a
+    // fresh memo) is required so the cached full result is not reused.
+    let bounded_ctx = NarrowingContext::new(&interner);
+    bounded_ctx.set_narrow_excluding_budget(1);
+    assert_eq!(
+        bounded_ctx.narrow_excluding_type(union, TypeId::STRING),
+        union,
+    );
+}
+
+/// Name-independence: the bound is structural, not keyed on the type-parameter
+/// name. Refinement happens under a normal budget and bails under a starved one
+/// regardless of how the parameter is spelled.
+#[test]
+fn test_narrow_excluding_budget_bound_is_name_independent() {
+    for name in ["T", "U", "Element", "__x"] {
+        let interner = TypeInterner::new();
+        let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        }));
+        let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+        let full_ctx = NarrowingContext::new(&interner);
+        let refined = full_ctx.narrow_excluding_type(union, TypeId::STRING);
+        assert_ne!(refined, union, "param `{name}` must refine under full budget");
+
+        let bounded_ctx = NarrowingContext::new(&interner);
+        bounded_ctx.set_narrow_excluding_budget(1);
+        assert_eq!(
+            bounded_ctx.narrow_excluding_type(union, TypeId::STRING),
+            union,
+            "param `{name}` must bail to the source under a starved budget",
+        );
+    }
+}
+
+/// The default budget is generous enough that a legitimately wide (but finite)
+/// type narrows fully without a false bail. A 4,000-member intersection forces
+/// one exclusion narrow per member; excluding `string` removes nothing, so the
+/// result must terminate and equal the source unchanged.
+#[test]
+fn test_narrow_excluding_default_budget_handles_wide_intersection() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let mut members = Vec::new();
+    for i in 0..4000 {
+        let name = interner.intern_string(&format!("p{i}"));
+        members.push(interner.object(vec![PropertyInfo::new(name, TypeId::NUMBER)]));
+    }
+    let wide = interner.intersection(members);
+
+    assert_eq!(ctx.narrow_excluding_type(wide, TypeId::STRING), wide);
+}
+
+/// The per-request budget is shared across the exclusion families: the
+/// `typeof x !== "function"` path (`narrow_excluding_function`) re-mints
+/// `T & narrowed` through `narrow_type_param_excluding_function`, so it must be
+/// bounded by the same counter. Under a normal budget a constrained parameter
+/// refines; under a starved one it bails to the unchanged source.
+#[test]
+fn test_narrow_excluding_function_shares_the_budget() {
+    let interner = TypeInterner::new();
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let constraint = interner.union(vec![func, TypeId::NUMBER]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+
+    // Full budget: the callable constituent is stripped, refining T to T & number.
+    let full_ctx = NarrowingContext::new(&interner);
+    let refined = full_ctx.narrow_excluding_function(param);
+    assert_ne!(refined, param, "T must refine away its callable constraint constituent");
+
+    // Starved budget: the nested constraint narrow bails, leaving T unchanged.
+    let bounded_ctx = NarrowingContext::new(&interner);
+    bounded_ctx.set_narrow_excluding_budget(1);
+    assert_eq!(bounded_ctx.narrow_excluding_function(param), param);
+}

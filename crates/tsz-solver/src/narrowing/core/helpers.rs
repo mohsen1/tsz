@@ -427,6 +427,17 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude function-like members (typeof !== "function").
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
+        // Shares the per-request exclusion-narrowing budget with
+        // `narrow_excluding_type`: a constrained type parameter whose constraint
+        // re-mints `T & narrowed` at each level (via
+        // `narrow_type_param_excluding_function`) would otherwise recurse
+        // unbounded here too. Charge one unit per call and bail to the unchanged
+        // source when the budget is spent.
+        let _frame = self.enter_exclusion_frame();
+        if !self.charge_exclusion_work() {
+            return source_type;
+        }
+
         // Resolve a non-union Lazy/Application source so an instantiated generic
         // alias whose body is a callable union is decomposed before exclusion
         // (the dual of `narrow_to_function`). Resolution is only adopted when it
