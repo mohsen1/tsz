@@ -35,6 +35,7 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "vite-vanilla-ts-app"
   "nextjs-fresh-app"
   "comlink-project"
+  "infisical-project"
 )
 
 TSZ_COMPILE_GUARD_CANARY_ROWS=(
@@ -75,7 +76,6 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "typebot-project"
   "lobe-chat-project"
   "supabase-studio-project"
-  "infisical-project"
   "payload-project"
   "medusa-project"
   "outline-project"
