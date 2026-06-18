@@ -11,7 +11,10 @@ const workflowConfigs = new Map([
     ".github/workflows/bench.yml",
     ["cloudbuild-bench-prepare.yaml", "cloudbuild-bench-shard.yaml"],
   ],
-  [".github/workflows/ci.yml", ["cloudbuild-checker-integration.yaml"]],
+  [
+    ".github/workflows/ci.yml",
+    ["cloudbuild-checker-integration.yaml", "cloudbuild-unit.yaml"],
+  ],
   [
     ".github/workflows/runner-image.yml",
     ["cloudbuild-runner-image.yaml"],
