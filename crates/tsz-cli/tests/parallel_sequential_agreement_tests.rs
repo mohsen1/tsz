@@ -16,6 +16,16 @@
 //! validation this failed deterministically: the parallel output disagreed
 //! with the sequential output on elaboration identity and carried extra
 //! false diagnostics.
+//!
+//! Floor caveat: `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` only lifts the
+//! order-sensitive global-lib (DOM) gate; it deliberately keeps the tiny-batch
+//! policy, so a witness below the small-project floor
+//! (`FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`, 32 files) runs sequentially
+//! in *both* arms of the `forced_parallel_*_matches_sequential` tests — a
+//! sequential-vs-sequential comparison that cannot witness a schedule race.
+//! `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` additionally bypasses that floor
+//! and forces the genuine per-file `par_iter` path; `genuine_parallel_*` tests
+//! use it so a small distilled witness is actually checked concurrently.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -207,24 +217,55 @@ const SCOPE_REGISTRY_FIXTURE_FILES: &[(&str, &str)] = &[
 const SCOPE_REGISTRY_FIXTURE_TSCONFIG: &str =
     include_str!("fixtures/parallel_agreement_scope_registry/tsconfig.json");
 
-fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> String {
+/// Run the project, clearing both force-parallel experiment flags first and
+/// then setting exactly `envs` (so a leaked env from the caller's process can
+/// never perturb which checking path is taken).
+fn run_tsz(tsz_bin: &Path, project_dir: &Path, envs: &[(&str, &str)]) -> String {
     let mut cmd = Command::new(tsz_bin);
     cmd.args(["-p", "tsconfig.json", "--pretty", "false"])
-        .current_dir(project_dir);
-    if force_parallel {
-        cmd.env("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK", "1");
-    } else {
-        cmd.env_remove("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK");
+        .current_dir(project_dir)
+        .env_remove("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK")
+        .env_remove("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY");
+    for (key, value) in envs {
+        cmd.env(key, value);
     }
     let output = cmd.output().expect("run tsz on agreement fixture");
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn assert_parallel_matches_sequential(
+fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> String {
+    let envs: &[(&str, &str)] = if force_parallel {
+        &[("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK", "1")]
+    } else {
+        &[]
+    };
+    run_tsz(tsz_bin, project_dir, envs)
+}
+
+/// Run the project on the *genuine* rayon `par_iter` fresh-checker path.
+///
+/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` alone only lifts the DOM gate, not the
+/// tiny-batch floor (see module docs), so a sub-floor witness needs
+/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` too to actually run concurrently.
+fn run_project_tiny_parallel(tsz_bin: &Path, project_dir: &Path) -> String {
+    run_tsz(
+        tsz_bin,
+        project_dir,
+        &[
+            ("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK", "1"),
+            ("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY", "1"),
+        ],
+    )
+}
+
+/// Stage a witness project and assert its sequential baseline is byte-identical
+/// to `run_parallel`'s output across `attempts` schedules.
+fn assert_matches_sequential(
     name: &str,
     files: &[(&str, &str)],
     tsconfig: &str,
     attempts: usize,
+    run_parallel: impl Fn(&Path, &Path) -> String,
 ) {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping parallel agreement test: tsz binary not found");
@@ -242,14 +283,36 @@ fn assert_parallel_matches_sequential(
         !sequential.is_empty() || run_project(&tsz_bin, &temp.path, false) == sequential,
         "sequential run should be reproducible"
     );
-
     for attempt in 0..attempts {
-        let parallel = run_project(&tsz_bin, &temp.path, true);
+        let parallel = run_parallel(&tsz_bin, &temp.path);
         assert_eq!(
             parallel, sequential,
-            "forced-parallel diagnostics diverged from sequential on attempt {attempt}"
+            "parallel diagnostics diverged from sequential on attempt {attempt}"
         );
     }
+}
+
+fn assert_parallel_matches_sequential(
+    name: &str,
+    files: &[(&str, &str)],
+    tsconfig: &str,
+    attempts: usize,
+) {
+    assert_matches_sequential(name, files, tsconfig, attempts, |bin, dir| {
+        run_project(bin, dir, true)
+    });
+}
+
+/// Genuine-`par_iter` variant of [`assert_parallel_matches_sequential`]: drives
+/// the real concurrent path (via [`run_project_tiny_parallel`]) so a sub-floor
+/// witness can actually observe an in-flight shared-state schedule race.
+fn assert_tiny_parallel_matches_sequential(
+    name: &str,
+    files: &[(&str, &str)],
+    tsconfig: &str,
+    attempts: usize,
+) {
+    assert_matches_sequential(name, files, tsconfig, attempts, run_project_tiny_parallel);
 }
 
 /// Forced-parallel fresh checking must produce byte-identical diagnostics to
@@ -400,5 +463,21 @@ fn dom_element_heritage_clean_sequential() {
         !output.contains("error TS"),
         "DOM element interfaces must be recognized as Node under the fresh per-file \
          checker pool (default sequential schedule); got diagnostics:\n{output}"
+    );
+}
+
+/// Genuine-`par_iter` guard for the cross-arena delegation witness (#13255):
+/// unlike the `forced_parallel_*` tests (which a sub-floor witness runs
+/// sequentially in both arms — see module docs), this drives the real
+/// concurrent path, so the delegation derivation (#13391: lib-origin global
+/// resolution + def-identity recovery for symbol-less structural bases) is
+/// proven schedule-independent rather than merely sequentially reproducible.
+#[test]
+fn genuine_parallel_disposable_delegation_matches_sequential() {
+    assert_tiny_parallel_matches_sequential(
+        "disposable_tiny",
+        DISPOSABLE_FIXTURE_FILES,
+        DISPOSABLE_FIXTURE_TSCONFIG,
+        8,
     );
 }
