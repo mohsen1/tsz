@@ -782,13 +782,42 @@ impl<'a> CheckerState<'a> {
         marker_this_type: Option<TypeId>,
         contextual_type: Option<TypeId>,
     ) -> FxHashMap<Atom, PropertyInfo> {
-        if marker_this_type.is_some()
+        if self.ctx.in_destructuring_target
+            || marker_this_type.is_some()
             || contextual_type.is_some()
             || self.current_this_type().is_some()
+            || !self.object_literal_has_synthetic_this_member(elements)
         {
             return FxHashMap::default();
         }
         self.object_literal_member_previews(obj_idx, elements)
+    }
+
+    fn object_literal_has_synthetic_this_member(&self, elements: &[NodeIndex]) -> bool {
+        elements.iter().any(|&elem_idx| {
+            let Some(node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            if matches!(
+                node.kind,
+                syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+            ) {
+                return true;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(node) else {
+                return false;
+            };
+            let initializer = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(prop.initializer);
+            self.ctx
+                .arena
+                .get(initializer)
+                .is_some_and(|init_node| init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+        })
     }
 
     fn object_literal_member_previews(
@@ -990,7 +1019,7 @@ impl<'a> CheckerState<'a> {
         }
         let name_node = self.ctx.arena.get(var_decl.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(ident.escaped_text.to_string())
+        Some(ident.escaped_text.clone())
     }
 
     /// Whether the expression subtree contains an identifier with the given
