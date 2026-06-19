@@ -167,6 +167,13 @@ impl<'a> Printer<'a> {
         // tsc preserves the single-line format for function body blocks regardless
         // of statement count, as long as the source was single-line.
         // (Forced multi-line when we need to inject `var _this = this;`.)
+        // An ES2018 object-rest parameter preamble (`var { a } = _a, rest =
+        // __rest(_a, ["a"]);`) does NOT force the body multi-line: tsc keeps a
+        // single-line source body single-line and writes the preamble inline
+        // (see the inline emission in the single-line branch below). Only state
+        // that genuinely needs hoisted line-leading declarations (`var _this =
+        // this;`, captured `new.target`, hoisted assignment/for-of temps) forces
+        // multi-line.
         let should_emit_single_line = !block.statements.nodes.is_empty()
             && self.is_single_line(node)
             && !needs_this_capture
@@ -174,9 +181,7 @@ impl<'a> Printer<'a> {
             && is_function_body_block
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
-            && self.hoisted_for_of_temps.is_empty()
-            && self.pending_object_rest_params.is_empty()
-            && self.pending_object_rest_param_defaults.is_empty();
+            && self.hoisted_for_of_temps.is_empty();
 
         if should_emit_single_line {
             let private_static_shadow = self.block_shadows_private_static_class_alias(
@@ -199,12 +204,26 @@ impl<'a> Printer<'a> {
             }
             self.map_opening_brace(node);
             self.write("{ ");
-            let block_close_pos = self.find_block_closing_brace_end(node).saturating_sub(1);
+            // Anchor for inline hoisted temp vars (`var _b; `), captured right
+            // after `{ ` and BEFORE the object-rest preamble: tsc emits the
+            // optional-chaining / logical-assignment temp declarations ahead of
+            // the destructuring preamble, e.g.
+            //   { var _b, _c; var { a } = _a, rest = __rest(_a, ["a"]); ... }
             let var_insert_pos = if is_function_body_block {
                 Some(self.writer.len())
             } else {
                 None
             };
+            // Inject the ES2018 object-rest parameter preamble inline so a
+            // single-line source body stays single-line (matching tsc):
+            //   function f(_a) { var { a } = _a, rest = __rest(_a, ["a"]); return a; }
+            // The multi-line branch below emits the same preamble line-by-line;
+            // here it is written inline followed by a single separating space
+            // before the first body statement (which the loop never prefixes).
+            if self.emit_object_rest_param_prologue(is_function_body_block, true) {
+                self.write(" ");
+            }
+            let block_close_pos = self.find_block_closing_brace_end(node).saturating_sub(1);
             for (si, &stmt_idx) in block.statements.nodes.iter().enumerate() {
                 if si > 0 {
                     self.write(" ");
@@ -322,11 +341,7 @@ impl<'a> Printer<'a> {
 
         // Inject object rest parameter destructuring preamble for ES2018 lowering.
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
-        if is_function_body_block && !self.pending_object_rest_params.is_empty() {
-            self.emit_pending_object_rest_param_preamble(false);
-        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
-            self.emit_pending_object_rest_param_defaults(false);
-        }
+        self.emit_object_rest_param_prologue(is_function_body_block, false);
 
         let static_super_scope =
             self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
@@ -820,6 +835,28 @@ impl<'a> Printer<'a> {
             );
             self.writer
                 .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
+        }
+    }
+
+    /// Emit the pending ES2018 object-rest parameter prologue for a function
+    /// body block: the `var { a } = _a, rest = __rest(_a, [...])` preamble, or
+    /// — when only destructuring defaults are pending — the default guards.
+    /// `inline` selects single-line vs multi-line formatting. Returns whether
+    /// anything was emitted so a single-line caller can add the separating space
+    /// before the first body statement.
+    pub(in crate::emitter) fn emit_object_rest_param_prologue(
+        &mut self,
+        is_function_body_block: bool,
+        inline: bool,
+    ) -> bool {
+        if is_function_body_block && !self.pending_object_rest_params.is_empty() {
+            self.emit_pending_object_rest_param_preamble(inline);
+            true
+        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
+            self.emit_pending_object_rest_param_defaults(inline);
+            true
+        } else {
+            false
         }
     }
 
