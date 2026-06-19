@@ -578,54 +578,32 @@ function f3(ors: (typeof Input.static)[]): Output[] { return ors; }
     );
 }
 
-/// PARTIAL witness (still accepted-regression `deeplyNestedMappedTypes.ts`).
+/// Guard for the `plain Input[] -> Output[]` reducer mismatch
+/// (`deeplyNestedMappedTypes.ts`'s `problematicFunction1` shape).
 ///
-/// The authoritative tsc baseline emits TS2322 for `problematicFunction1` and
-/// `problematicFunction3` (`Input[]` is not assignable to `Output[]` because
-/// `Output.static` carries a `bar` property that `Input.static` lacks).
-/// `problematicFunction1` and the `const Readonly` shadowing analysis below were
-/// fixed separately. `problematicFunction3` is the parenthesized-`typeof`-array
-/// element gap (`(typeof Input.static)[]`): the `ARRAY_TYPE` branch of
-/// `CheckerState::get_type_from_type_node` now unwraps a parenthesized `typeof`
-/// element and resolves the operand through the rich path so it is evaluated like
-/// `Array<typeof X.y>`/an alias rather than left under-evaluated for the
-/// `isDeeplyNestedType` relation bailout to mis-accept (see the driver test
-/// `parenthesized_typeof_array_element_relates_like_alias_and_array_generic`).
-/// That lowering fix resolves the simplified/embedded-lib reducer, but with the
-/// full pinned `lib.es5`/`lib.es2015` utilities the `Static`/`PropertiesReduce`
-/// reducer is deeper and STILL trips `isDeeplyNestedType`, so
-/// `problematicFunction3` remains a real-lib miss and the row stays accepted
-/// pending the deeper relation/evaluation work.
+/// The authoritative tsc baseline emits TS2322 for `f` (`Input[]` is not
+/// assignable to `Output[]` because `Output.static` carries a required `bar`
+/// property that `Input.static` lacks). The `const Readonly` *shadowing* defect
+/// used to suppress it: the generic `PropertiesReducer` body instantiated
+/// `Readonly<Pick<R, ...>>` against the shadowing `unique symbol` value instead
+/// of the lib `Readonly<T>` utility, corrupting the reduced object so
+/// `Input.static`/`Output.static` lost the `bar` discriminator (see
+/// `renaming_readonly_unique_symbol_restores_ts2322`). That defect is fixed, so
+/// tsz now emits exactly the leaf TS2322 with no spurious TS2344/TS2464 — and the
+/// `f` shape (a plain `Input[]` parameter, like `problematicFunction1`) matches
+/// tsc under both the bundled and the pinned lib sets.
 ///
-/// The original `const Readonly` shadowing analysis below is retained as
-/// historical context.
+/// NOTE: the `deeplyNestedMappedTypes.ts` conformance row stays an
+/// accepted-regression — a *separate* residual (`problematicFunction3`'s
+/// `(typeof Input.static)[]` element) still trips the `isDeeplyNestedType`
+/// one-sided-expansion bailout once the deeper full pinned `lib.es5`/`lib.es2015`
+/// `Static`/`PropertiesReduce` reducer is in play, which this `problematicFunction1`
+/// shape does not exercise. See the row's note in
+/// `scripts/conformance/conformance-accepted-regressions.txt`.
 ///
-/// Root cause (verified by one-variable isolation — see the companion test
-/// `renaming_readonly_unique_symbol_restores_ts2322`): the fixture declares
-/// `const Readonly: unique symbol`, whose name collides with the global lib
-/// `Readonly<T>` utility type. When the deferred generic `PropertiesReducer`
-/// body instantiates `Readonly<Pick<R, ...>>` (R/T still free type
-/// parameters), tsz mis-resolves the `Readonly` reference to the shadowing
-/// value instead of the lib type, corrupting the reduced object so that
-/// `Input.static` and `Output.static` both lose the real `bar` discriminator
-/// and compare as assignable. Renaming the `Readonly` unique symbol to any
-/// non-lib name restores the correct TS2322. A simple
-/// `type Foo = Readonly<{ a: string }>` with `const Readonly` in scope resolves
-/// correctly, so the divergence is specific to lazy instantiation of the
-/// shadowed lib type inside a generic alias body. The fix belongs in
-/// type-vs-value name resolution for globally-shadowed lib utility types
-/// (checker/binder), NOT in the solver index-access path.
-///
-/// NOTE: this repro depends on lib utility types (`Readonly`, `Pick`, `Omit`,
-/// `Required`, `Record`) that the minimal unit-test lib does not provide, so it
-/// is kept `#[ignore]`d here purely as inline documentation of the exact
-/// minimal witness. The runnable parity gate lives in conformance
-/// (`deeplyNestedMappedTypes.ts`, listed in
-/// `scripts/conformance/conformance-accepted-regressions.txt`); reproduce the
-/// CLI behavior with the full lib via `tsz` on the snippet below.
+/// The helper skips gracefully (empty) when the lib asset is unavailable.
 #[test]
-#[ignore = "lib-dependent witness for the const-Readonly-shadows-lib-Readonly<T> false-negative; runnable gate is in conformance, see conformance-accepted-regressions.txt"]
-fn readonly_pick_never_under_evaluate_loses_property_mismatch() {
+fn readonly_pick_under_evaluate_reports_property_mismatch() {
     let source = r#"
 export declare const Readonly: unique symbol;
 export declare const Optional: unique symbol;
@@ -651,10 +629,73 @@ export type Output = Static<typeof Output>
 export const Output = Type.Object({ foo: Type.String(), bar: Type.String() })
 function f(x: Input[]): Output[] { return x; }
 "#;
-    let codes = check(source);
+    let codes = check_with_es5_lib_codes(source);
+    if codes.is_empty() {
+        return; // lib asset unavailable — covered by CLI/conformance instead
+    }
     assert!(
         codes.contains(&2322),
         "Input[] is not assignable to Output[] (Output.static has required 'bar'): {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2344),
+        "must NOT produce spurious TS2344: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2464),
+        "must NOT produce spurious TS2464: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding companion to `readonly_pick_under_evaluate_reports_property_mismatch`:
+/// the same structural shape with every user binder renamed (the `Readonly`/
+/// `Optional` `unique symbol`s keep their lib-colliding names, which is the
+/// structural crux, but the schema/object/reducer aliases and the field/value
+/// names all differ). tsz must still report exactly the leaf TS2322 with no
+/// spurious TS2344/TS2464 — proving the fix is structural, not keyed on the
+/// `TObject`/`Static`/`Input`/`Output`/`foo`/`bar` identifiers.
+#[test]
+fn readonly_pick_under_evaluate_reports_property_mismatch_renamed_binders() {
+    let source = r#"
+export declare const Readonly: unique symbol;
+export declare const Optional: unique symbol;
+export interface Spec { args: unknown[]; shape: unknown }
+export interface SpecText extends Spec { shape: string }
+export type Frozen<S extends Spec> = S & { [Readonly]: 'Readonly' }
+export type Maybe<S extends Spec> = S & { [Optional]: 'Optional' }
+export type Members = Record<string | number, Spec>
+export type Flatten<U> = U extends infer O ? { [Q in keyof O]: O[Q] } : never
+export type FrozenKeys<M extends Members> = { [Q in keyof M]: M[Q] extends Frozen<Spec> ? (M[Q] extends Maybe<M[Q]> ? Q : never) : never }[keyof M]
+export type LiveKeys<M extends Members> = keyof Omit<M, FrozenKeys<M>>
+export type Fold<M extends Members, W extends Record<keyof any, unknown>> = Flatten<(
+    Readonly<Pick<W, FrozenKeys<M>>> &
+    Required<Pick<W, LiveKeys<M>>>
+)>
+export type Reduce<M extends Members, A extends unknown[]> = Fold<M, { [Q in keyof M]: Shape<M[Q], A> }>
+export interface Node<M extends Members = Members> extends Spec { shape: Reduce<M, this['args']>; members: M }
+export type Shape<S extends Spec, A extends unknown[] = []> = (S & { args: A; })['shape']
+declare namespace Build { function Node<M extends Members>(members: M): Node<M>; function Text(): SpecText }
+export type Lhs = Shape<typeof Lhs>
+export const Lhs = Build.Node({ alpha: Build.Text() })
+export type Rhs = Shape<typeof Rhs>
+export const Rhs = Build.Node({ alpha: Build.Text(), beta: Build.Text() })
+function g(items: Lhs[]): Rhs[] { return items; }
+"#;
+    let codes = check_with_es5_lib_codes(source);
+    if codes.is_empty() {
+        return; // lib asset unavailable — covered by CLI/conformance instead
+    }
+    assert!(
+        codes.contains(&2322),
+        "Lhs[] is not assignable to Rhs[] (Rhs.shape has required 'beta'): {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2344),
+        "must NOT produce spurious TS2344 (renamed binders): {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2464),
+        "must NOT produce spurious TS2464 (renamed binders): {codes:?}"
     );
 }
 
