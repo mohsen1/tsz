@@ -68,6 +68,9 @@ impl<'a> CheckerState<'a> {
         elements: &[NodeIndex],
     ) -> FxHashMap<Atom, tsz_solver::PropertyInfo> {
         let mut result: FxHashMap<Atom, tsz_solver::PropertyInfo> = FxHashMap::default();
+        if self.ctx.in_destructuring_target {
+            return result;
+        }
         let Some(first_callable_pos) = elements
             .iter()
             .position(|&elem_idx| self.object_literal_member_captures_synthetic_this(elem_idx))
@@ -929,5 +932,40 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.factory().object(this_props)
+    }
+
+    /// Name of the variable binding an object literal initializes, if it is the
+    /// initializer of a `const`/`let`/`var` declaration (`const o = { … }`).
+    fn object_literal_variable_initializer_name(&self, obj_idx: NodeIndex) -> Option<String> {
+        let parent_idx = self.ctx.arena.get_extended(obj_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != obj_idx {
+            return None;
+        }
+        let name_node = self.ctx.arena.get(var_decl.name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        Some(ident.escaped_text.clone())
+    }
+
+    /// Whether the expression subtree contains an identifier with the given
+    /// name (used to detect self-referential data-property initializers).
+    fn object_literal_initializer_references_name(&self, idx: NodeIndex, name: &str) -> bool {
+        if idx.is_none() {
+            return false;
+        }
+        if let Some(ident) = self.ctx.arena.get_identifier_at(idx)
+            && ident.escaped_text == name
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| self.object_literal_initializer_references_name(child, name))
     }
 }
