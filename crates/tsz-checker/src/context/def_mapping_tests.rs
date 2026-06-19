@@ -354,3 +354,82 @@ fn eval_env_backlog_drains_on_next_successful_write() {
         "the draining write itself must be visible"
     );
 }
+
+/// Regression for #13944 / #13086: a `DefId -> TypeId` body re-published by the
+/// lazy-resolution path (`register_resolved_def_in_envs`, the gateway
+/// `try_insert_def_in_type_env` now uses) must travel the race-safe deferred
+/// path. When a re-resolution writes a *different* body while the flow-analyzer
+/// holds `type_environment` borrowed, the mirror must be deferred and replayed,
+/// never silently dropped — a dropped mirror would leave the two envs disagreeing
+/// on this shared `def_types` entry, which is exactly the divergence the
+/// file-prep reconciliation guard reports.
+#[test]
+fn resolved_def_mirror_is_deferred_under_borrow_then_envs_reconcile() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+
+    // First publication (no borrow contention): both envs agree on the body.
+    ctx.register_resolved_def_in_envs(def_id, TypeId::STRING);
+    assert_eq!(ctx.type_env.borrow().get_def(def_id), Some(TypeId::STRING));
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(def_id),
+        Some(TypeId::STRING)
+    );
+
+    // A re-resolution publishes a *different* (e.g. further-unfolded) body while
+    // the flow-analyzer holds `type_environment` borrowed during recursive
+    // narrowing. The evaluator env advances; the flow-analyzer mirror is deferred.
+    {
+        let held = ctx.type_environment.borrow();
+        ctx.register_resolved_def_in_envs(def_id, TypeId::NUMBER);
+
+        assert_eq!(
+            ctx.type_env.borrow().get_def(def_id),
+            Some(TypeId::NUMBER),
+            "evaluator env must advance to the latest resolved body"
+        );
+        assert_eq!(
+            held.get_def(def_id),
+            Some(TypeId::STRING),
+            "flow-analyzer env must not yet have the deferred re-resolution write"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "the lost mirror-write must be queued, not dropped"
+        );
+    }
+
+    // After flush both envs converge on the authoritative latest body, so the
+    // reconciliation probe reports no divergence on the shared `def_types` entry.
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    assert_eq!(ctx.type_env.borrow().get_def(def_id), Some(TypeId::NUMBER));
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(def_id),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.type_environment
+            .borrow()
+            .first_def_divergence_from(&ctx.type_env.borrow()),
+        None,
+        "envs must agree on every shared DefId -> TypeId after reconciliation"
+    );
+}
