@@ -119,7 +119,7 @@ declare class Worker {
 }
 export declare function spawn(): Worker;
 export {};"#,
-    );
+    )
 }
 
 /// A non-exported class is the base of an exported class. The base's member
@@ -143,7 +143,7 @@ declare class Foundation {
 export declare class Surface extends Foundation {
 }
 export {};"#,
-    );
+    )
 }
 
 /// Transitive chain: an exported function returns a non-exported class whose
@@ -173,7 +173,7 @@ declare class Middle {
 }
 export declare function entry(): Middle;
 export {};"#,
-    );
+    )
 }
 
 /// A non-exported `const` surfaced through `typeof` names a local type in its
@@ -194,5 +194,5 @@ declare const registry: {
 };
 export type Snapshot = typeof registry;
 export {};"#,
-    );
+    )
 }
