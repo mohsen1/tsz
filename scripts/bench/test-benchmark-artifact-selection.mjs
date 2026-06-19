@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { selectLatestBenchmarkArtifact } from "./benchmark-artifact-selection.mjs";
+import { PROJECT_ROW_DEFINITIONS } from "./project-rows.mjs";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-bench-artifacts-"));
 
@@ -30,6 +31,25 @@ function projectRow(name, state = "green") {
       diagnostic_status: ok ? "none" : "compiler crashed",
     },
   };
+}
+
+function applicationCompatibilityRows() {
+  return PROJECT_ROW_DEFINITIONS
+    .filter((row) => row.category === "application")
+    .map((row, index) => ({
+      name: row.name,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      compatibility: {
+        state: index === 0 ? "green" : index === 1 ? "yellow" : "red",
+        phase: "check",
+        last_successful_phase: index === 0 ? "check" : null,
+        exit_class: index === 0 ? "exit success" : index === 1 ? "nonzero exit" : "timeout",
+        diagnostic_status: index === 0 ? "none" : index === 1 ? "diagnostic mismatch" : "compiler timed out",
+      },
+    }));
 }
 
 try {
@@ -65,6 +85,21 @@ try {
     selectLatestBenchmarkArtifact([goodProject, badProject], { minimumProjectTimingPairs: 1 })?.file,
     goodProject,
     "a newer artifact with no successful project timings should not mask older public project timing data",
+  );
+  const olderWithApplications = writeArtifact("older-with-applications.json", "2026-06-02T00:00:00.000Z", [
+    projectRow("utility-types-project"),
+    ...applicationCompatibilityRows(),
+  ]);
+  const newerWithoutApplications = writeArtifact("newer-without-applications.json", "2026-06-03T00:00:00.000Z", [
+    projectRow("utility-types-project"),
+  ]);
+  assert.equal(
+    selectLatestBenchmarkArtifact(
+      [newerWithoutApplications, olderWithApplications],
+      { minimumProjectTimingPairs: 1, requireApplicationCompat: true },
+    )?.file,
+    olderWithApplications,
+    "a newer artifact without application compatibility should not mask older app-compatible benchmark data",
   );
   assert.equal(
     selectLatestBenchmarkArtifact([path.join(tempDir, "missing.json")]),
