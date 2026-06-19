@@ -1096,6 +1096,24 @@ impl<'a> CheckerState<'a> {
     /// both `error_cannot_find_name_at` and the boundary's
     /// `report_not_found_at_boundary`.
     pub(crate) fn collect_spelling_suggestions(&self, name: &str, idx: NodeIndex) -> Vec<String> {
+        if self.suggestion_scan_eligible(name, idx) {
+            self.scan_similar_identifiers(name, idx)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Cheap half of `collect_spelling_suggestions`: apply every suppression
+    /// predicate and advance the eager cap counter, returning whether the
+    /// expensive candidate scan (`scan_similar_identifiers`) should run.
+    ///
+    /// This is split out so the resolution boundary can charge the counter in
+    /// resolution order (matching tsc's sequential `suggestionCount`) while
+    /// deferring the full-symbol-universe Levenshtein scan to the
+    /// diagnostic-emission path. The counter side effects here are identical to
+    /// the previous eager `collect_spelling_suggestions`, so cap behavior and
+    /// the resulting diagnostics are unchanged.
+    pub(crate) fn suggestion_scan_eligible(&self, name: &str, idx: NodeIndex) -> bool {
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
         // tsc does not emit TS2552 suggestions (e.g. "private" -> "print") in these cases.
         let is_accessibility_modifier_name = matches!(name, "public" | "private" | "protected");
@@ -1108,7 +1126,7 @@ impl<'a> CheckerState<'a> {
             is_accessibility_modifier_name || is_arguments_name || is_super_name;
 
         if suppress_spelling_suggestion {
-            return Vec::new();
+            return false;
         }
 
         // Eagerly increment the suggestion counter for each unique name resolution
@@ -1144,7 +1162,7 @@ impl<'a> CheckerState<'a> {
             > 10
             && is_new_node
         {
-            return Vec::new();
+            return false;
         }
 
         // Suppress spelling suggestions in files with parse errors.
@@ -1152,9 +1170,30 @@ impl<'a> CheckerState<'a> {
         // name resolution cascades are unhelpful.  tsc keeps only primary
         // diagnostics in these files.
         if self.has_syntax_parse_errors() {
-            return Vec::new();
+            return false;
         }
 
+        // Skip the scan when the failing reference lives in a foreign/library
+        // arena borrowed by a cross-arena delegation child checker (e.g. a lib
+        // namespace's own internal type references resolved on demand while
+        // computing a user-visible type). Such diagnostics are never surfaced —
+        // only user-file diagnostics are reported — so computing a spelling
+        // suggestion for them is pure waste. tsc likewise never reports
+        // cannot-find-name (and so never offers a suggestion) for the trusted
+        // standard library it resolves through. The cap counter above is still
+        // charged so its sequencing is unchanged.
+        if !self.ctx.current_arena_is_user_file() {
+            return false;
+        }
+
+        true
+    }
+
+    /// Expensive half of `collect_spelling_suggestions`: the full-symbol-universe
+    /// candidate scan. Call only after `suggestion_scan_eligible` returned `true`
+    /// (it does not re-apply the suppression predicates or touch the cap
+    /// counter), and only when a diagnostic is actually being emitted.
+    pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
