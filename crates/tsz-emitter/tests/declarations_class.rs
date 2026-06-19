@@ -1374,3 +1374,50 @@ class Child extends Base {
         "Explicit constructor parameter must be preserved.\nOutput:\n{output}"
     );
 }
+
+/// Regression: when an auto-accessor is downleveled to a `WeakMap`-backed
+/// private storage (target < ES2022) and mixed with public and `#private`
+/// field initializers, the backing-storage `.set(this, ...)` must be emitted at
+/// the accessor's source position, interleaved with the other field inits —
+/// not appended after them. Field initializers can have observable side
+/// effects, so `tsc` evaluates them strictly in source declaration order.
+#[test]
+fn auto_accessor_storage_init_keeps_source_order_among_fields() {
+    let source = r#"export class Widget {
+    first = 10;
+    accessor mid = 20;
+    #last = 30;
+    tail = 40;
+    readLast() { return this.#last; }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+    let expected = "constructor() {\n        this.first = 10;\n        _Widget_mid_accessor_storage.set(this, 20);\n        _Widget_last.set(this, 30);\n        this.tail = 40;\n    }";
+    assert!(
+        output.contains(expected),
+        "Auto-accessor storage init must stay in source order between the public \
+         and #private field inits.\nOutput:\n{output}"
+    );
+}
+
+/// Anti-hardcoding companion: the same source-order guarantee with different
+/// binder names and the accessor declared *after* the private field, proving
+/// the interleave is driven by source position, not fixed identifiers.
+#[test]
+fn auto_accessor_storage_init_source_order_renamed_binders() {
+    let source = r#"export class Gadget {
+    #alpha = 1;
+    beta = 2;
+    accessor gamma = 3;
+    delta = 4;
+    readAlpha() { return this.#alpha; }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+    let expected = "constructor() {\n        _Gadget_alpha.set(this, 1);\n        this.beta = 2;\n        _Gadget_gamma_accessor_storage.set(this, 3);\n        this.delta = 4;\n    }";
+    assert!(
+        output.contains(expected),
+        "Auto-accessor storage init order must follow source position regardless \
+         of binder names.\nOutput:\n{output}"
+    );
+}

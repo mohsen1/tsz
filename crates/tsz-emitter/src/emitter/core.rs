@@ -674,10 +674,12 @@ pub struct Printer<'a> {
     pub(crate) pending_class_field_inits: Vec<FieldInit>,
 
     /// Pending auto-accessor field initializers to emit in constructor body.
-    /// Each tuple is (`weakmap_storage_name`, `initializer_expression`).
-    /// `initializer_expression` is `None` when the accessor field has no
-    /// initializer and should default to `void 0`.
-    pub(crate) pending_auto_accessor_inits: Vec<(String, Option<NodeIndex>)>,
+    /// Each tuple is (`weakmap_storage_name`, `initializer_expression`,
+    /// `source_order`). `initializer_expression` is `None` when the accessor
+    /// field has no initializer and should default to `void 0`. `source_order`
+    /// is the declaring member's source position, used to interleave the
+    /// backing-storage init with public/`#private` field inits in source order.
+    pub(crate) pending_auto_accessor_inits: Vec<(String, Option<NodeIndex>, u32)>,
 
     /// Counter for generated public auto-accessor backing names (`_a`, `_b`, ...).
     /// TypeScript keeps this sequence file-scoped for ES2015+ class emit.
