@@ -65,6 +65,7 @@ pub mod typing_request;
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
+use crate::symbol_resolver::TypeSymbolResolution;
 pub use aliases::*;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
@@ -963,6 +964,16 @@ pub struct CheckerContext<'a> {
     /// `TypeIds` whose lazy/type-query refs have been walked and resolved.
     /// This avoids repeated deep traversals in `ensure_refs_resolved`.
     pub refs_resolved: FxHashSet<TypeId>,
+
+    /// Memo of type-position identifier resolution keyed on node idx
+    /// (`NodeIndex::0`). A type-position identifier's resolution is fixed by
+    /// its lexical position and the binder/lib symbol tables, both immutable
+    /// for the context's lifetime, so the resolved symbol is stable across
+    /// every call for a given node. Recursive type evaluation re-resolves the
+    /// same alias/type-parameter identifier nodes once per recursion level
+    /// (`resolve_identifier_symbol_in_type_position`), and the by-name scope
+    /// walk dominates those repeats; the memo collapses them to one lookup.
+    pub type_position_resolution_cache: RefCell<FxHashMap<u32, TypeSymbolResolution>>,
 
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
