@@ -563,21 +563,15 @@ impl<'a> CheckerState<'a> {
                 // stored as an Application needs to be expanded so that the nullish split
                 // can see through the alias to extract the non-nullable component.
                 let evaluated_left = self.evaluate_type_with_env(left_type);
-                let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
-                let left_is_top_type =
-                    evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
-                let diagnostics = self.nullish_coalescing_left_diagnostics(
-                    left_idx,
-                    non_nullish,
-                    cause,
-                    left_is_top_type,
-                );
+                let (non_nullish, _cause) = self.split_nullish_type(evaluated_left);
+                let diagnostics = self.nullish_coalescing_left_diagnostics(left_idx);
 
                 if let Some(diag_idx) = diagnostics.never_nullish_diag {
                     use crate::diagnostics::diagnostic_codes;
-                    // tsc points the error at the left operand (the never-nullish expression),
-                    // skipping through any parentheses to reach the inner expression.
-                    // e.g., `(expr) ?? ""` → error anchored at `expr`, not `(expr)`.
+                    // tsc anchors at `skipOuterExpressions(left, All)` — the inner
+                    // expression reached through parentheses, type assertions,
+                    // `satisfies`, and non-null assertions. e.g. `(1 as any) ?? ""`
+                    // → error anchored at `1`, not `(1 as any)`.
                     self.error_at_node(
                         diag_idx,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
@@ -585,15 +579,12 @@ impl<'a> CheckerState<'a> {
                     );
                     type_stack.push(left_type);
                 } else if let Some(diag_idx) = diagnostics.always_nullish_diag {
-                    // TS2871: complementary to TS2869. When the left operand of
-                    // `??` is syntactically a nullish-coalescing chain or a
-                    // bare nullish literal and its evaluated type contains
-                    // only nullish constituents (split yields no non-nullish
-                    // part), tsc emits TS2871 — the left expression is
-                    // *always* nullish, so the `??` itself is redundant.
-                    //
-                    // Same anchor strategy as TS2869: point at the left
-                    // operand, skipping through parentheses.
+                    // TS2871: complementary to TS2869. When the `??` left operand,
+                    // looked through outer expressions, is syntactically always
+                    // nullish (the `null` keyword, the `undefined` identifier, or a
+                    // `??`/comma/conditional that resolves to one), tsc emits TS2871
+                    // — the left expression is *always* nullish, so the `??` itself
+                    // is redundant. Same anchor as TS2869.
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         diag_idx,

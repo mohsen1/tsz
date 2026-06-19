@@ -17,10 +17,8 @@ use tsz_solver::TypeId;
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-enum SyntacticNullishness {
+pub(super) enum SyntacticNullishness {
     /// The expression is always nullish (e.g., `null`, `undefined`).
-    #[allow(dead_code)]
     Always,
     /// The expression may or may not be nullish (e.g., identifiers, calls, property accesses).
     Sometimes,
@@ -341,33 +339,17 @@ impl CheckerState<'_> {
     /// that determines whether an expression can ever be nullish, WITHOUT consulting the
     /// type system. For example, a variable `foo: string` returns `Sometimes` (it could
     /// theoretically be reassigned at runtime), while a literal `"hello"` returns `Never`.
-    #[allow(dead_code)]
-    fn get_syntactic_nullishness(&self, idx: NodeIndex) -> SyntacticNullishness {
+    ///
+    /// Outer expressions (parentheses, `as`/`satisfies`/`<T>` assertions, and non-null
+    /// `!`) are looked *through* — exactly like tsc's `skipOuterExpressions(node, All)` —
+    /// so `(1 as any) ?? x` classifies on the literal `1` and `null! ?? x` on `null`.
+    pub(super) fn get_syntactic_nullishness(&self, idx: NodeIndex) -> SyntacticNullishness {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         let Some(node) = self.ctx.arena.get(idx) else {
             return SyntacticNullishness::Sometimes;
         };
 
         let kind = node.kind;
-
-        // Skip parenthesized expressions (tsc's skipOuterExpressions)
-        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-        {
-            return self.get_syntactic_nullishness(paren.expression);
-        }
-
-        // Non-null assertions (!): always Never
-        if kind == syntax_kind_ext::NON_NULL_EXPRESSION {
-            return SyntacticNullishness::Never;
-        }
-
-        // Type assertions (as/satisfies/<T>x): tsc skips these via skipOuterExpressions
-        if kind == syntax_kind_ext::AS_EXPRESSION
-            || kind == syntax_kind_ext::SATISFIES_EXPRESSION
-            || kind == syntax_kind_ext::TYPE_ASSERTION
-        {
-            return SyntacticNullishness::Sometimes;
-        }
 
         // Expressions that may produce null/undefined at runtime
         if kind == syntax_kind_ext::AWAIT_EXPRESSION
@@ -446,47 +428,6 @@ impl CheckerState<'_> {
         // object literal, array literal, function expression, arrow function, class expression,
         // etc.) are never nullish.
         SyntacticNullishness::Never
-    }
-    /// Check if an AST node is a nullish coalescing expression (`??`) or a
-    /// literal value (string, number, boolean, bigint, template), unwrapping
-    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
-    /// non-nullable expressions (identifiers, property access, `&&` chains)
-    /// do not trigger TS2869 even when their type is never nullish.
-    pub(super) fn is_nullish_coalescing_or_literal(
-        arena: &tsz_parser::parser::NodeArena,
-        node_idx: NodeIndex,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(node) = arena.get(node_idx) else {
-            return false;
-        };
-
-        // Unwrap parentheses: (expr) -> expr
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = arena.get_parenthesized(node) {
-                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
-            }
-            return false;
-        }
-
-        // Binary expression: check if it's a `??`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = arena.get_binary_expr(node) {
-                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
-            }
-            return false;
-        }
-
-        // Literal values: string, number, bigint, template, true, false
-        let kind = node.kind;
-        kind == SyntaxKind::StringLiteral as u16
-            || kind == SyntaxKind::NumericLiteral as u16
-            || kind == SyntaxKind::BigIntLiteral as u16
-            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            || kind == SyntaxKind::TrueKeyword as u16
-            || kind == SyntaxKind::FalseKeyword as u16
-            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
     }
 
     /// Format the apparent type for display in TS2638 error messages.
