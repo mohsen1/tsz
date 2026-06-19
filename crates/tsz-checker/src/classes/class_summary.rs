@@ -827,6 +827,28 @@ impl<'a> CheckerState<'a> {
         summary
     }
 
+    pub(crate) fn own_class_member_type_for_recovery(
+        &mut self,
+        class_idx: NodeIndex,
+        property_name: &str,
+        is_static: bool,
+        include_private: bool,
+    ) -> Option<TypeId> {
+        let class = self.ctx.arena.get_class_at(class_idx)?;
+        let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let summary = self.collect_class_members_for_chain(class_idx, class);
+        self.pop_type_parameters(type_param_updates);
+
+        let members = if is_static {
+            &summary.static_members
+        } else {
+            &summary.instance_members
+        };
+        members
+            .get(property_name)
+            .and_then(|entry| (include_private || entry.is_visible).then_some(entry.info.type_id))
+    }
+
     pub(crate) fn class_chain_member_kind_name_only(
         &mut self,
         class_idx: NodeIndex,

@@ -661,6 +661,9 @@ mod callable_union_relation_routing_arch_tests;
 #[path = "tests/circular_initializer_deferred_generic_tests.rs"]
 mod circular_initializer_deferred_generic_tests;
 #[cfg(test)]
+#[path = "tests/class_constructor_private_static_recovery_tests.rs"]
+mod class_constructor_private_static_recovery_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]

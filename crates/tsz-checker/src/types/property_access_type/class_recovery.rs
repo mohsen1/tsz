@@ -37,14 +37,19 @@ impl<'a> CheckerState<'a> {
         receiver_type: TypeId,
     ) -> Option<(NodeIndex, bool)> {
         let (class_idx, class_sym) = self.current_class_member_initializer_context(expression)?;
+        let receiver_is_current_class_identifier = self
+            .resolve_identifier_symbol_without_tracking(expression)
+            .is_some_and(|receiver_sym| receiver_sym == class_sym);
         if !self.property_access_receiver_targets_class(receiver_type, class_sym)
             && !self.asserted_this_receiver_targets_current_class(expression, class_sym)
+            && !receiver_is_current_class_identifier
         {
             return None;
         }
 
         let is_static_access = self.find_enclosing_static_block(expression).is_some()
             || self.is_in_static_class_member_context(expression)
+            || receiver_is_current_class_identifier
             || self.is_constructor_type(receiver_type);
         Some((class_idx, is_static_access))
     }
@@ -137,11 +142,6 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(NodeIndex, tsz_binder::SymbolId)> {
         let class_idx = self.nearest_enclosing_class(expression)?;
         let class_sym = self.ctx.binder.get_node_symbol(class_idx)?;
-        if self.ctx.checking_computed_property_name.is_none()
-            && !self.property_access_is_in_class_property_initializer(expression)
-        {
-            return None;
-        }
         Some((class_idx, class_sym))
     }
 
@@ -200,6 +200,14 @@ impl<'a> CheckerState<'a> {
         let (class_idx, is_static_access) = resolved_class_access?;
         if summary.is_none() {
             *summary = Some(self.summarize_class_chain(class_idx));
+        }
+        if let Some(member_type) = self.own_class_member_type_for_recovery(
+            class_idx,
+            property_name,
+            is_static_access,
+            true,
+        ) {
+            return Some(member_type);
         }
         summary
             .as_ref()?
@@ -323,6 +331,12 @@ impl<'a> CheckerState<'a> {
         };
         if summary.is_none() {
             *summary = Some(self.summarize_class_chain(class_idx));
+        }
+        if self
+            .own_class_member_type_for_recovery(class_idx, property_name, is_static_access, true)
+            .is_some()
+        {
+            return true;
         }
         summary.as_ref().is_some_and(|summary| {
             summary
