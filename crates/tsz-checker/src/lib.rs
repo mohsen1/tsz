@@ -667,6 +667,9 @@ mod callable_union_relation_routing_arch_tests;
 #[path = "tests/circular_initializer_deferred_generic_tests.rs"]
 mod circular_initializer_deferred_generic_tests;
 #[cfg(test)]
+#[path = "tests/class_constructor_private_static_recovery_tests.rs"]
+mod class_constructor_private_static_recovery_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
@@ -951,6 +954,9 @@ mod jsdoc_cast_and_define_property_widening_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_empty_augments_class_chain_tests.rs"]
+mod jsdoc_empty_augments_class_chain_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_enum_circular_tests.rs"]
 mod jsdoc_enum_circular_tests;

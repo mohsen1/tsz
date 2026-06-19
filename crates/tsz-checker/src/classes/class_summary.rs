@@ -695,9 +695,20 @@ impl<'a> CheckerState<'a> {
 
             let own_summary = self.collect_class_members_for_chain(current_idx, class);
 
+            // In checked JS, an empty `@extends`/`@augments` tag deliberately
+            // invalidates the structural `extends` edge for instance members.
+            // Keep this summary aligned with `class_instance_merge_base_members`
+            // so recovery lookups do not resurrect suppressed base properties.
+            let skip_heritage_merge =
+                self.ctx.is_js_file() && self.has_empty_jsdoc_augments_tag(current_idx);
+
             // Extract extends-clause type arguments while the current class's type
             // parameters are still in scope (so expressions like `RT[RT['a']]` resolve).
-            let extends_info = self.get_extends_clause_type_args(current_idx);
+            let extends_info = if skip_heritage_merge {
+                None
+            } else {
+                self.get_extends_clause_type_args(current_idx)
+            };
 
             self.pop_type_parameters(type_param_updates);
 
@@ -778,6 +789,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            if skip_heritage_merge {
+                break;
+            }
+
             // Build the substitution for the next level: map the base class's type
             // parameters to the extends-clause type arguments, composed with the
             // existing cumulative substitution.
@@ -825,6 +840,28 @@ impl<'a> CheckerState<'a> {
             .insert(class_idx, std::rc::Rc::clone(&summary));
 
         summary
+    }
+
+    pub(crate) fn own_class_member_type_for_recovery(
+        &mut self,
+        class_idx: NodeIndex,
+        property_name: &str,
+        is_static: bool,
+        include_private: bool,
+    ) -> Option<TypeId> {
+        let class = self.ctx.arena.get_class_at(class_idx)?;
+        let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let summary = self.collect_class_members_for_chain(class_idx, class);
+        self.pop_type_parameters(type_param_updates);
+
+        let members = if is_static {
+            &summary.static_members
+        } else {
+            &summary.instance_members
+        };
+        members
+            .get(property_name)
+            .and_then(|entry| (include_private || entry.is_visible).then_some(entry.info.type_id))
     }
 
     pub(crate) fn class_chain_member_kind_name_only(

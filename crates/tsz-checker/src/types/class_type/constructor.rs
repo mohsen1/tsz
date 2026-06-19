@@ -124,7 +124,13 @@ impl<'a> CheckerState<'a> {
                 {
                     return window_partial;
                 }
-                return TypeId::ANY;
+                // Re-entrant constructor resolution with no usable partial:
+                // defer through the `ClassConstructor` companion instead of
+                // caching `any` across files. The companion is filled by the
+                // outer computation and resolves to the constructor side, so it
+                // avoids both untyped static calls (#13947) and instance-side
+                // false `TS2339`.
+                return self.deferred_constructor_companion_lazy(class_idx, class, sym_id);
             }
         } else {
             false
