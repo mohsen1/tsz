@@ -21,7 +21,7 @@ use crate::visitor::{
 };
 
 use super::super::evaluate::TypeEvaluator;
-use super::string_index_helpers::string_index_signature_applies;
+use super::string_index_helpers::{number_index_signature_applies, string_index_signature_applies};
 use crate::objects::apparent::literal_value_intrinsic_kind;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
@@ -2011,6 +2011,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && string_index_signature_applies(self, string_index, index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
+        }
+
+        // Number subtypes that are neither a bare `number` nor a numeric literal
+        // — most commonly a `number & { brand }` tagged-number intersection, but
+        // also any other subtype of `number` — must resolve through the numeric
+        // index signature, exactly as `TypeId::NUMBER` and numeric literals do
+        // above. This mirrors the string-subtype branch (`string & { brand }`):
+        // without it a tagged-number key falls through to `UNDEFINED` and the
+        // `is_generic_index` guard then defers the access into an unreduced
+        // `Obj[Key]`, producing a spurious TS2322. A numeric key still falls back
+        // to a string index signature, since numeric keys coerce to string keys.
+        if number_index_signature_applies(self, index_type) {
+            if let Some(number_index) = shape.number_index.as_ref() {
+                return self.add_undefined_if_unchecked(number_index.value_type);
+            }
+            if let Some(string_index) = string_index {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
         }
 
         TypeId::UNDEFINED

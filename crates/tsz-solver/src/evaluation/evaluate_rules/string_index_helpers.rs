@@ -1,4 +1,5 @@
-//! Helpers for string index-signature applicability during indexed access.
+//! Helpers for index-signature applicability (string and numeric) during
+//! indexed access.
 
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
@@ -40,6 +41,63 @@ pub(super) fn string_index_signature_applies<R: TypeResolver>(
         checker = checker.with_query_db(db);
     }
     checker.is_subtype_of(index_type, string_index.key_type)
+}
+
+/// Whether `index_type` is a *number subtype* that should resolve through a
+/// numeric index signature (and, failing that, a string index signature, since
+/// numeric keys coerce to string keys).
+///
+/// This is the numeric mirror of [`string_index_signature_applies`]. A numeric
+/// index signature's `key_type` is always `number`, so applicability reduces to
+/// "is `index_type` a subtype of `number`". The common cases (`number`, a
+/// numeric literal, and a `number & { brand }` intersection) are answered
+/// structurally on the hot path; anything else falls back to a subtype query so
+/// general number subtypes (e.g. an enum type) still apply, matching tsc's
+/// `isApplicableIndexType`.
+pub(super) fn number_index_signature_applies<R: TypeResolver>(
+    evaluator: &TypeEvaluator<'_, R>,
+    index_type: TypeId,
+) -> bool {
+    if index_type == TypeId::NUMBER {
+        return true;
+    }
+    // A single interner lookup answers both structural fast paths: a numeric
+    // literal, or a `number & { brand }` intersection.
+    match evaluator.interner().lookup(index_type) {
+        Some(TypeData::Literal(LiteralValue::Number(_))) => return true,
+        Some(TypeData::Intersection(list_id)) => {
+            if evaluator
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .any(|&member| is_number_like_intersection_member(evaluator, member))
+            {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    let mut checker = SubtypeChecker::with_resolver(evaluator.interner(), evaluator.resolver());
+    if let Some(db) = evaluator.query_db() {
+        checker = checker.with_query_db(db);
+    }
+    checker.is_subtype_of(index_type, TypeId::NUMBER)
+}
+
+fn is_number_like_intersection_member<R: TypeResolver>(
+    evaluator: &TypeEvaluator<'_, R>,
+    member: TypeId,
+) -> bool {
+    if member == TypeId::NUMBER {
+        return true;
+    }
+    if member.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        evaluator.interner().lookup(member),
+        Some(TypeData::Literal(LiteralValue::Number(_)))
+    )
 }
 
 fn is_string_like_index<R: TypeResolver>(
@@ -85,7 +143,7 @@ mod tests {
     use super::*;
     use crate::evaluation::evaluate::evaluate_index_access;
     use crate::intern::TypeInterner;
-    use crate::types::{ObjectFlags, ObjectShape, TemplateSpan};
+    use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TemplateSpan};
 
     #[test]
     fn template_pattern_string_index_rejects_non_matching_literal_key() {
@@ -264,6 +322,136 @@ mod tests {
         assert_eq!(
             evaluate_index_access(&db, object, db.literal_number(42.0)),
             TypeId::UNDEFINED
+        );
+    }
+
+    // A `number & { brand }` tagged-number intersection used as an index key.
+    // Structural over the brand: the property name/type are arbitrary and do not
+    // change the rule.
+    fn tagged_number(db: &TypeInterner, brand_name: &str, brand_type: TypeId) -> TypeId {
+        let brand_atom = db.intern_string(brand_name);
+        let brand = db.object(vec![PropertyInfo::new(brand_atom, brand_type)]);
+        db.intersection2(TypeId::NUMBER, brand)
+    }
+
+    #[test]
+    fn tagged_number_index_resolves_numeric_index_signature() {
+        // `{ [x: number]: V }[number & { brand }]` -> V, exactly like `D[number]`.
+        // This is the numeric mirror of the existing `string & { brand }` path
+        // and the regression repro from operatorsAndIntersectionTypes.ts.
+        for value_type in [TypeId::STRING, TypeId::BOOLEAN, TypeId::NUMBER] {
+            let db = TypeInterner::new();
+            let object = db.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type,
+                    readonly: false,
+                    param_name: None,
+                }),
+                symbol: None,
+            });
+            // Vary the brand name/type so the rule is structural, not name-driven.
+            let key = tagged_number(&db, "serialNo", TypeId::BOOLEAN);
+            assert_eq!(
+                evaluate_index_access(&db, object, key),
+                value_type,
+                "tagged number key must resolve through the numeric index signature"
+            );
+        }
+    }
+
+    #[test]
+    fn tagged_number_index_falls_back_to_string_index_signature() {
+        // `{ [x: string]: V }[number & { brand }]` -> V: a numeric key coerces to
+        // a string key, so it resolves through a string index signature when no
+        // numeric one is present.
+        let db = TypeInterner::new();
+        let object = plain_string_index_object(&db, TypeId::BOOLEAN);
+        let key = tagged_number(&db, "tag", db.literal_number(1.0));
+        assert_eq!(evaluate_index_access(&db, object, key), TypeId::BOOLEAN);
+    }
+
+    #[test]
+    fn tagged_number_index_prefers_numeric_over_string_index_signature() {
+        // With both signatures present the numeric one wins, like a bare `number`
+        // key.
+        let db = TypeInterner::new();
+        let object = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::NUMBER,
+                readonly: false,
+                param_name: None,
+            }),
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::BOOLEAN,
+                readonly: false,
+                param_name: None,
+            }),
+            symbol: None,
+        });
+        let key = tagged_number(&db, "id", TypeId::STRING);
+        assert_eq!(evaluate_index_access(&db, object, key), TypeId::BOOLEAN);
+    }
+
+    #[test]
+    fn tagged_number_index_without_any_index_signature_stays_deferred() {
+        // Negative control: no index signature to resolve through. A generic
+        // (intersection) key with nothing to match is kept as a deferred
+        // `IndexAccess` rather than collapsed to a concrete value type.
+        let db = TypeInterner::new();
+        let object = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        });
+        let key = tagged_number(&db, "tag", TypeId::NUMBER);
+        let result = evaluate_index_access(&db, object, key);
+        assert!(
+            matches!(db.lookup(result), Some(TypeData::IndexAccess(_, _))),
+            "an unmatched tagged-number key must stay deferred, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tagged_string_does_not_match_numeric_index_signature() {
+        // Negative control / asymmetry: a `string & { brand }` key is NOT a
+        // number subtype, so it must not resolve through a numeric-only index
+        // signature (tsc errors on this). It must not collapse to the numeric
+        // value type; it stays a deferred `IndexAccess`.
+        let db = TypeInterner::new();
+        let object = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::BOOLEAN,
+                readonly: false,
+                param_name: None,
+            }),
+            symbol: None,
+        });
+        let brand_atom = db.intern_string("g");
+        let brand = db.object(vec![PropertyInfo::new(brand_atom, TypeId::NUMBER)]);
+        let tagged_string = db.intersection2(TypeId::STRING, brand);
+        let result = evaluate_index_access(&db, object, tagged_string);
+        assert_ne!(
+            result,
+            TypeId::BOOLEAN,
+            "a tagged-string key must not match the numeric index signature"
+        );
+        assert!(
+            matches!(db.lookup(result), Some(TypeData::IndexAccess(_, _))),
+            "an unmatched tagged-string key must stay deferred, got {result:?}"
         );
     }
 }
