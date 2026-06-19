@@ -459,9 +459,11 @@ impl<'a> VarianceComputer<'a> {
         if self.use_shared_store
             && let Some((mask, gaps)) = self.db.shared_def_variance(def_id)
         {
-            let valid = gaps
-                .iter()
-                .all(|d| self.resolver.resolve_lazy(*d, self.db).is_none());
+            let valid = gaps.iter().all(|d| {
+                self.resolver
+                    .resolve_lazy_lookup_only(*d, self.db)
+                    .is_none()
+            });
             if valid {
                 self.gap_log.extend_from_slice(&gaps);
                 let gaps = if gaps.is_empty() { None } else { Some(gaps) };
@@ -1112,10 +1114,14 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     fn visit_lazy(&mut self, def_id: u32) {
         // Resolve the Lazy(DefId) to its underlying TypeId
         let def_id = DefId(def_id);
+        // Lookup-only: variance masks carry a resolution-failure fingerprint that
+        // is validated with `resolve_lazy_lookup_only` (see `def_variances`), so
+        // the gap set recorded here must be computed the same way — on-demand
+        // miss-forcing (#12101) must not perturb the fingerprint.
         if let Some(resolved) = self
             .computer
             .resolver
-            .resolve_lazy(def_id, self.computer.db)
+            .resolve_lazy_lookup_only(def_id, self.computer.db)
         {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
@@ -1133,11 +1139,12 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
         // Try to convert Ref to DefId (migration path)
         if let Some(def_id) = self.computer.resolver.symbol_to_def_id(symbol_ref) {
-            // Convert to Lazy and resolve
+            // Convert to Lazy and resolve (lookup-only: keep the variance
+            // fingerprint insulated from #12101 miss-forcing — see `visit_lazy`).
             if let Some(resolved) = self
                 .computer
                 .resolver
-                .resolve_lazy(def_id, self.computer.db)
+                .resolve_lazy_lookup_only(def_id, self.computer.db)
             {
                 let current_polarity = self.get_current_polarity();
                 self.visit_with_polarity(resolved, current_polarity);

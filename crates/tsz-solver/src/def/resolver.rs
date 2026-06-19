@@ -81,6 +81,24 @@ pub trait TypeResolver {
         None
     }
 
+    /// Pure lookup of a `DefId`'s already-registered body, with **no** on-demand
+    /// side effects.
+    ///
+    /// `resolve_lazy` may, for a force-eligible lib interface, materialize and
+    /// register a previously-unregistered body on a miss (issue #12101). Callers
+    /// that treat a `resolve_lazy` *miss* as a stable signal — e.g. the variance
+    /// fingerprint validity check, which asserts a stored mask's gap defs are
+    /// *still* unresolved — must use this entry point instead, so miss-forcing
+    /// never inverts that is-none signal. The default delegates to `resolve_lazy`
+    /// for resolvers that have no forcing side effect.
+    fn resolve_lazy_lookup_only(
+        &self,
+        def_id: DefId,
+        interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        self.resolve_lazy(def_id, interner)
+    }
+
     /// Get type parameters for a symbol (for generic type aliases/interfaces).
     /// Returns None by default; implementations can override to support
     /// Application type expansion.
