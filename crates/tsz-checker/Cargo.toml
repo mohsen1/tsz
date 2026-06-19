@@ -289,6 +289,9 @@ path = "tests/array_generic_shorthand_canonical_tests.rs"
 name = "array_subclass_inheritance_tests"
 path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
+name = "extends_readonly_array_assignability_tests"
+path = "tests/extends_readonly_array_assignability_tests.rs"
+[[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 [[test]]
@@ -553,6 +556,9 @@ path = "tests/hkt_self_augmentation_keyof_repro.rs"
 [[test]]
 name = "hkt_cross_file_augmentation_13653_repro"
 path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
+[[test]]
+name = "hkt_typeof_uri_instance_assignability_13930_repro"
+path = "tests/hkt_typeof_uri_instance_assignability_13930_repro.rs"
 [[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"

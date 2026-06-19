@@ -84,7 +84,7 @@ pub(crate) fn exit_refs_resolution_scope() {
     REFS_RESOLUTION_ACTIVE.set(false);
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
         use crate::query_boundaries::state::type_environment::{
             contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
@@ -1591,36 +1591,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params);
+                    env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
             }
+            drop(env);
+            self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
             false
-        }
-    }
-
-    /// Insert `type_id` for `def_id` into both type environments, carrying type params
-    /// when present. Safe to call during recursive resolution; failed borrows are logged.
-    fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
-        // insert_def_with_params with empty params is equivalent to insert_def, so we
-        // unify both paths and avoid a conditional.
-        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        match self.ctx.type_env.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params.clone()),
-            Err(e) => tracing::warn!(
-                target_env = "type_env",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
-        match self.ctx.type_environment.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
-            Err(e) => tracing::warn!(
-                target_env = "type_environment",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
         }
     }
 

@@ -20,7 +20,7 @@ thread_local! {
 // Global instantiation depth and fuel counters live in `EvaluationSession`
 // (shared via `Rc` on `CheckerContext::eval_session`).
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     // Get type of object literal.
     // =========================================================================
     // Type Relations (uses solver::CompatChecker for assignability)
@@ -1349,18 +1349,30 @@ impl<'a> CheckerState<'a> {
                 // Populate local DefId caches.
                 s2d.insert(sym_id, def_id);
                 d2s.insert(def_id, sym_id);
-                // Seed type_env with the DefId -> body mapping.
+                // Seed type_env with the DefId -> body mapping, and mirror the
+                // same authoritative shared-store body into the flow-analyzer
+                // env so the two envs do not diverge on it (#13944).
+                //
+                // The global/boxed-type registration may already have seeded the
+                // flow env with a differently-interned materialization of this
+                // same def (e.g. a symbol-less object shape vs the symbol-bearing
+                // body the shared store published). Seeding only `type_env` here
+                // would leave that stale flow-env entry in place — a
+                // present-but-different `DefId -> TypeId` divergence that the
+                // vacancy-only `overlay_missing_from` cannot reconcile. The
+                // mirror defers on a borrow race and is replayed at
+                // `flush_deferred_flow_env_writes`.
+                let type_params = self
+                    .ctx
+                    .definition_store
+                    .get_type_params(def_id)
+                    .unwrap_or_default();
+                self.ctx
+                    .mirror_def_in_type_environment(def_id, body, &type_params);
                 if let Some(env) = env_opt.as_deref_mut() {
-                    let type_params = self
-                        .ctx
-                        .definition_store
-                        .get_type_params(def_id)
-                        .unwrap_or_default();
-                    if type_params.is_empty() {
-                        env.insert_def(def_id, body);
-                    } else {
-                        env.insert_def_with_params(def_id, body, type_params);
-                    }
+                    // `insert_def_with_params` with empty params is equivalent to
+                    // `insert_def`, so the one call covers both arities.
+                    env.insert_def_with_params(def_id, body, type_params);
                 }
             }
             drop(s2d);

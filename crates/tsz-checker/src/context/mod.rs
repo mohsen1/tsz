@@ -37,6 +37,7 @@ pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_declaration;
 mod def_mapping;
+mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
 mod deferred_flow_env_write;
 mod unresolved_import;
@@ -62,16 +63,15 @@ pub mod typing_request;
 pub use aliases::*;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
-use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
-pub use symbol_file_targets::SymbolFileTargetsOverlay;
-pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
-
 use rustc_hash::{FxHashMap, FxHashSet};
+use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
+pub use symbol_file_targets::SymbolFileTargetsOverlay;
 use tsz_common::interner::Atom;
+pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
@@ -1876,6 +1876,17 @@ pub struct CheckerContext<'a> {
     /// Stack of symbols being resolved via typeof to detect cycles.
     /// Prevents infinite loops in typeof X where X's type computation depends on typeof X.
     pub typeof_resolution_stack: RefCell<FxHashSet<u32>>,
+
+    /// Stack of symbols whose cross-file type-parameter omitted-default
+    /// constraints are currently being expanded. A type parameter constraint
+    /// that is a bare generic reference (`<P extends Ref>`) is re-expanded with
+    /// `Ref`'s own defaults, which re-enters `get_reference_type_params_for_symbol`
+    /// for `Ref`; when that chain leads back to a symbol already on the stack
+    /// (mutually or self-referential generic registries, e.g. the fp-ts HKT
+    /// `URItoKind`/`Kind` family), the expansion must stop rather than recurse
+    /// without bound. The result cache only breaks the cycle once a frame has
+    /// fully returned, so a cold cache (fresh per-file check) needs this guard.
+    pub omitted_default_constraint_stack: RefCell<FxHashSet<u32>>,
 
     /// Closure depth - tracks nesting of function expressions, arrow functions, and method expressions.
     /// Used to apply Rule #42: CFA Invalidation in Closures.

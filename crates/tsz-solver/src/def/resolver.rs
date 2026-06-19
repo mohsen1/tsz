@@ -1214,6 +1214,54 @@ impl TypeEnvironment {
         None
     }
 
+    /// Collect every shared `def_types` key whose value differs between `self`
+    /// and `other`.
+    ///
+    /// Companion to [`Self::first_def_divergence_from`]: where that probe
+    /// returns only the first disagreement for a debug assertion, this returns
+    /// the full set so the checker can converge the benign (structurally
+    /// identical) subset at the file-preparation reconciliation boundary before
+    /// re-probing the residual. `overlay_missing_from` is a vacancy-only merge
+    /// and therefore cannot touch a `DefId` that is present-but-different in
+    /// both envs; that residual class is dominated by recursive
+    /// self-referential interfaces whose self-reference is materialized at
+    /// different resolution points and so interns to distinct — but
+    /// coinductively equal — `TypeId`s per env (#13944).
+    ///
+    /// Each tuple is `(raw_def_key, self_value, other_value)`. Read-only; never
+    /// mutates either env.
+    #[must_use]
+    pub fn collect_def_type_divergences_from(&self, other: &Self) -> Vec<(u32, TypeId, TypeId)> {
+        let mut out = Vec::new();
+        for (&key, &value) in &self.def_types {
+            if let Some(&other_value) = other.def_types.get(&key)
+                && other_value != value
+            {
+                out.push((key, value, other_value));
+            }
+        }
+        out
+    }
+
+    /// Overwrite **only** the local `def_types` cache entry for `raw_def_key`,
+    /// leaving the shared `DefinitionStore` write-through that
+    /// [`Self::insert_def`] performs untouched.
+    ///
+    /// Used by flow/evaluator env reconciliation to canonicalize a
+    /// flow-analyzer-env `def_types` entry onto the evaluator env's
+    /// authoritative value when the two hold structurally identical recursive
+    /// types interned at distinct `TypeId`s (#13944). The shared store already
+    /// holds the authoritative body, so re-publishing it through `insert_def`
+    /// would be redundant churn; this canonicalizes the divergent local cache
+    /// entry in place.
+    pub fn set_local_def_type(&mut self, raw_def_key: u32, type_id: TypeId) {
+        if self.def_types.get(&raw_def_key) == Some(&type_id) {
+            return;
+        }
+        self.def_types.insert(raw_def_key, type_id);
+        self.bump_generation();
+    }
+
     /// Snapshot the local DefId -> TypeId cache for downstream consumers like declaration emit.
     pub fn snapshot_def_types(&self) -> FxHashMap<u32, TypeId> {
         self.def_types.clone()
@@ -2130,6 +2178,77 @@ mod tests {
             flow.first_def_divergence_from(&evaluator),
             None,
             "post-overlay envs must agree on every shared DefId entry"
+        );
+    }
+
+    #[test]
+    fn collect_def_type_divergences_reports_every_present_but_different_shared_def() {
+        let conflict_a = DefId(42);
+        let conflict_b = DefId(43);
+        let agree = DefId(44);
+
+        let mut evaluator = TypeEnvironment::new();
+        evaluator.insert_def(conflict_a, TypeId(100));
+        evaluator.insert_def(conflict_b, TypeId(110));
+        evaluator.insert_def(agree, TypeId(120));
+        // Evaluator-only entry: vacancy, never a divergence.
+        evaluator.insert_def(DefId(7), TypeId(101));
+
+        let mut flow = TypeEnvironment::new();
+        flow.insert_def(conflict_a, TypeId(200));
+        flow.insert_def(conflict_b, TypeId(210));
+        flow.insert_def(agree, TypeId(120));
+
+        let mut divergences = flow.collect_def_type_divergences_from(&evaluator);
+        divergences.sort_by_key(|&(key, ..)| key);
+        assert_eq!(
+            divergences,
+            vec![
+                (conflict_a.0, TypeId(200), TypeId(100)),
+                (conflict_b.0, TypeId(210), TypeId(110)),
+            ],
+            "only present-but-different shared defs are divergences; agreeing and \
+             vacant keys are excluded"
+        );
+    }
+
+    #[test]
+    fn set_local_def_type_canonicalizes_without_store_write_through() {
+        let store = Arc::new(DefinitionStore::default());
+        let shared_def = DefId(42);
+
+        let mut evaluator = TypeEnvironment::new();
+        evaluator.set_definition_store(Arc::clone(&store));
+        evaluator.insert_def(shared_def, TypeId(100)); // store body = 100 (authoritative)
+
+        let mut flow = TypeEnvironment::new();
+        flow.set_definition_store(Arc::clone(&store));
+        // Simulate a local-only divergence: the flow env's local cache holds a
+        // different `TypeId` than the authoritative store/evaluator (as happens
+        // when a recursive interface materializes to distinct interned ids per
+        // env). `set_local_def_type` is the only writer that touches the local
+        // cache without store write-through, so use it to seed the divergence
+        // too — proving the store is untouched in both directions.
+        flow.set_local_def_type(shared_def.0, TypeId(200));
+        assert_eq!(
+            flow.first_def_divergence_from(&evaluator),
+            Some(("def_types", shared_def.0, 200, 100)),
+            "local-only flow cache must diverge from the authoritative evaluator value"
+        );
+
+        // Canonicalize the flow env's local cache onto the evaluator's value.
+        flow.set_local_def_type(shared_def.0, TypeId(100));
+        assert_eq!(
+            flow.first_def_divergence_from(&evaluator),
+            None,
+            "set_local_def_type must converge the flow env onto the authoritative value"
+        );
+        // The shared store still holds the body the evaluator published; the
+        // local-only setter never writes through it in either direction.
+        assert_eq!(
+            store.get_body(shared_def),
+            Some(TypeId(100)),
+            "set_local_def_type must not write through to the shared DefinitionStore"
         );
     }
 }

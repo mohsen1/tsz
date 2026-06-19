@@ -34,7 +34,7 @@ fn eager_warm_local_caches() -> bool {
     })
 }
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Get or create a `DefId` for a symbol.
     ///
     /// If the symbol already has a `DefId`, return it.
@@ -793,7 +793,7 @@ impl<'a> CheckerContext<'a> {
     /// On a successful borrow, first replays any previously-deferred writes (in
     /// order) so the env catches up, then applies `op`. On a borrow conflict,
     /// `op` is queued for later replay.
-    fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
+    pub(super) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
             Ok(mut env) => {
                 self.drain_deferred_flow_env_writes_into(&mut env);
