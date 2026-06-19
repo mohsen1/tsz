@@ -896,9 +896,20 @@ impl<'a> ScopeWalker<'a> {
                     refs.push(current);
                 }
             } else {
-                // It's a usage - resolve using CURRENT scope stack (O(1))
+                // It's a usage - resolve using CURRENT scope stack (O(1)).
+                //
+                // Identifiers in a *name* position that does not bind through
+                // the lexical scope chain (an object-literal property key, a
+                // property-access member name, the right side of a qualified
+                // name, or a binding-element source-property name) must not be
+                // matched against a same-named in-scope symbol: `tsc` resolves
+                // these through the containing object/namespace type, never the
+                // lexical scope. Private identifiers still route through
+                // `resolve_identifier`, which performs proper member resolution.
                 let resolved_sym = if node.kind == SyntaxKind::PrivateIdentifier as u16 {
                     self.binder.resolve_identifier(self.arena, current)
+                } else if self.is_non_lexical_name_position(current) {
+                    None
                 } else {
                     self.resolve_name(text)
                 };
@@ -929,6 +940,64 @@ impl<'a> ScopeWalker<'a> {
         // 4. Pop Scope
         if creates_scope {
             self.pop_scope();
+        }
+    }
+
+    /// Returns `true` when `node_idx` is an identifier occupying a *name*
+    /// position that does not resolve through the lexical scope chain.
+    ///
+    /// These positions denote a member/property of a containing
+    /// object/namespace type rather than a lexically-scoped binding, so they
+    /// must not be matched against a same-named in-scope symbol during
+    /// reference collection:
+    /// - an object-literal property key (`{ name: value }`),
+    /// - a property-access member name (`obj.name`),
+    /// - the right side of a qualified name (`ns.Name`),
+    /// - a binding-element source-property name (`const { name: local } = obj`),
+    /// - a type-member name in an interface or type literal
+    ///   (`interface I { name: T }`, `type O = { name: T }`),
+    /// - a JSX attribute name (`<C name={value} />`).
+    ///
+    /// Shorthand property assignments (`{ name }`) and computed property names
+    /// (`{ [name]: value }`) are deliberately excluded: their identifier *is* a
+    /// lexical value reference. Element-access arguments (`obj[name]`) are also
+    /// excluded for the same reason.
+    fn is_non_lexical_name_position(&self, node_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(node_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.arena.get(ext.parent) else {
+            return false;
+        };
+        match parent_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .arena
+                .get_access_expr(parent_node)
+                .is_some_and(|access| access.name_or_argument == node_idx),
+            k if k == syntax_kind_ext::QUALIFIED_NAME => self
+                .arena
+                .get_qualified_name(parent_node)
+                .is_some_and(|qual| qual.right == node_idx),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(parent_node)
+                .is_some_and(|prop| prop.name == node_idx),
+            k if k == syntax_kind_ext::BINDING_ELEMENT => self
+                .arena
+                .get_binding_element(parent_node)
+                .is_some_and(|binding| binding.property_name == node_idx),
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE
+                || k == syntax_kind_ext::METHOD_SIGNATURE =>
+            {
+                self.arena
+                    .get_signature(parent_node)
+                    .is_some_and(|sig| sig.name == node_idx)
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTE => self
+                .arena
+                .get_jsx_attribute(parent_node)
+                .is_some_and(|attr| attr.name == node_idx),
+            _ => false,
         }
     }
 }
