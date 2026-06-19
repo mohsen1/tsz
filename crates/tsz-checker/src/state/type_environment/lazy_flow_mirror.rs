@@ -17,6 +17,19 @@ impl CheckerState<'_> {
                 "try_insert_def_in_type_env: borrow failed; insert skipped"
             ),
         }
-        self.ctx.mirror_def_to_flow_env(def_id, type_id, params);
+        self.ctx
+            .mirror_def_in_type_environment(def_id, type_id, &params);
+    }
+
+    pub(super) fn mirror_application_def_resolution(
+        &self,
+        def_id: Option<DefId>,
+        resolved: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) {
+        if let Some(def_id) = def_id {
+            self.ctx
+                .mirror_def_in_type_environment(def_id, resolved, type_params);
+        }
     }
 }

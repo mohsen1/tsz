@@ -21,6 +21,18 @@ use crate::visitor::{
     union_list_id,
 };
 
+/// Work budget for one failure-explanation traversal; see
+/// [`SubtypeChecker::explain_eval_fuel`] (issue #13243).
+///
+/// Sized well above any legitimate single-diagnostic elaboration — the deepest
+/// `tsc`-parity chains drill at most a few hundred distinct sub-types — and far
+/// below the unbounded breadth of a pathological deeply-generic relation, so it
+/// never alters rendered diagnostics on terminating workloads while still
+/// bounding the explain pass on inputs that would otherwise not terminate. The
+/// magnitude mirrors the proven eval-fuel bound added to the diagnostic display
+/// pass in PR #13176.
+pub(crate) const EXPLAIN_EVAL_BUDGET: u32 = 16_000;
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Array element type, transparently peeling a single `readonly` array
     /// wrapper (`readonly T[]` / `ReadonlyArray<T>`).
@@ -195,12 +207,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
-        // Route the public entry through the guarded path so the recursion
-        // guard brackets every elaboration, including the nested branch /
-        // member / constraint explanations that call `explain_failure_guarded`
-        // directly. Bracketing only here would leave those nested paths
-        // unguarded (see `explain_failure_guarded`).
-        self.explain_failure_guarded(source, target)
+        // `explain_failure` is both the public entry *and* the recursion entry
+        // for nested member / element / branch elaborations (explain_function,
+        // explain_tuple, generics_application_helpers all call it). Only the
+        // outermost call initializes the per-failure work budget (#13243) — an
+        // already-active `Some(_)` fuel means a nested call, which shares the
+        // outer budget so the whole elaboration is bounded as one unit rather
+        // than refilling fuel at every level.
+        if self.explain_eval_fuel.is_some() {
+            return self.explain_failure_guarded(source, target);
+        }
+        self.explain_eval_fuel = Some(self.explain_budget);
+        // Route the entry through the guarded path so the recursion guard
+        // brackets every elaboration, including the nested branch / member /
+        // constraint explanations that call `explain_failure_guarded` directly.
+        let result = self.explain_failure_guarded(source, target);
+        self.explain_eval_fuel = None;
+        result
     }
 
     /// Guarded elaboration funnel. Every recursive elaboration path (object
@@ -217,6 +240,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        // Work budget exhausted (#13243): stop drilling and report the coarse
+        // verdict. The boolean relation already decided these types do not
+        // relate, so only elaboration detail is dropped — and only on
+        // pathological traversals that would otherwise not terminate. On
+        // terminating workloads the budget is never reached, so this is inert
+        // and rendered output is byte-identical.
+        if self.explain_eval_fuel == Some(0) {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
         let pair = (source, target);
         match self.guard.enter(pair) {
             crate::recursion::RecursionResult::Entered => {}

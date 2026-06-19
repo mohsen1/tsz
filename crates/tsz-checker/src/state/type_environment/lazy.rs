@@ -1594,21 +1594,8 @@ impl CheckerState<'_> {
                     env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
             }
-            // Mirror the def body into the flow-analyzer env. The evaluator-only
-            // `insert_def` above advances `type_env.def_types[def_id]` to the
-            // freshly-resolved body; without this mirror the flow-analyzer env
-            // keeps whatever body it was first given, and the vacancy-only
-            // file-prep reconciliation (`overlay_missing_from`) cannot repair a
-            // present-but-stale entry. The two envs then diverge on
-            // `def_types[def_id]` — the silent `DefId -> TypeId` divergence the
-            // #13086 reconciliation assertion guards against and a source of
-            // query-site-dependent wrong types (#13942 / #13944). The mirror
-            // performs no evaluator-side write or cache invalidation, so
-            // evaluator resolution order and cached results are unchanged.
-            if let Some(def_id) = def_id {
-                self.ctx
-                    .mirror_def_to_flow_env(def_id, resolved, type_params);
-            }
+            drop(env);
+            self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
             false
@@ -1965,12 +1952,13 @@ impl CheckerState<'_> {
                 env.insert_def(def_id, resolved);
                 // Mirror both writes into the flow-analyzer env so it does not
                 // retain a stale `def_types`/`class_instance_types` entry for this
-                // remapped def (see `mirror_def_to_flow_env`; #13086 / #13942).
+                // remapped def (see `mirror_def_in_type_environment`; #13086 / #13942).
                 if is_class {
-                    self.ctx.mirror_class_instance_to_flow_env(def_id, resolved);
+                    self.ctx
+                        .mirror_class_instance_in_type_environment(def_id, resolved);
                 }
                 self.ctx
-                    .mirror_def_to_flow_env(def_id, resolved, Vec::new());
+                    .mirror_def_in_type_environment(def_id, resolved, &[]);
             }
 
             Some((inserted, resolved))
