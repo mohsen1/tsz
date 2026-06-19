@@ -377,6 +377,27 @@ refresh_rust_source_mtimes_after_target_restore() {
   echo "Refreshed Rust source mtimes after Cargo target cache restore"
 }
 
+# Render a whole-second duration as a compact human age (e.g. "2d 3h", "4h 18m",
+# "37m"). Used by the staleness report so a wall-clock age is readable at a
+# glance in the dist-binaries job summary.
+format_duration() {
+  local secs="$1" days hours mins
+  if [[ ! "$secs" =~ ^[0-9]+$ ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+  days=$(( secs / 86400 )); secs=$(( secs % 86400 ))
+  hours=$(( secs / 3600 )); secs=$(( secs % 3600 ))
+  mins=$(( secs / 60 ))
+  if (( days > 0 )); then
+    printf '%dd %dh\n' "$days" "$hours"
+  elif (( hours > 0 )); then
+    printf '%dh %dm\n' "$hours" "$mins"
+  else
+    printf '%dm\n' "$mins"
+  fi
+}
+
 # Observability for #13747: how stale is the restored workspace-rlib baseline?
 #
 # The cargo-target-deps (dist-fast) blob is the only cross-commit reuse the
@@ -384,24 +405,51 @@ refresh_rust_source_mtimes_after_target_restore() {
 # rust_cache_refresh (Cargo.lock/Cargo.toml/.cargo/config.toml changes only),
 # so on a long run of source-only main pushes the workspace .rlibs inside it
 # drift many commits behind HEAD and Cargo recompiles the hot crates against an
-# old baseline every PR. We pack a tiny `.tsz-cache-commit` marker into the
-# blob at save time (no extra GCS object) and read it back here so the staleness
-# is measurable before we decide whether to broaden the save trigger.
+# old baseline every PR. The blob carries two markers (no extra GCS object):
+# `.tsz-cache-commit` (the build commit) and `.tsz-cache-built-at` (epoch
+# seconds), read back here so the staleness gating the #13747 rollout is
+# measurable before we decide whether to broaden the save trigger.
 #
-# Best-effort: never fails the build. dist-binaries checks out fetch-depth:1, so
-# `git rev-list` usually cannot resolve the blob commit — in that case we still
-# log both SHAs and report distance as unknown.
+# dist-binaries checks out fetch-depth:1, so `git rev-list` usually cannot
+# resolve the blob commit and the commit-distance reports "unknown" on the real
+# runner. The wall-clock age derived from `.tsz-cache-built-at` is depth-
+# independent, so it is always available — that is the number the measured
+# rollout decision actually needs. The line is echoed and, when running inside a
+# job, appended to GITHUB_STEP_SUMMARY so it is visible without log-diving.
+# Best-effort throughout: never fails the build.
 log_cargo_target_deps_staleness() {
-  local marker=".target/dist-fast/.tsz-cache-commit"
-  if [[ ! -f "$marker" ]]; then
-    echo "cargo-target-deps staleness: no commit marker in restored blob (pre-#13747 blob or cache miss)"
+  local commit_marker=".target/dist-fast/.tsz-cache-commit"
+  local built_at_marker=".target/dist-fast/.tsz-cache-built-at"
+  if [[ ! -f "$commit_marker" && ! -f "$built_at_marker" ]]; then
+    echo "cargo-target-deps staleness: no marker in restored blob (pre-#13747 blob or cache miss)"
     return 0
   fi
-  local blob_commit head_commit distance
-  blob_commit="$(tr -d '[:space:]' < "$marker" 2>/dev/null || true)"
+
+  local head_commit blob_commit="" distance="unknown" age="unknown"
   head_commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  distance="$(git rev-list --count "${blob_commit}..HEAD" 2>/dev/null || echo unknown)"
-  echo "cargo-target-deps staleness: blob built at ${blob_commit:-unknown}; HEAD ${head_commit}; workspace-rlib baseline is ${distance} commit(s) behind (#13747)"
+
+  if [[ -f "$commit_marker" ]]; then
+    blob_commit="$(tr -d '[:space:]' < "$commit_marker" 2>/dev/null || true)"
+    if [[ -n "$blob_commit" ]]; then
+      distance="$(git rev-list --count "${blob_commit}..HEAD" 2>/dev/null || echo unknown)"
+    fi
+  fi
+
+  if [[ -f "$built_at_marker" ]]; then
+    local built_at now
+    built_at="$(tr -cd '0-9' < "$built_at_marker" 2>/dev/null || true)"
+    now="$(date -u +%s 2>/dev/null || true)"
+    if [[ -n "$built_at" && -n "$now" && "$now" -ge "$built_at" ]]; then
+      age="$(format_duration "$(( now - built_at ))")"
+    fi
+  fi
+
+  local line
+  line="cargo-target-deps staleness: blob built at ${blob_commit:-unknown} (age ${age}); HEAD ${head_commit}; workspace-rlib baseline is ${distance} commit(s) behind (#13747)"
+  echo "$line"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '%s\n' "$line" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  fi
 }
 
 # save_archive <label> <gs://...> <base> <path...>
@@ -709,8 +757,16 @@ save_caches() {
     if [[ "$save_cargo_targets" == "1" || "$refresh_workspace_rlibs" == "1" ]]; then
       # Pack a tiny provenance marker into the blob so the next restore can
       # measure how stale this workspace-rlib baseline is (#13747). Best-effort.
+      #
+      # Two markers, because the consumer (dist-binaries) checks out with
+      # fetch-depth:1: `git rev-list blob..HEAD` almost never resolves the blob
+      # commit there, so a commit-distance alone reports "unknown" on the real
+      # runner. The epoch-seconds build time lets the restore report staleness as
+      # a wall-clock age regardless of clone depth, which is the signal the
+      # measured #13747 rollout decision actually needs.
       if [[ -d .target/dist-fast ]]; then
         printf '%s\n' "$commit" > .target/dist-fast/.tsz-cache-commit 2>/dev/null || true
+        date -u +%s > .target/dist-fast/.tsz-cache-built-at 2>/dev/null || true
       fi
       save_archive \
         "cargo-target-deps-${cargo_target_key}" \
@@ -800,4 +856,9 @@ main() {
   esac
 }
 
-main "$@"
+# Only dispatch when executed directly. Sourcing (e.g. from
+# test-gcp-cache-staleness.mjs) loads the helpers without running auth/IO so the
+# staleness reporting can be unit-tested in isolation.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
