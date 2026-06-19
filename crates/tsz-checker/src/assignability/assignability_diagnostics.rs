@@ -1182,10 +1182,14 @@ impl<'a> CheckerState<'a> {
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
         };
+        // Snapshot the unresolved-`Lazy` counter before the relation so
+        // `failure_memo_store` can refuse to persist an analysis that compared
+        // against a not-yet-registered def body (issue #12101 backstop).
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let (gate, capture) =
             check_assignable_gate_with_overrides(&inputs, &overrides, true, precomputed.as_ref());
         if let Some(capture) = capture {
-            self.failure_memo_store(memo_key, capture);
+            self.failure_memo_store(memo_key, capture, lazy_failures_at_entry);
         }
         if gate.related
             && let Some(reason) =
