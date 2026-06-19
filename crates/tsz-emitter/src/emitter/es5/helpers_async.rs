@@ -615,7 +615,7 @@ impl<'a> Printer<'a> {
         use crate::transforms::async_es5_ir::AsyncES5Transformer;
         use crate::transforms::ir_printer::IRPrinter;
         let mut transformer = AsyncES5Transformer::new(self.arena);
-        if let Some(text) = self.source_text {
+        if let Some(text) = self.source_text.or_else(|| self.source_text_for_map()) {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());

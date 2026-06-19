@@ -471,6 +471,52 @@ fn test_source_map_es5_generator_yield_operand_token_start() {
 }
 
 #[test]
+fn test_source_map_es5_generator_yield_astref_operand_not_duplicated() {
+    let source = "function* produce() {\n    yield /token/.test(input);\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let map_json = printer.generate_source_map_json().expect("source map");
+    let map_value: Value = serde_json::from_str(&map_json).expect("parse source map");
+    let mappings = map_value
+        .get("mappings")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let decoded = decode_mappings(mappings);
+
+    let (op_line, op_col) = find_line_col(source, "/token/");
+    let mapping = decoded
+        .iter()
+        .find(|entry| entry.original_line == op_line && entry.original_column == op_col)
+        .unwrap_or_else(|| panic!("expected regex operand mapping. mappings: {mappings}"));
+    let duplicate_count = decoded
+        .iter()
+        .filter(|entry| {
+            entry.generated_line == mapping.generated_line
+                && entry.generated_column == mapping.generated_column
+                && entry.original_line == op_line
+                && entry.original_column == op_col
+        })
+        .count();
+    assert_eq!(
+        duplicate_count, 1,
+        "expected one mapping for the ASTRef operand start. mappings: {mappings}"
+    );
+}
+
+#[test]
 fn test_source_map_names_array_multiple_identifiers() {
     let source = "function greet(name) { const message = 'Hello ' + name; return message; }";
     let (parser, root) = parse_test_source(source);
@@ -1756,4 +1802,3 @@ const result = format(["apple", "banana"]);"#;
         "expected non-empty source mappings for template literals"
     );
 }
-
