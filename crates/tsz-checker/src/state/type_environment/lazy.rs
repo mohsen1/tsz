@@ -1950,6 +1950,15 @@ impl CheckerState<'_> {
                     env.insert_class_instance_type(def_id, resolved);
                 }
                 env.insert_def(def_id, resolved);
+                // Mirror both writes into the flow-analyzer env so it does not
+                // retain a stale `def_types`/`class_instance_types` entry for this
+                // remapped def (see `mirror_def_in_type_environment`; #13086 / #13942).
+                if is_class {
+                    self.ctx
+                        .mirror_class_instance_in_type_environment(def_id, resolved);
+                }
+                self.ctx
+                    .mirror_def_in_type_environment(def_id, resolved, &[]);
             }
 
             Some((inserted, resolved))
