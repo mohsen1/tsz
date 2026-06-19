@@ -307,6 +307,13 @@ pub struct DeclarationEmitter<'a> {
     pub(super) suppress_current_statement_jsdoc_comments: bool,
     /// Local declarations emitted on-demand to support synthetic class base aliases.
     pub(super) emitted_synthetic_dependency_symbols: FxHashSet<SymbolId>,
+    /// Local declaration symbols that back a synthetic class-extends base alias
+    /// (e.g. `class C extends helper()<...>` whose base resolves to a local
+    /// `class`/`interface`). When usage analysis has not run (`used_symbols` is
+    /// `None`) the usage-based public-API filter cannot confirm these as live,
+    /// so they are recorded here and emitted in source order by the main
+    /// statement loop instead of being resurfaced out of order at the alias.
+    pub(super) synthetic_extends_alias_dependency_symbols: FxHashSet<SymbolId>,
     /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).
     pub(super) diagnostics: Vec<Diagnostic>,
     /// When true, skip TS2883 non-portable type reference checks.

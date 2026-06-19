@@ -13,6 +13,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Reset per-file emission state
         self.used_symbols = None;
         self.foreign_symbols = None;
+        self.synthetic_extends_alias_dependency_symbols.clear();
         self.import_name_map.clear();
         self.import_symbol_map.clear();
         self.import_string_aliases.clear();

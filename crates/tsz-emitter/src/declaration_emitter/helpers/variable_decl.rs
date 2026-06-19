@@ -1799,6 +1799,16 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol_id) = symbol_id else {
             return;
         };
+        // A backing local declaration recorded as a synthetic-extends-alias
+        // dependency is emitted in source order by the main statement loop
+        // (see `is_confirmed_public_api_dependency`). Resurfacing it inline here
+        // would either duplicate it or move it out of order, so skip it.
+        if self
+            .synthetic_extends_alias_dependency_symbols
+            .contains(&symbol_id)
+        {
+            return;
+        }
         if !self.emitted_synthetic_dependency_symbols.insert(symbol_id) {
             return;
         }
