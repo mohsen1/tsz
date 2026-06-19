@@ -1354,6 +1354,9 @@ mod ts2565_jsdoc_prototype_type_decl_tests;
 #[path = "tests/ts2590_array_literal_identity_skip_tests.rs"]
 mod ts2590_array_literal_identity_skip_tests;
 #[cfg(test)]
+#[path = "tests/ts2591_node_global_type_position_tests.rs"]
+mod ts2591_node_global_type_position_tests;
+#[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]
