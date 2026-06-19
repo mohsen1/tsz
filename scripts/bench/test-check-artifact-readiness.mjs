@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   REQUIRED_PROJECT_ROWS as ALL_REQUIRED_PROJECT_ROWS,
+  PROJECT_ROW_DEFINITIONS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
@@ -19,6 +20,9 @@ const REQUIRED_PROJECT_ROWS = ALL_REQUIRED_PROJECT_ROWS.filter(
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
+const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application")
+  .map((row) => row.name);
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -449,6 +453,52 @@ withTempDir((dir) => {
   assert.match(result.stderr, /0 successful project timing pair\(s\); required 1/);
 });
 console.log("✅ --require-project-timing-pairs fails all-crashed project artifacts");
+
+// ---------------------------------------------------------------------------
+// Test: --require-application-compat fails the public publish gate when the
+// benchmark artifact has timing rows but no application compatibility rows.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-application-compat"]);
+  assert.equal(result.status, 1, "publish gate should fail when application compat rows are absent");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.application_compatibility.required, true);
+  assert.equal(parsed.application_compatibility.row_count, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.present, 0);
+  assert.equal(parsed.application_compatibility.missing, APPLICATION_PROJECT_ROWS.length);
+  assert.match(result.stderr, /application compatibility incomplete/);
+  assert.match(result.stderr, new RegExp(`${APPLICATION_PROJECT_ROWS[0]} \\(missing\\)`));
+});
+console.log("✅ --require-application-compat fails missing application rows");
+
+// ---------------------------------------------------------------------------
+// Test: compile-only application rows with complete compatibility metadata pass
+// the application gate even though they are not timed by bench-vs-tsgo.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
+    makeRow(name, "green", {
+      errorStatus: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+    }),
+  );
+  writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+  const result = run(file, ["--json", "--require-application-compat"]);
+  assert.equal(result.status, 0, `complete application compatibility rows should pass:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.application_compatibility.present, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.complete, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.missing, 0);
+  assert.equal(parsed.application_compatibility.incomplete, 0);
+});
+console.log("✅ --require-application-compat accepts complete compile-only app rows");
 
 // ---------------------------------------------------------------------------
 // Test: --require-green fails when any present required row is red.

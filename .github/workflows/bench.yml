@@ -1632,6 +1632,7 @@ jobs:
           set -euo pipefail
           node scripts/bench/check-artifact-readiness.mjs \
             --json \
+            --require-application-compat \
             --require-project-timing-pairs=1 \
             "$GITHUB_WORKSPACE/bench-results.json" \
             > "$GITHUB_WORKSPACE/bench-results-readiness.json"
@@ -1663,6 +1664,7 @@ jobs:
           fi
           if [[ "${{ steps.readiness.outcome }}" != "success" ]]; then
             echo "Benchmark artifact readiness check did not pass; refusing to publish it as latest."
+            echo "This includes application compatibility rows, so the website will not publish an all-gray application group."
           fi
           exit 1
 
