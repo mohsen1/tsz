@@ -119,6 +119,165 @@ fn messageport_onmessage_event_clean() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Type-interner count harness (the perf side of #13937).
+//
+// `merge_lib_interface_heritage` over-materializing a lib-interface receiver's
+// transitive `extends` closure is invisible to a diagnostic-only guard: the
+// extra thousands of interned types are dropped after a single member lookup,
+// so diagnostics stay byte-identical while `tsz --extendedDiagnostics`'s "Types"
+// counter balloons. These guards make that count observable and bounded so the
+// lazy-heritage rework (#13933 producer / #13935 consumer / #13936
+// relation-input) can iterate locally on the actual lever instead of only the
+// diagnostic surface.
+//
+// Counts are the in-process analogue of `--extendedDiagnostics`; their absolute
+// value depends on the bundled stripped lib assets (smaller than the `dist`
+// binary's full-lib numbers), but is deterministic for a fixed lib set, so the
+// margins below are expressed relative to the trivial-file baseline rather than
+// hardcoded totals.
+// ---------------------------------------------------------------------------
+
+/// Trivial source whose interned-type count is the per-lib-set baseline floor
+/// every other count is measured against.
+const TRIVIAL_SOURCE: &str = "const c = 1; export {};";
+
+/// Max types a **lazy** lib-interface receiver may intern above the trivial
+/// baseline. Today (default bundle) `Document`/`HTMLElement`/`Node`
+/// annotations add ≤ ~440 over the floor, while the eager (un-deferred)
+/// heritage path adds ≥ ~`4_600`; `2_000` sits cleanly between, so a regression
+/// that re-materializes a lazy receiver's `extends` closure trips this bound
+/// long before it reaches the eager cost.
+const LAZY_RECEIVER_MARGIN: usize = 2_000;
+
+/// Ceiling (above baseline) for the interfaces that **currently** over-
+/// materialize — the lazy-heritage rework's target. Today the worst case
+/// (`Worker` + member access) adds ~`7_800` over the floor; this only guards
+/// against the count getting *worse*. When #13933/#13935/#13936 land and drop
+/// these under [`LAZY_RECEIVER_MARGIN`], move the affected cases into the
+/// lazy-floor guards above and tighten this ratchet.
+const EAGER_RECEIVER_CEILING: usize = 10_000;
+
+/// Interned-type count for `source` under the default lib bundle (strict),
+/// asserting no lazy-heritage hazard diagnostic surfaced first (a dropped base
+/// would corrupt both the count and the diagnostics).
+fn type_count(source: &str) -> usize {
+    use crate::test_utils::check_source_with_libs_type_count;
+    let libs = load_default_lib_files();
+    let (diagnostics, count) = check_source_with_libs_type_count(
+        source,
+        "guard.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let hazards: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .filter(|code| HERITAGE_HAZARD_CODES.contains(code))
+        .collect();
+    assert!(
+        hazards.is_empty(),
+        "type_count({source:?}) surfaced lazy-heritage hazard diagnostics {hazards:?}",
+    );
+    count
+}
+
+fn assert_lazy_receiver(label: &str, source: &str) {
+    let base = type_count(TRIVIAL_SOURCE);
+    let count = type_count(source);
+    assert!(
+        count <= base + LAZY_RECEIVER_MARGIN,
+        "{label}: interned {count} types (baseline {base}), exceeding the lazy ceiling \
+         {} — a lib-interface receiver that should resolve lazily is materializing its \
+         full heritage closure (#12101/#13933 regression)",
+        base + LAZY_RECEIVER_MARGIN,
+    );
+}
+
+/// The trivial-file baseline must not silently balloon (a regression there
+/// would mask every relative bound below).
+#[test]
+fn trivial_baseline_is_bounded() {
+    let base = type_count(TRIVIAL_SOURCE);
+    assert!(
+        base <= 1_500,
+        "trivial file interned {base} types; the baseline floor regressed",
+    );
+}
+
+/// `Document` (the shipped #12101 lazy-receiver win) stays at the lazy floor
+/// for both a bare annotation and a property read — member access must not
+/// force the receiver's heritage closure.
+#[test]
+fn document_receiver_stays_lazy() {
+    assert_lazy_receiver("Document annotation", "declare const d: Document; void d;");
+    assert_lazy_receiver(
+        "Document.title read",
+        "declare const d: Document; const t = d.title; void t;",
+    );
+}
+
+/// Property access on a lazy receiver must add no materialization over the bare
+/// annotation — the invariant that makes `document.title` cheap.
+#[test]
+fn property_access_adds_no_materialization() {
+    let annotation = type_count("declare const d: Document; void d;");
+    let property = type_count("declare const d: Document; const t = d.title; void t;");
+    assert!(
+        property <= annotation,
+        "Document.title interned {property} types vs {annotation} for the bare annotation; \
+         member access is forcing receiver materialization (#12101 regression)",
+    );
+}
+
+/// `HTMLElement` and `Node` resolve lazily today and must stay that way; the
+/// heritage rework must not regress the receivers that already win.
+#[test]
+fn htmlelement_and_node_receivers_stay_lazy() {
+    assert_lazy_receiver(
+        "HTMLElement annotation",
+        "declare const e: HTMLElement; void e;",
+    );
+    assert_lazy_receiver("Node annotation", "declare const n: Node; void n;");
+}
+
+/// Ratchet for the campaign-target interfaces (messaging / deep heritage) that
+/// over-materialize today. They sit above the lazy margin now; this only fails
+/// if the count grows past [`EAGER_RECEIVER_CEILING`]. The rework drives them
+/// under [`LAZY_RECEIVER_MARGIN`], at which point they graduate to the
+/// lazy-floor guards above.
+#[test]
+fn eager_receivers_stay_below_ratchet() {
+    let base = type_count(TRIVIAL_SOURCE);
+    let ceiling = base + EAGER_RECEIVER_CEILING;
+    for (label, source) in [
+        ("Worker annotation", "declare const w: Worker; void w;"),
+        (
+            "Worker.addEventListener",
+            "declare const w: Worker; w.addEventListener(\"message\", (e) => { void e.data; });",
+        ),
+        (
+            "MessagePort annotation",
+            "declare const p: MessagePort; void p;",
+        ),
+        (
+            "HTMLDivElement annotation",
+            "declare const e: HTMLDivElement; void e;",
+        ),
+    ] {
+        let count = type_count(source);
+        assert!(
+            count <= ceiling,
+            "{label}: interned {count} types (baseline {base}), exceeding the over-\
+             materialization ratchet {ceiling}; lib-interface heritage materialization \
+             regressed further (#13933/#13935/#13936)",
+        );
+    }
+}
+
 /// Floor sanity (#12158): an already-lazy own property read stays clean — the
 /// heritage rework must not regress the member-access laziness already shipped.
 #[test]
