@@ -1580,20 +1580,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // Mirror DefId mappings into type_environment (flow-analyzer env)
-            // so both environments stay consistent. The type_env block above
-            // handles SymbolRef + DefId writes to the evaluator env; this block
-            // ensures the flow-analyzer env also has the DefId entries.
-            //
-            // Route through the race-safe `mirror_to_flow_env` queue rather than a
-            // direct `try_borrow_mut`: during recursive resolution the
-            // flow-analyzer holds `type_environment` borrowed (narrowing) while
-            // the evaluator mutates `type_env`, so a direct mirror would *silently
-            // drop* this write, leaving the two envs disagreeing on the def's
-            // `TypeId` — the silent #13086 divergence the file-prep reconciliation
-            // guard reports (#13944). Building the ops first keeps the applied
-            // writes byte-identical to the previous direct path; only the
-            // borrow-contended case changes, from drop to defer-and-replay.
+            // Keep evaluator and flow-analyzer `DefId` entries aligned via the
+            // deferred queue, even during recursive narrowing borrows.
             if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                 let mut flow_ops: Vec<DeferredFlowEnvWrite> = Vec::new();
                 if let Some((instance_type, _)) = &class_env_entry {

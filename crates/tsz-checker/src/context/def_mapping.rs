@@ -817,19 +817,12 @@ impl<'a> CheckerContext<'a> {
     // The flow-env mirror was already deferred via `deferred_flow_env_writes`
     // (TODO #8269); the evaluator env now uses `deferred_eval_env_writes`.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
-    fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
+    pub(super) fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
         self.apply_to_eval_env(op.clone());
         self.mirror_to_flow_env(op);
     }
 
-    /// Apply (or defer) a single registration to the authoritative evaluator
-    /// env (`type_env`).
-    ///
-    /// On a successful borrow, first replays any previously-deferred evaluator
-    /// writes (in order) so the env catches up, then applies `op`. On a borrow
-    /// conflict (recursive resolution already holds `type_env`), `op` is queued
-    /// for later replay so neither the local cache nor the shared
-    /// `DefinitionStore` write-through is ever lost.
+    /// Apply (or defer) one registration to the authoritative evaluator env.
     fn apply_to_eval_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_env.try_borrow_mut() {
             Ok(mut env) => {
@@ -842,9 +835,7 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Replay every queued deferred evaluator-env write into an already-borrowed
-    /// evaluator env, clearing the queue. A single borrow: `take` leaves an
-    /// empty queue, so the loop is a no-op when nothing was deferred.
+    /// Replay queued evaluator-env writes into an already-borrowed env.
     fn drain_deferred_eval_env_writes_into(&self, env: &mut TypeEnvironment) {
         let pending = std::mem::take(&mut *self.deferred_eval_env_writes.borrow_mut());
         for op in pending {
@@ -1056,36 +1047,6 @@ impl<'a> CheckerContext<'a> {
             self.register_def_in_envs(def_id, body);
         } else {
             self.register_def_with_params_in_envs(def_id, body, params);
-        }
-    }
-
-    /// Register an already-resolved definition body in **both** type
-    /// environments via the race-safe deferred-write path, without touching the
-    /// shared `DefinitionStore` or running the body-rewrite cache sweeps.
-    ///
-    /// This is the env-only counterpart to [`Self::register_def_in_envs`], used
-    /// by the lazy-resolution path (`try_insert_def_in_type_env`) which
-    /// re-publishes a `DefId -> TypeId` mapping it just resolved. The crucial
-    /// difference from a direct `try_borrow_mut` write is that a mirror that
-    /// loses the `RefCell` borrow race during recursive resolution (the
-    /// flow-analyzer holds `type_environment` borrowed while the evaluator
-    /// mutates `type_env`) is *deferred and replayed* rather than silently
-    /// dropped. A dropped mirror leaves the two envs disagreeing on a shared
-    /// `DefId -> TypeId` entry — the silent #13086 divergence the file-prep
-    /// reconciliation guard reports (issue #13944). Routing through
-    /// [`Self::register_in_envs`] (the same path `register_def_in_envs` uses)
-    /// guarantees both envs converge on the authoritative latest body.
-    pub(crate) fn register_resolved_def_in_envs(&self, def_id: DefId, body: TypeId) {
-        let params = self.get_def_type_params(def_id).unwrap_or_default();
-        if params.is_empty() {
-            self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
-        } else {
-            self.register_in_envs(DeferredFlowEnvWrite::InsertDefWithParams {
-                def_id,
-                body,
-                params,
-                variances: None,
-            });
         }
     }
 
