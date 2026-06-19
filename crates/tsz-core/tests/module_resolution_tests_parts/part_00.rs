@@ -338,6 +338,92 @@ export const thing = parse();
     );
 }
 
+// Regression (#13826 sub-root #1, opposite-polarity parity gap): a static
+// `import` of an unresolved Node builtin must report the `@types/node` install
+// hint (TS2580) regardless of the `module` emit target. Node16/18/20/NodeNext
+// previously suppressed it silently, while every other module kind (and `tsc`)
+// reports TS2580/TS2591.
+#[test]
+fn test_node_module_kind_static_import_of_node_builtin_emits_ts2580() {
+    for module in [
+        crate::common::ModuleKind::Node16,
+        crate::common::ModuleKind::Node18,
+        crate::common::ModuleKind::Node20,
+        crate::common::ModuleKind::NodeNext,
+    ] {
+        let diags = check_with_module_not_found_errors(
+            r#"import { parse } from "url";
+export const thing = () => parse();
+"#,
+            "usage.ts",
+            vec![],
+            vec!["url"],
+            CheckerOptions {
+                module,
+                ..CheckerOptions::default()
+            },
+        );
+        assert!(
+            has_error_code(&diags, TS2580),
+            "{module:?} static import of unresolved Node builtin should emit TS2580 (not be silently suppressed), got: {diags:?}"
+        );
+        assert!(
+            no_error_code(&diags, TS2307),
+            "{module:?} Node builtin should use the TS2580 install hint, not TS2307, got: {diags:?}"
+        );
+    }
+}
+
+// The witnessed trpc specifier shape: a `node:`-scheme subpath builtin under
+// NodeNext that fails to resolve must surface the install hint rather than
+// staying silent.
+#[test]
+fn test_nodenext_node_scheme_subpath_builtin_emits_install_hint() {
+    let diags = check_with_module_not_found_errors(
+        r#"import { pipeline } from "node:stream/promises";
+export const run = () => pipeline;
+"#,
+        "usage.ts",
+        vec![],
+        vec!["node:stream/promises"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::NodeNext,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2580),
+        "NodeNext static import of unresolved node:stream/promises should emit the @types/node install hint, got: {diags:?}"
+    );
+}
+
+// Guard: removing the suppression must not over-report. A genuine non-builtin
+// bare package that fails to resolve under NodeNext must keep the plain
+// module-not-found path (TS2307), never the @types/node install hint.
+#[test]
+fn test_nodenext_non_builtin_bare_package_keeps_ts2307() {
+    let diags = check_with_module_not_found_errors(
+        r#"import { thing } from "definitely-not-a-node-builtin";
+export const use = () => thing;
+"#,
+        "usage.ts",
+        vec![],
+        vec!["definitely-not-a-node-builtin"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::NodeNext,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_module_not_found(&diags),
+        "NodeNext non-builtin bare package should keep a module-not-found error, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2580) && no_error_code(&diags, TS2591),
+        "NodeNext non-builtin bare package must not take the @types/node install-hint path, got: {diags:?}"
+    );
+}
+
 #[test]
 fn test_es_default_import_resolved() {
     let source = r#"import utils from "./utils";"#;

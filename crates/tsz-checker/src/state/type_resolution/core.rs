@@ -391,6 +391,56 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                // Namespace-qualified generic interface reference
+                // (`ns.Generic<Arg>`): build the application off the resolved
+                // member's primed `DefId` directly, mirroring the bare-name path
+                // (`ensure_def_ready_for_lowering` + `Application(Lazy(def),
+                // args)`). The generic `TypeLowering` path used below keys the
+                // application base to a *different* `DefId` than the one
+                // `ensure_def_ready_for_lowering` primes with the declared type
+                // parameters, so a qualified reference reached relation time with
+                // an empty `type_params` list on its base def and left every type
+                // parameter unsubstituted (a free `T`) — a false TS2322 on every
+                // `ns.Generic<...>` assignment.
+                //
+                // Scoped to a generic interface: its body resolves on demand
+                // from `Lazy(def)`, whereas classes carry a constructor/instance
+                // split and type aliases a distinct alias-body lowering path —
+                // both already handled by the existing path below. Gated on the
+                // member actually being generic (non-empty primed params) so
+                // non-generic qualified references keep their existing path and
+                // TS2315 arity diagnostics.
+                if has_type_args
+                    && let Some(args) = type_ref.type_arguments.as_ref()
+                    // Cheap `DefKind` gate (the def's kind is fixed at mint time)
+                    // before the more expensive param priming and qualified-name
+                    // build, so non-interface qualified references pay nothing.
+                    // `ensure_def_ready_for_lowering` returns this same `DefId`.
+                    && matches!(
+                        self.ctx
+                            .definition_store
+                            .get_kind(self.ctx.get_or_create_def_id(sym_id)),
+                        Some(tsz_solver::def::DefKind::Interface)
+                    )
+                {
+                    let qualified_name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let def_id = self.ensure_def_ready_for_lowering(sym_id, &qualified_name);
+                    if self
+                        .ctx
+                        .get_def_type_params(def_id)
+                        .is_some_and(|params| !params.is_empty())
+                    {
+                        let type_args: Vec<TypeId> = args
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        let base = self.ctx.types.factory().lazy(def_id);
+                        return self.ctx.types.factory().application(base, type_args);
+                    }
+                }
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
