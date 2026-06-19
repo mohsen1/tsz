@@ -274,3 +274,128 @@ emitter.emit("focus", "unexpected");
         "expected at least one error for extra arg on void event, got no errors"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #13956: the wrong-payload diagnostic must name the *evaluated value
+// element* of the inline-conditional rest spread, not the *key* element.
+//
+// Residual of #6475: the accept path correctly flattens the inline
+// `Conditional` rest element, but the failing-argument diagnostic display
+// re-derived the expected type via the generic-call literal-reconstruction
+// heuristic, which substituted the sibling `key` literal (whose widened base
+// coincided with the real `string` target). The reconstruction must be gated
+// to bare type-parameter slots, so a derived `value: Handlers[K]` slot keeps
+// its concrete `string` expected.
+// ---------------------------------------------------------------------------
+
+use tsz_checker::test_utils::check_source_code_messages;
+
+fn ts2345_message(source: &str) -> String {
+    let msgs = check_source_code_messages(source);
+    msgs.into_iter()
+        .find(|(code, _)| *code == 2345)
+        .map(|(_, m)| m)
+        .unwrap_or_else(|| panic!("expected a TS2345 for source:\n{source}"))
+}
+
+/// The exact witness: `run("log", 123)` must report `number` vs `string`
+/// (the evaluated `value: Handlers["log"]` element), never `123` vs `"log"`.
+#[test]
+fn inline_conditional_rest_spread_wrong_payload_names_value_element() {
+    let msg = ts2345_message(
+        r#"
+interface Handlers { log: string; stop: void; }
+declare function run<K extends keyof Handlers>(
+    ...args: [key: K, ...(Handlers[K] extends void ? [] : [value: Handlers[K]])]
+): void;
+run("log", 123);
+"#,
+    );
+    assert!(
+        msg.contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "expected the value-element target, got: {msg}"
+    );
+    assert!(
+        !msg.contains("\"log\""),
+        "must not report the payload against the key element, got: {msg}"
+    );
+}
+
+/// Renamed binders (anti-hardcoding): the fix is structural, not keyed on
+/// `Handlers`/`K`/`run`.
+#[test]
+fn inline_conditional_rest_spread_wrong_payload_renamed_binders() {
+    let msg = ts2345_message(
+        r#"
+interface Signals { resize: string; hide: void; }
+declare function dispatch<N extends keyof Signals>(
+    ...args: [name: N, ...(Signals[N] extends void ? [] : [payload: Signals[N]])]
+): void;
+dispatch("resize", 42);
+"#,
+    );
+    assert!(
+        msg.contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "renamed-binder inline conditional must name the value element, got: {msg}"
+    );
+    assert!(
+        !msg.contains("\"resize\""),
+        "must not name the key element, got: {msg}"
+    );
+}
+
+/// Method form with a structured (object) payload: the expected type is the
+/// structured `data` element, not the `event` key literal.
+#[test]
+fn inline_conditional_rest_spread_wrong_payload_structured_value() {
+    let msg = ts2345_message(
+        r#"
+interface Ev { click: { x: number; y: number }; focus: void; }
+declare class Emitter {
+    on<K extends keyof Ev>(
+        ...args: [event: K, ...(Ev[K] extends void ? [] : [data: Ev[K]])]
+    ): void;
+}
+declare const e: Emitter;
+e.on("click", "not-an-object");
+"#,
+    );
+    assert!(
+        msg.contains("{ x: number; y: number; }"),
+        "expected the structured value element as target, got: {msg}"
+    );
+    assert!(
+        !msg.contains("\"click\""),
+        "must not name the key element, got: {msg}"
+    );
+}
+
+/// Parity reference: the named-alias `Application` form already reported the
+/// right target; it must keep doing so (the value element, not the key).
+#[test]
+fn named_alias_rest_spread_wrong_payload_names_value_element() {
+    let msg = ts2345_message(
+        r#"
+type EventArgs<E, K extends keyof E> = E[K] extends void ? [] : [value: E[K]];
+interface Handlers { log: string; stop: void; }
+declare function run<K extends keyof Handlers>(...args: [key: K, ...EventArgs<Handlers, K>]): void;
+run("log", 123);
+"#,
+    );
+    assert!(
+        !msg.contains("\"log\""),
+        "named-alias form must not name the key element either, got: {msg}"
+    );
+}
+
+/// Guard the legitimate sibling-literal reconstruction the gate must preserve:
+/// for a *bare* type-parameter slot (`foo<T>(x: T, y: T)` with `T` exposed via
+/// the return type), the displayed expected stays the inferred literal `1`.
+#[test]
+fn bare_type_param_slot_still_reconstructs_sibling_literal() {
+    let msg = ts2345_message("function foo<T>(x: T, y: T): T { return y; }\nfoo(1, '');\n");
+    assert!(
+        msg.contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
+        "bare type-parameter slot must keep the inferred-literal display, got: {msg}"
+    );
+}

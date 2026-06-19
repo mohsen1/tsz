@@ -668,8 +668,36 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
     }
 
+    /// Whether the *declared* parameter occupying argument slot `index` in the
+    /// raw (uninstantiated) callee signature is a bare type parameter (e.g.
+    /// `y: T`), rather than a derived type that merely mentions one (e.g.
+    /// `value: Handlers[K]`, an indexed access that reduces to a concrete type).
+    ///
+    /// The sibling-literal reconstruction in
+    /// `preferred_literal_expected_for_mismatch` is only sound for a bare
+    /// type-parameter slot: there the displayed primitive *is* the widened
+    /// inference of that parameter, so a sibling literal that widens to it is a
+    /// genuine display candidate. When the slot is a derived type, the expected
+    /// primitive is an independent concrete type and must be shown verbatim.
+    fn mismatch_slot_is_bare_type_parameter(
+        &self,
+        callee_type: TypeId,
+        index: usize,
+        arg_count: usize,
+    ) -> bool {
+        let ctx = common::ContextualTypeContext::with_expected(self.ctx.types, callee_type);
+        ctx.get_parameter_type_for_call(index, arg_count)
+            .is_some_and(|param| {
+                crate::query_boundaries::checkers::generic::is_bare_type_parameter(
+                    self.ctx.types,
+                    param,
+                )
+            })
+    }
+
     fn preferred_literal_expected_for_mismatch(
         &self,
+        callee_type: TypeId,
         callee_has_declared_generic_signature: bool,
         arg_types: &[TypeId],
         args: &[NodeIndex],
@@ -711,6 +739,17 @@ impl<'a> CheckerState<'a> {
             return expected;
         }
         if !callee_has_declared_generic_signature {
+            return expected;
+        }
+        // Reconstructing a sibling literal in place of the expected primitive is
+        // only correct when the mismatch slot's declared parameter is a bare
+        // type parameter (e.g. `foo<T>(x: T, y: T); foo(1, '')` → `'""'`/`'1'`).
+        // For a slot whose declared type is derived (e.g.
+        // `...args: [key: K, ...(Handlers[K] extends void ? [] : [value: Handlers[K]])]`,
+        // where the payload slot reduces to a concrete `string`), the expected
+        // type is independent of the sibling `key` argument and must be kept.
+        if !self.mismatch_slot_is_bare_type_parameter(callee_type, mismatch_index, arg_types.len())
+        {
             return expected;
         }
         arg_types
@@ -1099,6 +1138,7 @@ impl<'a> CheckerState<'a> {
                         .generic_callable_mismatch_display_target(actual, expected)
                         .unwrap_or(expected);
                     self.preferred_literal_expected_for_mismatch(
+                        callee_type,
                         callee_has_declared_generic_signature,
                         arg_types,
                         args,
