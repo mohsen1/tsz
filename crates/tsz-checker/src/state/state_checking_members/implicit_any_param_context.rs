@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_variable_declaration(parent_node)
                     .map(|var_decl| var_decl.type_annotation)
-                    .filter(|type_annotation| type_annotation.is_some());
+                    .filter(tsz_parser::NodeIndex::is_some);
                 break;
             }
             if parent_kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
