@@ -489,17 +489,9 @@ impl BinderState {
             .pop()
             .expect("return_targets pushed before function body binding");
 
-        // Finalize: if the return label has antecedents, use it as current flow.
-        // This mirrors tsc's finishFlowLabel behavior.
-        if let Some(label_node) = self.flow_nodes.get(return_label) {
-            match label_node.antecedent.len() {
-                0 => self.current_flow = self.unreachable_flow,
-                1 => self.current_flow = label_node.antecedent[0],
-                _ => self.current_flow = return_label,
-            }
-        } else {
-            self.current_flow = self.unreachable_flow;
-        }
+        // Finalize the return label as current flow via the shared
+        // `finishFlowLabel` helper (also used by `bind_if_statement`'s merge label).
+        self.finish_flow_label(return_label);
     }
 
     /// Bind an arrow function expression - creates a scope and binds the body.

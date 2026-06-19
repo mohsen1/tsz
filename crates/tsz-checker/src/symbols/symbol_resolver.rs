@@ -888,6 +888,36 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> TypeSymbolResolution {
+        // A type-position identifier's resolution is determined by its lexical
+        // position (enclosing type-parameter scopes walked via `arena`) and the
+        // binder/lib symbol tables — all immutable for the context's lifetime —
+        // so the result is stable across every call for a given node. Memoize
+        // on node idx to collapse the repeated by-name scope walks that
+        // dominate recursive type evaluation (a recursive alias re-resolves the
+        // same body identifiers once per recursion level). The underlying
+        // `_uncached` resolver is side-effect free (its only mutation is a
+        // function-local `Cell`), so a cache hit is behavior-identical.
+        if let Some(cached) = self
+            .ctx
+            .type_position_resolution_cache
+            .borrow()
+            .get(&idx.0)
+            .copied()
+        {
+            return cached;
+        }
+        let resolved = self.resolve_identifier_symbol_in_type_position_uncached(idx);
+        self.ctx
+            .type_position_resolution_cache
+            .borrow_mut()
+            .insert(idx.0, resolved);
+        resolved
+    }
+
+    fn resolve_identifier_symbol_in_type_position_uncached(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
         let node = match self.ctx.arena.get(idx) {
             Some(node) => node,
             None => return TypeSymbolResolution::NotFound,
