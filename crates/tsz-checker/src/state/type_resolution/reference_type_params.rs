@@ -344,6 +344,62 @@ impl CheckerState<'_> {
         self.reference_import_alias_export_target(alias_symbol, expected_name)
     }
 
+    /// Canonical `DefId` for a bare type reference whose local symbol is an
+    /// import alias reaching its declaration through a barrel re-export
+    /// (`export { X } from` / `export type { X } from`).
+    ///
+    /// Follows the re-export chain to the declaring `(SymbolId, file)` and keys
+    /// the `DefId` to that declaration via
+    /// [`crate::context::CheckerContext::def_id_for_declaration_in_file`].
+    /// Returns `None` when the local symbol is not an import alias, the chain
+    /// has no resolvable file, or the declaration is a lib symbol (lib types
+    /// keep their canonical-lib `DefId` path).
+    ///
+    /// Without this, lowering keys the application's base `DefId` to an
+    /// intermediate re-export file (raw `SymbolId`s collide across binders),
+    /// minting a non-canonical def whose generic body is never registered — so
+    /// `Base<number>` stays an opaque `Application` with its type parameter
+    /// never substituted, producing a false `TS2322`. Scoped to interface/class
+    /// declarations (see the gate below). Mirrors the reference-aware heritage
+    /// path (#13803); refs #13212 / #10663.
+    pub(crate) fn reexported_declaration_def_id_for_lowering(
+        &self,
+        local_sym: SymbolId,
+        expected_name: &str,
+    ) -> Option<tsz_solver::def::DefId> {
+        let leaf_name = expected_name.rsplit('.').next().unwrap_or(expected_name);
+        let alias_symbol = self.ctx.binder.get_symbol(local_sym)?;
+        if !self.reference_symbol_is_import_alias(alias_symbol) {
+            return None;
+        }
+        let (decl_sym, Some(decl_file_idx)) =
+            self.reference_import_alias_export_target(alias_symbol, leaf_name)?
+        else {
+            return None;
+        };
+        if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_actual_or_cloned_lib(decl_sym) {
+            return None;
+        }
+        // Restrict to interface/class declarations. Their bodies resolve on
+        // demand at relation time once the `DefId` is keyed to the declaration,
+        // so canonicalization alone fixes the substitution. Re-exported generic
+        // *type aliases* need their body eagerly registered under the canonical
+        // `DefId` as well (a distinct path); leave them on the existing
+        // resolution so this change does not alter the alias path.
+        let decl_is_interface_or_class = self
+            .ctx
+            .get_binder_for_file(decl_file_idx)
+            .and_then(|binder| binder.get_symbol(decl_sym))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS)
+            });
+        if !decl_is_interface_or_class {
+            return None;
+        }
+        self.ctx
+            .def_id_for_declaration_in_file(decl_sym, decl_file_idx, leaf_name)
+    }
+
     pub(crate) fn reference_import_alias_export_target(
         &self,
         alias_symbol: &tsz_binder::Symbol,
