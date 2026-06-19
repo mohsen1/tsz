@@ -283,6 +283,10 @@ name = "generator_downlevel_iteration_for_of_tests"
 path = "tests/generator_downlevel_iteration_for_of_tests.rs"
 
 [[test]]
+name = "generator_yield_star_es5_tests"
+path = "tests/generator_yield_star_es5_tests.rs"
+
+[[test]]
 name = "async_try_emit"
 path = "tests/async_try_emit.rs"
 

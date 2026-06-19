@@ -954,6 +954,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 return;
             }
 
+            // A delegating `yield* expr` in a (non-async) generator lowers to the
+            // `__values`-wrapped delegate with op 5 (`yield**`), matching tsc; the
+            // `__values` helper is requested by the lowering pass. A plain `yield`
+            // (and `await`) uses op 4. Async generators take the dedicated
+            // `process_async_generator_yield_expression` path above.
+            let is_yield_star = self.generator_mode
+                && node.kind == syntax_kind_ext::YIELD_EXPRESSION
+                && await_expr.asterisk_token;
+
             // Get the awaited expression. A bare generator `yield;` lowers to
             // `[4 /*yield*/]`, while `await;` keeps the historical empty
             // operand shape for invalid/recovered async input.
@@ -964,6 +973,13 @@ impl<'a> AsyncES5Transformer<'a> {
                 None
             } else if await_expr.expression.is_none() {
                 Some(IRNode::Raw("".to_string().into()))
+            } else if is_yield_star {
+                // `yield* x` delegates iteration: wrap the operand in `__values(x)`
+                // so the runtime drives the delegate's iterator protocol.
+                Some(IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__values".into())),
+                    arguments: vec![self.generator_yield_operand_to_ir(await_expr.expression)],
+                })
             } else if self.generator_mode && node.kind == syntax_kind_ext::YIELD_EXPRESSION {
                 Some(self.generator_yield_operand_to_ir(await_expr.expression))
             } else {
@@ -981,12 +997,17 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             };
 
-            // Emit: return [4 /*yield*/, operand];
+            // Emit: return [4 /*yield*/, operand] (or [5 /*yield**/, __values(...)]).
+            let (opcode, comment) = if is_yield_star {
+                (opcodes::YIELD_STAR, "yield*")
+            } else {
+                (opcodes::YIELD, "yield")
+            };
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
-                    opcode: opcodes::YIELD,
+                    opcode,
                     value: operand.map(Box::new),
-                    comment: Some("yield".to_string().into()),
+                    comment: Some(comment.to_string().into()),
                 },
             ))));
             if let Some(comment) = trailing_comment {
