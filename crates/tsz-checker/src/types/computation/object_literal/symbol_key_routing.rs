@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
         (is_string_named, is_symbol_named, single_quoted_name)
     }
 
-    pub(super) fn object_literal_computed_key_is_wide_symbol(
+    pub(crate) fn object_literal_computed_key_is_wide_symbol(
         &mut self,
         name_idx: NodeIndex,
     ) -> bool {

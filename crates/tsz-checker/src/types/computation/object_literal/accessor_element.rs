@@ -15,6 +15,10 @@ pub(super) struct ObjectLiteralAccessorContext<'b> {
     pub(super) marker_this_type: Option<TypeId>,
     pub(super) skip_duplicate_check: bool,
     pub(super) partial_initializer_stack_index: Option<usize>,
+    /// Non-method members declared after this accessor; spliced into the
+    /// accessor's synthetic `this` so `this.<laterMember>` resolves like the
+    /// full object literal (see `object_literal_trailing_member_props`).
+    pub(super) trailing_member_props: &'b FxHashMap<Atom, PropertyInfo>,
 }
 
 pub(super) struct ObjectLiteralAccessorState<'b> {
@@ -41,6 +45,7 @@ impl<'a> CheckerState<'a> {
             marker_this_type,
             skip_duplicate_check,
             partial_initializer_stack_index,
+            trailing_member_props,
         } = context;
         let properties = state.properties;
         let setter_names = state.setter_names;
@@ -141,6 +146,9 @@ impl<'a> CheckerState<'a> {
             let mut pushed_synthetic_this = false;
             if marker_this_type.is_none() {
                 let mut this_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+                // Splice in members declared after this accessor so that
+                // `this.<laterMember>` resolves like the complete object literal.
+                Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
                 let name_atom = self.ctx.types.intern_string(&name);
                 if !this_props.iter().any(|p| p.name == name_atom) {
                     // Getter-only accessors are readonly in the object type

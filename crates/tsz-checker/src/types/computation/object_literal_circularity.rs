@@ -8,6 +8,212 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    /// Whether an object-literal member, when its body is checked, binds the
+    /// synthetic object-literal `this` type — i.e. a member whose `this` refers
+    /// to the surrounding object literal rather than the enclosing scope.
+    ///
+    /// Methods, get/set accessors, and `function`-expression property
+    /// initializers all capture the object as `this`. Arrow-function property
+    /// initializers do NOT: an arrow inherits `this` lexically from the
+    /// enclosing scope, so a data member declared after an arrow is irrelevant
+    /// to that arrow's `this`.
+    fn object_literal_member_captures_synthetic_this(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return false;
+        };
+        if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+            || elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            return true;
+        }
+        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+            return false;
+        };
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        self.ctx
+            .arena
+            .get(initializer)
+            .is_some_and(|init_node| init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+    }
+
+    /// Best-effort `PropertyInfo` entries for the object literal's non-method
+    /// members (data properties, shorthands, and accessors) declared *after* the
+    /// first `this`-capturing callable member.
+    ///
+    /// `tsc` types `this` inside an object-literal method/accessor/function
+    /// property as the *complete* object literal type. tsz instead builds the
+    /// synthetic `this` incrementally, so a member declared after the callable
+    /// is invisible to it, producing spurious `TS2339` (and the consequent
+    /// `TS7023` circular-return diagnostic) on `this.<laterMember>`. Members
+    /// declared *before* the first callable are already present in the
+    /// incremental `properties` map by the time the callable body is checked,
+    /// and method / `function` / arrow-function members are already represented
+    /// in `obj_all_method_names`, so only the trailing non-method members need a
+    /// prescan.
+    ///
+    /// The prescan is deliberately free of expression-checker side effects: it
+    /// never invokes `get_type_of_node` (which would populate `node_types` and
+    /// suppress the main loop's diagnostics on the subsequent authoritative
+    /// pass). Trailing data properties with a literal initializer get their
+    /// precise widened type via `literal_type_from_initializer`; every other
+    /// trailing member is recorded as `any`, which is enough to make the member
+    /// *exist* on `this` (clearing the spurious error) without ever introducing
+    /// a new diagnostic.
+    pub(super) fn object_literal_trailing_member_props(
+        &mut self,
+        elements: &[NodeIndex],
+    ) -> FxHashMap<Atom, tsz_solver::PropertyInfo> {
+        let mut result: FxHashMap<Atom, tsz_solver::PropertyInfo> = FxHashMap::default();
+        let Some(first_callable_pos) = elements
+            .iter()
+            .position(|&elem_idx| self.object_literal_member_captures_synthetic_this(elem_idx))
+        else {
+            return result;
+        };
+        // Common arrangement ("data first, methods last"): nothing is declared
+        // after the only/last callable, so the incremental `properties` map is
+        // already complete and no prescan work is needed.
+        if first_callable_pos + 1 >= elements.len() {
+            return result;
+        }
+
+        // Names declared with a `set` accessor anywhere in the literal — a
+        // trailing get-accessor is only `readonly` when it has no paired setter.
+        let setter_names: FxHashSet<Atom> = elements
+            .iter()
+            .filter_map(|&elem_idx| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+                if elem_node.kind != syntax_kind_ext::SET_ACCESSOR {
+                    return None;
+                }
+                let accessor = self.ctx.arena.get_accessor(elem_node)?;
+                self.get_property_name_resolved(accessor.name)
+                    .map(|name| self.ctx.types.intern_string(&name))
+            })
+            .collect();
+
+        let in_const = self.ctx.in_const_assertion;
+        for (pos, &elem_idx) in elements.iter().enumerate().skip(first_callable_pos + 1) {
+            let Some((name_atom, type_id, readonly)) =
+                self.object_literal_trailing_member_prop_entry(elem_idx, &setter_names)
+            else {
+                continue;
+            };
+            result.insert(
+                name_atom,
+                tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: readonly || in_const,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: (pos + 1) as u32,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                },
+            );
+        }
+        result
+    }
+
+    /// Compute `(name, read_type, readonly)` for a single trailing non-method
+    /// member, or `None` when the member is already represented elsewhere
+    /// (methods / `function` / arrow properties) or carries no statically
+    /// resolvable name.
+    fn object_literal_trailing_member_prop_entry(
+        &mut self,
+        elem_idx: NodeIndex,
+        setter_names: &FxHashSet<Atom>,
+    ) -> Option<(Atom, TypeId, bool)> {
+        let elem_node = self.ctx.arena.get(elem_idx)?;
+
+        // Accessors contribute a data-shaped property read through `this`.
+        if elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let accessor_name = self.ctx.arena.get_accessor(elem_node)?.name;
+            if self.object_literal_computed_key_is_wide_symbol(accessor_name) {
+                return None;
+            }
+            let name = self.get_property_name_resolved(accessor_name)?;
+            let name_atom = self.ctx.types.intern_string(&name);
+            // Read type is left as `any`: the member only needs to *exist* on
+            // the synthetic `this` to clear the spurious error, and inferring an
+            // un-annotated accessor body here would re-run the checker.
+            let readonly = elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && !setter_names.contains(&name_atom);
+            return Some((name_atom, TypeId::ANY, readonly));
+        }
+
+        // Shorthand property: { x } — the value is an outer binding; record the
+        // member as existing without resolving its symbol (which would touch the
+        // node cache / flow diagnostics).
+        if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            let shorthand = self.ctx.arena.get_shorthand_property(elem_node)?;
+            let ident = self
+                .ctx
+                .arena
+                .get(shorthand.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))?;
+            let name_atom = self.ctx.types.intern_string(&ident.escaped_text);
+            return Some((name_atom, TypeId::ANY, false));
+        }
+
+        // Data property assignment. `function`/arrow initializers are already
+        // represented in `obj_all_method_names`, so they are skipped here.
+        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        if self.ctx.arena.get(initializer).is_some_and(|init_node| {
+            init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        }) {
+            return None;
+        }
+        if self.object_literal_computed_key_is_wide_symbol(prop.name) {
+            return None;
+        }
+        let name = self.get_property_name_resolved(prop.name)?;
+        let name_atom = self.ctx.types.intern_string(&name);
+        // A literal initializer has a statically known type; an object-literal
+        // data property widens it (e.g. `v: 1` → `number`). Anything else stays
+        // `any` (member exists, no spurious error). `as const` / type-assertion
+        // initializers are non-widening, but `literal_type_from_initializer`
+        // does not descend into assertion nodes, so those fall through to `any`.
+        let type_id = match self.literal_type_from_initializer(prop.initializer) {
+            Some(literal) => self.widen_literal_type(literal),
+            None => TypeId::ANY,
+        };
+        Some((name_atom, type_id, false))
+    }
+
+    /// Merge trailing-member entries into a synthetic-`this` property vector,
+    /// skipping any name already present (earlier members and methods take
+    /// precedence). The entries already carry their final `readonly` flag (the
+    /// `const`-assertion case is baked in by `object_literal_trailing_member_props`).
+    pub(crate) fn merge_trailing_member_props(
+        this_props: &mut Vec<tsz_solver::PropertyInfo>,
+        trailing_member_props: &FxHashMap<Atom, tsz_solver::PropertyInfo>,
+    ) {
+        for (&name_atom, info) in trailing_member_props {
+            if this_props.iter().any(|p| p.name == name_atom) {
+                continue;
+            }
+            this_props.push(info.clone());
+        }
+    }
+
     pub(super) fn object_literal_callable_member_names(
         &mut self,
         elements: &[NodeIndex],
@@ -412,6 +618,10 @@ impl<'a> CheckerState<'a> {
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
         obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
+        trailing_member_props: &rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            tsz_solver::PropertyInfo,
+        >,
         current_method_idx: NodeIndex,
         current_method_name: &str,
         current_method_type_override: Option<TypeId>,
@@ -423,6 +633,10 @@ impl<'a> CheckerState<'a> {
                 prop.readonly = true;
             }
         }
+
+        // Members declared after the current method are not yet in `properties`;
+        // splice them in so `this.<laterMember>` resolves like the full object.
+        Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
 
         let current_method_name_atom = self.ctx.types.intern_string(current_method_name);
         for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
@@ -600,6 +814,10 @@ impl<'a> CheckerState<'a> {
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
         obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
+        trailing_member_props: &rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            tsz_solver::PropertyInfo,
+        >,
         _current_property_name: &str,
     ) -> TypeId {
         let mut this_props: Vec<tsz_solver::PropertyInfo> = properties.values().cloned().collect();
@@ -609,6 +827,10 @@ impl<'a> CheckerState<'a> {
                 prop.readonly = true;
             }
         }
+
+        // Members declared after this function-expression property are not yet
+        // in `properties`; splice them in so `this.<laterMember>` resolves.
+        Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
 
         // Add placeholder callable types for pre-scanned method declarations
         for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
