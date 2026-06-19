@@ -9,6 +9,7 @@ pub(crate) enum TypeOnlyKind {
 }
 
 // Submodules
+pub(crate) mod apparent_type_display;
 pub(crate) mod assignability;
 mod assignability_alias_display;
 mod assignability_anchor_helpers;
@@ -42,7 +43,7 @@ mod name_resolution;
 mod noinfer_diagnostic_display;
 mod operator_errors;
 mod primitive_intersection_display;
-pub(crate) mod properties;
+mod properties;
 mod property_receiver_formatting;
 mod recursive_alias_display;
 mod render_failure;

@@ -695,7 +695,11 @@ impl<'a> CheckerState<'a> {
             // does this; share the same mapping here so element access matches.
             // For a type parameter `display_object_type` is its constraint, so a
             // `T extends number` receiver also widens to `Number`, matching tsc.
-            .or_else(|| super::apparent_intrinsic_type_display(display_object_type))
+            .or_else(|| {
+                crate::error_reporter::apparent_type_display::apparent_intrinsic_type_display(
+                    display_object_type,
+                )
+            })
             .unwrap_or_else(|| {
                 self.property_receiver_display_for_node(display_object_type, expr_idx)
             });

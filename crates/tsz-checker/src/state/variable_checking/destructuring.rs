@@ -1535,7 +1535,7 @@ impl<'a> CheckerState<'a> {
                             // patterns like `var { a } = "s"` report `type 'String'`
                             // rather than the raw `type 'string'`.
                             let apparent_type_display =
-                                crate::error_reporter::properties::apparent_intrinsic_type_display(
+                                crate::error_reporter::apparent_type_display::apparent_intrinsic_type_display(
                                     parent_type,
                                 );
                             if let Some(ce) = computed_expr {
