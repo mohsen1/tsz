@@ -661,6 +661,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.silent_depth_bailed
     }
 
+    /// Whether this run evaluated an application whose base `DefId` had no
+    /// resolvable body (the registration-window artifact tracked by
+    /// `unresolved_def_seen`).
+    ///
+    /// A result computed while a consumed `DefId` was still unresolved is a
+    /// function of the *registration window* it ran in, not of the input
+    /// `TypeId` alone: once the declaring file registers the real body, a fresh
+    /// evaluation produces a different (correct) answer. Callers that persist
+    /// the result in a cache keyed purely on the input `TypeId` — with no
+    /// generation/registration guard — must consult this flag and skip the
+    /// write, or the under-resolved answer permanently shadows the correct one.
+    /// This is the public counterpart of the in-module `unresolved_def_seen`,
+    /// exposed for the env-eval cache-poisoning backstop (issue #12101).
+    #[inline]
+    pub const fn is_unresolved_def_seen(&self) -> bool {
+        self.unresolved_def_seen
+    }
+
     /// Whether this run hit any recursion / depth / iteration limit.
     ///
     /// Single source of truth for the three flags that mark a result as a

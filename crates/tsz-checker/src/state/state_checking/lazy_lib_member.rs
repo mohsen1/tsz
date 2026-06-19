@@ -81,6 +81,39 @@ pub(crate) fn global_lazy_receiver_preserve_disabled() -> bool {
     })
 }
 
+/// Kill-switch for the planned on-demand lib-reference *forcing* rework
+/// (issue #12101). Set `TSZ_DISABLE_ON_DEMAND_FORCING=1` to force the legacy
+/// eager `ensure_refs_resolved` pre-walk once the forcing path lands, enabling
+/// byte-identical diagnostic comparison between the eager and on-demand paths.
+///
+/// # Status
+///
+/// Scaffolding only. No caller gates on this flag yet: the on-demand forcing
+/// path (Steps 4-9 of the rework) is not implemented. The companion
+/// cache-poisoning backstop (suppressing the `env_eval_cache` write when an
+/// evaluation observed an unresolved `DefId`) is installed and inert today
+/// because the current eager pre-walk pre-resolves every referenced `DefId`
+/// before a committed relation, so `unresolved_def_seen` never fires. This
+/// kill-switch becomes live only when the eager pre-walk is later removed.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+// Scaffolding for the #12101 on-demand-forcing rework; the gating caller lands
+// with Steps 4-9. `expect` (not `allow`) is deliberate: it self-clears — once a
+// caller exists the unfulfilled-lint warning forces this attribute's removal.
+#[expect(
+    dead_code,
+    reason = "on-demand-forcing kill-switch caller lands in #12101 Steps 4-9"
+)]
+pub(crate) fn on_demand_forcing_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_ON_DEMAND_FORCING")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`

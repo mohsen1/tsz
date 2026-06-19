@@ -172,6 +172,21 @@ impl CheckerState<'_> {
         let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
 
         let mut depth_exceeded = false;
+        // Cache-poisoning backstop (issue #12101): OR-accumulated across both
+        // evaluation passes, exactly like `depth_exceeded`. Set when an
+        // application's base `DefId` had no resolvable body during the pass, so
+        // the `result` is a function of the registration window it ran in, not
+        // of `type_id` alone. The authoritative env-eval memo
+        // (`cache_env_eval_result`) is keyed purely on `type_id` with no
+        // generation guard, so persisting such a result would permanently
+        // shadow the correct answer once the declaring file registers the real
+        // body — see the write-suppression below.
+        //
+        // Inert today: the eager `ensure_refs_resolved` pre-walk above
+        // pre-resolves every referenced `DefId` before a committed relation, so
+        // this flag stays `false` on every current path. It becomes live only
+        // when the on-demand forcing rework removes that pre-walk.
+        let mut unresolved_def_seen = false;
         let first_pass_silent_bailed;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
@@ -203,6 +218,7 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            unresolved_def_seen |= eval_result.unresolved_def_seen;
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
             // Persist intermediate evaluation results to the shared cache.
             // Skip entries whose result contains unbound `infer` types or type queries.
@@ -316,6 +332,7 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            unresolved_def_seen |= eval_result.unresolved_def_seen;
             if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
@@ -330,7 +347,19 @@ impl CheckerState<'_> {
 
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
+        //
+        // Cache-poisoning backstop (issue #12101): also suppress the write when
+        // either pass observed an unresolved application base `DefId`
+        // (`unresolved_def_seen`). The env-eval memo is keyed purely on
+        // `type_id` with no generation/registration guard, so persisting a
+        // result derived from a not-yet-registered body would permanently
+        // shadow the correct answer once that body is registered — mirroring
+        // the per-application epoch guard the solver's `application_eval_cache`
+        // already applies via `mark_unresolved_def_seen`. Inert today (the
+        // eager pre-walk keeps `unresolved_def_seen` false); becomes load-
+        // bearing only when the on-demand forcing rework drops the pre-walk.
         if use_cache
+            && !unresolved_def_seen
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
