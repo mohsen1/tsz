@@ -310,6 +310,119 @@ fn hash_prefix_without_paths_still_uses_package_imports() {
 }
 
 #[test]
+fn hash_prefix_imports_resolve_only_against_nearest_package_scope() {
+    // Per Node.js LOOKUP_PACKAGE_SCOPE, a `#`-import resolves only against the
+    // nearest enclosing package.json. When that nearest scope has no `imports`
+    // field, resolution fails — the resolver must NOT keep walking up to an
+    // ancestor package whose `imports` happens to define the specifier. This is
+    // the monorepo shape: a nested package without `imports`, under a root
+    // package that defines `#shared`.
+    let dir = TempDir::new().expect("temp dir creation should succeed in test");
+    let dir = dir.path();
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    // Root package DOES define `#/shared`, with a real target on disk.
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","type":"module","imports":{"#/shared":"./shared.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.ts"), "").unwrap();
+
+    // Nearest scope for the importer has NO `imports` field.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner","type":"module"}"##,
+    )
+    .unwrap();
+
+    let options = resolve_options(CompilerOptions {
+        module_resolution: Some("nodenext".to_string()),
+        module: Some("nodenext".to_string()),
+        ..Default::default()
+    });
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("packages/inner/src/main.ts"),
+        "#/shared",
+        &options,
+        dir,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(
+        resolved, None,
+        "#/shared must not resolve against the ancestor root package once a \
+         nearer package scope (without a matching import) is found"
+    );
+}
+
+#[test]
+fn hash_prefix_imports_no_match_in_nearest_scope_does_not_reach_ancestor() {
+    // Variant: the nearest scope HAS an `imports` map, but no matching key.
+    // tsc fails here too — it does not continue to ancestor package scopes.
+    let dir = TempDir::new().expect("temp dir creation should succeed in test");
+    let dir = dir.path();
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","type":"module","imports":{"#/shared":"./shared.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.ts"), "").unwrap();
+
+    // Nearest scope defines only an unrelated `#/local` key.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner","type":"module","imports":{"#/local":"./local.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("packages/inner/local.ts"), "").unwrap();
+
+    let options = resolve_options(CompilerOptions {
+        module_resolution: Some("nodenext".to_string()),
+        module: Some("nodenext".to_string()),
+        ..Default::default()
+    });
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    // The nearest scope's own key resolves fine.
+    let local = resolve_module_specifier(
+        &dir.join("packages/inner/src/main.ts"),
+        "#/local",
+        &options,
+        dir,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(
+        local.map(|path| canonicalize_or_owned(&path)),
+        Some(canonicalize_or_owned(&dir.join("packages/inner/local.ts"))),
+        "#/local must resolve against the nearest package scope"
+    );
+
+    // But the ancestor-only `#/shared` must not be reached.
+    let shared = resolve_module_specifier(
+        &dir.join("packages/inner/src/main.ts"),
+        "#/shared",
+        &options,
+        dir,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(
+        shared, None,
+        "#/shared (defined only in the ancestor) must not fall through past the \
+         nearest import-bearing scope"
+    );
+}
+
+#[test]
 fn hash_prefix_invalid_for_node16_still_blocked_for_imports_after_paths_miss() {
     // In `node16` resolution, the bare `#/foo` form is invalid for package
     // imports. If `paths` doesn't match either, the function must return

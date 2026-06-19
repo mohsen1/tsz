@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_solver::def::DefId;
@@ -120,6 +120,9 @@ pub struct TypeReferenceValidationCaches {
     /// Type-reference argument validations that completed without diagnostics
     /// in the current lexical type-parameter scope.
     pub arg_validation: FxHashSet<(u32, u32, u64)>,
+    /// Stable results for bare type-parameter base constraint checks in the
+    /// current file session.
+    pub bare_param_base_inst_constraint: FxHashMap<(TypeId, TypeId, TypeId, u16, bool), bool>,
     /// Type-node validations that completed without diagnostics in the
     /// current lexical type-parameter scope and active alias-resolution
     /// context.
@@ -147,6 +150,12 @@ pub struct TypeReferenceValidationCaches {
     /// underneath `conditional_branch_constraint` because different conditional
     /// aliases can expose the same mapped-object branch/value constraint pair.
     pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Successful conditional true-branch constraint relations for prepared
+    /// source/target types in the current file session.
+    pub conditional_true_branch_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
+    /// Results for syntactic conditional true-branch narrowing proofs keyed by
+    /// `(arg node, constraint, type-parameter scope, active alias set)`.
+    pub conditional_true_branch_narrowing: FxHashMap<(u32, TypeId, u64, u64), bool>,
     /// Type-parameter default/constraint validations that completed without
     /// diagnostics for the active checker file.
     pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>,
@@ -194,6 +203,8 @@ pub struct SharedConstraintProofCache {
     pub conditional_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
     /// Mirror of `indexed_object_map_branch_constraint`, `true` results only.
     pub indexed_object_map_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
+    /// Mirror of `conditional_true_branch_relation_successes`.
+    pub conditional_true_branch_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
@@ -481,32 +492,42 @@ impl NarrowableIdentifierCache {
 /// scales with total program symbols even when a checker touches only a small
 /// subset. Keep the cache sparse and Arc-backed so child checkers can inherit a
 /// read snapshot cheaply; writes copy-on-write only the populated entries.
+///
+/// The map and version counter sit behind interior mutability
+/// (`RefCell`/`Cell`) so writes (`insert`/`remove`/`entry_or_insert`/`extend`)
+/// run through `&self`. This lets an on-demand `&self` forcing resolver
+/// (#12101) publish a resolved symbol type without a `&mut` borrow of the whole
+/// checker. The mutation discipline is otherwise byte-for-byte identical to the
+/// previous `&mut` API — including the monotonic `version()` semantics: no-op
+/// writes never bump, and every write that can change a lookup result bumps
+/// exactly once. `get` returns a copied `TypeId` (the value is `Copy`) because a
+/// `RefCell` borrow guard cannot escape the call.
 #[derive(Clone, Debug, Default)]
 pub struct SymbolTypeCache {
-    data: Arc<FxHashMap<SymbolId, TypeId>>,
+    data: RefCell<Arc<FxHashMap<SymbolId, TypeId>>>,
     /// Monotonic mutation counter. Consumers (the assignability evaluation
     /// memo) treat a version change as "any previously observed symbol type
     /// may have changed"; reads never bump it.
-    version: u64,
+    version: Cell<u64>,
 }
 
 impl SymbolTypeCache {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            data: Arc::new(FxHashMap::with_capacity_and_hasher(
+            data: RefCell::new(Arc::new(FxHashMap::with_capacity_and_hasher(
                 capacity.min(4096),
                 Default::default(),
-            )),
-            version: 0,
+            ))),
+            version: Cell::new(0),
         }
     }
 
     #[inline]
     pub fn new() -> Self {
         Self {
-            data: Arc::new(FxHashMap::default()),
-            version: 0,
+            data: RefCell::new(Arc::new(FxHashMap::default())),
+            version: Cell::new(0),
         }
     }
 
@@ -514,95 +535,116 @@ impl SymbolTypeCache {
     /// result. Consumed by `CheckerContext::assignability_eval_memo` stamps.
     #[inline]
     pub const fn version(&self) -> u64 {
-        self.version
+        self.version.get()
     }
 
     #[inline]
-    pub fn get(&self, key: &SymbolId) -> Option<&TypeId> {
-        self.data.get(key)
+    pub fn get(&self, key: &SymbolId) -> Option<TypeId> {
+        self.data.borrow().get(key).copied()
     }
 
     #[inline]
-    pub fn insert(&mut self, key: SymbolId, value: TypeId) {
+    pub fn insert(&self, key: SymbolId, value: TypeId) {
         // No-op writes (same value, or removing an absent entry) leave every
         // lookup result unchanged, so they must not bump the version: version
         // consumers would needlessly drop their memoized state.
-        let existing = self.data.get(&key).copied();
+        let existing = self.data.borrow().get(&key).copied();
         if value == TypeId::NONE {
             if existing.is_none() {
                 return;
             }
-            self.version += 1;
-            Arc::make_mut(&mut self.data).remove(&key);
+            self.version.set(self.version.get() + 1);
+            Arc::make_mut(&mut self.data.borrow_mut()).remove(&key);
         } else {
             if existing == Some(value) {
                 return;
             }
-            self.version += 1;
-            Arc::make_mut(&mut self.data).insert(key, value);
+            self.version.set(self.version.get() + 1);
+            Arc::make_mut(&mut self.data.borrow_mut()).insert(key, value);
         }
     }
 
     #[inline]
     pub fn contains_key(&self, key: &SymbolId) -> bool {
-        self.data.contains_key(key)
+        self.data.borrow().contains_key(key)
     }
 
     #[inline]
-    pub fn remove(&mut self, key: &SymbolId) -> Option<TypeId> {
-        if !self.data.contains_key(key) {
+    pub fn remove(&self, key: &SymbolId) -> Option<TypeId> {
+        if !self.data.borrow().contains_key(key) {
             return None;
         }
-        self.version += 1;
-        Arc::make_mut(&mut self.data).remove(key)
+        self.version.set(self.version.get() + 1);
+        Arc::make_mut(&mut self.data.borrow_mut()).remove(key)
     }
 
     #[inline]
-    pub fn entry_or_insert(&mut self, key: SymbolId, value: TypeId) -> TypeId {
+    pub fn entry_or_insert(&self, key: SymbolId, value: TypeId) -> TypeId {
         // Same NONE-storage guard as `NodeTypeCache::or_insert` — `insert`
         // explicitly removes NONE entries to maintain the cache invariant
         // that `get`/`contains_key` only see real types. `entry().or_insert()`
         // with `value == NONE` would silently break that.
         if value == TypeId::NONE {
-            return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
+            return self
+                .data
+                .borrow()
+                .get(&key)
+                .copied()
+                .unwrap_or(TypeId::NONE);
         }
-        if !self.data.contains_key(&key) {
-            self.version += 1;
+        if !self.data.borrow().contains_key(&key) {
+            self.version.set(self.version.get() + 1);
         }
-        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        *Arc::make_mut(&mut self.data.borrow_mut())
+            .entry(key)
+            .or_insert(value)
     }
 
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.data.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.data.borrow().is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (SymbolId, TypeId)> + '_ {
+    /// Snapshot the entries as an owned vector.
+    ///
+    /// Returns an owned `Vec` rather than a borrowing iterator: a `RefCell`
+    /// guard cannot outlive the call, and callers that hold the result while
+    /// re-entering the cache (e.g. inserting derived types) would otherwise
+    /// deadlock on the live borrow.
+    pub fn iter(&self) -> impl Iterator<Item = (SymbolId, TypeId)> {
         self.data
+            .borrow()
             .iter()
             .map(|(&symbol_id, &type_id)| (symbol_id, type_id))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn to_hash_map(&self) -> FxHashMap<SymbolId, TypeId> {
-        self.data.as_ref().clone()
+        self.data.borrow().as_ref().clone()
     }
 
-    pub fn extend(&mut self, other: Self) {
-        if other.data.is_empty() {
+    pub fn extend(&self, other: Self) {
+        let other_data = other.data.borrow();
+        if other_data.is_empty() {
             return;
         }
-        let changes = other.data.iter().any(|(symbol_id, &type_id)| {
-            type_id != TypeId::NONE && self.data.get(symbol_id) != Some(&type_id)
-        });
+        let changes = {
+            let data = self.data.borrow();
+            other_data.iter().any(|(symbol_id, &type_id)| {
+                type_id != TypeId::NONE && data.get(symbol_id) != Some(&type_id)
+            })
+        };
         if !changes {
             return;
         }
-        self.version += 1;
-        let data = Arc::make_mut(&mut self.data);
-        for (&symbol_id, &type_id) in other.data.iter() {
+        self.version.set(self.version.get() + 1);
+        let mut data_guard = self.data.borrow_mut();
+        let data = Arc::make_mut(&mut data_guard);
+        for (&symbol_id, &type_id) in other_data.iter() {
             if type_id != TypeId::NONE {
                 data.insert(symbol_id, type_id);
             }
@@ -655,7 +697,20 @@ impl AssignabilityEvalMemo {
     /// Record an evaluation result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        self.entries.insert(type_id, result);
+        let previous = self.entries.insert(type_id, result);
+        // Debug-only purity invariant (#13980): under a fixed stamp this is a
+        // pure function, so overwriting an entry with a *different* result means
+        // a hidden input (lib-ref resolution eagerness) leaked into type
+        // identity. The displaced value is free; no extra lookup.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::ASSIGNABILITY_EVAL_MEMO,
+            type_id,
+            previous,
+            &result,
+        );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions:
@@ -710,7 +765,17 @@ impl AwaitedAssignabilityEvalMemo {
     /// Record a normalization result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        self.entries.insert(type_id, result);
+        let previous = self.entries.insert(type_id, result);
+        // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::AWAITED_ASSIGNABILITY_EVAL_MEMO,
+            type_id,
+            previous,
+            &result,
+        );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions
@@ -734,7 +799,7 @@ pub type AssignabilityFailureKey = (TypeId, TypeId, u16, bool);
 /// post-passes (excess-property suppression, intersection-constituent
 /// framing, array-extends weak-type suppression), which differ per consumer
 /// and must keep running on every path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CachedAssignabilityAnalysis {
     /// Pass/fail verdict of the relation.
     pub related: bool,
@@ -795,7 +860,19 @@ impl AssignabilityFailureMemo {
         analysis: CachedAssignabilityAnalysis,
     ) {
         self.roll_to(stamp);
-        self.entries.insert(key, analysis);
+        let previous = self.entries.insert(key, analysis);
+        // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
+        // The value moved into the map, so the just-stored entry is borrowed back
+        // (a debug-only lookup) to compare against the displaced one.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::ASSIGNABILITY_FAILURE_MEMO,
+            key,
+            previous,
+            self.entries.get(&key).expect("entry was just inserted"),
+        );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp (between file sessions; see
@@ -895,16 +972,16 @@ mod tests {
     #[test]
     fn symbol_type_cache_absent_remove_does_not_detach_shared_snapshot() {
         let sym = SymbolId(1);
-        let mut parent = SymbolTypeCache::new();
+        let parent = SymbolTypeCache::new();
         parent.insert(sym, TypeId::STRING);
-        let mut child = parent.clone();
+        let child = parent.clone();
 
         assert!(child.remove(&SymbolId(2)).is_none());
-        assert!(Arc::ptr_eq(&parent.data, &child.data));
+        assert!(Arc::ptr_eq(&parent.data.borrow(), &child.data.borrow()));
 
         assert_eq!(child.remove(&sym), Some(TypeId::STRING));
-        assert!(!Arc::ptr_eq(&parent.data, &child.data));
-        assert_eq!(parent.get(&sym), Some(&TypeId::STRING));
+        assert!(!Arc::ptr_eq(&parent.data.borrow(), &child.data.borrow()));
+        assert_eq!(parent.get(&sym), Some(TypeId::STRING));
         assert_eq!(child.get(&sym), None);
     }
 

@@ -477,3 +477,51 @@ fn type_parameter_constraint_query_boundary() {
     let app = types.application(TypeId::STRING, vec![TypeId::NUMBER]);
     assert_eq!(type_parameter_constraint(&types, app), None);
 }
+
+/// Step 2 of the #12101 on-demand-forcing backstop: the env-eval boundary must
+/// surface the evaluator's unresolved-def-seen flag so the checker can refuse
+/// to write the `TypeId`-keyed env-eval cache for a registration-window
+/// artifact. A fully-resolvable evaluation reports `false` (the no-op default
+/// that holds on every current path), while evaluating an `Application` whose
+/// base `DefId` has nothing registered reports `true`.
+#[test]
+fn evaluate_type_with_cache_surfaces_unresolved_def_seen() {
+    use tsz_solver::relations::subtype::TypeEnvironment;
+
+    let types = TypeInterner::new();
+    let env = TypeEnvironment::new();
+    let options = EvaluateTypeWithCacheOptions {
+        expand_application_display_alias_args: false,
+        query_db: None,
+        authoritative: false,
+        cache_entry_collection: CacheEntryCollection::Skip,
+    };
+
+    // A concrete, fully-resolvable type evaluates without consulting any
+    // unresolved def, so the flag stays false (the inert default today).
+    let resolved = evaluate_type_with_cache(
+        &types,
+        &env,
+        TypeId::STRING,
+        std::iter::empty(),
+        false,
+        options,
+    );
+    assert!(
+        !resolved.unresolved_def_seen,
+        "a fully-resolvable evaluation must not flag unresolved_def_seen"
+    );
+
+    // An Application over a Lazy(DefId) whose base def has neither registered
+    // type params nor a body is the registration-window artifact the backstop
+    // guards: the empty resolver cannot resolve the def, so the evaluator marks
+    // unresolved_def_seen and the boundary surfaces it.
+    let unregistered = types.lazy(DefId(987_654));
+    let app = types.application(unregistered, vec![TypeId::NUMBER]);
+    let under_resolved =
+        evaluate_type_with_cache(&types, &env, app, std::iter::empty(), false, options);
+    assert!(
+        under_resolved.unresolved_def_seen,
+        "an application over an unregistered base def must flag unresolved_def_seen"
+    );
+}

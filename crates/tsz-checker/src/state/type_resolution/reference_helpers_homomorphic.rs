@@ -252,7 +252,7 @@ impl CheckerState<'_> {
             self.ctx
                 .symbol_types
                 .get(&sym_id)
-                .is_some_and(|&resolved| query::is_tuple_type(db, resolved))
+                .is_some_and(|resolved| query::is_tuple_type(db, resolved))
         });
         if !any_arg_is_tuple {
             return false;

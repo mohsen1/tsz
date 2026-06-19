@@ -98,7 +98,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     self.ctx.types,
                 )
             }
-            .or_else(|| self.ctx.symbol_types.get(&sym_id).copied())?;
+            .or_else(|| self.ctx.symbol_types.get(&sym_id))?;
             if self
                 .symbol_is_bare_const_object_literal(sym_id)
                 .unwrap_or(false)

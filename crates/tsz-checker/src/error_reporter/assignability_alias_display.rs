@@ -149,6 +149,14 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<(String, String)> {
+        // A source identifier narrowed away from a declared `unknown`/`any` must
+        // keep its narrowed checked-type display (already in `source_display`);
+        // the declared-annotation repaints below would otherwise restore the
+        // stale top type. tsc renders the narrowed type. This guards both
+        // callers (`render_type_mismatch` and the TS2322 message rewrite).
+        if self.assignment_source_narrowed_from_declared_top_type(anchor_idx, source) {
+            return None;
+        }
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
@@ -191,7 +199,6 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-
         let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))?;

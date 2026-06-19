@@ -123,7 +123,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .count();
 
         if enum_member_count == members.len() {
-            if let Some(parent_type) = self.ctx.symbol_types.get(&parent).copied() {
+            if let Some(parent_type) = self.ctx.symbol_types.get(&parent) {
                 return Some(parent_type);
             }
             // Resolve the parent enum's `DefId` from the shared store's

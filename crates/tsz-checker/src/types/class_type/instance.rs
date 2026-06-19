@@ -436,6 +436,7 @@ impl<'a> CheckerState<'a> {
                 };
                 self.ctx
                     .class_instance_type_cache
+                    .borrow_mut()
                     .insert(class_idx, prescan_type);
                 self.ctx.this_type_stack.push(prescan_type);
                 b.prescan_this_type = Some(prescan_type);
@@ -936,6 +937,7 @@ impl<'a> CheckerState<'a> {
                     cached_instance_this_type: Some(
                         self.ctx
                             .class_instance_type_cache
+                            .borrow()
                             .get(&class_idx)
                             .copied()
                             .unwrap_or(TypeId::ERROR),
@@ -1124,6 +1126,7 @@ impl<'a> CheckerState<'a> {
             // partial type, causing private-name brand-check failures.
             self.ctx
                 .class_instance_type_cache
+                .borrow_mut()
                 .insert(class_idx, partial_type);
 
             // Keep enclosing_class.cached_instance_this_type in sync with the

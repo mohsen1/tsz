@@ -163,7 +163,6 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .symbol_types
             .get(&sym_id)
-            .copied()
             .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
     }
 }
@@ -182,12 +181,12 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .binder
             .get_node_symbol(decl_idx)
-            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
             .or_else(|| {
                 self.ctx
                     .binder
                     .get_node_symbol(name_idx)
-                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
             })
             .or_else(|| {
                 name_is_binding_pattern
@@ -714,7 +713,7 @@ impl<'a> CheckerState<'a> {
             // This happens when the initializer (directly or indirectly) references the variable,
             // causing the node-level cycle detection to return ERROR.
             let sym_cached_as_error =
-                !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
+                !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(TypeId::ERROR);
             let circular_return_sites = if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
@@ -924,7 +923,7 @@ impl<'a> CheckerState<'a> {
             if var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
-                && let Some(inferred) = self.ctx.symbol_types.get(&sym_id).copied()
+                && let Some(inferred) = self.ctx.symbol_types.get(&sym_id)
                 && inferred != TypeId::ERROR
             {
                 final_type = inferred;

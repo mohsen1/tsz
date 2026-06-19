@@ -105,7 +105,51 @@ pub fn reset_stack_overflow_flag() {
 /// thread-local, add its reset here too — the regression test
 /// `clear_all_thread_local_state_resets_cross_arena_and_alias_guards` guards the
 /// recursion-guard subset against drift.
+///
+/// Most of the reset surface — every recursion/cycle guard and depth counter —
+/// is delegated to [`reset_per_file_resolution_guards`], which the fresh-checker
+/// path also runs at every *file* boundary so a mid-walk bail cannot leak dirty
+/// guard state onto a shared worker thread (see that function's docs). This
+/// function additionally drops the warm cross-file memos that are only stale at
+/// a *compilation* boundary.
 pub fn clear_all_thread_local_state() {
+    // Recursion/cycle guards, depth counters, and arena-local scratch memos.
+    reset_per_file_resolution_guards();
+
+    // Drop the module-specifier candidate memo. It is a pure function of the
+    // specifier text (no correctness dependence on row state), but clearing at
+    // row boundaries keeps it from accumulating every project's specifiers on a
+    // reused worker thread while preserving within-compilation cross-file reuse.
+    // Unlike the guards above this is a *warm* cross-file memo, so it is dropped
+    // only at the compilation boundary, never per file.
+    crate::module_resolution::reset_module_specifier_candidates_memo();
+}
+
+/// Reset the checker's transient per-file resolution guards, depth counters, and
+/// arena-local visited-sets/memos on the current thread.
+///
+/// Every entry here is balanced (RAII or manual enter/leave / push/pop) in the
+/// normal path, so it is empty or zero at a clean file boundary. A mid-walk bail
+/// — the stack-overflow breaker, fuel/recursion-limit exhaustion, or a panic
+/// caught by the batch driver — can instead leave a depth counter non-zero or a
+/// visited-set non-empty.
+///
+/// The fresh-checker path checks files on shared rayon pool worker threads
+/// (`check_file_for_parallel`, used by both the sequential and parallel fresh
+/// arms), and reuses those threads across files within a compilation and across
+/// compilations in a batch worker. A dirty guard left by one file would suppress
+/// resolution in the *next* file scheduled onto the same worker thread —
+/// nondeterministically, because file→worker assignment depends on the parallel
+/// schedule. Running this reset at every file boundary makes a bail in one file
+/// unable to leak into another on any thread, closing a documented source of the
+/// schedule-sensitive conformance flakes (#13255 / #13368 family).
+///
+/// This deliberately does **not** drop the warm cross-file memos (e.g. the
+/// module-specifier candidate memo): those are pure functions of their inputs
+/// and are safe — and beneficial — to keep warm across files within a
+/// compilation. Only [`clear_all_thread_local_state`] (the per-compilation
+/// reset) drops those.
+pub fn reset_per_file_resolution_guards() {
     // Reset stack overflow breaker
     STACK_STATE.set(0);
 
@@ -141,12 +185,6 @@ pub fn clear_all_thread_local_state() {
     // mid-resolution bail-out could leave it non-zero and suppress the cycle
     // drain for every later row on this worker thread (#12299).
     crate::types_domain::queries::lib_resolution::reset_lib_resolution_state();
-
-    // Drop the module-specifier candidate memo. It is a pure function of the
-    // specifier text (no correctness dependence on row state), but clearing at
-    // row boundaries keeps it from accumulating every project's specifiers on a
-    // reused worker thread while preserving within-compilation cross-file reuse.
-    crate::module_resolution::reset_module_specifier_candidates_memo();
 
     // Reset the Awaited<…> assignability-normalization cycle guard and clamp
     // epoch. The visiting set keys on arena-local `TypeId`s reused across
@@ -382,6 +420,51 @@ mod tests {
         assert!(
             super::promise_checker_object_normalization::awaited_eval_thread_local_state_clear_for_test(),
             "clear_all_thread_local_state must reset the awaited-eval cycle guard and clamp epoch"
+        );
+    }
+
+    /// The fresh-checker path runs [`reset_per_file_resolution_guards`] at every
+    /// *file* boundary (in `check_file_for_parallel` / `reset_for_next_file`) so
+    /// a file that bails mid-walk cannot leak a dirty recursion/cycle guard into
+    /// the next file scheduled onto the same shared worker thread (#13255 /
+    /// #13368 schedule-sensitivity). This asserts the per-file reset clears the
+    /// same cross-arena / alias / awaited guards the compilation-boundary reset
+    /// does — they must not survive a file boundary on any thread.
+    #[test]
+    fn reset_per_file_resolution_guards_clears_cross_arena_and_alias_guards() {
+        use crate::{state_domain, types_domain};
+
+        // Dirty every guard the way an aborted mid-walk file would.
+        state_domain::state::set_cross_arena_depth_for_test(3);
+        state_domain::state::set_cross_arena_bailout_epoch_for_test(7);
+        state_domain::type_analysis::dirty_cross_file_recursion_guards_for_test();
+        types_domain::dirty_type_resolution_guards_for_test();
+        super::promise_checker_object_normalization::dirty_awaited_eval_thread_local_state_for_test(
+        );
+
+        reset_per_file_resolution_guards();
+
+        assert_eq!(
+            state_domain::state::cross_arena_depth_for_test(),
+            0,
+            "per-file reset must clear the cross-arena delegation depth"
+        );
+        assert_eq!(
+            state_domain::state::cross_arena_bailout_epoch_for_test(),
+            0,
+            "per-file reset must clear the cross-arena bailout epoch"
+        );
+        assert!(
+            state_domain::type_analysis::cross_file_recursion_guards_clear_for_test(),
+            "per-file reset must clear cross-file interface depth and alias stack"
+        );
+        assert!(
+            types_domain::type_resolution_guards_clear_for_test(),
+            "per-file reset must clear alias-resolution depth, stack, and scratch pool"
+        );
+        assert!(
+            super::promise_checker_object_normalization::awaited_eval_thread_local_state_clear_for_test(),
+            "per-file reset must clear the awaited-eval cycle guard and clamp epoch"
         );
     }
 

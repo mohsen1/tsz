@@ -344,6 +344,13 @@ pub(super) fn check_file_for_parallel<'a>(
         program_has_unsupported_js_root,
         extract_type_cache,
     } = context;
+
+    // Start every file's check from a clean per-thread guard slate so a prior
+    // file that bailed mid-walk cannot leak a dirty guard onto the next file on
+    // this reused worker thread. Both fresh-checker arms route through here; see
+    // `reset_per_file_resolution_guards` docs for the full rationale (#13255).
+    tsz::checker::reset_per_file_resolution_guards();
+
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {

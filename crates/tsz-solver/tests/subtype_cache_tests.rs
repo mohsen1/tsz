@@ -882,3 +882,157 @@ fn flag_flip_does_not_reuse_stale_cache_entry() {
         "flag flip must not serve the previous-mode cache entry"
     );
 }
+
+// =============================================================================
+// Polymorphic-`this` relation cache discrimination (issue #13828)
+// =============================================================================
+//
+// A pair carrying a polymorphic `this` resolves `ThisType` against the current
+// receiver, so its verdict is valid only under that binding. The relation cache
+// key is discriminated by the resolved `this` binding
+// (`RelationCacheKey::this_context`) so such verdicts can live in the
+// cross-checker shared cache without poisoning a sibling checker that compares
+// the same pair under a different receiver — while pairs with no `this` (or no
+// resolvable binding) keep a byte-identical undiscriminated key.
+
+/// Minimal resolver exposing a configurable polymorphic-`this` binding.
+struct ThisBindingResolver {
+    this: Option<TypeId>,
+}
+
+impl crate::def::resolver::TypeResolver for ThisBindingResolver {
+    fn resolve_ref(
+        &self,
+        _symbol: crate::types::SymbolRef,
+        _interner: &dyn crate::caches::db::TypeDatabase,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_this_type(&self, _interner: &dyn crate::caches::db::TypeDatabase) -> Option<TypeId> {
+        self.this
+    }
+}
+
+/// An object whose `self` property is typed `this` (so the pair is
+/// `this`-bearing), plus a structurally-comparable non-`this` counterpart.
+fn this_bearing_and_plain(interner: &TypeInterner) -> (TypeId, TypeId) {
+    let this_ty = interner.intern(crate::types::TypeData::ThisType);
+    let slot = interner.intern_string("slot");
+    let this_bearing = interner.object(vec![PropertyInfo::new(slot, this_ty)]);
+    let plain = interner.object(vec![PropertyInfo::new(slot, TypeId::STRING)]);
+    (this_bearing, plain)
+}
+
+#[test]
+fn this_bearing_key_is_discriminated_by_resolved_receiver() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (this_bearing, plain) = this_bearing_and_plain(&interner);
+
+    // Two distinct receivers (binder names vary so the discriminator is keyed
+    // on the resolved type identity, not on any name).
+    let recv_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("alpha"),
+        TypeId::NUMBER,
+    )]);
+    let recv_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("omega"),
+        TypeId::BOOLEAN,
+    )]);
+    assert_ne!(recv_a, recv_b);
+
+    let res_a = ThisBindingResolver { this: Some(recv_a) };
+    let res_b = ThisBindingResolver { this: Some(recv_b) };
+
+    let key_a = SubtypeChecker::with_resolver(&interner, &res_a)
+        .with_query_db(&db)
+        .debug_cache_key_for(this_bearing, plain);
+    let key_b = SubtypeChecker::with_resolver(&interner, &res_b)
+        .with_query_db(&db)
+        .debug_cache_key_for(this_bearing, plain);
+
+    assert_eq!(key_a.this_context, recv_a);
+    assert_eq!(key_b.this_context, recv_b);
+    assert_ne!(
+        key_a, key_b,
+        "the same `this`-bearing pair under different receivers must key to \
+         different cache slots (no cross-receiver poisoning)"
+    );
+}
+
+#[test]
+fn non_this_pair_and_unbound_this_keep_undiscriminated_key() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (this_bearing, plain) = this_bearing_and_plain(&interner);
+
+    let receiver = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("recv"),
+        TypeId::NUMBER,
+    )]);
+    let res_bound = ThisBindingResolver {
+        this: Some(receiver),
+    };
+    let res_unbound = ThisBindingResolver { this: None };
+
+    // A pair with no polymorphic `this` is never discriminated, even when a
+    // receiver is available — its verdict is receiver-independent.
+    let key_plain = SubtypeChecker::with_resolver(&interner, &res_bound)
+        .with_query_db(&db)
+        .debug_cache_key_for(plain, plain);
+    assert_eq!(key_plain.this_context, TypeId::NONE);
+
+    // A `this`-bearing pair with no resolvable binding stays undiscriminated
+    // (it falls to the instance-local memo rather than the shared cache).
+    let key_unbound = SubtypeChecker::with_resolver(&interner, &res_unbound)
+        .with_query_db(&db)
+        .debug_cache_key_for(this_bearing, plain);
+    assert_eq!(key_unbound.this_context, TypeId::NONE);
+}
+
+#[test]
+fn this_bearing_verdict_is_shared_under_its_receiver_only() {
+    use crate::types::RelationCacheValue;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (this_bearing, plain) = this_bearing_and_plain(&interner);
+
+    let recv_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("alpha"),
+        TypeId::NUMBER,
+    )]);
+    let recv_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("omega"),
+        TypeId::BOOLEAN,
+    )]);
+    let res_a = ThisBindingResolver { this: Some(recv_a) };
+    let res_b = ThisBindingResolver { this: Some(recv_b) };
+
+    // Compute the verdict under receiver A; it must be recorded in the shared
+    // cache under A's discriminated key (the pre-fix behavior kept it only in
+    // the dropped per-instance local memo, so the shared cache stayed empty).
+    let verdict = SubtypeChecker::with_resolver(&interner, &res_a)
+        .with_query_db(&db)
+        .is_subtype_of(this_bearing, plain);
+
+    let key_a = SubtypeChecker::with_resolver(&interner, &res_a)
+        .with_query_db(&db)
+        .debug_cache_key_for(this_bearing, plain);
+    assert_eq!(
+        db.lookup_subtype_cache_value(key_a),
+        Some(RelationCacheValue::from_bool(verdict)),
+        "the `this`-bearing verdict must be cached cross-checker under its receiver"
+    );
+
+    // A different receiver's key must NOT observe that verdict.
+    let key_b = SubtypeChecker::with_resolver(&interner, &res_b)
+        .with_query_db(&db)
+        .debug_cache_key_for(this_bearing, plain);
+    assert_eq!(
+        db.lookup_subtype_cache_value(key_b),
+        None,
+        "a different receiver must not be served the other receiver's verdict"
+    );
+}

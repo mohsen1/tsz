@@ -786,11 +786,21 @@ impl<'a> CheckerState<'a> {
                             request.idx,
                         );
                     } else if matches!(request.kind, NameLookupKind::Type) {
-                        self.error_at_node_msg(
-                            request.idx,
-                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
-                            &[request.name],
-                        );
+                        // A missing node/jQuery/test-runner/Bun global in TYPE
+                        // position gets the same "install @types/X" diagnostic
+                        // (e.g. TS2591) tsc emits — `let b: Buffer` without
+                        // @types/node is TS2591, not a bare TS2304. The value
+                        // path runs the same dispatch; es2015/DOM type-position
+                        // cases already match tsc and are handled elsewhere.
+                        if !self
+                            .try_emit_install_types_for_missing_global(request.name, request.idx)
+                        {
+                            self.error_at_node_msg(
+                                request.idx,
+                                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                &[request.name],
+                            );
+                        }
                     } else {
                         self.error_cannot_find_name_at(request.name, request.idx);
                     }

@@ -43,7 +43,7 @@ const a = E.A;
         let member_sym_id = exports
             .get(member_name)
             .expect("enum member should exist in exports");
-        let member_type = *checker
+        let member_type = checker
             .ctx
             .symbol_types
             .get(&member_sym_id)

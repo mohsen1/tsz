@@ -6,8 +6,9 @@
  *   0 — artifact present, all required rows included
  *   1 — artifact present, one or more required rows are missing, the
  *       --require-green release gate found non-green required rows, the
- *       --require-clean-metadata gate found artifact metadata warnings, or the
- *       --require-source-current gate found a stale artifact source commit
+ *       --require-clean-metadata gate found artifact metadata warnings,
+ *       --require-application-compat found missing/incomplete application rows,
+ *       or the --require-source-current gate found a stale artifact source commit
  *   2 — artifact file absent or unparseable
  *
  * Without --json: writes a markdown report to stdout (and GITHUB_STEP_SUMMARY
@@ -18,7 +19,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -26,6 +27,7 @@ import { execFileSync } from "node:child_process";
 
 import {
   REQUIRED_PROJECT_ROWS,
+  PROJECT_ROW_DEFINITIONS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
@@ -49,6 +51,9 @@ const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
+const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application")
+  .map((row) => row.name);
 
 const args = process.argv.slice(2);
 
@@ -57,6 +62,7 @@ function parseArgs(rawArgs) {
     jsonOutput: false,
     requireGreen: false,
     requireCleanMetadata: false,
+    requireApplicationCompat: false,
     requireSourceCurrent: false,
     requiredProjectTimingPairs: 0,
     expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
@@ -71,6 +77,8 @@ function parseArgs(rawArgs) {
       options.requireGreen = true;
     } else if (arg === "--require-clean-metadata") {
       options.requireCleanMetadata = true;
+    } else if (arg === "--require-application-compat") {
+      options.requireApplicationCompat = true;
     } else if (arg === "--require-source-current") {
       options.requireSourceCurrent = true;
     } else if (arg === "--require-project-timing-pairs") {
@@ -100,6 +108,7 @@ const {
   jsonOutput,
   requireGreen,
   requireCleanMetadata,
+  requireApplicationCompat,
   requireSourceCurrent,
   requiredProjectTimingPairs: rawRequiredProjectTimingPairs,
   expectedSourceCommit: rawExpectedSourceCommit,
@@ -151,6 +160,19 @@ function rowState(row, duplicate = false) {
   if (row.status) return "red";
   if (isGreen(row)) return "green";
   if (compat.state === "yellow" || compat.state === "red") return compat.state;
+  return "gray";
+}
+
+function applicationCompatibilityState(row, duplicate = false) {
+  if (!row) return "missing";
+  if (duplicate) return "gray";
+  if (row.artifact_missing === true) return "gray";
+  const compat = row.compatibility;
+  if (!compat) return "gray";
+  if (!hasCompletePhaseMetadata(compat)) return "gray";
+  if (compat.state === "green" || compat.state === "yellow" || compat.state === "red") {
+    return compat.state;
+  }
   return "gray";
 }
 
@@ -250,11 +272,11 @@ function analyzeArtifact(artifact, expectedCommit) {
     }
   }
 
-  const rows = REQUIRED_MEASURED_ROWS.map((name) => {
+  const compatibilityRow = (name, stateFn) => {
     const row = byName.get(name) ?? null;
     const duplicateCount = duplicateCounts.get(name) ?? (row ? 1 : 0);
     const duplicate = duplicateCount > 1;
-    const state = rowState(row, duplicate);
+    const state = stateFn(row, duplicate);
     const def = PROJECT_ROWS_BY_NAME[name];
     const compatibility = row?.compatibility ?? {};
     return {
@@ -283,13 +305,22 @@ function analyzeArtifact(artifact, expectedCommit) {
       peak_memory_bytes: compatibility.peak_memory_bytes ?? null,
       peak_memory_bytes_reason: compatibility.peak_memory_bytes_reason ?? null,
     };
-  });
+  };
+
+  const rows = REQUIRED_MEASURED_ROWS.map((name) => compatibilityRow(name, rowState));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
+    compatibilityRow(name, applicationCompatibilityState),
+  );
 
   return {
     measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
     rows,
+    applicationRows,
+    applicationMissing: applicationRows.filter((r) => r.state === "missing"),
+    applicationIncomplete: applicationRows.filter((r) => r.state === "gray"),
+    applicationDuplicates: applicationRows.filter((r) => r.duplicate_count > 1),
     successfulProjectTimingPairs: rows.filter((row) => (
       row.state === "green" &&
       Number.isFinite(Number(row.tsz_ms)) &&
@@ -316,7 +347,26 @@ function uniqueRowsByName(rows) {
   return [...byName.values()];
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, sourceFreshness, rows, successfulProjectTimingPairs, missing, red, yellow, gray, green, duplicates }) {
+function buildJson({
+  artifactAbsent,
+  parseError,
+  artifact,
+  measurementProfile,
+  validationWarnings,
+  sourceFreshness,
+  rows,
+  applicationRows,
+  applicationMissing,
+  applicationIncomplete,
+  applicationDuplicates,
+  successfulProjectTimingPairs,
+  missing,
+  red,
+  yellow,
+  gray,
+  green,
+  duplicates,
+}) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_MEASURED_ROWS;
   const metadataWarningsList = metadataWarnings(measurementProfile, validationWarnings);
   const nonGreenRows = rows
@@ -351,6 +401,20 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
     required_row_count: rows?.length ?? REQUIRED_MEASURED_ROWS.length,
     successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
     required_project_timing_pairs: requiredProjectTimingPairs,
+    application_compatibility: applicationRows
+      ? {
+          required: requireApplicationCompat,
+          row_count: applicationRows.length,
+          present: applicationRows.length - (applicationMissing?.length ?? 0),
+          complete: applicationRows.length - (applicationMissing?.length ?? 0) - (applicationIncomplete?.length ?? 0),
+          missing: applicationMissing?.length ?? 0,
+          incomplete: applicationIncomplete?.length ?? 0,
+          duplicates: applicationDuplicates?.length ?? 0,
+          missing_rows: applicationMissing?.map((r) => r.name) ?? [],
+          incomplete_rows: applicationIncomplete?.map((r) => ({ name: r.name, state: r.state })) ?? [],
+          duplicate_rows: applicationDuplicates?.map((r) => ({ name: r.name, count: r.duplicate_count })) ?? [],
+        }
+      : null,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
     red: red?.length ?? 0,
@@ -459,7 +523,24 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, validationWarnings, sourceFreshness, rows, successfulProjectTimingPairs, missing, red, yellow, gray, green, duplicates }) {
+function buildReport({
+  artifact,
+  measurementProfile,
+  validationWarnings,
+  sourceFreshness,
+  rows,
+  applicationRows,
+  applicationMissing,
+  applicationIncomplete,
+  applicationDuplicates,
+  successfulProjectTimingPairs,
+  missing,
+  red,
+  yellow,
+  gray,
+  green,
+  duplicates,
+}) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
@@ -489,6 +570,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, sourceF
     `| Binary target CPU | ${profile.rust_target_cpu ? `\`${profile.rust_target_cpu}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
+    `| Application compatibility rows | ${applicationRows.length - applicationMissing.length}/${applicationRows.length} present, ${applicationIncomplete.length} incomplete |`,
     `| ✅ green | ${green.length} |`,
     `| ⚠️ yellow | ${yellow.length} |`,
     `| ❌ red | ${red.length} |`,
@@ -509,6 +591,17 @@ function buildReport({ artifact, measurementProfile, validationWarnings, sourceF
   if (duplicates.length > 0) {
     lines.push(`### ⬜ Duplicate required rows (${duplicates.length})`, "");
     for (const r of duplicates) lines.push(`- \`${r.name}\` appears ${r.duplicate_count} times`);
+    lines.push("");
+  }
+
+  if (applicationMissing.length > 0 || applicationIncomplete.length > 0 || applicationDuplicates.length > 0) {
+    lines.push(
+      `### Application compatibility gaps (${applicationMissing.length + applicationIncomplete.length + applicationDuplicates.length})`,
+      "",
+    );
+    for (const r of applicationMissing) lines.push(`- \`${r.name}\`: missing compatibility row`);
+    for (const r of applicationIncomplete) lines.push(`- \`${r.name}\`: incomplete compatibility metadata`);
+    for (const r of applicationDuplicates) lines.push(`- \`${r.name}\`: duplicate compatibility row (${r.duplicate_count})`);
     lines.push("");
   }
 
@@ -585,6 +678,10 @@ if (artifactAbsent || parseError) {
         measurementProfile: null,
         sourceFreshness: null,
         rows: null,
+        applicationRows: null,
+        applicationMissing: null,
+        applicationIncomplete: null,
+        applicationDuplicates: null,
         missing: null,
         red: null,
         yellow: null,
@@ -604,6 +701,10 @@ const {
   validationWarnings,
   sourceFreshness,
   rows,
+  applicationRows,
+  applicationMissing,
+  applicationIncomplete,
+  applicationDuplicates,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -625,6 +726,10 @@ if (jsonOutput) {
       validationWarnings,
       sourceFreshness,
       rows,
+      applicationRows,
+      applicationMissing,
+      applicationIncomplete,
+      applicationDuplicates,
       successfulProjectTimingPairs,
       missing,
       red,
@@ -649,6 +754,23 @@ if (missing.length > 0 || duplicates.length > 0) {
         missing.map((r) => r.name).join(", ") + "\n",
     );
   }
+  process.exit(1);
+}
+
+if (requireApplicationCompat && (
+  applicationMissing.length > 0 ||
+  applicationIncomplete.length > 0 ||
+  applicationDuplicates.length > 0
+)) {
+  const gaps = [
+    ...applicationMissing.map((r) => `${r.name} (missing)`),
+    ...applicationIncomplete.map((r) => `${r.name} (incomplete)`),
+    ...applicationDuplicates.map((r) => `${r.name} (${r.duplicate_count} duplicates)`),
+  ];
+  process.stderr.write(
+    `bench-artifact-readiness: application compatibility incomplete for ${gaps.length} row(s): ` +
+      gaps.join(", ") + "\n",
+  );
   process.exit(1);
 }
 

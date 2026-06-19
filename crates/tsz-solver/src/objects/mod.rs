@@ -16,7 +16,8 @@ mod literal;
 
 pub use apparent::{
     ApparentMemberKind, apparent_object_member_kind, apparent_primitive_member_kind,
-    apparent_primitive_members, apparent_primitive_shape, literal_value_intrinsic_kind,
+    apparent_primitive_members, apparent_primitive_shape, index_receiver_apparent_type,
+    literal_value_intrinsic_kind,
 };
 pub use collect::*;
 pub use element_access::*;

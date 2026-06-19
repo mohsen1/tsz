@@ -10,6 +10,7 @@
 //!   absolute targets, bare-imports validity)
 
 use super::super::*;
+use super::fixtures::TempFixture;
 
 #[test]
 fn test_resolver_rejects_root_slash_package_import_with_wildcard() {
@@ -480,6 +481,163 @@ fn test_package_imports_target_cannot_contain_node_modules_segment() {
         matches!(result, Err(ResolutionFailure::NotFound { .. })),
         "imports target containing node_modules must not resolve, got {result:?}"
     );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_resolve_only_against_nearest_package_scope() {
+    // Per Node.js LOOKUP_PACKAGE_SCOPE + PACKAGE_IMPORTS_RESOLVE (and tsc's
+    // `getPackageScopeForPath` / `loadModuleFromImports`), a `#`-prefixed
+    // specifier resolves ONLY against the nearest enclosing `package.json`. If
+    // that nearest scope has no `imports` field (or no matching key), resolution
+    // fails — the resolver must NOT keep walking up to an ancestor package that
+    // happens to define a matching `#import`.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_nearest_scope_only");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    // Outer package defines `#shared`, with a real target on disk.
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+
+    // Nearest package scope for the importer has NO `imports` field.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner"}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/src/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve(
+        "#shared",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 7),
+    );
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "#shared must NOT resolve against an ancestor package once a nearer \
+         package scope (without a matching import) is found, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_no_match_in_nearest_scope_does_not_fall_through_to_ancestor() {
+    // A variant where the nearest scope DOES have an `imports` field, but the
+    // specifier does not match any of its keys. tsc fails here too — it does not
+    // continue searching ancestor package scopes for a matching key.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_nearest_scope_nomatch");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+
+    // Nearest scope has an `imports` map, but only an unrelated key.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner","imports":{"#local":"./local.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/local.d.ts"),
+        "export declare const w: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/src/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    // The unrelated `#local` key in the nearest scope resolves fine.
+    let local = resolver.resolve(
+        "#local",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 6),
+    );
+    assert!(
+        local.is_ok(),
+        "#local should resolve against the nearest scope, got {local:?}"
+    );
+
+    // But `#shared`, defined only in the ancestor, must not be reached.
+    let shared = resolver.resolve(
+        "#shared",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 7),
+    );
+    assert!(
+        matches!(shared, Err(ResolutionFailure::NotFound { .. })),
+        "#shared (only in ancestor) must not fall through past the nearest \
+         import-bearing scope, got {shared:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_resolve_from_subdir_within_same_scope() {
+    // Control: walking UP to find the nearest package.json is still correct when
+    // the importer lives in a subdirectory of its own package. `#shared` must
+    // resolve from `src/nested/` against the single enclosing package scope.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_same_scope_subdir");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src/nested")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+    fs::write(
+        dir.join("src/nested/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#shared", &dir.join("src/nested/index.ts"), Span::new(0, 7));
+
+    let resolved = result.expect("#shared should resolve from a subdir of its own package");
+    assert_eq!(resolved.resolved_path, dir.join("shared.d.ts"));
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -984,5 +1142,167 @@ fn test_wildcard_export_beats_directory_key_independent_of_declaration_order() {
         resolved_b,
         star_then_dir.join("node_modules/pkg/dist/foo.d.ts"),
         "`./*` must win over `./` regardless of declaration order"
+    );
+}
+
+// ===========================================================================
+// `exports` authority over the legacy `typesVersions` field
+//
+// tsc's `loadModuleFromSpecificNodeModulesDirectory` returns from
+// `loadModuleFromExports` unconditionally when a package declares `exports`
+// ("package exports are higher priority than file/directory/typesVersions
+// lookups and ... blocks them"). So under Node16/NodeNext/Bundler the legacy
+// `typesVersions` field must NOT be consulted as a fallback when `exports` is
+// present: a subpath the `exports` map does not expose is unresolved (TS2307),
+// even if a `typesVersions` pattern would otherwise map it to an existing file.
+// `typesVersions` still applies to packages that declare NO `exports` map.
+// ===========================================================================
+
+/// A non-exported subpath must not fall back to `typesVersions` when the
+/// package declares an `exports` map (Node16). Even though the `typesVersions`
+/// target file exists on disk, `exports` authority blocks it.
+#[test]
+fn exports_present_blocks_types_versions_fallback_for_subpath_node16() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/index.ts", "import {} from 'widget/internals';");
+    fixture.write(
+        "node_modules/widget/package.json",
+        r#"{
+            "name": "widget",
+            "exports": { "./panel": "./panel.js" },
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    // The `typesVersions` target exists, but `exports` is authoritative.
+    fixture.write(
+        "node_modules/widget/typed/internals.d.ts",
+        "export const x = 0;",
+    );
+    fixture.write("node_modules/widget/panel.d.ts", "export const panel = 0;");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let result = resolver.resolve(
+        "widget/internals",
+        &dir.join("src/index.ts"),
+        Span::new(0, 1),
+    );
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "exports is authoritative: a non-exported subpath must not fall back to \
+         typesVersions, got {result:?}"
+    );
+}
+
+/// Same `exports`-authority rule under Bundler resolution, with a wildcard
+/// `exports` map that still does not cover the requested subpath.
+#[test]
+fn exports_present_blocks_types_versions_fallback_for_subpath_bundler() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("app/main.ts", "import {} from 'gadget/secret';");
+    fixture.write(
+        "node_modules/gadget/package.json",
+        r#"{
+            "name": "gadget",
+            "exports": { "./public/*": "./lib/public/*.js" },
+            "typesVersions": { "*": { "*": ["legacy/*"] } }
+        }"#,
+    );
+    fixture.write(
+        "node_modules/gadget/legacy/secret.d.ts",
+        "export const s = 0;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    });
+    let result = resolver.resolve("gadget/secret", &dir.join("app/main.ts"), Span::new(0, 1));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "Bundler: a subpath outside the exports map must not resolve via \
+         typesVersions, got {result:?}"
+    );
+}
+
+/// Control: an exported subpath still resolves through `exports` (the fix must
+/// not break exports-based subpath resolution).
+#[test]
+fn exports_present_still_resolves_exported_subpath() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/app.ts", "import {} from 'gizmo/panel';");
+    fixture.write(
+        "node_modules/gizmo/package.json",
+        r#"{
+            "name": "gizmo",
+            "exports": { "./panel": "./panel.js" },
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    fixture.write("node_modules/gizmo/panel.d.ts", "export const panel = 0;");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let exported_subpath = resolver
+        .resolve("gizmo/panel", &dir.join("src/app.ts"), Span::new(0, 1))
+        .expect("an exported subpath must still resolve through exports");
+
+    assert_eq!(
+        exported_subpath.resolved_path,
+        dir.join("node_modules/gizmo/panel.d.ts")
+    );
+}
+
+/// Control: a package that declares NO `exports` map still honors the legacy
+/// `typesVersions` field for subpaths (the fix only blocks typesVersions when
+/// exports is present).
+#[test]
+fn no_exports_subpath_still_uses_types_versions() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/app.ts", "import {} from 'doohickey/internals';");
+    fixture.write(
+        "node_modules/doohickey/package.json",
+        r#"{
+            "name": "doohickey",
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    fixture.write(
+        "node_modules/doohickey/typed/internals.d.ts",
+        "export const x = 0;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let legacy_types_version_subpath = resolver
+        .resolve(
+            "doohickey/internals",
+            &dir.join("src/app.ts"),
+            Span::new(0, 1),
+        )
+        .expect("without an exports map, typesVersions still resolves the subpath");
+
+    assert_eq!(
+        legacy_types_version_subpath.resolved_path,
+        dir.join("node_modules/doohickey/typed/internals.d.ts")
     );
 }

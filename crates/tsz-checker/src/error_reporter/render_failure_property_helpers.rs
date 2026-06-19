@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
             let Some(member_symbol_id) = exports.get(&member_name) else {
                 continue;
             };
-            let Some(member_type) = self.ctx.symbol_types.get(&member_symbol_id).copied() else {
+            let Some(member_type) = self.ctx.symbol_types.get(&member_symbol_id) else {
                 continue;
             };
             if self.enum_member_type_matches_property_key(member_type, property_key) {

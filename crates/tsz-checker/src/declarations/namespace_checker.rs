@@ -302,7 +302,7 @@ impl<'a> CheckerState<'a> {
                 )
         });
         if !is_ns_interface_merge
-            && let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
+            && let Some(cached) = self.ctx.symbol_instance_types.get(&sym_id)
             && cached != TypeId::ERROR
             && cached != TypeId::UNKNOWN
         {

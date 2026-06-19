@@ -857,7 +857,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_identifier_symbol(base_expr)
-            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
             == Some(TypeId::ERROR)
     }
 

@@ -273,8 +273,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .symbol_instance_types
                     .get(&sym_id)
-                    .or_else(|| self.ctx.symbol_types.get(&sym_id))
-                    .copied();
+                    .or_else(|| self.ctx.symbol_types.get(&sym_id));
             }
             current = self.ctx.arena.get_extended(current)?.parent;
         }

@@ -452,7 +452,7 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .flatten()
                 {
-                    if let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
+                    if let Some(existing) = self.ctx.symbol_types.get(&sym_id)
                         && existing != TypeId::ERROR
                         && type_id != existing
                         && type_id.is_any_unknown_or_error()
@@ -467,7 +467,7 @@ impl<'a> CheckerState<'a> {
                     // parameter annotations remain authoritative.
                     if param_types.is_none()
                         && param.type_annotation.is_none()
-                        && let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
+                        && let Some(existing) = self.ctx.symbol_types.get(&sym_id)
                         && existing != TypeId::ERROR
                     {
                         continue;
@@ -568,7 +568,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_node_symbol(function_idx)
-                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
                     .filter(|&ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
             })
             .or_else(|| {

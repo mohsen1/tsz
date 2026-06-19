@@ -514,7 +514,7 @@ impl<'a> CheckerState<'a> {
             .copied()
             .or_else(|| {
                 self.resolve_identifier_symbol(spread.expression)
-                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
             });
         let Some(spread_type) = spread_type else {
             return false;

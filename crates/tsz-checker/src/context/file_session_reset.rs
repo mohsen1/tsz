@@ -155,8 +155,8 @@ impl<'a> CheckerContext<'a> {
             .type_node_scope_types
             .clear();
         self.request_node_types.clear();
-        self.class_instance_type_cache.clear();
-        self.class_constructor_type_cache.clear();
+        self.class_instance_type_cache.get_mut().clear();
+        self.class_constructor_type_cache.get_mut().clear();
         self.class_instance_type_to_decl.clear();
         self.flow_narrowed_nodes.clear();
         self.daa_error_nodes.clear();
@@ -310,6 +310,10 @@ impl<'a> CheckerContext<'a> {
         self.application_symbols_resolved.clear();
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
+        // Type-position identifier resolution is memoized by (arena pointer,
+        // node index); arena pointers are per-file and can be reused across
+        // sessions, so the memo shares the per-file lifecycle (issue #13987).
+        self.type_position_resolution_cache.borrow_mut().clear();
         self.clear_env_eval_cache();
         // Body-publication history tracks oscillating re-resolutions only to
         // suppress redundant env-eval cache sweeps; it shares that cache's
@@ -336,6 +340,9 @@ impl<'a> CheckerContext<'a> {
         self.type_parameter_scope.clear();
         self.type_reference_validation_caches.arg_validation.clear();
         self.type_reference_validation_caches
+            .bare_param_base_inst_constraint
+            .clear();
+        self.type_reference_validation_caches
             .type_node_validation
             .clear();
         self.type_reference_validation_caches
@@ -355,6 +362,12 @@ impl<'a> CheckerContext<'a> {
             .clear();
         self.type_reference_validation_caches
             .indexed_object_map_branch_constraint
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_true_branch_relation_successes
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_true_branch_narrowing
             .clear();
         self.type_reference_validation_caches
             .type_param_default_constraint
@@ -441,11 +454,12 @@ impl<'a> CheckerContext<'a> {
         self.request_cache_counters = crate::context::RequestCacheCounters::default();
         self.flow_shared.narrowing_cache = tsz_solver::narrowing::NarrowingCache::new();
 
-        // Module-scoped thread-local memoisations that key by file-
-        // local `NodeIndex`.
-        crate::types_domain::utilities::cycle_guard::clear_visited_sets();
-        crate::types_domain::utilities::enum_utils::clear_enum_eval_memo();
-        crate::types_domain::utilities::const_enum_eval::clear_const_eval_memo();
+        // Transient per-thread resolution guards, depth counters, and
+        // arena-local visited-set/enum memos keyed by file-local `NodeIndex`.
+        // Same per-file reset the fresh-checker path runs, so the session-reuse
+        // path is held to the identical isolation contract; see
+        // `reset_per_file_resolution_guards` docs for the rationale (#13255).
+        crate::checkers_domain::reset_per_file_resolution_guards();
 
         // Invariants: these stacks must be empty at the file
         // boundary. A non-empty state indicates a logic bug in the

@@ -1252,7 +1252,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
-                && let Some(&old) = self.ctx.symbol_types.get(&sym_id)
+                && let Some(old) = self.ctx.symbol_types.get(&sym_id)
                 && old != ty
                 && old != TypeId::ERROR
                 && old != TypeId::ANY

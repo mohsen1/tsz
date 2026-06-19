@@ -56,7 +56,7 @@ mod types_domain;
 pub use checkers_domain::{
     accessor_checker, call_checker, clear_all_thread_local_state, enum_checker, generic_checker,
     iterable_checker, jsx, parameter_checker, promise_checker, property_checker,
-    reset_stack_overflow_flag, signature_builder,
+    reset_per_file_resolution_guards, reset_stack_overflow_flag, signature_builder,
 };
 
 pub use assignability_domain::{
@@ -213,6 +213,9 @@ mod environment_capabilities_tests;
 #[cfg(test)]
 #[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
 mod flow_assignment_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/flow_for_of_destructure_closure_assignment_tests.rs"]
+mod flow_for_of_destructure_closure_assignment_tests;
 #[cfg(test)]
 #[path = "tests/flow_guard_boundary_tests.rs"]
 mod flow_guard_boundary_tests;
@@ -556,6 +559,9 @@ mod ts7036_tests;
 #[path = "../tests/ts7041_tests.rs"]
 mod ts7041_tests;
 #[cfg(test)]
+#[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
+mod ts7053_apparent_receiver_display_tests;
+#[cfg(test)]
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]
@@ -660,6 +666,9 @@ mod callable_union_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/circular_initializer_deferred_generic_tests.rs"]
 mod circular_initializer_deferred_generic_tests;
+#[cfg(test)]
+#[path = "tests/class_constructor_private_static_recovery_tests.rs"]
+mod class_constructor_private_static_recovery_tests;
 #[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
@@ -946,6 +955,9 @@ mod jsdoc_cast_and_define_property_widening_tests;
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_empty_augments_class_chain_tests.rs"]
+mod jsdoc_empty_augments_class_chain_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_enum_circular_tests.rs"]
 mod jsdoc_enum_circular_tests;
 #[cfg(test)]
@@ -1041,6 +1053,9 @@ mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
+#[cfg(test)]
+#[path = "../tests/keyof_mapped_constraint_key_space_tests.rs"]
+mod keyof_mapped_constraint_key_space_tests;
 #[cfg(test)]
 #[path = "tests/keyof_suppression_relation_routing_arch_tests.rs"]
 mod keyof_suppression_relation_routing_arch_tests;
@@ -1176,6 +1191,12 @@ mod polymorphic_this_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/predicate_narrowed_lib_union_access_tests.rs"]
 mod predicate_narrowed_lib_union_access_tests;
+#[cfg(test)]
+#[path = "tests/predicate_narrowed_top_type_source_display_tests.rs"]
+mod predicate_narrowed_top_type_source_display_tests;
+#[cfg(test)]
+#[path = "tests/predicate_narrowed_unknown_any_source_display_tests.rs"]
+mod predicate_narrowed_unknown_any_source_display_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
@@ -1342,11 +1363,17 @@ mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
 #[cfg(test)]
+#[path = "tests/ts2564_constructor_throw_guard_tests.rs"]
+mod ts2564_constructor_throw_guard_tests;
+#[cfg(test)]
 #[path = "tests/ts2565_jsdoc_prototype_type_decl_tests.rs"]
 mod ts2565_jsdoc_prototype_type_decl_tests;
 #[cfg(test)]
 #[path = "tests/ts2590_array_literal_identity_skip_tests.rs"]
 mod ts2590_array_literal_identity_skip_tests;
+#[cfg(test)]
+#[path = "tests/ts2591_node_global_type_position_tests.rs"]
+mod ts2591_node_global_type_position_tests;
 #[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
@@ -1362,6 +1389,9 @@ mod type_alias_primitive_display_tests;
 #[cfg(test)]
 #[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
 mod type_param_default_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/type_position_resolution_cache_tests.rs"]
+mod type_position_resolution_cache_tests;
 #[cfg(test)]
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;

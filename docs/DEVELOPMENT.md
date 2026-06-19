@@ -107,6 +107,16 @@ cargo install cargo-nextest
 cargo nextest run -p tsz-checker --lib <test-name>
 ```
 
+If `cargo nextest` wedges locally at ~0% CPU (an idle orchestrator with no
+output — see issue #13982), run it through the serializing guard, which queues
+concurrent runs and clears a stale orchestrator left by a killed-mid-build run:
+
+```bash
+scripts/test/nextest-guard.sh -- cargo nextest run -p tsz-checker --lib <test-name>
+```
+
+See [`docs/development/TOOLING.md`](development/TOOLING.md) for details.
+
 ### Conformance Tests
 
 Conformance tests compare tsz diagnostics against the official TypeScript compiler (`tsc`).

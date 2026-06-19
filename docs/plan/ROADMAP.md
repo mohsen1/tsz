@@ -94,10 +94,10 @@ active campaigns.
   test out of the shard failure set.
 - Output-surgery audit stays at zero unallowlisted calls and zero allowlist
   entries.
-- CheckerContext field-count guard is ratcheted at `251` fields after adding
-  a recursion guard for cross-file omitted-default constraint expansion. Future
-  work should reduce this through capability extraction rather than silently
-  adding checker-global state.
+- CheckerContext field-count guard is ratcheted at `252` fields after adding
+  `type_position_resolution_cache` (a per-file memo of type-position identifier
+  resolution; #13987). Future work should reduce this through capability
+  extraction rather than silently adding checker-global state.
 
 ## How To Pick Work
 

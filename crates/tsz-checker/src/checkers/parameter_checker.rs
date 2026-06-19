@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         self.parameter_symbol_ids(param_idx, param.name)
             .into_iter()
             .flatten()
-            .filter_map(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .filter_map(|sym_id| self.ctx.symbol_types.get(&sym_id))
             .any(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
     }
 
@@ -947,7 +947,7 @@ impl<'a> CheckerState<'a> {
                 self.parameter_symbol_ids(param_idx, param.name)
                     .into_iter()
                     .flatten()
-                    .find_map(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .find_map(|sym_id| self.ctx.symbol_types.get(&sym_id))
                     .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN && t != TypeId::ERROR)
             } else {
                 None

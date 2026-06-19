@@ -706,12 +706,7 @@ impl CheckerState<'_> {
         for symbol_ref in type_queries.iter().copied() {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
             let _ = self.get_type_of_symbol(sym_id);
-            let value_type = self
-                .ctx
-                .symbol_types
-                .get(&sym_id)
-                .copied()
-                .unwrap_or(TypeId::ERROR);
+            let value_type = self.ctx.symbol_types.get(&sym_id).unwrap_or(TypeId::ERROR);
             // When circular resolution causes ERROR (e.g. `let Anon = class<T> {}` and
             // `typeof Anon` appears in the class body), inserting ERROR into the TypeEnvironment
             // would poison all TypeQuery resolutions for this symbol. Instead, build a minimal
@@ -1145,7 +1140,7 @@ impl CheckerState<'_> {
                             if symbol.has_any_flags(symbol_flags::CLASS) {
                                 // Try the symbol-indexed cache first (populated
                                 // after class building completes).
-                                let cached = self.ctx.symbol_instance_types.get(&sym_id).copied();
+                                let cached = self.ctx.symbol_instance_types.get(&sym_id);
 
                                 // Fallback: check the node-indexed cache for
                                 // in-progress class builds.  During
@@ -1159,7 +1154,11 @@ impl CheckerState<'_> {
                                 // Point) can find properties.
                                 let from_node_cache = if cached.is_none() {
                                     symbol.primary_declaration().and_then(|idx| {
-                                        self.ctx.class_instance_type_cache.get(&idx).copied()
+                                        self.ctx
+                                            .class_instance_type_cache
+                                            .borrow()
+                                            .get(&idx)
+                                            .copied()
                                     })
                                 } else {
                                     None
@@ -1402,7 +1401,7 @@ impl CheckerState<'_> {
                 // For CLASS symbols in type position, prefer the instance type over the
                 // constructor type. get_type_of_symbol returns the constructor (value-side)
                 // type, but Lazy(DefId) in type position means the instance type.
-                if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
+                if let Some(instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
                     && instance_type != type_id
                 {
                     return self.resolve_lazy_type_inner(instance_type, visited);
@@ -1640,11 +1639,14 @@ impl CheckerState<'_> {
                 self.ctx
                     .symbol_instance_types
                     .get(&sym_id)
-                    .copied()
                     .or_else(|| {
-                        symbol
-                            .primary_declaration()
-                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol.primary_declaration().and_then(|idx| {
+                            self.ctx
+                                .class_instance_type_cache
+                                .borrow()
+                                .get(&idx)
+                                .copied()
+                        })
                     })
                     .or_else(|| {
                         owner_file_idx
@@ -1910,11 +1912,14 @@ impl CheckerState<'_> {
                 self.ctx
                     .symbol_instance_types
                     .get(&sym_id)
-                    .copied()
                     .or_else(|| {
-                        symbol
-                            .primary_declaration()
-                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol.primary_declaration().and_then(|idx| {
+                            self.ctx
+                                .class_instance_type_cache
+                                .borrow()
+                                .get(&idx)
+                                .copied()
+                        })
                     })
                     .unwrap_or_else(|| {
                         // Try building the instance type directly from the class symbol.
@@ -1931,7 +1936,6 @@ impl CheckerState<'_> {
                         self.ctx
                             .symbol_instance_types
                             .get(&sym_id)
-                            .copied()
                             .or_else(|| self.instance_type_from_constructor_type(constructor))
                             .unwrap_or(constructor)
                     })

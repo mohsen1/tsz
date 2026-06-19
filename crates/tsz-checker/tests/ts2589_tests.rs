@@ -482,7 +482,6 @@ let x2x = x2.x;
         .ctx
         .symbol_types
         .get(&sym_id)
-        .copied()
         .map(|ty| checker.format_type(ty))
         .unwrap_or_else(|| "<missing>".to_string());
 

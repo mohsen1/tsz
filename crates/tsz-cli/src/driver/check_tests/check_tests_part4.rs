@@ -811,3 +811,76 @@ export function overwrite(c: C, flag: boolean): Inner {
         );
     }
 
+    // ------------------------------------------------------------------
+    // #13947: a class merged with a namespace, default-exported, in an
+    // import cycle with its consumers had its imported *value/constructor*
+    // side collapse to `any` cross-file (the *instance* side survives the
+    // cycle via a deferred `Lazy(classDef)`). The collapsed value made a
+    // `Schema.make<…>(…)` call an *untyped* call → false `TS2347` cascading
+    // implicit-`any` callback params (`TS7006`) — the runtypes
+    // `Runtype.create` root, 227 false positives.
+    //
+    // Fix: the re-entrant constructor-cycle fallback returns a deferred
+    // `Lazy` to the class's `ClassConstructor` companion `DefId` instead of a
+    // bare `any`, so the transient `any` is never cached/propagated and the
+    // call site observes the real generic call signature once the companion
+    // body is published.
+    //
+    // Renamed binders (no `Runtype`/`create` literals) so the result is not
+    // keyed on any identifier text. `tsc`-clean.
+    #[test]
+    fn cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle() {
+        let options = resolved_options_for_es2015_strict_test();
+        let base = std::path::Path::new("/");
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/schema.ts",
+                    r#"
+import Helper from "./helper";
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+class Schema<T = any> {
+  readonly mark!: T;
+  static make = <R extends Schema>(
+    build: (x: number) => MarkOf<R>,
+    meta: Schema.Meta<R>,
+  ): R => new Schema(build as any, meta) as unknown as R;
+  private constructor(_b: (x: number) => T, _m: Schema.Meta<Schema<T>>) {}
+  static unit(): Schema<number> {
+    return Schema.make<Schema<number>>((x) => x, { tag: "u", inner: undefined as any });
+  }
+  use() {
+    return new Helper().go();
+  }
+}
+namespace Schema {
+  export type Meta<R> = { tag: string; inner: R };
+}
+export default Schema;
+"#,
+                ),
+                (
+                    "/helper.ts",
+                    r#"
+import Schema from "./schema";
+export default class Helper {
+  go() {
+    return Schema.make<Schema<number>>((x) => x, { tag: "n", inner: undefined as any });
+  }
+}
+"#,
+                ),
+            ],
+            &options,
+            base,
+        );
+
+        // `tsc`-clean: the imported class+namespace-merge value must keep its
+        // generic call signature across the import cycle — no untyped-call
+        // `TS2347`, no implicit-`any` callback `TS7006`, nothing.
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+

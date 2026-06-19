@@ -131,7 +131,6 @@ fn class_instance_property_type_string(
         .ctx
         .symbol_instance_types
         .get(&sym_id)
-        .copied()
         .unwrap_or(TypeId::ERROR);
     let property_type = match checker.resolve_property_access_with_env(instance_type, property_name)
     {

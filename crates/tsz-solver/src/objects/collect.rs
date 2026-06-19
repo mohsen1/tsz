@@ -765,3 +765,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 #[cfg(test)]
 #[path = "../../tests/objects_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/lazy_heritage_member_resolution_tests.rs"]
+mod lazy_heritage_member_resolution_tests;

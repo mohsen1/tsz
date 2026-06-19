@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
                         let target_type = self.get_type_of_symbol(target_sym_id);
                         // Also cache the instance type so type-position references
                         // (`let x: Observable<number>`) continue to work.
-                        if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
+                        if let Some(inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
                             self.ctx.symbol_instance_types.insert(sym_id, inst);
                         }
                         return (target_type, Vec::new());

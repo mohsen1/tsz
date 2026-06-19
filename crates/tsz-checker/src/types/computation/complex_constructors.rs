@@ -1339,11 +1339,15 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
-        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+        if let Some(instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
             return Some(instance_type);
         }
         let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
-        self.ctx.class_instance_type_cache.get(&decl_idx).copied()
+        self.ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&decl_idx)
+            .copied()
     }
 
     /// Check if the target of a `new` expression is a class with circular
@@ -1406,12 +1410,13 @@ impl<'a> CheckerState<'a> {
         };
 
         // Look up the cached instance type.
-        let instance_type = self
-            .ctx
-            .symbol_instance_types
-            .get(&sym_id)
-            .copied()
-            .or_else(|| self.ctx.class_instance_type_cache.get(&decl_idx).copied())?;
+        let instance_type = self.ctx.symbol_instance_types.get(&sym_id).or_else(|| {
+            self.ctx
+                .class_instance_type_cache
+                .borrow()
+                .get(&decl_idx)
+                .copied()
+        })?;
 
         if instance_type == TypeId::ERROR {
             return None;

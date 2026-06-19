@@ -32,6 +32,10 @@ mod cross_file_query;
 mod diagnostic_indices;
 mod diagnostic_push;
 pub(crate) mod env_eval_cache;
+/// Debug-only purity invariant for the stamp-keyed evaluation memos (#13980).
+/// Compiles out of release builds; the wiring in `caches.rs` is gated the same.
+#[cfg(debug_assertions)]
+pub(crate) mod eval_memo_purity;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
@@ -49,6 +53,8 @@ mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;
+mod lib_type_resolution_caches;
+pub use lib_type_resolution_caches::LibTypeResolutionCaches;
 mod lib_queries;
 mod module_entity;
 mod package_resolution;
@@ -122,39 +128,6 @@ pub struct JSDocGlobalTypedefLookupCache {
     pub miss_cache: RefCell<FxHashSet<String>>,
     pub in_progress: RefCell<FxHashSet<String>>,
     pub typedef_presence_by_file: Arc<dashmap::DashMap<(u32, u32, String), bool>>,
-}
-
-/// File-session caches for lib type and lazy lib-member resolution.
-#[derive(Default)]
-pub struct LibTypeResolutionCaches {
-    /// Cache for `resolve_lib_type_by_name` results.
-    /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
-    pub types: FxHashMap<String, Option<TypeId>>,
-
-    /// Per-checker cache for lazy single-member lib-interface property reads.
-    /// Keyed by `(interface_name, property_name)` atoms and stores both hits and
-    /// conservative misses after the existing lazy-member resolver has decided
-    /// whether it can lower only the requested member. This keeps repeated DOM
-    /// reads from rescanning declaration and heritage lists while preserving the
-    /// same full-materialization fallback on cached misses.
-    pub lazy_members: RefCell<FxHashMap<(Atom, Atom), Option<TypeId>>>,
-
-    /// Per-checker cache for lazy single-member property reads once a receiver
-    /// has already been classified as an eligible bare `Lazy(DefId)`.
-    /// Keyed by `(receiver_def_id, property_name)` and stores the same hit/miss
-    /// result as `lazy_members`, but lets the receiver hot path avoid mapping
-    /// the cached `DefId` back to a symbol name before a repeated lookup.
-    pub lazy_member_receiver_properties:
-        RefCell<FxHashMap<(tsz_solver::def::DefId, Atom), Option<TypeId>>>,
-
-    /// Per-checker cache for lazy single-member receiver eligibility.
-    /// Keyed by the bare receiver `Lazy(DefId)`. Stores both eligible and
-    /// ineligible decisions after the conservative receiver predicate has
-    /// inspected symbol provenance, generic parameters, shadowing, global
-    /// augmentations, and heritage bases. This keeps repeated DOM/lib property
-    /// reads from re-walking the same heritage/augmentation graph before they
-    /// can hit the member cache.
-    pub lazy_member_receivers: RefCell<FxHashMap<tsz_solver::def::DefId, bool>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
@@ -365,11 +338,17 @@ pub struct TypeCache {
 
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
-    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// `RefCell` for `&self` interior mutability (#12101); an on-demand `&self`
+    /// forcing resolver can publish without a `&mut` borrow. Behavior identical.
+    pub class_instance_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
     /// Avoids recomputing constructor shape/inheritance on repeated class queries.
-    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see
+    /// `class_instance_type_cache`.
+    pub class_constructor_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Set of import specifier nodes that should be elided from JavaScript output.
     /// These are imports that reference type-only declarations (interfaces, type aliases).
@@ -443,8 +422,8 @@ impl TypeCache {
         );
         size += entry(self.flow_analysis_cache.len(), 8 + sym + id, id);
         size += entry(self.class_instance_type_to_decl.len(), id, node);
-        size += entry(self.class_instance_type_cache.len(), node, id);
-        size += entry(self.class_constructor_type_cache.len(), node, id);
+        size += entry(self.class_instance_type_cache.borrow().len(), node, id);
+        size += entry(self.class_constructor_type_cache.borrow().len(), node, id);
         size += entry(self.type_only_nodes.len(), node, 0);
         size += entry(
             self.namespace_module_names.len(),
@@ -1020,11 +999,17 @@ pub struct CheckerContext<'a> {
 
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
-    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see the
+    /// matching field on `TypeCache`.
+    pub class_instance_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
     /// Avoids recomputing constructor inheritance checks in class-heavy programs.
-    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see the
+    /// matching field on `TypeCache`.
+    pub class_constructor_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Cache for class chain summaries (class declaration `NodeIndex` -> summary).
     /// Avoids recomputing the full inheritance chain member walk on every property
@@ -1063,6 +1048,30 @@ pub struct CheckerContext<'a> {
     /// method's readiness walk O(1) instead of O(signature size). Pure speed
     /// memo: identical to recomputing on demand.
     pub(crate) type_queries_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[tsz_solver::SymbolRef]>>>,
+
+    /// Memoizes type-position identifier resolution
+    /// (`resolve_identifier_symbol_in_type_position`) keyed by
+    /// `(arena pointer, node index)`.
+    ///
+    /// Recursive type evaluation (e.g. `DeepReadonly<T>` over a deeply-nested
+    /// object) re-lowers the same alias-body identifier nodes at every recursion
+    /// level, re-resolving each by name through scope walks and the binder's
+    /// by-name `HashMap` — the dominant non-lib recompute cliff (issue #13987,
+    /// where `resolve_identifier_symbol_in_type_position_inner` was 75.6%
+    /// inclusive). The alias/global/namespace/module-augmentation resolution is a
+    /// pure function of `(arena, node)` for a fixed binder + lib context — the
+    /// same key the binder's own `resolve_identifier` cache uses — so caching it
+    /// is a pure speed memo, identical to recomputing on demand.
+    ///
+    /// Only context-free resolutions are stored: the enclosing-type-parameter
+    /// fast path (`resolve_enclosing_type_parameter_symbol`) is *never* cached
+    /// here because the same lexical node can bind to different type-parameter
+    /// symbols across instantiation/return contexts (the
+    /// `return_context_type_param_shadowing_tests` shape). The arena pointer is
+    /// per-file, so the cache shares the per-file lifecycle and is cleared on
+    /// `reset_for_next_source_file`.
+    pub(crate) type_position_resolution_cache:
+        RefCell<FxHashMap<(usize, u32), crate::symbol_resolver::TypeSymbolResolution>>,
 
     /// Per-`DefId` history of body `TypeId`s already published to the
     /// definition store, used to suppress redundant cache invalidation when a

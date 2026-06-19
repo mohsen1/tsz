@@ -896,8 +896,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         if string_index.is_some() || number_index.is_some() {
+            // A non-homomorphic mapped type's index signatures derive from its
+            // constraint, so `keyof` of the materialized object is the
+            // constraint key space (see `ObjectFlags::MAPPED_CONSTRAINT_KEYS`).
+            // Homomorphic maps keep `keyof T` and stay unflagged.
+            let flags = if is_homomorphic || is_identity_homomorphic {
+                ObjectFlags::empty()
+            } else {
+                ObjectFlags::MAPPED_CONSTRAINT_KEYS
+            };
             self.interner().object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+                flags,
                 properties,
                 string_index,
                 number_index,

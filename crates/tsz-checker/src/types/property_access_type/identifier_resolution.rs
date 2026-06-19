@@ -430,6 +430,25 @@ impl<'a> CheckerState<'a> {
             {
                 return TypeId::SYMBOL;
             }
+            let namespace_class_recovery = self
+                .resolve_class_access_with_current_member_initializer_recovery(
+                    access.expression,
+                    object_type,
+                );
+            let mut namespace_class_chain_summary = None;
+            if let Some(member_type) = self.recover_property_from_class_chain_summary(
+                namespace_class_recovery.1,
+                namespace_class_recovery.0,
+                &mut namespace_class_chain_summary,
+                property_name,
+            ) {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
             if !access.question_dot_token
                 && !property_name.starts_with('#')
                 && !accessibility_error_emitted
@@ -673,6 +692,25 @@ impl<'a> CheckerState<'a> {
                         property_name,
                     )
                 {
+                    let generic_class_recovery = self
+                        .resolve_class_access_with_current_member_initializer_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        );
+                    let mut generic_class_chain_summary = None;
+                    if let Some(member_type) = self.recover_property_from_class_chain_summary(
+                        generic_class_recovery.1,
+                        generic_class_recovery.0,
+                        &mut generic_class_chain_summary,
+                        property_name,
+                    ) {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     // Suppress TS2339 for index access types on type parameters.
                     // When accessing properties on types like T[keyof T], we cannot
                     // determine what properties exist until T is instantiated.
@@ -927,6 +965,26 @@ impl<'a> CheckerState<'a> {
                     // The updated version in scope has a constraint (likely ERROR),
                     // so suppress the cascading TS2339.
                     return TypeId::ERROR;
+                }
+
+                let early_class_recovery = self
+                    .resolve_class_access_with_current_member_initializer_recovery(
+                        access.expression,
+                        object_type_for_access,
+                    );
+                let mut early_class_chain_summary = None;
+                if let Some(member_type) = self.recover_property_from_class_chain_summary(
+                    early_class_recovery.1,
+                    early_class_recovery.0,
+                    &mut early_class_chain_summary,
+                    property_name,
+                ) {
+                    return self.finalize_property_access_result(
+                        idx,
+                        member_type,
+                        skip_flow_narrowing,
+                        false,
+                    );
                 }
 
                 // Special case: unconstrained type parameters should emit TS2339
