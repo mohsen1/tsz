@@ -144,8 +144,23 @@ pub(crate) enum ResolutionFailureKind {
 pub(crate) struct ResolutionFailure {
     /// Why the lookup failed.
     pub kind: ResolutionFailureKind,
-    /// Spelling-suggestion candidates (if any).
+    /// Spelling-suggestion candidates already computed at construction time.
+    ///
+    /// For `NotFound` failures the expensive candidate scan is usually
+    /// *deferred* to the diagnostic-emission path (see `suggestions_eligible`);
+    /// this vector is only populated when a caller eagerly computes suggestions
+    /// (e.g. the exported-member path, whose candidate set is the small export
+    /// list rather than the whole symbol universe).
     pub suggestions: Vec<String>,
+    /// For `NotFound` failures whose suggestion scan was deferred: whether the
+    /// spelling-suggestion candidate scan should still run when (and only when)
+    /// a diagnostic is actually emitted. The cap counter and the cheap
+    /// suppression predicates have already been applied to produce this flag, so
+    /// the deferred scan reproduces exactly what an eager
+    /// `collect_spelling_suggestions` would have returned — without paying for
+    /// the full-symbol-universe Levenshtein walk on failures that are suppressed
+    /// or recovered before any diagnostic is emitted.
+    pub suggestions_eligible: bool,
 }
 
 impl ResolutionFailure {
@@ -154,6 +169,7 @@ impl ResolutionFailure {
         Self {
             kind: ResolutionFailureKind::NotFound,
             suggestions: Vec::new(),
+            suggestions_eligible: false,
         }
     }
 
@@ -162,6 +178,19 @@ impl ResolutionFailure {
         Self {
             kind: ResolutionFailureKind::NotFound,
             suggestions,
+            suggestions_eligible: false,
+        }
+    }
+
+    /// Create a "not found" failure whose spelling-suggestion scan is deferred to
+    /// the diagnostic-emission path. `eligible` is the result of the cheap
+    /// eligibility check (suppression predicates + cap counter), which has
+    /// already been applied; pass `true` only when an eager scan would have run.
+    pub const fn not_found_deferred(eligible: bool) -> Self {
+        Self {
+            kind: ResolutionFailureKind::NotFound,
+            suggestions: Vec::new(),
+            suggestions_eligible: eligible,
         }
     }
 
@@ -173,6 +202,7 @@ impl ResolutionFailure {
                 actual_meaning,
             },
             suggestions: Vec::new(),
+            suggestions_eligible: false,
         }
     }
 
@@ -184,6 +214,7 @@ impl ResolutionFailure {
                 parent_name,
             },
             suggestions: Vec::new(),
+            suggestions_eligible: false,
         }
     }
 
@@ -199,10 +230,11 @@ impl ResolutionFailure {
                 parent_name,
             },
             suggestions,
+            suggestions_eligible: false,
         }
     }
 
-    /// Whether this failure has spelling suggestions.
+    /// Whether this failure has eagerly-computed spelling suggestions.
     pub const fn has_suggestions(&self) -> bool {
         !self.suggestions.is_empty()
     }
@@ -317,14 +349,17 @@ impl<'a> CheckerState<'a> {
     fn resolve_scoped_name(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
         let sym_id = self.resolve_identifier_symbol(request.idx);
         let Some(sym_id) = sym_id else {
-            // Not found — collect spelling suggestions via shared helper
-            // which respects all tsc suppression rules.
-            let suggestions = self.collect_spelling_suggestions(request.name, request.idx);
-            return Err(if suggestions.is_empty() {
-                ResolutionFailure::not_found()
-            } else {
-                ResolutionFailure::not_found_with_suggestions(suggestions)
-            });
+            // Not found. Apply the cheap suggestion bookkeeping now (suppression
+            // predicates + the eager cap counter, which must advance in
+            // resolution order to match tsc's sequential `suggestionCount`), but
+            // *defer* the expensive full-symbol-universe candidate scan to the
+            // diagnostic-emission path. Many of these failures are suppressed or
+            // recovered before any diagnostic is emitted (e.g. clean projects
+            // that ultimately resolve every name), so scanning here would be
+            // pure waste. `report_name_resolution_failure` runs the scan only
+            // when it actually emits a "cannot find name" diagnostic.
+            let eligible = self.suggestion_scan_eligible(request.name, request.idx);
+            return Err(ResolutionFailure::not_found_deferred(eligible));
         };
 
         // Get symbol flags
@@ -723,20 +758,42 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
                         &[request.name],
                     );
-                } else if failure.has_suggestions() && !suppress_suggestions {
-                    self.error_cannot_find_name_with_suggestions(
-                        request.name,
-                        &failure.suggestions,
-                        request.idx,
-                    );
-                } else if matches!(request.kind, NameLookupKind::Type) {
-                    self.error_at_node_msg(
-                        request.idx,
-                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
-                        &[request.name],
-                    );
                 } else {
-                    self.error_cannot_find_name_at(request.name, request.idx);
+                    // Resolve the spelling suggestions for this failure now that
+                    // we have decided to emit a diagnostic. Eagerly-computed
+                    // suggestions (e.g. the exported-member path) are used as-is;
+                    // deferred `NotFound` failures run the full candidate scan
+                    // here — and *only* here, so failures that were suppressed
+                    // above or never reached a diagnostic never pay for it. The
+                    // cap counter / suppression predicates were already applied
+                    // when `suggestions_eligible` was computed, so this produces
+                    // the same suggestions an eager scan would have.
+                    // `suggestions_eligible` already excludes the parse-error case
+                    // that drives `suppress_suggestions`, so the scan only runs
+                    // when suggestions could actually be emitted; the emission
+                    // gate below re-checks `suppress_suggestions` explicitly.
+                    let suggestions: Vec<String> = if failure.has_suggestions() {
+                        failure.suggestions.clone()
+                    } else if failure.suggestions_eligible {
+                        self.scan_similar_identifiers(request.name, request.idx)
+                    } else {
+                        Vec::new()
+                    };
+                    if !suggestions.is_empty() && !suppress_suggestions {
+                        self.error_cannot_find_name_with_suggestions(
+                            request.name,
+                            &suggestions,
+                            request.idx,
+                        );
+                    } else if matches!(request.kind, NameLookupKind::Type) {
+                        self.error_at_node_msg(
+                            request.idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                            &[request.name],
+                        );
+                    } else {
+                        self.error_cannot_find_name_at(request.name, request.idx);
+                    }
                 }
             }
             ResolutionFailureKind::WrongMeaning { actual_meaning, .. } => {
@@ -1026,7 +1083,13 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
     use crate::test_utils::check_source_diagnostics;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
 
     #[test]
     fn name_resolution_request_constructors() {
@@ -1070,6 +1133,81 @@ mod tests {
             vec!["member1".to_string()],
         );
         assert!(f.has_suggestions());
+
+        // Deferred not-found: no eagerly-computed suggestions, but the eligibility
+        // flag controls whether the emit path runs the scan.
+        let f = ResolutionFailure::not_found_deferred(true);
+        assert!(!f.has_suggestions());
+        assert!(f.suggestions_eligible);
+        assert!(matches!(f.kind, ResolutionFailureKind::NotFound));
+
+        let f = ResolutionFailure::not_found_deferred(false);
+        assert!(!f.has_suggestions());
+        assert!(!f.suggestions_eligible);
+    }
+
+    /// The spelling-suggestion scan is deferred to the diagnostic-emission path,
+    /// so a genuinely-misspelled user type name still produces the TS2552
+    /// "did you mean" elaboration. Binder names are varied to prove the
+    /// suggestion is driven by structural edit-distance over the in-scope
+    /// symbols, not a fixed candidate.
+    #[test]
+    fn deferred_spelling_scan_still_emits_did_you_mean() {
+        for (decl, typo) in [("Banana", "Banan"), ("Mango", "Mngo")] {
+            let src = format!("type {decl} = number;\nlet v: {typo} = 0 as never;\n");
+            let diagnostics = check_source_diagnostics(&src);
+            let ts2552 = diagnostics.iter().find(|d| d.code == 2552);
+            assert!(
+                ts2552.is_some_and(|d| d.message_text.contains(decl)),
+                "Expected TS2552 suggesting `{decl}` for `{typo}`, got: {:?}",
+                diagnostics
+                    .iter()
+                    .map(|d| (d.code, d.message_text.clone()))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Deferred spelling-suggestion eligibility follows the diagnostic that will
+    /// be emitted, not whether the current arena is part of the user-file arena
+    /// set. Selected declaration libs can surface missing-name diagnostics too,
+    /// so a foreign/current arena must not pre-disable the later suggestion scan.
+    #[test]
+    fn deferred_spelling_scan_remains_eligible_in_foreign_current_arena() {
+        for (decl, typo) in [
+            ("NearbyType", "NearblyType"),
+            ("CalendarThing", "CalenderThing"),
+        ] {
+            let mut user_parser =
+                ParserState::new("entry.ts".to_string(), format!("type {decl} = number;\n"));
+            let user_root = user_parser.parse_source_file();
+            let mut user_binder = BinderState::new();
+            user_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+            let mut foreign_parser =
+                ParserState::new("selected-lib.d.ts".to_string(), format!("let v: {typo};\n"));
+            let foreign_root = foreign_parser.parse_source_file();
+            let mut foreign_binder = BinderState::new();
+            foreign_binder.bind_source_file(foreign_parser.get_arena(), foreign_root);
+
+            let types = TypeInterner::new();
+            let mut checker = CheckerState::new(
+                foreign_parser.get_arena(),
+                &foreign_binder,
+                &types,
+                "selected-lib.d.ts".to_string(),
+                CheckerOptions::default(),
+            );
+            checker
+                .ctx
+                .set_all_arenas(Arc::new(vec![Arc::new(user_parser.get_arena().clone())]));
+            checker.ctx.set_lib_contexts(Vec::new());
+
+            assert!(
+                checker.suggestion_scan_eligible(typo, foreign_root),
+                "foreign/current arena must not suppress deferred suggestions for `{typo}`"
+            );
+        }
     }
 
     // =========================================================================
