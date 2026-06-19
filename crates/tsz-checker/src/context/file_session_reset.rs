@@ -445,11 +445,12 @@ impl<'a> CheckerContext<'a> {
         self.request_cache_counters = crate::context::RequestCacheCounters::default();
         self.flow_shared.narrowing_cache = tsz_solver::narrowing::NarrowingCache::new();
 
-        // Module-scoped thread-local memoisations that key by file-
-        // local `NodeIndex`.
-        crate::types_domain::utilities::cycle_guard::clear_visited_sets();
-        crate::types_domain::utilities::enum_utils::clear_enum_eval_memo();
-        crate::types_domain::utilities::const_enum_eval::clear_const_eval_memo();
+        // Transient per-thread resolution guards, depth counters, and
+        // arena-local visited-set/enum memos keyed by file-local `NodeIndex`.
+        // Same per-file reset the fresh-checker path runs, so the session-reuse
+        // path is held to the identical isolation contract; see
+        // `reset_per_file_resolution_guards` docs for the rationale (#13255).
+        crate::checkers_domain::reset_per_file_resolution_guards();
 
         // Invariants: these stacks must be empty at the file
         // boundary. A non-empty state indicates a logic bug in the
