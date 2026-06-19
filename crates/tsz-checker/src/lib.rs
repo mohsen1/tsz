@@ -949,6 +949,9 @@ mod jsdoc_cast_and_define_property_widening_tests;
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_empty_augments_class_chain_tests.rs"]
+mod jsdoc_empty_augments_class_chain_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_enum_circular_tests.rs"]
 mod jsdoc_enum_circular_tests;
 #[cfg(test)]
