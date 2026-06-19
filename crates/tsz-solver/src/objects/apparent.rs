@@ -14,6 +14,35 @@ pub const fn literal_value_intrinsic_kind(lit: &LiteralValue) -> IntrinsicKind {
     }
 }
 
+/// Apparent type of an element-access receiver for the implicit-any index
+/// diagnostic (`TS7053`).
+///
+/// `tsc` renders `typeToString(getApparentType(objectType))` for the receiver.
+/// `getApparentType` maps the `object` intrinsic to the empty object type `{}`
+/// and a bare primitive to its boxed wrapper interface (`string` -> `String`,
+/// `number` -> `Number`, ...). Every other type is returned unchanged; callers
+/// reduce type parameters to their constraint upstream, mirroring
+/// `getBaseConstraintOfType`.
+pub fn index_receiver_apparent_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id == TypeId::OBJECT
+        || crate::intrinsic_kind(db, type_id) == Some(IntrinsicKind::Object)
+    {
+        return db.object(Vec::new());
+    }
+    let boxed_kind = match type_id {
+        TypeId::NUMBER => Some(IntrinsicKind::Number),
+        TypeId::STRING => Some(IntrinsicKind::String),
+        TypeId::BOOLEAN => Some(IntrinsicKind::Boolean),
+        TypeId::BIGINT => Some(IntrinsicKind::Bigint),
+        TypeId::SYMBOL => Some(IntrinsicKind::Symbol),
+        _ => None,
+    };
+    match boxed_kind {
+        Some(kind) => db.get_boxed_type(kind).unwrap_or(type_id),
+        None => type_id,
+    }
+}
+
 pub enum ApparentMemberKind {
     Value(TypeId),
     Method(TypeId),

@@ -690,7 +690,21 @@ impl<'a> CheckerState<'a> {
             .object_literal_initializer_display_type_for_receiver(expr_idx)
             .map(|init_type| self.format_type_for_assignability_message(init_type))
             .unwrap_or_else(|| {
-                self.property_receiver_display_for_node(display_object_type, expr_idx)
+                // tsc renders `typeToString(getApparentType(objectType))` for the
+                // receiver. The apparent type of the `object` intrinsic is the empty
+                // object type `{}`, and a bare primitive's apparent type is its boxed
+                // wrapper interface (`string` -> `String`, ...). When the apparent type
+                // differs from the raw receiver the plain formatter matches tsc; every
+                // other receiver keeps the existing annotation-aware display path.
+                let apparent = crate::query_boundaries::diagnostics::index_receiver_apparent_type(
+                    self.ctx.types,
+                    display_object_type,
+                );
+                if apparent != display_object_type {
+                    self.format_type_for_assignability_message(apparent)
+                } else {
+                    self.property_receiver_display_for_node(display_object_type, expr_idx)
+                }
             });
         let message = format!(
             "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
