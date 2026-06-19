@@ -768,6 +768,33 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
+        // A `for...in`/`for...of` loop binding (plain or destructured) is
+        // assigned by the loop on every iteration before the body runs. Any read
+        // at or after the loop — including reads captured by closures created
+        // inside the loop body — therefore sees an assigned value, so TS2454 must
+        // not fire. tsc applies this exemption uniformly; the gap was destructured
+        // `for...of`/`for...in` bindings (`[k, v]`, `{ x }`) captured by a nested
+        // closure, where `decl_id_to_check` is a `BindingElement` (not a direct
+        // `VariableDeclaration`) and the cross-scope (deferred-function) heuristics
+        // below would fall through to flow analysis and emit a false TS2454.
+        //
+        // A usage that precedes the loop in source order (e.g. `v; for (var v of
+        // …)`) is intentionally NOT covered — the binding is not yet assigned
+        // there — so it falls through to the definite-assignment check.
+        //
+        // Gated on `!has_initializer`: a loop binding's `VariableDeclaration`
+        // never carries an initializer, so this skips the parent-walk for the
+        // common case of ordinary initialized declarations (which the initializer
+        // guards further below suppress anyway).
+        if !has_initializer
+            && let Some(for_node_idx) = self.for_in_of_loop_binding(decl_id_to_check)
+            && let Some(for_node) = self.ctx.arena.get(for_node_idx)
+            && let Some(usage_node) = self.ctx.arena.get(idx)
+            && usage_node.pos >= for_node.pos
+        {
+            return false;
+        }
+
         // Skip TS2454 when the variable is used from a different function scope
         // than where it is declared. The nested function could be called later,
         // so tsz conservatively suppresses TS2454 for captured locals.
@@ -954,34 +981,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // If the variable is declared in a for-in or for-of loop header,
-        // it's assigned by the loop iteration itself - but only when usage is at or after the loop.
-        // A usage BEFORE the loop in source order (e.g. `v; for (var v of [0]) {}`) must still
-        // be checked for definite assignment.
-        if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id_to_check) {
-            let decl_list_idx = decl_list_info.parent;
-            if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
-                && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                && let Some(for_info) = self.ctx.arena.node_info(decl_list_idx)
-            {
-                let for_idx = for_info.parent;
-                if let Some(for_node) = self.ctx.arena.get(for_idx)
-                    && (for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                        || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-                {
-                    // Only skip the check if the usage is at or after the start of the loop.
-                    // If the usage precedes the loop in source order, fall through to DAA.
-                    if let Some(usage_node) = self.ctx.arena.get(idx) {
-                        if usage_node.pos >= for_node.pos {
-                            return false;
-                        }
-                        // Usage is before the loop - continue to definite assignment check
-                    } else {
-                        return false;
-                    }
-                }
-            }
-        }
+        // (The for-in/for-of loop-binding exemption — including destructured
+        // bindings and closure captures — is applied earlier, before the
+        // cross-scope heuristics, via `for_in_of_loop_binding`.)
 
         // For namespace-scoped variables, skip TS2454 when the usage is inside
         // a nested namespace (MODULE_DECLARATION) relative to the declaration.
@@ -1273,6 +1275,54 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         false
+    }
+
+    /// If `decl_id_to_check` is the binding of a `for...in`/`for...of` loop,
+    /// return the loop statement node, else `None`.
+    ///
+    /// Handles a plain loop variable (`for (const x of …)`) as well as
+    /// destructured loop bindings (`for (const [a, b] of …)`,
+    /// `for (const { x } of …)`), including nested patterns, by walking up
+    /// through the binding (`BindingElement`/array+object `BindingPattern`/
+    /// `VariableDeclaration`) to the enclosing `VariableDeclarationList` and
+    /// confirming its parent is a `for...in`/`for...of` statement.
+    ///
+    /// A for-in/for-of loop binding is assigned by the loop on every iteration
+    /// before the body runs, so reads of it are never used-before-assigned.
+    fn for_in_of_loop_binding(&self, decl_id_to_check: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_id_to_check;
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent = info.parent;
+            // `arena.get` yields `None` for a none index, so no explicit
+            // `parent.is_none()` guard is needed.
+            let parent_node = self.ctx.arena.get(parent)?;
+            match parent_node.kind {
+                // Walk up through the binding: the declaration itself and any
+                // nested destructuring patterns/elements.
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION
+                    || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || k == syntax_kind_ext::BINDING_ELEMENT =>
+                {
+                    current = parent;
+                }
+                // Reached the declaration list: the loop header iff its parent
+                // is a for-in/for-of statement.
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
+                    let list_info = self.ctx.arena.node_info(parent)?;
+                    let for_node = self.ctx.arena.get(list_info.parent)?;
+                    if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    {
+                        return Some(list_info.parent);
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// Check if an identifier is an assignment target in a destructuring assignment.

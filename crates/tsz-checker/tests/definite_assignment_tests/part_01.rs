@@ -437,3 +437,131 @@ class C {
         "Expected no diagnostics when constructor assigns [s] and [N.s], got: {diags:?}"
     );
 }
+
+/// A `for...of` *destructured* binding captured by a nested closure must not
+/// trigger TS2454. The loop assigns the binding on every iteration before the
+/// body (and the closure) runs. Regression for the ofetch canary pattern.
+#[test]
+fn test_ts2454_for_of_destructured_binding_captured_by_closure_is_clean() {
+    let source = r#"
+        function arrayPattern() {
+            const out: any = {};
+            for (const [key, refKey] of [["data", "_data"]] as const) {
+                out[key] = () => refKey;
+            }
+        }
+        function objectPattern() {
+            const o: any = {};
+            for (const { x } of [{ x: 1 }] as const) {
+                o.f = () => x;
+            }
+        }
+        function nestedArrayPattern() {
+            const out: any = {};
+            for (const [[a, b]] of [[["p", "q"]]] as const) {
+                out.f = () => a + b;
+            }
+        }
+        function forInDestructured() {
+            const out: any = {};
+            const src: Record<string, string> = {};
+            for (const key in src) {
+                out[key] = () => key;
+            }
+        }
+    "#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "for...of/for...in destructured loop bindings captured by closures must not emit TS2454, got: {diags:?}"
+    );
+}
+
+/// Adjacent negatives that already passed and must keep passing: direct use of
+/// a destructured loop binding, simple loop binding + closure, and plain
+/// destructuring + closure.
+#[test]
+fn test_ts2454_for_of_loop_binding_negatives_remain_clean() {
+    let source = r#"
+        function directUse() {
+            for (const [k, v] of [["a", "b"]] as const) {
+                console.log(k, v);
+            }
+        }
+        function simpleBindingClosure() {
+            const o: any = {};
+            for (const x of [1, 2] as const) {
+                o.f = () => x;
+            }
+        }
+        function plainDestructuringClosure() {
+            const [a, b] = [1, 2] as const;
+            const f = () => b;
+            f();
+            return a;
+        }
+    "#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Loop-binding negatives must stay clean, got: {diags:?}"
+    );
+}
+
+/// The fix must not be over-broad: the `for_in_of_loop_binding` exemption only
+/// covers actual loop bindings, so a genuinely unassigned annotated local —
+/// even one declared in the same function as a `for...of` loop — must still
+/// report TS2454.
+#[test]
+fn test_ts2454_unassigned_local_still_reported_alongside_for_of() {
+    let source = r#"
+        function f() {
+            let unassigned: number;
+            for (const [key, refKey] of [["data", "_data"]] as const) {
+                console.log(key, refKey);
+            }
+            return unassigned;
+        }
+    "#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        1,
+        "A genuinely unassigned local must still be flagged TS2454 (only loop bindings are exempt), got: {diags:?}"
+    );
+}
