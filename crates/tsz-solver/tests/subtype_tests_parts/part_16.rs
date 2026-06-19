@@ -291,3 +291,77 @@ fn test_missing_property_in_index_sig_target_returns_missing_property_directly()
         "missing-property case should surface the missing property reason directly, got: {reason:?}"
     );
 }
+
+// ----------------------------------------------------------------------
+// #13609: two applications of the SAME opaque/unresolvable base that differ
+// ONLY in a type parameter's optional `default` denote the same type and must
+// relate reflexively on EVERY relation path — including those built without a
+// `QueryDatabase` (instanceof, element-access, contextual, property lookup,
+// `CompatChecker` before `set_query_db`), where the canonical-identity fast
+// path in `check_subtype` is unavailable. Before the fix the no-`query_db`
+// path dropped two structurally identical applications to a false `False`.
+// A genuinely different type argument must still be rejected (no unsound
+// covariant/identity fallback over the opaque base).
+// ----------------------------------------------------------------------
+#[test]
+fn application_over_opaque_base_relates_reflexively_despite_type_param_default_13609() {
+    use crate::caches::db::QueryDatabase;
+
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    // Name-agnostic: the binder spelling must not influence the outcome.
+    for raw_name in ["R", "Elem", "TKey"] {
+        let name = interner.intern_string(raw_name);
+        let mk_param = |default| {
+            interner.type_param(TypeParamInfo {
+                name,
+                constraint: Some(TypeId::STRING),
+                default,
+                is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
+            })
+        };
+        // Same logical parameter, fragmented only on the optional `default`.
+        let p_with = mk_param(Some(TypeId::NUMBER));
+        let p_without = mk_param(None);
+        assert_ne!(p_with, p_without, "precondition: default fragments interning");
+
+        // An opaque/unresolvable generic base (the resolver has no body for it),
+        // mirroring a cross-arena `Lazy` not resolvable in this generation.
+        let base = interner.lazy(DefId(90_001));
+        let app_with = interner.application(base, vec![p_with]);
+        let app_without = interner.application(base, vec![p_without]);
+        assert_ne!(app_with, app_without);
+
+        // Precondition: they canonicalize to one identity (the `default` drop).
+        assert_eq!(cache.canonical_id(app_with), cache.canonical_id(app_without));
+
+        // With a query database (the production checker path): reflexive both ways.
+        let mut with_db = SubtypeChecker::with_resolver(&interner, &cache).with_query_db(&cache);
+        assert!(with_db.is_subtype_of(app_with, app_without));
+        let mut with_db_rev = SubtypeChecker::with_resolver(&interner, &cache).with_query_db(&cache);
+        assert!(with_db_rev.is_subtype_of(app_without, app_with));
+
+        // WITHOUT a query database (the regressing path): the canonical fast path
+        // is absent, yet structurally identical applications must still relate.
+        let mut no_db = SubtypeChecker::with_resolver(&interner, &cache);
+        assert!(
+            no_db.is_subtype_of(app_with, app_without),
+            "{raw_name}: identical applications must relate without a query_db"
+        );
+        let mut no_db_rev = SubtypeChecker::with_resolver(&interner, &cache);
+        assert!(no_db_rev.is_subtype_of(app_without, app_with));
+
+        // Negative control: a genuinely different type argument must NOT relate,
+        // even over the opaque base — the recovery is strict structural identity,
+        // not an unsound covariant/identity fallback.
+        let app_string = interner.application(base, vec![TypeId::STRING]);
+        let app_number = interner.application(base, vec![TypeId::NUMBER]);
+        let mut neg = SubtypeChecker::with_resolver(&interner, &cache);
+        assert!(
+            !neg.is_subtype_of(app_string, app_number),
+            "{raw_name}: differing concrete args over an opaque base must stay unrelated"
+        );
+    }
+}
