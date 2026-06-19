@@ -1746,7 +1746,6 @@ fn rename_class_across_type_and_value() {
 }
 
 #[test]
-#[ignore = "requires destructuring pattern rename support"]
 fn rename_destructured() {
     let mut t = FourslashTest::new(
         "
@@ -1757,6 +1756,99 @@ fn rename_destructured() {
     t.rename("r", "fullName")
         .expect_success()
         .expect_total_edits(2);
+}
+
+#[test]
+fn rename_destructured_renamed_binders() {
+    // Same structure as `rename_destructured` with every user binder renamed,
+    // proving the fix is structural and not keyed on specific identifiers.
+    let mut t = FourslashTest::new(
+        "
+        const { /*r*/title, count } = { title: 'doc', count: 5 };
+        report(title);
+    ",
+    );
+    t.rename("r", "heading")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+fn rename_local_excludes_object_literal_key() {
+    // An object-literal property key that happens to share the local's name is
+    // a property of the literal type, not a reference to the lexical binding.
+    let mut t = FourslashTest::new(
+        "
+        const /*r*/name = 'Alice';
+        const o = { name: 1 };
+        console.log(name);
+    ",
+    );
+    t.rename("r", "label")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+fn rename_local_excludes_property_access_member() {
+    // A property-access member name that shares the local's name resolves
+    // through the receiver's type, not the lexical scope.
+    let mut t = FourslashTest::new(
+        "
+        const /*r*/value = 1;
+        declare const o: { value: number };
+        o.value;
+        console.log(value);
+    ",
+    );
+    t.rename("r", "amount")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+fn rename_local_excludes_interface_member() {
+    // An interface member name that shares the local's name is a type member,
+    // not a reference to the lexical binding.
+    let mut t = FourslashTest::new(
+        "
+        const /*r*/size = 1;
+        interface Box { size: number; }
+        console.log(size);
+    ",
+    );
+    t.rename("r", "extent")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+fn rename_local_excludes_jsx_attribute_name() {
+    // The JSX attribute *name* (`value=`) is a prop name, not a lexical
+    // reference, and must be excluded — but the attribute *value* expression
+    // (`{value}`) is a genuine reference and must still be renamed.
+    let mut t = FourslashTest::from_content(
+        "// @filename: app.tsx\nconst /*r*/value = 1;\nconst e = <Comp value={value} />;\nlog(value);\n",
+    );
+    t.rename("r", "amount")
+        .expect_success()
+        .expect_total_edits(3);
+}
+
+#[test]
+fn rename_shorthand_property_value_is_renamed() {
+    // Positive control: a shorthand property assignment IS a lexical value
+    // reference and must still be renamed (expanding to `name: newName`).
+    let mut t = FourslashTest::new(
+        "
+        const /*r*/name = 'Alice';
+        const o = { name };
+        console.log(name);
+    ",
+    );
+    t.rename("r", "label")
+        .expect_success()
+        .expect_total_edits(3);
 }
 
 #[test]
