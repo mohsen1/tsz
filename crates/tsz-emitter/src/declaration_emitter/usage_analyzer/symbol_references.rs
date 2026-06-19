@@ -389,16 +389,32 @@ impl UsageAnalyzer<'_> {
             };
             match decl_node.kind {
                 k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    self.analyze_type_alias_declaration(decl_idx)
+                    self.analyze_type_alias_declaration(decl_idx);
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    self.analyze_interface_declaration(decl_idx)
+                    self.analyze_interface_declaration(decl_idx);
                 }
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    self.analyze_function_declaration(decl_idx)
+                    self.analyze_function_declaration(decl_idx);
+                }
+                // A non-exported class can enter the public-API surface by being
+                // referenced from an exported declaration (e.g. an exported
+                // function returns it, or it is the base of an exported class).
+                // tsc then emits the class and, transitively, every local type
+                // its members name. Without walking the class body here, those
+                // member-type dependencies are dropped and the emitted
+                // `declare class` references types whose declarations are gone.
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    self.analyze_class_declaration(decl_idx);
+                }
+                // Symmetric gap for a non-exported variable pulled in via
+                // `typeof x`: its annotated/inferred type can name local types
+                // that must survive elision.
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    self.analyze_variable_declaration(decl_idx);
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    self.analyze_module_declaration(decl_idx)
+                    self.analyze_module_declaration(decl_idx);
                 }
                 _ => {}
             }

@@ -427,13 +427,13 @@ fn test_source_map_es5_transform_generator_yield_mapping() {
     );
 }
 
-/// Adjacent case: the mapping for a downleveled generator suspension operand is
-/// keyed on the operand's source position, not on any binder spelling. Every
-/// identifier here is renamed relative to the witness above, and the asserted
-/// mapping must still land on the `compute(...)` call that is yielded.
+/// Anti-hardcoding companion: renamed binders and a multi-line body, asserting
+/// the mapping lands exactly on the yield operand's token start (not merely
+/// within a tolerance window). The generator body is otherwise position-less
+/// after lowering, so this exercises the `Positioned` IR tagging end-to-end.
 #[test]
-fn test_source_map_es5_generator_yield_mapping_renamed_binders() {
-    let source = "function* iterate() { yield compute(); }";
+fn test_source_map_es5_generator_yield_operand_token_start() {
+    let source = "function* produce() {\n    yield alpha();\n    yield beta();\n}";
     let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
@@ -449,12 +449,6 @@ fn test_source_map_es5_generator_yield_mapping_renamed_binders() {
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
 
-    assert!(
-        printer.get_output().contains("__generator("),
-        "expected generator downlevel output, got: {}",
-        printer.get_output()
-    );
-
     let map_json = printer.generate_source_map_json().expect("source map");
     let map_value: Value = serde_json::from_str(&map_json).expect("parse source map");
     let mappings = map_value
@@ -463,17 +457,17 @@ fn test_source_map_es5_generator_yield_mapping_renamed_binders() {
         .unwrap_or("");
     let decoded = decode_mappings(mappings);
 
-    let (yield_line, yield_col) = find_line_col(source, "yield compute");
-    let has_yield_mapping = decoded.iter().any(|entry| {
-        entry.original_line == yield_line
-            && entry.original_column >= yield_col
-            && entry.original_column <= yield_col + 14
-    });
-    assert!(
-        has_yield_mapping,
-        "expected a mapping for the yielded `compute()` operand regardless of \
-         binder names. mappings: {mappings}"
-    );
+    // Each yielded call expression must map back to the start of its operand
+    // token (`alpha` / `beta`), the position tsc emits a mapping for.
+    for operand in ["alpha(", "beta("] {
+        let (op_line, op_col) = find_line_col(source, operand);
+        assert!(
+            decoded
+                .iter()
+                .any(|entry| entry.original_line == op_line && entry.original_column == op_col),
+            "expected a mapping at the `{operand}` operand ({op_line}:{op_col}). mappings: {mappings}"
+        );
+    }
 }
 
 #[test]
@@ -1762,4 +1756,3 @@ const result = format(["apple", "banana"]);"#;
         "expected non-empty source mappings for template literals"
     );
 }
-

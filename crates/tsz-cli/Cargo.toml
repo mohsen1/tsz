@@ -132,6 +132,10 @@ name = "declaration_type_walk_boundary_dts_emit_tests"
 path = "tests/declaration_type_walk_boundary_dts_emit_tests.rs"
 
 [[test]]
+name = "non_exported_dependency_transitive_dts_emit_tests"
+path = "tests/non_exported_dependency_transitive_dts_emit_tests.rs"
+
+[[test]]
 name = "lib_target_suggestion_ts2550_tests"
 path = "tests/lib_target_suggestion_ts2550_tests.rs"
 

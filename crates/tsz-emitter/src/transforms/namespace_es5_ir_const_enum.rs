@@ -274,6 +274,9 @@ impl<'a> NamespaceES5Transformer<'a> {
                     self.rewrite_const_enum_accesses_in_node(value, namespace_path);
                 }
             }
+            IRNode::Positioned { inner, .. } => {
+                self.rewrite_const_enum_accesses_in_node(inner, namespace_path);
+            }
             IRNode::IfBreak { condition, .. } => {
                 self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
             }

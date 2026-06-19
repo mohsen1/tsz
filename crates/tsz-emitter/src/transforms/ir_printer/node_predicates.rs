@@ -35,7 +35,7 @@ impl IRPrinter<'_> {
         match expr {
             // Stay transparent to the source-position wrapper: inline-ness is a
             // property of the wrapped expression.
-            IRNode::SourceMapped { node, .. } => Self::is_generator_inline_throw_expression(node),
+            IRNode::Positioned { inner, .. } => Self::is_generator_inline_throw_expression(inner),
             IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent => true,
             _ => false,
         }

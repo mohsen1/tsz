@@ -89,6 +89,10 @@ pub struct AsyncES5Emitter<'a> {
     source_text: Option<&'a str>,
     source_index: u32,
     mappings: Vec<Mapping>,
+    /// When true, the inner `IRPrinter` records source mappings for re-emitted
+    /// `ASTRef` nodes so the downleveled body is mapped. Set by the caller only
+    /// when a source map is being generated.
+    capture_mappings: bool,
     this_capture_depth: u32,
     class_name: Option<String>,
     /// Outer names (e.g. a class-expression alias) that must not be chosen as
@@ -111,6 +115,7 @@ impl<'a> AsyncES5Emitter<'a> {
             source_text: None,
             source_index: 0,
             mappings: Vec::new(),
+            capture_mappings: false,
             this_capture_depth: 0,
             class_name: None,
             outer_reserved_for_generator_state: Vec::new(),
@@ -224,6 +229,21 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_source_text(source_text);
     }
 
+    /// Enable source-map capture for the downleveled body. Callers set this only
+    /// when a source map is being generated, since the inner `IRPrinter` then
+    /// scans its output to position each mapping.
+    pub const fn set_capture_mappings(&mut self, capture: bool) {
+        self.capture_mappings = capture;
+    }
+
+    /// Forward this emitter's source-map capture state to an inner `IRPrinter`.
+    const fn configure_printer_capture(&self, printer: &mut IRPrinter<'a>) {
+        if self.capture_mappings {
+            printer.enable_mapping_capture();
+            printer.set_source_map_source_index(self.source_index);
+        }
+    }
+
     pub fn take_mappings(&mut self) -> Vec<Mapping> {
         std::mem::take(&mut self.mappings)
     }
@@ -332,6 +352,7 @@ impl<'a> AsyncES5Emitter<'a> {
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }
+        self.configure_printer_capture(&mut printer);
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_helpers.prefix());
         printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
@@ -354,6 +375,7 @@ impl<'a> AsyncES5Emitter<'a> {
         };
         printer.set_generator_state_name(state_name);
         printer.emit(&ir);
+        self.mappings.extend(printer.take_mappings());
         (
             printer.take_output(),
             hoisted,
@@ -400,6 +422,7 @@ impl<'a> AsyncES5Emitter<'a> {
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }
+        self.configure_printer_capture(&mut printer);
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_helpers.prefix());
         printer.set_tslib_import_binding(self.tslib_helpers.binding().to_string());
@@ -410,6 +433,7 @@ impl<'a> AsyncES5Emitter<'a> {
             self.outer_reserved_for_generator_state.clone(),
         );
         printer.emit(&awaiter_call);
+        self.mappings.extend(printer.take_mappings());
         printer.take_output()
     }
 

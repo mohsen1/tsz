@@ -182,21 +182,14 @@ impl<'a> AsyncES5Transformer<'a> {
         IRNode::Raw(format!("\n                {comment}\n                {operand_text}").into())
     }
 
-    /// Tag a lowered suspension operand with the byte offset of the original
-    /// source expression so the IR printer can record a source-map mapping at
-    /// the operand's generated position. Anchors on the operand's leftmost leaf
-    /// token (e.g. the callee identifier of `first()`), falling back to the
-    /// node start. Transparent when no position is resolvable.
+    /// Tag a lowered suspension operand with its original source expression so
+    /// the IR printer can record a source-map mapping at the operand's generated
+    /// position. Anchors on transparent wrappers' inner expression (e.g. the
+    /// callee identifier of `first()`), falling back to the node start.
     pub(super) fn source_mapped_operand(&self, idx: NodeIndex, operand: IRNode) -> IRNode {
-        let Some(source_pos) = self
-            .expression_leaf_start(idx)
-            .or_else(|| self.arena.get(idx).map(|node| node.pos))
-        else {
-            return operand;
-        };
-        IRNode::SourceMapped {
-            node: Box::new(operand),
-            source_pos,
+        IRNode::Positioned {
+            source: self.expression_leaf_index(idx).unwrap_or(idx),
+            inner: Box::new(operand),
         }
     }
 
@@ -268,25 +261,30 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    fn expression_leaf_start(&self, idx: NodeIndex) -> Option<u32> {
+    fn expression_leaf_index(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(idx)?;
         match node.kind {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren = self.arena.get_parenthesized(node)?;
-                self.expression_leaf_start(paren.expression)
+                self.expression_leaf_index(paren.expression)
             }
             k if k == syntax_kind_ext::TYPE_ASSERTION
                 || k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
             {
                 let assertion = self.arena.get_type_assertion(node)?;
-                self.expression_leaf_start(assertion.expression)
+                self.expression_leaf_index(assertion.expression)
             }
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 let unary = self.arena.get_unary_expr_ex(node)?;
-                self.expression_leaf_start(unary.expression)
+                self.expression_leaf_index(unary.expression)
             }
-            _ => Some(node.pos),
+            _ => Some(idx),
         }
+    }
+
+    fn expression_leaf_start(&self, idx: NodeIndex) -> Option<u32> {
+        let leaf = self.expression_leaf_index(idx)?;
+        self.arena.get(leaf).map(|node| node.pos)
     }
 }

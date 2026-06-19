@@ -230,6 +230,7 @@ impl<'a> Printer<'a> {
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
             if let Some(text) = self.source_text_for_map() {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
+                async_emitter.set_capture_mappings(self.writer.has_source_map());
             }
             async_emitter.set_lexical_this(this_expr != "this");
             if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
@@ -282,7 +283,8 @@ impl<'a> Printer<'a> {
                 for generated_name in async_emitter.take_generated_disposable_env_names() {
                     self.generated_temp_names.insert(generated_name);
                 }
-                self.write(&rendered);
+                let mappings = async_emitter.take_mappings();
+                self.write_with_offset_mappings(&rendered, &mappings);
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
@@ -629,31 +631,24 @@ impl<'a> Printer<'a> {
         }
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
-        if let Some(text) = self.source_text {
+        // Use the source-map text (falling back to source text) so a downleveled
+        // generator body can be mapped; the two are identical in normal emit.
+        if let Some(text) = self.source_text_for_map() {
             printer.set_source_text(text);
-        }
-        if self.writer.has_source_map()
-            && let Some(map_text) = self.source_text_for_map()
-        {
-            printer.enable_source_map_capture(crate::output::source_writer::LineMap::new(map_text));
         }
         printer.set_indent_level(self.writer.indent_level());
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             printer.set_tslib_prefix(true);
             printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
+        if self.writer.has_source_map() {
+            printer.enable_mapping_capture();
+            printer.set_source_map_source_index(self.writer.current_source_index());
+        }
         printer.emit(&ir);
-        // Splice the IR-printed generator body into the parent output. Source-map
-        // mappings the IR printer captured for downleveled suspension operands
-        // (`yield`/`await` expressions) are offset to the splice point and merged
-        // into the parent map — the IR body is otherwise written as opaque text
-        // and would carry no mappings (matching tsc, which maps these operands).
-        let base_line = self.writer.current_line();
-        let base_column = self.writer.current_column();
-        let captured_mappings = printer.take_captured_mappings();
-        self.write(&printer.take_output());
-        self.writer
-            .add_offset_mappings(base_line, base_column, &captured_mappings);
+        let mappings = printer.take_mappings();
+        let output = printer.take_output();
+        self.write_with_offset_mappings(&output, &mappings);
         if let Some(node) = self.arena.get(function_node) {
             while self.comment_emit_idx < self.all_comments.len()
                 && self.all_comments[self.comment_emit_idx].end <= node.end

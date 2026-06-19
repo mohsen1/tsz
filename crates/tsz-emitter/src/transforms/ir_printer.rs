@@ -35,6 +35,8 @@ mod ir_printer_namespace;
 mod ir_printer_node_predicates;
 #[path = "ir_printer_recovery.rs"]
 mod ir_printer_recovery;
+#[path = "ir_printer_source_map.rs"]
+mod ir_printer_source_map;
 use ir_printer_namespace::NamespaceIifeContext;
 
 use crate::context::transform::TransformContext;
@@ -96,24 +98,17 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
-    /// Line map of the original source text, built once when source-map capture
-    /// is enabled. When present, [`IRNode::SourceMapped`] nodes record a mapping
-    /// at their generated position (relative to this printer's own output) into
-    /// [`Self::captured_mappings`]; the caller merges those into the parent
-    /// source map at the splice point. `None` (the default) disables capture —
-    /// most IR printing happens without a source map.
-    source_map_line_map: Option<crate::output::source_writer::LineMap<'a>>,
-    /// Mappings captured during emission, in this printer's own output
-    /// coordinate space (generated line 0 = first line of `output`).
-    captured_mappings: Vec<Mapping>,
-    /// Byte offset in `output` up to which the generated line/column counters
-    /// below have already been advanced. Lets mapping capture stay amortized
-    /// O(output length) instead of rescanning the whole buffer per mapping.
-    mapping_scan_offset: usize,
-    /// Generated line counter for captured mappings (advanced lazily).
-    mapping_generated_line: u32,
-    /// Generated column counter (UTF-16 code units) for captured mappings.
-    mapping_generated_column: u32,
+    /// Source-map mappings recorded for re-emitted `ASTRef` nodes while
+    /// `capture_mappings` is set. Generated positions are relative to the start
+    /// of this printer's own output, so a caller splices them with a base
+    /// offset via `Printer::write_with_offset_mappings`.
+    mappings: Vec<Mapping>,
+    /// Source index recorded on captured mappings.
+    source_index: u32,
+    /// When true, record a source mapping at the start of each re-emitted
+    /// `ASTRef` node. Off by default so emits without source maps pay no
+    /// position-scan cost.
+    capture_mappings: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -291,11 +286,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
-            source_map_line_map: None,
-            captured_mappings: Vec::new(),
-            mapping_scan_offset: 0,
-            mapping_generated_line: 0,
-            mapping_generated_column: 0,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -328,11 +321,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
-            source_map_line_map: None,
-            captured_mappings: Vec::new(),
-            mapping_scan_offset: 0,
-            mapping_generated_line: 0,
-            mapping_generated_column: 0,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -365,11 +356,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
-            source_map_line_map: None,
-            captured_mappings: Vec::new(),
-            mapping_scan_offset: 0,
-            mapping_generated_line: 0,
-            mapping_generated_column: 0,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -1432,10 +1421,6 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write("]");
             }
-            IRNode::SourceMapped { node, source_pos } => {
-                self.record_source_mapping(*source_pos);
-                self.emit_node(node);
-            }
             IRNode::GeneratorSent => {
                 self.write(self.generator_state_name);
                 self.write(".sent()");
@@ -1673,6 +1658,13 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(body);
             }
             IRNode::ASTRef(_) => self.emit_ast_ref_node(node),
+
+            IRNode::Positioned { source, inner } => {
+                // Record a mapping at the start of the lowered node's output,
+                // then emit it transparently.
+                self.record_ast_ref_mapping(*source);
+                self.emit_node(inner);
+            }
 
             IRNode::ASTRefWithGeneratorThis {
                 node,

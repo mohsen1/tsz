@@ -177,17 +177,6 @@ pub enum IRNode {
         expression: Box<Self>,
     },
 
-    /// An expression node tagged with the byte offset of the original source
-    /// expression it was lowered from. The IR printer records a source-map
-    /// mapping at the wrapped node's generated position before emitting it,
-    /// then emits `node` unchanged. This is otherwise transparent: every IR
-    /// traversal delegates through to `node`.
-    ///
-    /// Used for downleveled generator/async suspension operands (`yield expr`,
-    /// `await expr`), whose original source positions would otherwise be lost
-    /// when the operand is converted to position-less IR.
-    SourceMapped { node: Box<Self>, source_pos: u32 },
-
     // =========================================================================
     // Statements
     // =========================================================================
@@ -451,6 +440,13 @@ pub enum IRNode {
         value: Option<Box<Self>>,
         comment: Option<Cow<'static, str>>,
     },
+
+    /// A child node tagged with the source `NodeIndex` it was lowered from, so
+    /// the printer can emit a source-map mapping at the start of its output.
+    /// Transparent: it emits exactly `inner` and forwards all traversal to it.
+    /// Used to preserve source positions across the lowering of generator/async
+    /// bodies, where expressions are otherwise decomposed into position-less IR.
+    Positioned { source: NodeIndex, inner: Box<Self> },
 
     /// _`a.sent()` - get the sent value in generator
     GeneratorSent,
@@ -1165,7 +1161,7 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_identifier(name)),
-            Self::SourceMapped { node, .. } => node.contains_identifier(name),
+            Self::Positioned { inner, .. } => inner.contains_identifier(name),
             Self::IfBreak { condition, .. } => condition.contains_identifier(name),
             Self::PrivateFieldSet {
                 receiver, value, ..
@@ -1372,7 +1368,6 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_captured_this_reference()),
-            Self::SourceMapped { node, .. } => node.contains_captured_this_reference(),
             Self::AwaiterCall {
                 this_arg,
                 generator_body,
@@ -1400,6 +1395,7 @@ impl IRNode {
             Self::WeakMapSet { key, value, .. } => {
                 key.contains_captured_this_reference() || value.contains_captured_this_reference()
             }
+            Self::Positioned { inner, .. } => inner.contains_captured_this_reference(),
             _ => false,
         }
     }

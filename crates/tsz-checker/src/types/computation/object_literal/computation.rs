@@ -286,6 +286,11 @@ impl<'a> CheckerState<'a> {
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
         let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
+        // Non-method members declared after the first `this`-capturing callable.
+        // These are missing from the incrementally-built `properties` map when an
+        // earlier method/accessor body is checked, so they are spliced into the
+        // synthetic `this` type to match tsc (which sees the full object literal).
+        let trailing_member_props = self.object_literal_trailing_member_props(&obj.elements.nodes);
         let circular_return_method_sites =
             self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
@@ -576,6 +581,7 @@ impl<'a> CheckerState<'a> {
                                     .build_object_literal_fn_property_synthetic_this_type(
                                         &properties,
                                         &obj_all_method_names,
+                                        &trailing_member_props,
                                         &name,
                                     );
                                 self.ctx.this_type_stack.push(synthetic_this_type);
@@ -1484,6 +1490,7 @@ impl<'a> CheckerState<'a> {
                                 .build_object_literal_method_synthetic_this_type(
                                     &properties,
                                     &obj_all_method_names,
+                                    &trailing_member_props,
                                     elem_idx,
                                     &name,
                                     None,
@@ -1613,6 +1620,7 @@ impl<'a> CheckerState<'a> {
                             .build_object_literal_method_synthetic_this_type(
                                 &properties,
                                 &obj_all_method_names,
+                                &trailing_member_props,
                                 elem_idx,
                                 &name,
                                 Some(refined_method_type),
@@ -1878,6 +1886,7 @@ impl<'a> CheckerState<'a> {
                     marker_this_type,
                     skip_duplicate_check,
                     partial_initializer_stack_index,
+                    trailing_member_props: &trailing_member_props,
                 },
                 ObjectLiteralAccessorState {
                     properties: &mut properties,
