@@ -5,9 +5,8 @@ use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
 
 impl CheckerState<'_> {
-    /// Insert `type_id` for `def_id` into both type environments, carrying type
-    /// params when present. Safe to call during recursive resolution; failed
-    /// borrows are logged.
+    /// Insert `type_id` for `def_id` into the evaluator env and mirror it into
+    /// the flow-analyzer env through the deferred mirror path.
     pub(super) fn try_insert_def_in_type_env(&mut self, def_id: DefId, type_id: TypeId) {
         let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
         match self.ctx.type_env.try_borrow_mut() {
@@ -18,14 +17,8 @@ impl CheckerState<'_> {
                 "try_insert_def_in_type_env: borrow failed; insert skipped"
             ),
         }
-        match self.ctx.type_environment.try_borrow_mut() {
-            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
-            Err(e) => tracing::warn!(
-                target_env = "type_environment",
-                error = ?e,
-                "try_insert_def_in_type_env: borrow failed; insert skipped"
-            ),
-        }
+        self.ctx
+            .mirror_def_in_type_environment(def_id, type_id, &params);
     }
 
     pub(super) fn mirror_application_def_resolution(
