@@ -53,15 +53,27 @@ fn extend_keyof_with_index_signature_key_type(
     interner: &dyn TypeDatabase,
     key_types: &mut Vec<TypeId>,
     key_type: TypeId,
+    suppress_string_numeric: bool,
 ) -> bool {
     match interner.lookup(key_type) {
         Some(TypeData::Union(members)) => {
             let mut contributed_number = false;
             for &member in interner.type_list(members).iter() {
-                contributed_number |=
-                    extend_keyof_with_index_signature_key_type(interner, key_types, member);
+                contributed_number |= extend_keyof_with_index_signature_key_type(
+                    interner,
+                    key_types,
+                    member,
+                    suppress_string_numeric,
+                );
             }
             contributed_number
+        }
+        // A genuine `[k: string]` index signature implies numeric keys
+        // (`string | number`); a string-keyed *mapped constraint* contributes
+        // only `string` (`suppress_string_numeric`).
+        Some(TypeData::Intrinsic(IntrinsicKind::String)) if suppress_string_numeric => {
+            key_types.push(TypeId::STRING);
+            false
         }
         Some(TypeData::Intrinsic(IntrinsicKind::String)) => {
             key_types.push(TypeId::STRING);
@@ -99,9 +111,15 @@ fn extend_keyof_with_index_signature_keys(
     string_or_symbol_index: Option<&IndexSignature>,
     number_index: Option<&IndexSignature>,
     is_enum_namespace: bool,
+    suppress_string_numeric: bool,
 ) {
     let string_slot_contributed_number = if let Some(idx) = string_or_symbol_index {
-        extend_keyof_with_index_signature_key_type(interner, key_types, idx.key_type)
+        extend_keyof_with_index_signature_key_type(
+            interner,
+            key_types,
+            idx.key_type,
+            suppress_string_numeric,
+        )
     } else {
         false
     };
@@ -636,6 +654,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
                         shape.flags.contains(ObjectFlags::ENUM_NAMESPACE),
+                        shape.flags.contains(ObjectFlags::MAPPED_CONSTRAINT_KEYS),
                     );
 
                     if key_types.is_empty() {
@@ -662,6 +681,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
+                        false,
                         false,
                     );
 
