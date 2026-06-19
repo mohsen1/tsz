@@ -108,9 +108,9 @@ pub(crate) fn on_demand_forcing_disabled() -> bool {
     use std::sync::OnceLock;
     static DISABLED: OnceLock<bool> = OnceLock::new();
     *DISABLED.get_or_init(|| {
-        std::env::var("TSZ_DISABLE_ON_DEMAND_FORCING")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
+        // `is_ok_and` (vs the sibling kill-switches' `.map(..).unwrap_or(false)`)
+        // keeps the clippy::map_unwrap_or warn-ratchet count from rising.
+        std::env::var("TSZ_DISABLE_ON_DEMAND_FORCING").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
