@@ -1591,28 +1591,15 @@ impl CheckerState<'_> {
             } else {
                 env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params);
+                    env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
             }
+            drop(env);
+            self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
             false
         }
-    }
-
-    /// Insert `type_id` for `def_id` into both type environments, carrying type params
-    /// when present. Safe to call during recursive resolution; failed borrows are logged.
-    fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
-        // Route the dual-env write through the race-safe deferred-write path
-        // rather than two direct `try_borrow_mut` writes that silently DROP on a
-        // borrow race. During recursive resolution the flow-analyzer env
-        // (`type_environment`) is frequently borrowed while the evaluator mutates
-        // `type_env`; a dropped flow-analyzer mirror here leaves the two envs
-        // disagreeing on this `DefId -> TypeId` entry, which is the silent
-        // #13086 divergence the file-prep reconciliation guard reports (#13944).
-        // Deferring-then-replaying the lost mirror guarantees both envs converge
-        // on the authoritative latest body.
-        self.ctx.register_resolved_def_in_envs(def_id, type_id);
     }
 
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.

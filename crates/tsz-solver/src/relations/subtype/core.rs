@@ -342,6 +342,21 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// `ts-morph`) without ever leaking a context-bound verdict to a later
     /// query under a different context. Cleared by [`SubtypeChecker::reset`].
     pub(crate) local_relation_cache: FxHashMap<RelationCacheKey, bool>,
+    /// Configured work budget for one failure-explanation traversal (issue
+    /// #13243). Defaults to [`super::explain::EXPLAIN_EVAL_BUDGET`]; lowered in
+    /// tests via [`Self::with_explain_budget`] to exercise the exhaustion path.
+    /// Loaded into [`Self::explain_eval_fuel`] at the outermost
+    /// [`Self::explain_failure`] entry.
+    pub(crate) explain_budget: u32,
+    /// Remaining work budget for the *current* failure-explanation traversal,
+    /// or `None` outside the explain pass (issue #13243). `Some(_)` doubles as
+    /// the "in explain" marker, so only the failure-explanation traversal —
+    /// never the boolean relation walk — is budgeted.
+    ///
+    /// See [`super::explain::EXPLAIN_EVAL_BUDGET`] for why a separate budget is
+    /// needed and how it preserves byte-identical diagnostics; initialized per
+    /// failure by [`Self::explain_failure`].
+    pub(crate) explain_eval_fuel: Option<u32>,
 }
 
 /// Operation-local cache statistics for [`SubtypeChecker`].
@@ -416,6 +431,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             local_relation_cache: FxHashMap::default(),
+            explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
+            explain_eval_fuel: None,
         }
     }
 }
@@ -467,6 +484,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             local_relation_cache: FxHashMap::default(),
+            explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
+            explain_eval_fuel: None,
         }
     }
 
@@ -508,6 +527,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Configure whether recursive relation cycles should be assumed related.
     pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
         self.assume_related_on_cycle = assume;
+        self
+    }
+
+    /// Override the failure-explanation work budget (issue #13243).
+    ///
+    /// Lowering the budget bounds the elaboration the explain pass performs
+    /// before collapsing to a coarse `TypeMismatch`; the default
+    /// ([`super::explain::EXPLAIN_EVAL_BUDGET`]) is sized so that legitimate
+    /// diagnostics never reach it. Test seam for exercising the exhaustion path
+    /// deterministically without constructing a pathological generic relation.
+    #[cfg(test)]
+    pub(crate) const fn with_explain_budget(mut self, budget: u32) -> Self {
+        self.explain_budget = budget;
         self
     }
 
@@ -596,6 +628,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.eval_cache.clear();
         self.maybe_keys.clear();
         self.local_relation_cache.clear();
+        self.explain_eval_fuel = None;
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.
