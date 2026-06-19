@@ -176,7 +176,13 @@ impl<'a> AsyncES5Transformer<'a> {
     pub(super) fn generator_yield_operand_to_ir(&self, idx: NodeIndex) -> IRNode {
         let operand = self.expression_to_ir(idx);
         let Some(comment) = self.yield_operand_line_comment(idx) else {
-            return operand;
+            // Tag the decomposed operand with its source position so the lowered
+            // `[4 /*yield*/, <operand>]` carries a source-map mapping; without
+            // this the entire generator/async body emits with no body mappings.
+            return IRNode::Positioned {
+                source: idx,
+                inner: Box::new(operand),
+            };
         };
         let operand_text = crate::transforms::ir_printer::IRPrinter::emit_to_string(&operand);
         IRNode::Raw(format!("\n                {comment}\n                {operand_text}").into())

@@ -35,6 +35,8 @@ mod ir_printer_namespace;
 mod ir_printer_node_predicates;
 #[path = "ir_printer_recovery.rs"]
 mod ir_printer_recovery;
+#[path = "ir_printer_source_map.rs"]
+mod ir_printer_source_map;
 use ir_printer_namespace::NamespaceIifeContext;
 
 use crate::context::transform::TransformContext;
@@ -45,6 +47,7 @@ use crate::transforms::ir::{
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::tslib_helper_naming::TslibHelperNaming;
+use tsz_common::source_map::Mapping;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -95,6 +98,17 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    /// Source-map mappings recorded for re-emitted `ASTRef` nodes while
+    /// `capture_mappings` is set. Generated positions are relative to the start
+    /// of this printer's own output, so a caller splices them with a base
+    /// offset via `Printer::write_with_offset_mappings`.
+    mappings: Vec<Mapping>,
+    /// Source index recorded on captured mappings.
+    source_index: u32,
+    /// When true, record a source mapping at the start of each re-emitted
+    /// `ASTRef` node. Off by default so emits without source maps pay no
+    /// position-scan cost.
+    capture_mappings: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -272,6 +286,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -304,6 +321,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -336,6 +356,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -1635,6 +1658,13 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(body);
             }
             IRNode::ASTRef(_) => self.emit_ast_ref_node(node),
+
+            IRNode::Positioned { source, inner } => {
+                // Record a mapping at the start of the lowered node's output,
+                // then emit it transparently.
+                self.record_ast_ref_mapping(*source);
+                self.emit_node(inner);
+            }
 
             IRNode::ASTRefWithGeneratorThis {
                 node,

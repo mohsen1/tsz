@@ -363,7 +363,6 @@ fn test_source_map_es5_transform_async_for_of_destructuring_mapping() {
 }
 
 #[test]
-#[ignore = "regressed after remote changes: yield expression source map mappings no longer generated"]
 fn test_source_map_es5_transform_generator_yield_mapping() {
     let source = "function* gen() { yield first(); yield second(); }";
     let (parser, root) = parse_test_source(source);
@@ -426,6 +425,49 @@ fn test_source_map_es5_transform_generator_yield_mapping() {
         has_yield1_mapping || has_yield2_mapping,
         "expected at least one mapping for yield expressions. mappings: {mappings}"
     );
+}
+
+/// Anti-hardcoding companion: renamed binders and a multi-line body, asserting
+/// the mapping lands exactly on the yield operand's token start (not merely
+/// within a tolerance window). The generator body is otherwise position-less
+/// after lowering, so this exercises the `Positioned` IR tagging end-to-end.
+#[test]
+fn test_source_map_es5_generator_yield_operand_token_start() {
+    let source = "function* produce() {\n    yield alpha();\n    yield beta();\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let map_json = printer.generate_source_map_json().expect("source map");
+    let map_value: Value = serde_json::from_str(&map_json).expect("parse source map");
+    let mappings = map_value
+        .get("mappings")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let decoded = decode_mappings(mappings);
+
+    // Each yielded call expression must map back to the start of its operand
+    // token (`alpha` / `beta`), the position tsc emits a mapping for.
+    for operand in ["alpha(", "beta("] {
+        let (op_line, op_col) = find_line_col(source, operand);
+        assert!(
+            decoded
+                .iter()
+                .any(|entry| entry.original_line == op_line && entry.original_column == op_col),
+            "expected a mapping at the `{operand}` operand ({op_line}:{op_col}). mappings: {mappings}"
+        );
+    }
 }
 
 #[test]
