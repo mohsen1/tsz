@@ -5,7 +5,7 @@ use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Mirror a `def_id -> body` registration into the flow-analyzer env only,
     /// leaving the evaluator env untouched.
     ///

@@ -4,7 +4,7 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Insert `type_id` for `def_id` into the evaluator env and mirror it into
     /// the flow-analyzer env through the deferred mirror path.
     pub(super) fn try_insert_def_in_type_env(&mut self, def_id: DefId, type_id: TypeId) {

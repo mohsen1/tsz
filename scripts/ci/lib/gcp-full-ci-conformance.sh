@@ -259,7 +259,14 @@ run_conformance_aggregate() {
       local shard_name
       shard_name="$(basename "$shard_dir")"
       cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
-      local artifact_failure_list="$shard_dir/ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
+      local artifact_failure_list
+      artifact_failure_list="$(
+        find "$shard_dir" \
+          -name "conformance-failures-${shard_name#conformance-shard-}.txt" \
+          -maxdepth 4 \
+          2>/dev/null \
+          | head -1
+      )"
       if [[ -f "$artifact_failure_list" ]]; then
         cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
       fi
