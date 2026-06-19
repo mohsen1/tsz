@@ -1207,6 +1207,15 @@ bitflags::bitflags! {
         /// for assignability, but must remain distinct in the interner so
         /// diagnostics can print source/display order after widening.
         const PRESERVE_DECLARATION_ORDER = 1 << 7;
+        /// This object is the materialized form of a *non-homomorphic* mapped
+        /// type (`{ [P in C]: V }`, `Record<C, V>`), whose index signatures are
+        /// derived from the mapped *constraint* `C`. `keyof` of such an object
+        /// is the constraint key space, so a string-keyed slot contributes
+        /// exactly `string` — never the implicit `number` that a genuine
+        /// `[k: string]` index signature carries. Homomorphic mapped types
+        /// (`{ [K in keyof T]: V }`) are NOT flagged: their `keyof` is `keyof T`
+        /// and must keep the source's full key space.
+        const MAPPED_CONSTRAINT_KEYS = 1 << 8;
     }
 }
 

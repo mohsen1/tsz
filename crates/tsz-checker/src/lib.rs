@@ -1054,6 +1054,9 @@ mod keyof_function_type_is_never_tests;
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
+#[path = "../tests/keyof_mapped_constraint_key_space_tests.rs"]
+mod keyof_mapped_constraint_key_space_tests;
+#[cfg(test)]
 #[path = "tests/keyof_suppression_relation_routing_arch_tests.rs"]
 mod keyof_suppression_relation_routing_arch_tests;
 #[cfg(test)]
