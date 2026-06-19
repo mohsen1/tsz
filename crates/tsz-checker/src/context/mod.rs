@@ -36,6 +36,7 @@ mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
+mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
 mod deferred_flow_env_write;
 mod unresolved_import;
@@ -61,16 +62,15 @@ pub mod typing_request;
 pub use aliases::*;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
-use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
-pub use symbol_file_targets::SymbolFileTargetsOverlay;
-pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
-
 use rustc_hash::{FxHashMap, FxHashSet};
+use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
+pub use symbol_file_targets::SymbolFileTargetsOverlay;
 use tsz_common::interner::Atom;
+pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
