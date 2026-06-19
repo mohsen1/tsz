@@ -657,3 +657,108 @@ function f(x: Input[]): Output[] { return x; }
         "Input[] is not assignable to Output[] (Output.static has required 'bar'): {codes:?}"
     );
 }
+
+// ============================================================================
+// Same-base recursive-conditional false-negative witnesses (#8432)
+//
+// `deeplyNestedMappedTypes.ts` includes a `NestedRecord` family:
+//
+//     type NestedRecord<K extends string, V> =
+//         K extends `${infer K0}.${infer KR}`
+//             ? { [P in K0]: NestedRecord<KR, V> }
+//             : Record<K, V>;
+//
+// `tsc` reports the `const bar2: Bar2 = bar1` assignment (a number-valued nested
+// record assigned to a string-valued one) as `TS2322`. tsz reproduces the error
+// only while the dotted key path is shallow; once the path reaches four
+// segments AND both operands are applications of the *same* recursive
+// conditional alias (differing only in the non-recursion-driving payload type
+// argument `V`), tsz silently accepts the assignment.
+//
+// Root cause (traced, deterministic): both operands evaluate correctly to
+// distinct structural nested objects, but the assignment relation between them
+// resolves a `Lazy(DefId)` whose body is unregistered in the relation-internal
+// resolver (`resolver_generation() == 0`; `resolve_lazy_type` ->
+// `note_lazy_resolve_failure`). The `False` derived from the genuine leaf
+// mismatch (`number` vs `string`) is then treated as undetermined and the
+// `TS2322` is suppressed. This is the resolver-availability-under-relation
+// family (#13232) and the latent-soundness hazard documented in #13980 — the
+// same root behind the #13609 `ApplyDefaultOptions`/`RequiredKeysOf`
+// false-positive family. The fix belongs in the solver/checker relation layer
+// (thread the def-resolving resolver into the relation-internal evaluator), not
+// in the recursive alias itself; these witnesses pin the minimal, deterministic,
+// name-agnostic shape so the eventual fix can be verified.
+//
+// An inline `Leaf<K, V> = { [P in K]: V }` stands in for the conformance test's
+// `Record<K, V>` base case so the witnesses stay lib-free. The two positive
+// guards reproduce the correct `TS2322` today and protect against the fix being
+// scoped too narrowly (e.g. a witness-shaped patch keyed on a single depth or
+// alias name).
+// ============================================================================
+
+/// Positive guard: at a shallow (3-segment) dotted key path the same-base
+/// recursive-conditional assignment is correctly rejected. Binder names are
+/// varied (`Tree`/`Leaf`/`leaf`/`sink`) so the result is not keyed on text.
+#[test]
+fn nested_record_shallow_same_base_recursive_conditional_errors() {
+    let source = r#"
+type Leaf<K extends string, V> = { [P in K]: V };
+type Tree<K extends string, V> = K extends `${infer Head}.${infer Tail}`
+    ? { [P in Head]: Tree<Tail, V> }
+    : Leaf<K, V>;
+declare const leaf: Tree<"x.y.z", number>;
+const sink: Tree<"x.y.z", string> = leaf;
+"#;
+    let codes = check(source);
+    assert!(
+        codes.contains(&2322),
+        "shallow same-base recursive-conditional number->string nested record must error: {codes:?}"
+    );
+}
+
+/// Positive guard: at a deep (4-segment) path, when the source and target use
+/// *different* recursive-conditional alias bases (so the same-base relation path
+/// is not taken) the assignment is correctly rejected. This isolates the defect
+/// to the same-base path rather than the depth or the nested-record shape.
+#[test]
+fn nested_record_deep_different_base_recursive_conditional_errors() {
+    let source = r#"
+type Leaf<K extends string, V> = { [P in K]: V };
+type Path<K extends string, V> = K extends `${infer Head}.${infer Tail}`
+    ? { [P in Head]: Path<Tail, V> }
+    : Leaf<K, V>;
+type Trail<K extends string, V> = K extends `${infer Head}.${infer Tail}`
+    ? { [P in Head]: Trail<Tail, V> }
+    : Leaf<K, V>;
+declare const src: Path<"x.y.z.w", number>;
+const dst: Trail<"x.y.z.w", string> = src;
+"#;
+    let codes = check(source);
+    assert!(
+        codes.contains(&2322),
+        "deep different-base recursive-conditional number->string nested record must error: {codes:?}"
+    );
+}
+
+/// Witness (#8432, resolver-availability family #13232/#13980): at a deep
+/// (4-segment) path with both operands sharing the *same* recursive-conditional
+/// alias base, tsz silently accepts a `number`-valued nested record assigned to
+/// a `string`-valued one. `tsc` reports `TS2322`. Ignored until the
+/// relation-internal resolver-availability fix lands; remove `#[ignore]` then.
+#[test]
+#[ignore = "#8432: same-base deep recursive-conditional assignment relation suppresses the genuine TS2322 (resolver-availability-under-relation, #13232/#13980)"]
+fn nested_record_deep_same_base_recursive_conditional_false_negative() {
+    let source = r#"
+type Leaf<K extends string, V> = { [P in K]: V };
+type Tree<K extends string, V> = K extends `${infer Head}.${infer Tail}`
+    ? { [P in Head]: Tree<Tail, V> }
+    : Leaf<K, V>;
+declare const leaf: Tree<"x.y.z.w", number>;
+const sink: Tree<"x.y.z.w", string> = leaf;
+"#;
+    let codes = check(source);
+    assert!(
+        codes.contains(&2322),
+        "deep same-base recursive-conditional number->string nested record must error (tsc: TS2322): {codes:?}"
+    );
+}
