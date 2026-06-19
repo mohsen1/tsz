@@ -202,6 +202,61 @@ fn test_project_rename_cross_file() {
     assert_eq!(updated_b, "import { renamed } from \"./a\";\nrenamed;\n");
 }
 
+// The symbol-based production rename path must apply the destructuring
+// shorthand expansion: renaming a shorthand binding rewrites it to
+// `source: new` so it keeps destructuring the original property, instead of
+// the plain `new` replacement that would silently bind a missing property.
+// The unrelated object-literal key of the same name is left untouched.
+#[test]
+fn test_project_rename_destructuring_expands_shorthand() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "const { name, age } = { name: 'Alice', age: 30 };\nconsole.log(name);\n".to_string(),
+    );
+
+    // Cursor on the destructuring binding `name` (line 0, char 8).
+    let edits = project
+        .get_rename_edits("a.ts", Position::new(0, 8), "fullName".to_string())
+        .expect("Expected rename edits");
+
+    let file = project.file("a.ts").unwrap();
+    let a_edits = edits.changes.get("a.ts").expect("Expected edits for a.ts");
+    let updated = apply_text_edits(file.source_text(), file.line_map(), a_edits);
+
+    assert_eq!(
+        updated,
+        "const { name: fullName, age } = { name: 'Alice', age: 30 };\nconsole.log(fullName);\n"
+    );
+}
+
+// Renaming an object-literal shorthand property value rewrites it to
+// `key: new` through the symbol-based path, leaving the property key intact.
+#[test]
+fn test_project_rename_object_shorthand_expands() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "const name = 'Alice';\nconst person = { name };\n".to_string(),
+    );
+
+    // Cursor on the `const name` declaration (line 0, char 6).
+    let edits = project
+        .get_rename_edits("a.ts", Position::new(0, 6), "fullName".to_string())
+        .expect("Expected rename edits");
+
+    let file = project.file("a.ts").unwrap();
+    let a_edits = edits.changes.get("a.ts").expect("Expected edits for a.ts");
+    let updated = apply_text_edits(file.source_text(), file.line_map(), a_edits);
+
+    assert_eq!(
+        updated,
+        "const fullName = 'Alice';\nconst person = { name: fullName };\n"
+    );
+}
+
 #[test]
 fn test_project_rename_cross_file_alias_import() {
     let mut project = Project::new();
