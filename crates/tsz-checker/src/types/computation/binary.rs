@@ -319,7 +319,22 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypingRequest::NONE
                     };
+                    // Preserve literal types for a primitive-literal right operand,
+                    // symmetrically with the left operand above. Without this, a
+                    // literal RHS in a contextual position (`const r: Strategy =
+                    // v || 'warn'`) is checked with no contextual type (literals are
+                    // not context-sensitive forms, so `right_request` is NONE) and
+                    // widens to its base primitive (`'warn'` → `string`); the logical
+                    // result then becomes `string`, failing assignability to the
+                    // literal-union target. The `logical_operand_is_primitive_literal`
+                    // gate excludes array/object literals, so element widening is
+                    // unaffected.
+                    let prev_preserve_right = self.ctx.preserve_literal_types;
+                    if self.logical_operand_is_primitive_literal(right_idx) {
+                        self.ctx.preserve_literal_types = true;
+                    }
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
+                    self.ctx.preserve_literal_types = prev_preserve_right;
                     let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     let should_check_contextual_right =
