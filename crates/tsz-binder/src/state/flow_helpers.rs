@@ -111,4 +111,26 @@ impl BinderState {
             node.antecedent.push(antecedent);
         }
     }
+
+    /// Finalize a branch/merge label as `current_flow`, the way tsc's
+    /// `finishFlowLabel` does: a label with no (reachable) antecedents collapses
+    /// to the unreachable flow, a label with exactly one collapses to that
+    /// antecedent, and a label with several stays itself. `add_antecedent` skips
+    /// unreachable antecedents, so e.g. an `if` whose both arms `return` leaves an
+    /// antecedent-less merge label; assigning it directly to `current_flow` would
+    /// treat that unreachable merge point as reachable and drop the narrowing of
+    /// subsequent statements (a false negated-discriminant / definite-assignment
+    /// result). Use this instead of a bare `self.current_flow = label`.
+    pub(crate) fn finish_flow_label(&mut self, label: FlowNodeId) {
+        let unreachable = self.unreachable_flow;
+        let resolved = match self.flow_nodes.get(label) {
+            Some(node) => match node.antecedent.len() {
+                0 => unreachable,
+                1 => node.antecedent[0],
+                _ => label,
+            },
+            None => unreachable,
+        };
+        self.current_flow = resolved;
+    }
 }

@@ -78,7 +78,12 @@ impl BinderState {
         );
         self.add_antecedent(merge_label, after_then_flow);
         self.add_antecedent(merge_label, after_else_flow);
-        self.current_flow = merge_label;
+        // Finalize via tsc's `finishFlowLabel` rather than assigning the label
+        // directly: when both arms terminate (e.g. each `return`s), the merge
+        // label has no antecedents and must collapse to the unreachable flow so
+        // the code after the `if` is not treated as reachable through a dead
+        // branch (which would drop narrowing of subsequent statements).
+        self.finish_flow_label(merge_label);
     }
 
     pub(crate) fn bind_while_or_do_statement(&mut self, arena: &NodeArena, node: &Node) {
