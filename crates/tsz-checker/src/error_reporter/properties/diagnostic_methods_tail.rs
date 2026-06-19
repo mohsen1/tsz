@@ -689,6 +689,13 @@ impl<'a> CheckerState<'a> {
         let object_str = self
             .object_literal_initializer_display_type_for_receiver(expr_idx)
             .map(|init_type| self.format_type_for_assignability_message(init_type))
+            // tsc renders the *apparent* type of the receiver in TS7053:
+            // `object` -> `{}`, and primitives widen to their wrapper interface
+            // (`number` -> `Number`, etc.). The destructuring TS2538 path already
+            // does this; share the same mapping here so element access matches.
+            // For a type parameter `display_object_type` is its constraint, so a
+            // `T extends number` receiver also widens to `Number`, matching tsc.
+            .or_else(|| super::apparent_intrinsic_type_display(display_object_type))
             .unwrap_or_else(|| {
                 self.property_receiver_display_for_node(display_object_type, expr_idx)
             });

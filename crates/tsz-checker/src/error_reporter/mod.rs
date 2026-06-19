@@ -42,7 +42,7 @@ mod name_resolution;
 mod noinfer_diagnostic_display;
 mod operator_errors;
 mod primitive_intersection_display;
-mod properties;
+pub(crate) mod properties;
 mod property_receiver_formatting;
 mod recursive_alias_display;
 mod render_failure;

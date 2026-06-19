@@ -13,21 +13,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Returns the tsc apparent-type display name used in destructuring TS2339
-/// messages (e.g. `string` → `String`, `object` → `{}`). Returns `None` for
-/// types that use their regular diagnostic formatting.
-fn apparent_type_display_for_destructuring(type_id: TypeId) -> Option<String> {
-    match type_id {
-        TypeId::OBJECT => Some("{}".to_string()),
-        TypeId::STRING => Some("String".to_string()),
-        TypeId::NUMBER => Some("Number".to_string()),
-        TypeId::BOOLEAN => Some("Boolean".to_string()),
-        TypeId::BIGINT => Some("BigInt".to_string()),
-        TypeId::SYMBOL => Some("Symbol".to_string()),
-        _ => None,
-    }
-}
-
 impl<'a> CheckerState<'a> {
     fn report_unknown_empty_binding_pattern(
         &mut self,
@@ -1550,7 +1535,9 @@ impl<'a> CheckerState<'a> {
                             // patterns like `var { a } = "s"` report `type 'String'`
                             // rather than the raw `type 'string'`.
                             let apparent_type_display =
-                                apparent_type_display_for_destructuring(parent_type);
+                                crate::error_reporter::properties::apparent_intrinsic_type_display(
+                                    parent_type,
+                                );
                             if let Some(ce) = computed_expr {
                                 let type_str = apparent_type_display.clone().unwrap_or_else(|| {
                                     self.format_type_for_assignability_message(parent_type)
