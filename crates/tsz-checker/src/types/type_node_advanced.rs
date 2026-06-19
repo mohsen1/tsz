@@ -566,7 +566,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .symbol_types
                     .get(&sym_id)
-                    .copied()
                     .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
             };
 
@@ -1153,7 +1152,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .symbol_types
                     .get(&sym_id)
-                    .copied()
                     .filter(|&type_id| type_id != TypeId::ERROR)
                     .or_else(|| self.declared_type_for_type_query_symbol(sym_id))
                     .unwrap_or_else(|| {

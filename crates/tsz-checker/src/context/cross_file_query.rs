@@ -405,7 +405,6 @@ impl<'a> CheckerContext<'a> {
         if self
             .symbol_instance_types
             .get(&sym_id)
-            .copied()
             .is_some_and(|t| !t.is_any_unknown_or_error())
         {
             return true;

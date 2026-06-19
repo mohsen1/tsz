@@ -142,7 +142,13 @@ impl<'a> CheckerState<'a> {
             // in-flight window and treat the result as provisional.
             return true;
         };
-        let Some(&provisional_instance) = self.ctx.class_instance_type_cache.get(&decl_idx) else {
+        let Some(provisional_instance) = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&decl_idx)
+            .copied()
+        else {
             return true;
         };
         crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)

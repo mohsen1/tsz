@@ -182,6 +182,8 @@ impl<'a> CheckerContext<'a> {
             .symbol_flow_memo
             .alias_path_assignment
             .borrow();
+        let class_instance_type_cache = self.class_instance_type_cache.borrow();
+        let class_constructor_type_cache = self.class_constructor_type_cache.borrow();
         let class_chain_summary_cache = self.class_chain_summary_cache.borrow();
         let env_eval_cache = self.env_eval_cache.borrow();
         let class_symbol_to_decl_cache = self.class_symbol_to_decl_cache.borrow();
@@ -288,13 +290,13 @@ impl<'a> CheckerContext<'a> {
             js_export_surface_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &self.js_export_surface_cache,
             ),
-            class_instance_type_cache_entries: self.class_instance_type_cache.len(),
+            class_instance_type_cache_entries: class_instance_type_cache.len(),
             class_instance_type_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
-                &self.class_instance_type_cache,
+                &class_instance_type_cache,
             ),
-            class_constructor_type_cache_entries: self.class_constructor_type_cache.len(),
+            class_constructor_type_cache_entries: class_constructor_type_cache.len(),
             class_constructor_type_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
-                &self.class_constructor_type_cache,
+                &class_constructor_type_cache,
             ),
             class_chain_summary_cache_entries: class_chain_summary_cache.len(),
             class_chain_summary_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(

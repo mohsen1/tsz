@@ -1471,7 +1471,7 @@ impl CheckerState<'_> {
     }
 
     pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+        if let Some(instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
             return Some(instance_type);
         }
         self.class_instance_type_with_params_from_symbol(sym_id)
@@ -1482,7 +1482,7 @@ impl CheckerState<'_> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
+        if let Some(instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
             && !instance_type.is_any_unknown_or_error()
         {
             let params = self
@@ -1552,7 +1552,13 @@ impl CheckerState<'_> {
                 || canonical_sym
                     .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym))
             {
-                if let Some(&partial_instance) = self.ctx.class_instance_type_cache.get(&decl_idx)
+                let partial_instance = self
+                    .ctx
+                    .class_instance_type_cache
+                    .borrow()
+                    .get(&decl_idx)
+                    .copied();
+                if let Some(partial_instance) = partial_instance
                     && partial_instance != TypeId::ERROR
                     && partial_instance != TypeId::ANY
                 {
@@ -1566,7 +1572,7 @@ impl CheckerState<'_> {
             // Check cache but skip ERROR values — these can arise when
             // class_instance_type_cache is cleared during class statement
             // checking and re-computation hits the recursion guard.
-            if let Some(&instance_type) = self
+            if let Some(instance_type) = self
                 .ctx
                 .symbol_instance_types
                 .get(&sym_id)
@@ -1580,9 +1586,14 @@ impl CheckerState<'_> {
                     let cached_has_construct_signature =
                         query::callable_shape_for_type(self.ctx.types, instance_type)
                             .is_some_and(|shape| !shape.construct_signatures.is_empty());
+                    let class_cached = self
+                        .ctx
+                        .class_instance_type_cache
+                        .borrow()
+                        .get(&decl_idx)
+                        .copied();
                     if cached_has_construct_signature
-                        && let Some(&class_cached) =
-                            self.ctx.class_instance_type_cache.get(&decl_idx)
+                        && let Some(class_cached) = class_cached
                         && class_cached != TypeId::ERROR
                         && class_cached != TypeId::ANY
                     {

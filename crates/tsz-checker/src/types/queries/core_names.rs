@@ -742,11 +742,13 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, false));
         }
 
-        if let Some((&class_idx, _)) = self
+        if let Some(class_idx) = self
             .ctx
             .class_constructor_type_cache
+            .borrow()
             .iter()
             .find(|entry| *entry.1 == type_id)
+            .map(|(&class_idx, _)| class_idx)
         {
             return Some((class_idx, true));
         }

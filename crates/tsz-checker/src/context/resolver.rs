@@ -41,7 +41,136 @@ use tsz_parser::parser::base::{NodeIndex, NodeList};
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{SymbolRef, TypeId, TypeParamInfo};
 
+thread_local! {
+    /// `DefId`s currently inside [`CheckerContext::force_def_on_miss`] on this
+    /// thread. On-demand forcing (#12101) re-enters `resolve_lazy` when it
+    /// registers the forced body and re-reads it; this guard makes the inner
+    /// `resolve_lazy` for the same `def_id` fall through to the conservative
+    /// `None` instead of recursively re-forcing.
+    static FORCE_IN_PROGRESS: std::cell::RefCell<rustc_hash::FxHashSet<DefId>> =
+        std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+}
+
 impl<'a> CheckerContext<'a> {
+    /// Whether `def_id` was classified as a force-eligible simple lib interface
+    /// (the value-position / `ensure_refs_resolved` predicate
+    /// `CheckerState::force_eligible_lib_def`). Reads the per-`DefId` cache only;
+    /// an uncached def is treated as ineligible so the conservative fallback is
+    /// preserved. Authoritative classification (including the heritage
+    /// augmentation/shadow walk) populates this cache through the `&mut`
+    /// relation-prep path before any miss-forcing is attempted.
+    fn cached_force_eligible_lib_def(&self, def_id: DefId) -> bool {
+        self.lib_type_resolution_caches
+            .lazy_member_receivers
+            .borrow()
+            .get(&def_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// On a `resolve_lazy` miss for a force-eligible simple lib interface,
+    /// recover its already-flattened body from the by-name lib-type cache and
+    /// register it into the type environments, so a structurally-consuming
+    /// relation/evaluation sees the real shape instead of an unresolved `Lazy`
+    /// (issue #12101, the on-demand replacement for the eager transitive
+    /// pre-walk).
+    ///
+    /// Soundness contract (strictly additive over the #12144 conservative
+    /// fallback):
+    /// - Only fires for a def the relation-prep path already classified as a
+    ///   force-eligible lib interface (non-generic, from-actual-lib, unmerged,
+    ///   unaugmented, unshadowed) — see [`Self::cached_force_eligible_lib_def`].
+    /// - Only registers a body that lib resolution already produced and cached
+    ///   by name (e.g. a shared heritage base flattened as a side effect of an
+    ///   earlier interface's heritage merge). It never mints a new body here:
+    ///   minting requires the `&mut CheckerState` lib-resolution machinery, and
+    ///   a def with no cached body falls through to `None` exactly as before.
+    ///
+    ///   On-demand *minting* (driving `resolve_lib_type_by_name` from this
+    ///   `&self` site) was investigated for #12101 and is BOTH blocked and
+    ///   unnecessary, measured:
+    ///   1. Blocked — `CheckerContext` holds no back-reference to its owning
+    ///      `CheckerState`, and the flatten chain bottoms out in
+    ///      `get_type_of_symbol` / `merge_interface_types*` /
+    ///      `merge_global_augmentations` (all `&mut CheckerState`, the core
+    ///      symbol-typing recursion, not mere caches). Reaching it from `&self`
+    ///      is a checker-wide ownership rewrite, not a scoped cache conversion.
+    ///   2. Unnecessary — on comlink this gate is reached only for already-
+    ///      ineligible augmentation-seam interfaces (`ArrayBufferTypes`,
+    ///      `WeakKeyTypes`); there are zero force-eligible misses, so a working
+    ///      mint would have nothing to produce. The residual interns are the
+    ///      `&mut` relation-prep direct-ref bodies, which comlink's relations
+    ///      structurally consume — deferring them (verified) reintroduces the
+    ///      #12144 false TS2345/TS2677 family. The "~2-4k intern floor" was an
+    ///      optimistic extrapolation; the parity-holding comlink floor is the
+    ///      direct-ref consumption set (~10.4k interns), already reached.
+    /// - The recovered body is the same flattened shape full materialization
+    ///   would register, so registering it cannot change a verdict relative to
+    ///   the eager path — it only lets the relation resolve instead of taking
+    ///   the still-`Lazy` conservative branch.
+    /// - Re-entrancy is guarded by [`FORCE_IN_PROGRESS`]; gated by the
+    ///   `TSZ_DISABLE_ON_DEMAND_FORCING` kill-switch at the call site.
+    ///
+    /// Returns `Some(body)` when a usable cached body was registered, else
+    /// `None` (caller keeps the conservative fallback).
+    pub(crate) fn force_def_on_miss(&self, def_id: DefId) -> Option<TypeId> {
+        if !self.cached_force_eligible_lib_def(def_id) {
+            return None;
+        }
+        if FORCE_IN_PROGRESS.with(|set| !set.borrow_mut().insert(def_id)) {
+            return None;
+        }
+        let result = self.force_def_on_miss_inner(def_id);
+        FORCE_IN_PROGRESS.with(|set| {
+            set.borrow_mut().remove(&def_id);
+        });
+        result
+    }
+
+    fn force_def_on_miss_inner(&self, def_id: DefId) -> Option<TypeId> {
+        let name_atom = self.definition_store.get_name(def_id)?;
+        let name = self.types.resolve_atom(name_atom);
+        let body = (*self.lib_type_resolution_caches.types.get(&name)?)?;
+        if body == TypeId::ERROR
+            || body == TypeId::ANY
+            || body == TypeId::UNKNOWN
+            || crate::query_boundaries::common::lazy_def_id(self.types, body) == Some(def_id)
+        {
+            return None;
+        }
+        // The cached body must be self-contained enough to register: its own
+        // referenced defs must already have bodies (env or DefinitionStore), or
+        // registering it would only re-introduce the same unresolved edge. This
+        // mirrors `cached_lib_type_is_usable`'s reachability gate.
+        for &ref_def in self.collect_lazy_def_ids_cached(body).iter() {
+            if ref_def == def_id {
+                continue;
+            }
+            let in_env = self
+                .type_env
+                .try_borrow()
+                .is_ok_and(|env| env.get_def(ref_def).is_some());
+            if !in_env && self.definition_store.get_body(ref_def).is_none() {
+                return None;
+            }
+        }
+
+        // Register the flattened body under this def in both environments
+        // (non-generic: no params). Then drop any evaluation-cache entries that
+        // were computed while the def was still an unresolved `Lazy`, so a later
+        // re-evaluation observes the freshly-registered body (#13981).
+        self.register_def_auto_params_in_envs(def_id, body, Vec::new());
+        self.invalidate_env_eval_reachable_from(body);
+        self.clear_type_evaluation_caches_for_def(def_id);
+        tracing::trace!(
+            def_id = def_id.0,
+            type_id = body.0,
+            name = name.as_str(),
+            "force_def_on_miss: registered cached flattened lib body"
+        );
+        Some(body)
+    }
+
     /// Get the resolution error for a specifier under an explicit resolution-mode override.
     pub fn get_resolution_error_with_mode(
         &self,
@@ -558,7 +687,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
-        self.symbol_types.get(&sym_id).copied()
+        self.symbol_types.get(&sym_id)
     }
 
     /// Resolve a `typeof X` query to its VALUE-space type.
@@ -597,14 +726,43 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         self.definition_store.canonical_def_id(def_id)
     }
 
-    /// Resolve a `DefId` to its cached type.
+    /// Resolve a `DefId` to its already-registered type, materializing a
+    /// force-eligible lib interface on a miss (issue #12101).
+    ///
+    /// On a lookup miss for a force-eligible simple lib interface, this calls
+    /// [`CheckerContext::force_def_on_miss`] (behind the
+    /// `TSZ_DISABLE_ON_DEMAND_FORCING` kill-switch) to register the flattened
+    /// body the eager transitive pre-walk used to materialize up front, then
+    /// re-reads it. On any other miss — or when forcing is disabled / the def is
+    /// ineligible / no cached body is available — it returns `None`, preserving
+    /// the #12144 conservative fallback (the consuming relation treats the still
+    /// unresolved `Lazy` as undetermined and refuses to cache the verdict).
+    ///
+    /// Callers that must NOT trigger forcing (the variance gap fingerprint) use
+    /// [`Self::resolve_lazy_lookup_only`].
+    fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        if let Some(body) = self.resolve_lazy_lookup_only(def_id, interner) {
+            return Some(body);
+        }
+        if crate::state_checking::lazy_lib_member::on_demand_forcing_disabled() {
+            return None;
+        }
+        self.force_def_on_miss(def_id)
+    }
+
+    /// Lookup-only `DefId` resolution: the original `resolve_lazy` body with no
+    /// on-demand forcing side effect. See the trait method docs.
     ///
     /// This looks up the type from the `symbol_types` cache, which is populated
     /// during type checking. Returns None if the symbol hasn't been resolved yet.
     ///
     /// **Callers should ensure `get_type_of_symbol()` is called first** to populate
     /// the cache before calling `resolve_lazy()`.
-    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+    fn resolve_lazy_lookup_only(
+        &self,
+        def_id: DefId,
+        _interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
         use tsz_binder::symbol_flags;
 
         // A type alias flagged as unconditionally-infinite (TS2589 at its
@@ -709,7 +867,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         let type_alias_self_wrapper = kind == DefKind::TypeAlias
                             && crate::query_boundaries::definition_identity::is_lazy_def_identity(
                                 self.types,
-                                *instance_type,
+                                instance_type,
                                 def_id,
                             );
                         // A type-alias self wrapper is its public identity,
@@ -717,7 +875,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         // fall through to the type environment or
                         // DefinitionStore body for transparent aliases.
                         if !type_alias_self_wrapper {
-                            return Some(*instance_type);
+                            return Some(instance_type);
                         }
                     }
                 } else {
@@ -732,7 +890,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                                 | symbol_flags::TYPE_ALIAS,
                         )
                     {
-                        return Some(*instance_type);
+                        return Some(instance_type);
                     }
                 }
             }
@@ -763,7 +921,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             // the type environment a chance to provide the real body first.
             if !is_atomics
                 && !has_local_symbol_collision
-                && let Some(&ty) = self.symbol_types.get(&sym_id)
+                && let Some(ty) = self.symbol_types.get(&sym_id)
             {
                 if ty == TypeId::ERROR {
                     // Skip poisoned ERROR entries (e.g., from stack overflow protection
@@ -836,7 +994,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
         if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
             && !has_local_symbol_collision
-            && let Some(&ty) = self.symbol_types.get(&sym_id)
+            && let Some(ty) = self.symbol_types.get(&sym_id)
             && crate::query_boundaries::common::lazy_def_id(self.types, ty) == Some(def_id)
             && self
                 .definition_store
@@ -934,7 +1092,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             }
             // Fallback within enclosing class: look up the instance type via the binder symbol.
             if let Some(sym_id) = self.binder.get_node_symbol(class_info.class_idx)
-                && let Some(ty) = self.symbol_instance_types.get(&sym_id).copied()
+                && let Some(ty) = self.symbol_instance_types.get(&sym_id)
             {
                 return Some(ty);
             }
@@ -1041,10 +1199,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 // Look up the cached type for the parent symbol
                 // For classes, we need the instance type, not constructor type
                 if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
-                    return Some(*instance_type);
+                    return Some(instance_type);
                 }
                 // Fallback to symbol_types (constructor type) if instance type not available
-                return self.symbol_types.get(parent_sym_id).copied();
+                return self.symbol_types.get(parent_sym_id);
             }
             return None;
         }
@@ -1056,10 +1214,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             if let Some(&parent_sym_id) = parents.first() {
                 // For classes, try instance_types first; for interfaces, use symbol_types
                 if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
-                    return Some(*instance_type);
+                    return Some(instance_type);
                 }
                 // Fallback to symbol_types (for interfaces)
-                return self.symbol_types.get(&parent_sym_id).copied();
+                return self.symbol_types.get(&parent_sym_id);
             }
         }
 
@@ -1076,7 +1234,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         // Step 4: Parent SymbolId -> Parent TypeId (Instance Type)
                         if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id)
                         {
-                            return Some(*instance_type);
+                            return Some(instance_type);
                         }
                     }
                 }

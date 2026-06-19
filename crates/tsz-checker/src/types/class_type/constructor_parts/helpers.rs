@@ -12,7 +12,7 @@ use tsz_solver::{
     TypePredicate, Visibility,
 };
 
-use super::StaticMemberBuildData;
+use super::build_data::StaticMemberBuildData;
 
 impl<'a> CheckerState<'a> {
     /// Deferred fallback for a re-entrant constructor query: a `Lazy` reference
@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
                         type_idx
                     };
                 if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
-                    && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
+                    && let Some(base_type) = self.ctx.symbol_types.get(&base_sym_id)
                 {
                     base_props = self.static_properties_from_type(base_type);
                 }

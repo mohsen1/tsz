@@ -401,6 +401,21 @@ pub(crate) struct EvalWithCacheResult {
     /// retry — the structural type-tree walk would hit the same protection
     /// limit at the same shape.
     pub silent_depth_bailed: bool,
+    /// Whether the evaluator observed an application whose base `DefId` had no
+    /// resolvable body during this pass (the registration-window artifact
+    /// tracked by `TypeEvaluator::is_unresolved_def_seen`).
+    ///
+    /// A `result` computed while a consumed `DefId` was still unresolved is a
+    /// function of the registration window it ran in, not of the input
+    /// `TypeId` alone. The env-eval memo (`cache_env_eval_result`) is keyed
+    /// purely on the input `TypeId` with no generation guard, so a caller that
+    /// would cache such a result must skip the write — otherwise the
+    /// under-resolved answer permanently shadows the correct one once the
+    /// declaring file registers the real body. Inert today: the eager
+    /// `ensure_refs_resolved` pre-walk resolves every referenced `DefId` before
+    /// a committed relation, so this flag stays `false` until the on-demand
+    /// forcing rework (issue #12101) removes that pre-walk.
+    pub unresolved_def_seen: bool,
     /// Cache entries produced by the evaluator (key -> evaluated value).
     ///
     /// Empty when `CacheEntryCollection::Skip` is selected. The top-level
@@ -486,6 +501,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
         silent_depth_bailed: evaluator.is_silent_depth_bailed(),
+        unresolved_def_seen: evaluator.is_unresolved_def_seen(),
         cache_entries: if matches!(
             options.cache_entry_collection,
             CacheEntryCollection::Collect
@@ -515,6 +531,7 @@ pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::relations::subtype::TypeRe
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
         silent_depth_bailed: evaluator.is_silent_depth_bailed(),
+        unresolved_def_seen: evaluator.is_unresolved_def_seen(),
         cache_entries: evaluator.drain_cache().collect(),
     }
 }

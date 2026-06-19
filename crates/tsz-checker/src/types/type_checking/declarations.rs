@@ -616,7 +616,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // Also check if the type_id was already cached as the symbol type
-            if let Some(&cached) = self.ctx.symbol_types.get(&func_sym_id)
+            if let Some(cached) = self.ctx.symbol_types.get(&func_sym_id)
                 && type_id == cached
             {
                 return true;
@@ -746,7 +746,7 @@ impl<'a> CheckerState<'a> {
                     // which are interfaces with `new()` signatures
                     if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
                         // Check the cached type for interface - it should be Callable if it has construct signatures
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        if let Some(cached_type) = self.ctx.symbol_types.get(&symbol_id) {
                             if cached_type != type_id {
                                 // Interface type was already resolved - check if it has construct signatures
                                 if query::has_construct_signatures(self.ctx.types, cached_type) {
@@ -792,7 +792,7 @@ impl<'a> CheckerState<'a> {
                     //   function f<T extends typeof A>(ctor: T) {
                     //     class B extends ctor {}  // ctor should be recognized as constructible
                     //   }
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                    if let Some(cached_type) = self.ctx.symbol_types.get(&symbol_id) {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {
@@ -886,7 +886,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check cached type for variables/parameters with constructor types
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                    if let Some(cached_type) = self.ctx.symbol_types.get(&symbol_id) {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {

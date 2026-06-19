@@ -1,6 +1,7 @@
 //! Declaration and statement checking, including `StatementCheckCallbacks`.
 
 pub(crate) mod class;
+mod class_decorators;
 mod class_heritage_diagnostics;
 #[cfg(test)]
 mod class_tests;

@@ -287,3 +287,103 @@ fn document_property_read_stays_clean() {
         "declare const d: Document; const t: string = d.title; void t;",
     );
 }
+
+// =============================================================================
+// On-demand forcing relation path (#12101 steps 5-7)
+// =============================================================================
+//
+// The eager transitive `ensure_refs_resolved` pre-walk is dropped for
+// force-eligible simple lib interfaces; their referenced tail is materialized on
+// demand when a relation/evaluation structurally consumes it
+// (`CheckerContext::force_def_on_miss`). These tests pin the relation path: a
+// DOM type flowing through an *assignment relation* (not just an annotation or a
+// member read) must still produce the exact `tsc` diagnostics and must not
+// re-materialize its full heritage closure.
+
+/// A DOM value assigned to an incompatible annotation drives the assignability
+/// relation over the (now lazily-resolved) DOM interface. The relation must
+/// still report TS2322 — the on-demand path resolves the real shape rather than
+/// treating the unresolved `Lazy` as compatible (the #12144 conservative
+/// fallback must never silence a genuine mismatch). Receiver/method spellings
+/// are varied so the rule is structural.
+#[test]
+fn dom_relation_reports_mismatch_on_demand() {
+    for (label, source, expect) in [
+        (
+            "createElement -> number",
+            "declare const d: Document; const x: number = d.createElement(\"div\"); export {};",
+            true,
+        ),
+        (
+            "body -> string",
+            "declare const d: Document; const s: string = d.body; export {};",
+            true,
+        ),
+        (
+            "createElement -> Element (compatible)",
+            "declare const d: Document; const e: Element = d.createElement(\"p\"); export {};",
+            false,
+        ),
+    ] {
+        let got = codes(source);
+        let has_2322 = got.contains(&2322);
+        assert_eq!(
+            has_2322, expect,
+            "{label}: expected TS2322={expect} from the on-demand relation path, got {got:?}",
+        );
+    }
+}
+
+/// An inherited DOM member reached through heritage (`HTMLElement.appendChild`
+/// from `Node`) must resolve on demand — the dropped transitive pre-walk must
+/// not turn it into a spurious TS2339/TS2740 (the #12299 case). Clean both as a
+/// bare statement and through a relation that consumes the return type.
+#[test]
+fn dom_inherited_member_resolves_on_demand() {
+    assert_no_heritage_hazard(
+        "HTMLElement.appendChild (statement)",
+        "declare const e: HTMLElement; e.appendChild(e); void e;",
+    );
+    assert_no_heritage_hazard(
+        "HTMLElement.appendChild return relation",
+        "declare const e: HTMLElement; const n: Node = e.appendChild(e); void n;",
+    );
+}
+
+/// The relation path must not re-introduce the eager heritage closure: a DOM
+/// type consumed by an assignment relation stays under the same over-
+/// materialization ratchet as a bare annotation. If forcing-on-miss walked the
+/// transitive tail it would blow past the ratchet, re-creating the cost the
+/// rework removed.
+#[test]
+fn dom_relation_stays_below_materialization_ratchet() {
+    // This guards the on-demand *win*; with the kill-switch set the legacy eager
+    // transitive pre-walk intentionally over-materializes, so skip it there.
+    if crate::state_checking::lazy_lib_member::on_demand_forcing_disabled() {
+        return;
+    }
+    let base = type_count(TRIVIAL_SOURCE);
+    let ceiling = base + EAGER_RECEIVER_CEILING;
+    for (label, source) in [
+        (
+            "HTMLElement assignment relation",
+            "declare const e: HTMLElement; const x: HTMLElement = e; void x;",
+        ),
+        (
+            "Node assignment relation",
+            "declare const n: Node; const m: Node = n; void m;",
+        ),
+        (
+            "Document createElement relation",
+            "declare const d: Document; const e: Element = d.createElement(\"p\"); void e;",
+        ),
+    ] {
+        let count = type_count(source);
+        assert!(
+            count <= ceiling,
+            "{label}: interned {count} types (baseline {base}), exceeding the on-demand \
+             ratchet {ceiling}; force-on-miss is walking the transitive heritage tail \
+             instead of materializing only what the relation consumes (#12101 regression)",
+        );
+    }
+}

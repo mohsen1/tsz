@@ -1400,17 +1400,20 @@ impl CheckerState<'_> {
                 });
 
         if !invalid_shadowed_base && let Some(base_idx) = self.get_base_class_idx(class_idx) {
-            if let Some(base_type) = self
+            // Copy the cached value out and drop the cache borrow before the
+            // fallback closure: it calls `get_class_instance_type`, which
+            // re-borrows this same `RefCell`.
+            let cached_base_type = self
                 .ctx
                 .class_instance_type_cache
+                .borrow()
                 .get(&base_idx)
-                .copied()
-                .or_else(|| {
-                    let base_node = self.ctx.arena.get(base_idx)?;
-                    let base_class = self.ctx.arena.get_class(base_node)?;
-                    Some(self.get_class_instance_type(base_idx, base_class))
-                })
-            {
+                .copied();
+            if let Some(base_type) = cached_base_type.or_else(|| {
+                let base_node = self.ctx.arena.get(base_idx)?;
+                let base_class = self.ctx.arena.get_class(base_node)?;
+                Some(self.get_class_instance_type(base_idx, base_class))
+            }) {
                 merge_base_type(self, &mut props, base_type);
             }
         } else if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -1458,7 +1461,10 @@ impl CheckerState<'_> {
             ..ObjectShape::default()
         });
         // Cache the partial type so subsequent nested class expressions can use it
-        self.ctx.class_instance_type_cache.insert(class_idx, result);
+        self.ctx
+            .class_instance_type_cache
+            .borrow_mut()
+            .insert(class_idx, result);
         result
     }
 }

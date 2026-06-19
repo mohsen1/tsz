@@ -1550,7 +1550,8 @@ impl<'a> CheckerState<'a> {
             } else {
                 &self.ctx.class_instance_type_cache
             };
-            return cache.get(&class_idx).copied().or_else(|| {
+            let cached = cache.borrow().get(&class_idx).copied();
+            return cached.or_else(|| {
                 if is_static {
                     return None;
                 }

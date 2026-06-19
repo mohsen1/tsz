@@ -42,10 +42,30 @@ impl CheckerState<'_> {
     /// on them. The stamp is recomputed after the pass on purpose — the
     /// relation walk can grow the type environments, and the captured
     /// analysis is valid for that *post*-pass state.
+    ///
+    /// `lazy_failures_at_entry` is a snapshot of `lazy_resolve_failure_count`
+    /// taken by the caller immediately before it ran the captured relation. If
+    /// the count advanced during the relation, the walk compared against a
+    /// `Lazy(DefId)` whose body was not yet registered (`note_lazy_resolve_failure`),
+    /// so the analysis is a function of the registration window it ran in, not
+    /// of the prepared `(source, target, flags, sound_mode)` key alone. The
+    /// failure memo is keyed purely on that prepared key with no
+    /// generation/registration guard, so persisting an under-resolved analysis
+    /// would let it shadow the correct one once the body registers. This is the
+    /// relation-layer analog of the env-eval `unresolved_def_seen` backstop
+    /// (issue #12101) and mirrors the suppression
+    /// [`publish_shared_constraint_proof`](Self::publish_shared_constraint_proof)
+    /// already applies to the cross-file constraint-proof cache.
+    ///
+    /// Inert today: the eager `ensure_refs_resolved` pre-walk resolves every
+    /// referenced `DefId` before a committed relation, so the count does not
+    /// advance during a captured relation. The guard becomes load-bearing only
+    /// when the on-demand forcing rework drops that pre-walk.
     pub(crate) fn failure_memo_store(
         &mut self,
         key: AssignabilityFailureKey,
         analysis: CachedAssignabilityAnalysis,
+        lazy_failures_at_entry: u64,
     ) {
         use crate::state_domain::type_environment::lazy::{
             global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
@@ -56,6 +76,8 @@ impl CheckerState<'_> {
             || refs_resolution_fuel_exhausted()
             || global_resolution_fuel_exhausted()
             || self.ctx.depth_exceeded.get()
+            || crate::query_boundaries::common::lazy_resolve_failure_count()
+                != lazy_failures_at_entry
         {
             return;
         }

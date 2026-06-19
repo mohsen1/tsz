@@ -1112,7 +1112,7 @@ impl CheckerState<'_> {
 
         // Check cache first
         if cross_file_owner_idx.is_none()
-            && let Some(&cached) = self.ctx.symbol_types.get(&sym_id)
+            && let Some(cached) = self.ctx.symbol_types.get(&sym_id)
         {
             let cached_is_stale_alias_placeholder =
                 !self.ctx.symbol_resolution_set.contains(&sym_id)
@@ -1148,12 +1148,7 @@ impl CheckerState<'_> {
                     // Restore ERROR if provisional failed
                     self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 }
-                let cached = self
-                    .ctx
-                    .symbol_types
-                    .get(&sym_id)
-                    .copied()
-                    .unwrap_or(TypeId::ERROR);
+                let cached = self.ctx.symbol_types.get(&sym_id).unwrap_or(TypeId::ERROR);
                 trace!(
                     sym_id = sym_id.0,
                     type_id = cached.0,

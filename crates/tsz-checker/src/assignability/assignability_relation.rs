@@ -160,6 +160,10 @@ impl<'a> CheckerState<'a> {
 
         let overrides = CheckerOverrideProvider::new(self, None);
 
+        // Snapshot the unresolved-`Lazy` counter before the relation so
+        // `failure_memo_store` can refuse to persist an analysis that compared
+        // against a not-yet-registered def body (issue #12101 backstop).
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let (mut outcome, capture) = execute_relation(
             request,
             self.ctx.types,
@@ -172,7 +176,7 @@ impl<'a> CheckerState<'a> {
         );
 
         if let (Some(key), Some(capture)) = (memo_key, capture) {
-            self.failure_memo_store(key, capture);
+            self.failure_memo_store(key, capture, lazy_failures_at_entry);
         }
 
         self.propagate_overflow_flags(outcome.depth_exceeded, outcome.iteration_exceeded);

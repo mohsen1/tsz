@@ -50,12 +50,22 @@ impl<'a> CheckerState<'a> {
         if apply_module_augmentations {
             if let Some(result) = in_progress_class_instance_result(
                 is_in_resolution_set,
-                self.ctx.class_instance_type_cache.get(&class_idx).copied(),
+                self.ctx
+                    .class_instance_type_cache
+                    .borrow()
+                    .get(&class_idx)
+                    .copied(),
             ) {
                 return result;
             }
 
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            if let Some(cached) = self
+                .ctx
+                .class_instance_type_cache
+                .borrow()
+                .get(&class_idx)
+                .copied()
+            {
                 return cached;
             }
         } else {
@@ -63,11 +73,18 @@ impl<'a> CheckerState<'a> {
                 return self
                     .ctx
                     .class_instance_type_cache
+                    .borrow()
                     .get(&class_idx)
                     .copied()
                     .unwrap_or(TypeId::ERROR);
             }
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            if let Some(cached) = self
+                .ctx
+                .class_instance_type_cache
+                .borrow()
+                .get(&class_idx)
+                .copied()
+            {
                 return cached;
             }
         }
@@ -83,7 +100,10 @@ impl<'a> CheckerState<'a> {
         );
 
         if apply_module_augmentations {
-            self.ctx.class_instance_type_cache.insert(class_idx, result);
+            self.ctx
+                .class_instance_type_cache
+                .borrow_mut()
+                .insert(class_idx, result);
         }
 
         result

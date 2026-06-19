@@ -8,10 +8,15 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
             .join("src/state/state_checking_members/decorator_signature_checks.rs"),
     )
     .expect("failed to read decorator_signature_checks.rs");
+    // The class decorator checks (`check_class_decorator_call_signature` and
+    // friends) were extracted from `class.rs` into the sibling
+    // `class_decorators.rs` module to keep `class.rs` under the 2000-LOC
+    // architecture cap; read it so the routing contract holds wherever the
+    // cluster physically resides.
     let class_source = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/state/state_checking/class.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/state/state_checking/class_decorators.rs"),
     )
-    .expect("failed to read state_checking/class.rs");
+    .expect("failed to read state_checking/class_decorators.rs");
     let compact_class_source: String = class_source
         .chars()
         .filter(|c| !c.is_whitespace())

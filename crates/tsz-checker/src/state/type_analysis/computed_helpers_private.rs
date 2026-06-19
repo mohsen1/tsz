@@ -84,6 +84,7 @@ impl<'a> CheckerState<'a> {
                 let cached_ctor = self
                     .ctx
                     .class_constructor_type_cache
+                    .borrow()
                     .get(&declaring_class)
                     .copied();
                 if let Some(ctor_type) = cached_ctor
@@ -700,9 +701,16 @@ impl<'a> CheckerState<'a> {
             // Resolve to the constructor type. Use the class_constructor_type_cache to
             // avoid triggering further recursion if the constructor is already built.
             let class_decl = self.get_class_declaration_from_symbol(sym_id);
-            if let Some(class_idx) = class_decl
-                && let Some(&ctor_type) = self.ctx.class_constructor_type_cache.get(&class_idx)
-            {
+            // Copy the cached ctor out and drop the borrow before the `else`
+            // branch, which re-enters the checker (and can re-borrow this cache).
+            let cached_ctor = class_decl.and_then(|class_idx| {
+                self.ctx
+                    .class_constructor_type_cache
+                    .borrow()
+                    .get(&class_idx)
+                    .copied()
+            });
+            if let Some(ctor_type) = cached_ctor {
                 ctor_type
             } else {
                 self.get_type_of_symbol(sym_id)

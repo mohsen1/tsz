@@ -43,7 +43,7 @@ fn memo_drops_entries_when_any_stamp_component_moves() {
 
 #[test]
 fn symbol_type_cache_version_tracks_mutations_not_reads() {
-    let mut cache = SymbolTypeCache::new();
+    let cache = SymbolTypeCache::new();
     let v0 = cache.version();
     assert!(cache.get(&SymbolId(7)).is_none());
     assert_eq!(cache.version(), v0, "reads must not bump the version");

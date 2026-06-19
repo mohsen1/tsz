@@ -1452,7 +1452,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # all through the existing `query_boundaries::common` gateway joining the
         # sibling structural predicates already used in the same expressions —
         # no new quarantine entry. Removal condition remains #8225.
-        3076,
+        #
+        # Bumped 3076→3079 for the #12101 on-demand-forcing cache-poisoning
+        # backstop: `failure_memo_store` and its two callers
+        # (`assignability_relation.rs`, `assignability_diagnostics.rs`) each
+        # reference the existing `query_boundaries::common::lazy_resolve_failure_count`
+        # gateway helper — the same one `publish_shared_constraint_proof` already
+        # uses for the sibling cross-file proof cache. No new quarantine entry.
+        # Removal condition remains #8225.
+        3079,
     ),
 ]
 

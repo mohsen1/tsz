@@ -1408,7 +1408,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the cached resolved type for this symbol.
-            let Some(&resolved) = self.ctx.symbol_types.get(&sym_id) else {
+            let Some(resolved) = self.ctx.symbol_types.get(&sym_id) else {
                 continue;
             };
 

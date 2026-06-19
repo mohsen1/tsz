@@ -107,8 +107,8 @@ impl TypeCache {
             self.symbol_dependencies.remove(sym_id);
         }
         self.node_types.clear();
-        self.class_instance_type_cache.clear();
-        self.class_constructor_type_cache.clear();
+        self.class_instance_type_cache.get_mut().clear();
+        self.class_constructor_type_cache.get_mut().clear();
         self.class_instance_type_to_decl.clear();
         affected.len()
     }
@@ -123,9 +123,11 @@ impl TypeCache {
         self.class_instance_type_to_decl
             .extend(other.class_instance_type_to_decl);
         self.class_instance_type_cache
-            .extend(other.class_instance_type_cache);
+            .get_mut()
+            .extend(other.class_instance_type_cache.into_inner());
         self.class_constructor_type_cache
-            .extend(other.class_constructor_type_cache);
+            .get_mut()
+            .extend(other.class_constructor_type_cache.into_inner());
         self.type_only_nodes.extend(other.type_only_nodes);
         self.namespace_module_names
             .extend(other.namespace_module_names);
@@ -1756,8 +1758,8 @@ mod tests {
             well_known_symbol_names: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
-            class_instance_type_cache: FxHashMap::default(),
-            class_constructor_type_cache: FxHashMap::default(),
+            class_instance_type_cache: std::cell::RefCell::new(FxHashMap::default()),
+            class_constructor_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             type_only_nodes: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),
         }
@@ -1766,15 +1768,18 @@ mod tests {
     #[test]
     fn type_cache_merge_keeps_constructor_type_cache() {
         let mut lhs = empty_cache();
-        let mut rhs = empty_cache();
+        let rhs = empty_cache();
 
         rhs.class_constructor_type_cache
+            .borrow_mut()
             .insert(NodeIndex(42), TypeId::STRING);
 
         lhs.merge(rhs);
 
         assert_eq!(
-            lhs.class_constructor_type_cache.get(&NodeIndex(42)),
+            lhs.class_constructor_type_cache
+                .borrow()
+                .get(&NodeIndex(42)),
             Some(&TypeId::STRING)
         );
     }
@@ -1782,21 +1787,25 @@ mod tests {
     #[test]
     fn type_cache_merge_keeps_error_class_type_cache_entries() {
         let mut lhs = empty_cache();
-        let mut rhs = empty_cache();
+        let rhs = empty_cache();
 
         rhs.class_instance_type_cache
+            .borrow_mut()
             .insert(NodeIndex(10), TypeId::ERROR);
         rhs.class_constructor_type_cache
+            .borrow_mut()
             .insert(NodeIndex(11), TypeId::ERROR);
 
         lhs.merge(rhs);
 
         assert_eq!(
-            lhs.class_instance_type_cache.get(&NodeIndex(10)),
+            lhs.class_instance_type_cache.borrow().get(&NodeIndex(10)),
             Some(&TypeId::ERROR)
         );
         assert_eq!(
-            lhs.class_constructor_type_cache.get(&NodeIndex(11)),
+            lhs.class_constructor_type_cache
+                .borrow()
+                .get(&NodeIndex(11)),
             Some(&TypeId::ERROR)
         );
     }
@@ -1810,9 +1819,11 @@ mod tests {
             .insert(sym, FxHashSet::<SymbolId>::default());
         cache
             .class_instance_type_cache
+            .borrow_mut()
             .insert(NodeIndex(1), TypeId::NUMBER);
         cache
             .class_constructor_type_cache
+            .borrow_mut()
             .insert(NodeIndex(2), TypeId::STRING);
         cache
             .class_instance_type_to_decl
@@ -1821,8 +1832,8 @@ mod tests {
         let affected = cache.invalidate_symbols(&[sym]);
 
         assert_eq!(affected, 1);
-        assert!(cache.class_instance_type_cache.is_empty());
-        assert!(cache.class_constructor_type_cache.is_empty());
+        assert!(cache.class_instance_type_cache.borrow().is_empty());
+        assert!(cache.class_constructor_type_cache.borrow().is_empty());
         assert!(cache.class_instance_type_to_decl.is_empty());
     }
 
