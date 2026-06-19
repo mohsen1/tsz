@@ -648,6 +648,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
             //
+            // This fast path stays consistent with the `-?` read-type-then-strip
+            // path below: for an identity `T[K]` template the declared type
+            // already equals `read type - undefined`, so returning `declared_type`
+            // here is equivalent to instantiating with the read type and running
+            // `strip_removed_optional_undefined`. Keep that equivalence if the
+            // strip semantics change.
             let property_type = if should_use_declared_source_property_type
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
