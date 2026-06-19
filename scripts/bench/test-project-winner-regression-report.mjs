@@ -254,8 +254,8 @@ assert.match(
 );
 assert.match(
   benchWorkflow,
-  /check-artifact-readiness\.mjs\s+\\\s*\n\s+--json\s+\\\s*\n\s+--require-project-timing-pairs=1\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
-  "bench publish should reject artifacts with no successful project timing pairs before publishing latest.json",
+  /check-artifact-readiness\.mjs\s+\\\s*\n\s+--json\s+\\\s*\n\s+--require-application-compat\s+\\\s*\n\s+--require-project-timing-pairs=1\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
+  "bench publish should reject artifacts with missing app compatibility or no successful project timing pairs before publishing latest.json",
 );
 assert.match(
   benchWorkflow,
