@@ -85,6 +85,25 @@ impl<'a> CheckerContext<'a> {
     ///   earlier interface's heritage merge). It never mints a new body here:
     ///   minting requires the `&mut CheckerState` lib-resolution machinery, and
     ///   a def with no cached body falls through to `None` exactly as before.
+    ///
+    ///   On-demand *minting* (driving `resolve_lib_type_by_name` from this
+    ///   `&self` site) was investigated for #12101 and is BOTH blocked and
+    ///   unnecessary, measured:
+    ///   1. Blocked — `CheckerContext` holds no back-reference to its owning
+    ///      `CheckerState`, and the flatten chain bottoms out in
+    ///      `get_type_of_symbol` / `merge_interface_types*` /
+    ///      `merge_global_augmentations` (all `&mut CheckerState`, the core
+    ///      symbol-typing recursion, not mere caches). Reaching it from `&self`
+    ///      is a checker-wide ownership rewrite, not a scoped cache conversion.
+    ///   2. Unnecessary — on comlink this gate is reached only for already-
+    ///      ineligible augmentation-seam interfaces (`ArrayBufferTypes`,
+    ///      `WeakKeyTypes`); there are zero force-eligible misses, so a working
+    ///      mint would have nothing to produce. The residual interns are the
+    ///      `&mut` relation-prep direct-ref bodies, which comlink's relations
+    ///      structurally consume — deferring them (verified) reintroduces the
+    ///      #12144 false TS2345/TS2677 family. The "~2-4k intern floor" was an
+    ///      optimistic extrapolation; the parity-holding comlink floor is the
+    ///      direct-ref consumption set (~10.4k interns), already reached.
     /// - The recovered body is the same flattened shape full materialization
     ///   would register, so registering it cannot change a verdict relative to
     ///   the eager path — it only lets the relation resolve instead of taking
