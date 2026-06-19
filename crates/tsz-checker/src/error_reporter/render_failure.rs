@@ -648,6 +648,22 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// When `target` is a union whose only non-nullish member is a single type
+    /// (`T | null`, `T | undefined`, `T | null | undefined`), return that member.
+    /// Used to display the missing-property target as `T` rather than the whole
+    /// nullable union, matching tsc (which elaborates the non-nullish source
+    /// against `T` alone). The nullish predicate (`null`/`undefined`) matches the
+    /// solver's promotion in `explain.rs`.
+    fn single_non_nullish_union_member(&self, target: TypeId) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, target)?;
+        let mut non_nullish = members
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::NULL && m != TypeId::UNDEFINED);
+        let first = non_nullish.next()?;
+        non_nullish.next().is_none().then_some(first)
+    }
+
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     pub(crate) fn render_failure_reason(
         &mut self,
@@ -727,9 +743,25 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+        // For a nullable-object target (`T | null`, `T | undefined`,
+        // `T | null | undefined`) the solver promotes a missing-property
+        // failure to a top-level `MissingProperty`/`MissingProperties` reason
+        // (matching tsc — the non-nullish source is elaborated against `T`
+        // alone). tsc displays that single non-nullish member, not the union,
+        // so rebind the render target to it for these property-miss arms.
+        let property_miss_target = if matches!(
+            reason,
+            SubtypeFailureReason::MissingProperty { .. }
+                | SubtypeFailureReason::MissingProperties { .. }
+        ) {
+            self.single_non_nullish_union_member(target)
+                .unwrap_or(target)
+        } else {
+            target
+        };
         let rctx = RenderContext {
             source,
-            target,
+            target: property_miss_target,
             idx,
             depth,
             start,
