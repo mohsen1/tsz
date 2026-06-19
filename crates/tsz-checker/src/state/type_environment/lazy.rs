@@ -172,11 +172,6 @@ impl CheckerState<'_> {
         let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
 
         let mut depth_exceeded = false;
-        // Cache-poisoning backstop (#12101): OR-accumulated across both passes
-        // like `depth_exceeded`; suppresses the env-eval write below. See the
-        // `EvalWithCacheResult::unresolved_def_seen` doc for the full rationale.
-        // Inert today (the eager `ensure_refs_resolved` pre-walk keeps it false).
-        let mut unresolved_def_seen = false;
         let first_pass_silent_bailed;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
@@ -208,7 +203,6 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            unresolved_def_seen |= eval_result.unresolved_def_seen;
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
             // Persist intermediate evaluation results to the shared cache.
             // Skip entries whose result contains unbound `infer` types or type queries.
@@ -322,7 +316,6 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            unresolved_def_seen |= eval_result.unresolved_def_seen;
             if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
@@ -337,10 +330,7 @@ impl CheckerState<'_> {
 
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
-        // `!unresolved_def_seen` is the #12101 cache-poisoning backstop (see the
-        // `EvalWithCacheResult::unresolved_def_seen` doc); inert today.
         if use_cache
-            && !unresolved_def_seen
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
