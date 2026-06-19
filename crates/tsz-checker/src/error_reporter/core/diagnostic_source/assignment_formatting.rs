@@ -132,6 +132,55 @@ impl<'a> CheckerState<'a> {
             .then(|| self.format_assignability_type_for_message(source, target))
     }
 
+    /// True when an assignment/return diagnostic source is an identifier whose
+    /// declared type is *explicitly* `unknown` or `any`, yet whose checked
+    /// source type (`source`) has flow-narrowed to a more specific type — the
+    /// canonical case being a user-defined `x is T` type-predicate guard over
+    /// an `unknown`/`any` operand.
+    ///
+    /// `tsc` renders the narrowed checked type for such a source; tsz's
+    /// declared-annotation / node-derived fallbacks below would otherwise
+    /// repaint it with the stale declared top type (the source identifier's
+    /// declared type, not the checked source type, drives the annotation text).
+    /// Gated on the *declared symbol* type being a top type, on the checked
+    /// source differing from it (i.e. narrowing actually occurred), and on the
+    /// presence of an explicit annotation — so an implicit / control-flow `any`
+    /// (`let x;`) keeps its existing display, which a separate path owns, and
+    /// an un-narrowed `unknown`/`any` source still renders as declared. The
+    /// decision is structural (declared top type vs. a different checked
+    /// source), never keyed on rendered text or identifier name.
+    pub(in crate::error_reporter) fn assignment_source_narrowed_from_declared_top_type(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> bool {
+        if matches!(source, TypeId::ERROR) {
+            return false;
+        }
+        let Some(expr_idx) = self.assignment_source_expression(anchor_idx) else {
+            return false;
+        };
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        if self.ctx.arena.get(expr_idx).map(|node| node.kind)
+            != Some(tsz_scanner::SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+        // Require an explicit `: unknown` / `: any` annotation on the
+        // declaration; this excludes implicit / control-flow `any`.
+        if self
+            .declared_diagnostic_source_annotation_text(expr_idx)
+            .is_none()
+        {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+        let declared = self.get_type_of_symbol(sym_id);
+        matches!(declared, TypeId::UNKNOWN | TypeId::ANY) && declared != source
+    }
+
     pub(in crate::error_reporter) fn format_assignment_source_type_for_diagnostic(
         &mut self,
         source: TypeId,
@@ -248,6 +297,17 @@ impl<'a> CheckerState<'a> {
         {
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
+        }
+
+        // A source identifier explicitly declared `unknown`/`any` that
+        // flow-narrowed to a more specific checked type (the canonical case
+        // being a user-defined `x is T` predicate guard over an `unknown`/`any`
+        // operand) renders the narrowed checked type, exactly as tsc's
+        // `typeToString(sourceType)` does. Resolve it here, before the
+        // declared-annotation / widening fallbacks below repaint the source
+        // with the stale declared top type.
+        if self.assignment_source_narrowed_from_declared_top_type(anchor_idx, source) {
+            return self.format_assignability_type_for_message(source, target);
         }
 
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
