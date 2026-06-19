@@ -619,6 +619,14 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::YIELD_EXPRESSION => {
                 if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    // A delegating `yield* x` lowered through the `__generator`
+                    // state machine wraps the delegate in `__values(x)` (op 5).
+                    // At ES5 every generator is lowered, so any `yield*` pulls in
+                    // the iterator helper; native (ES2015+) generators keep
+                    // `yield*` and need no helper.
+                    if unary.asterisk_token && self.ctx.target_es5 {
+                        self.transforms.helpers_mut().mark_values();
+                    }
                     self.visit(unary.expression);
                 }
             }
