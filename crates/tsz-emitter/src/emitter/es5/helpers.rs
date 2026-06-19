@@ -1,4 +1,4 @@
-use super::super::Printer;
+use super::super::{ParamTransformPlan, Printer};
 use crate::transforms::emit_utils;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
@@ -581,38 +581,77 @@ impl<'a> Printer<'a> {
                 }
             } else if needs_param_prologue {
                 let needs_parens = self.concise_body_needs_parens(func.body);
-                self.write("{");
-                self.write_line();
-                self.increase_indent();
-                self.emit_param_prologue(&param_transforms);
                 let comments_before_return =
                     self.es5_arrow_concise_body_needs_multiline_return(func.body);
-                self.emit_es5_arrow_concise_return(func.body, needs_parens, comments_before_return);
-                self.write_line();
-                self.decrease_indent();
-                self.write("}");
+                self.emit_es5_concise_body_block_hoisting_temps(
+                    func.body,
+                    needs_parens,
+                    comments_before_return,
+                    Some(&param_transforms),
+                );
             } else {
                 // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
                 // If the body is (or resolves to) an object literal, wrap in parens
                 // to disambiguate from a block: () => ({})  →  function () { return ({}); }
+                //
+                // The synthesized `{ return <expr>; }` is not a real block node, so
+                // it bypasses the function-body temp hoisting that `emit_block`
+                // performs. A concise body whose expression downlevels to hoisted
+                // temps (optional chaining `a?.b`, logical assignment, for-of) must
+                // still declare those `var _a, _b;` at the top of this function body
+                // — otherwise the temps are referenced but never declared, which is
+                // a ReferenceError under `"use strict"`. tsc emits them at the body
+                // top; mirror that by splicing the drained prologue before `return`.
                 let needs_parens = self.concise_body_needs_parens(func.body);
                 if self.es5_arrow_concise_body_needs_multiline_return(func.body) {
-                    self.write("{");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_es5_arrow_concise_return(func.body, needs_parens, true);
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("}");
+                    self.emit_es5_concise_body_block_hoisting_temps(
+                        func.body,
+                        needs_parens,
+                        true,
+                        None,
+                    );
                 } else {
                     self.write("{ ");
+                    let var_insert_pos = self.writer.len();
                     self.emit_es5_arrow_concise_return(func.body, needs_parens, false);
+                    let prologue = self.take_single_line_hoisted_temp_prologue();
+                    if !prologue.is_empty() {
+                        self.writer.insert_at(var_insert_pos, &prologue);
+                    }
                     self.write(" }");
                 }
             }
             self.emitting_function_body_block = prev_emitting_function_body_block;
             self.pop_temp_scope();
         }
+    }
+
+    /// Emit a concise arrow body as a multi-line ES5 function block,
+    /// `{ <param prologue?> [var _a, _b;] return <expr>; }`, hoisting any
+    /// downlevel temps the body generates (optional chaining, logical
+    /// assignment, for-of) to the top of the body — above the parameter-default
+    /// prologue, matching tsc. Shared by the parameter-prologue and
+    /// comment-forced-multiline concise paths; the anchor is captured before the
+    /// prologue so the temps land first.
+    fn emit_es5_concise_body_block_hoisting_temps(
+        &mut self,
+        body: NodeIndex,
+        needs_parens: bool,
+        comments_before_return: bool,
+        param_transforms: Option<&ParamTransformPlan>,
+    ) {
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        let hoist_anchor = self.capture_hoist_anchor();
+        if let Some(transforms) = param_transforms {
+            self.emit_param_prologue(transforms);
+        }
+        self.emit_es5_arrow_concise_return(body, needs_parens, comments_before_return);
+        self.insert_function_body_hoisted_temps_at(hoist_anchor);
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 
     fn es5_arrow_concise_body_needs_multiline_return(&self, body: NodeIndex) -> bool {

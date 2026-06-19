@@ -11,7 +11,6 @@ use tsz_parser::parser::NodeIndex;
 use super::declaration_helpers::imported_types_package_target;
 use super::declaration_helpers::should_rewrite_module_specifier;
 use super::declaration_helpers::{declaration_file_extension, ts_extension_suffix};
-use crate::query_boundaries::capabilities::is_known_node_module;
 
 impl<'a> CheckerState<'a> {
     /// Shared TS2846/TS5097 module-specifier extension diagnostics.
@@ -398,12 +397,13 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.import_resolution_stack.push(module_name.clone());
 
-        // Node.js built-in modules (e.g. "fs", "path", "node:fs") should not
-        // trigger TS2307/TS2882 when using Node module resolution. TSC resolves
-        // these via @types/node; our single-file checker lacks this, so we
-        // suppress resolution errors for known built-in names.
-        let is_node_builtin =
-            self.ctx.compiler_options.module.is_node_module() && is_known_node_module(module_name);
+        // Node.js built-in specifiers (`"fs"`, `"node:fs"`, …) take the same
+        // not-found path as any other import: `module_not_found_diagnostic`
+        // classifies them via `is_known_node_module` and emits the `@types/node`
+        // install hint (TS2580/TS2591) that `tsc` reports when the builtin is
+        // absent. No module-kind gating here — when `@types/node` is present the
+        // resolver binds the builtin and the import returns before any not-found
+        // path, so a diagnostic only fires on genuine failure.
 
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
@@ -438,26 +438,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
-                // Node.js built-in modules: suppress TS2307/TS2882 entirely,
-                // UNLESS noTypesAndSymbols is set — in that case @types/node
-                // won't be auto-loaded, so tsc emits TS2591 instead.
-                if is_node_builtin {
-                    if self.ctx.compiler_options.no_types_and_symbols {
-                        let (msg, code) = self.module_not_found_diagnostic_for_site(
-                            module_name,
-                            crate::import::core::ModuleNotFoundSite::Import,
-                        );
-                        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                            self.ctx
-                                .modules_with_ts2307_emitted
-                                .insert(module_key);
-                            self.error_at_position(spec_start, spec_length, &msg, code);
-                        }
-                    }
-                    self.ctx.import_resolution_stack.pop();
-                    return;
-                }
-
                 // AMD/System/classic-resolution: tsc only emits the secondary
                 // missing-module diagnostic when TS5107 deprecation is silenced
                 // via `ignoreDeprecations` — issue #3077.
@@ -832,23 +812,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
-
-        // Node.js built-in modules: suppress fallback TS2307/TS2882 too,
-        // unless noTypesAndSymbols — emit TS2591 in that case.
-        if is_node_builtin {
-            if self.ctx.compiler_options.no_types_and_symbols {
-                let (msg, code) = self.module_not_found_diagnostic_for_site(
-                    module_name,
-                    crate::import::core::ModuleNotFoundSite::Import,
-                );
-                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                    self.error_at_position(spec_start, spec_length, &msg, code);
-                }
-            }
             self.ctx.import_resolution_stack.pop();
             return;
         }

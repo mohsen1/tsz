@@ -299,6 +299,7 @@ impl<'a> CheckerContext<'a> {
                 FxHashSet::with_capacity_and_hasher(256, Default::default()),
             ),
             refs_resolved: FxHashSet::default(),
+            type_position_resolution_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),
