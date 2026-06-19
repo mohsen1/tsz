@@ -3,6 +3,7 @@ mod core;
 #[cfg(test)]
 mod decorated_class_expression_export_tests;
 mod exports;
+mod exports_destructuring;
 mod imports;
 #[cfg(test)]
 mod namespace_export_fold_tests;
