@@ -103,12 +103,16 @@ _(  "resize" as "resize", { width: 100, height: 200 });
 }
 
 /// Inline conditional type (not via a named alias) in a rest spread position.
-/// This is a known limitation: evaluating inline Conditionals (not wrapped in
-/// a named type alias Application) from within argument checking requires the
-/// `TypeEnvironment` to have the relevant interfaces pre-resolved, which is not
-/// guaranteed in the current evaluation path. Tracked for follow-up.
+///
+/// Regression guard (was the residual known-limitation of #6475): evaluating an
+/// inline `Conditional` rest element (not wrapped in a named type-alias
+/// `Application`) from within argument checking now reduces it to its concrete
+/// tuple form, so `run("log", "hello")` checks the payload against the evaluated
+/// `value: Handlers[K]` element instead of treating the whole conditional as an
+/// opaque variadic. The named-alias `Application` form was fixed by #6475; this
+/// inline form is now covered by the same `evaluate_tuple_rest_elements`
+/// pre-pass over rest elements.
 #[test]
-#[ignore = "inline conditional rest spread not yet supported; named-alias Application case fixed"]
 fn inline_conditional_rest_spread_no_ts2345() {
     let codes = check_source_codes(
         r#"
@@ -156,6 +160,62 @@ run("stop");
     assert!(
         !codes.contains(&2345),
         "expected no TS2345 for void inline conditional rest spread, got: {codes:?}"
+    );
+}
+
+/// Renamed binders for the inline conditional (anti-hardcoding): the fix must
+/// be structural, not keyed on `Handlers`/`K`/`run` spellings.
+#[test]
+fn inline_conditional_rest_spread_renamed_binders_no_ts2345() {
+    let codes = check_source_codes(
+        r#"
+interface Signals {
+    resize: { w: number };
+    hide: void;
+}
+
+declare function dispatch<N extends keyof Signals>(
+    ...args: [
+        name: N,
+        ...(Signals[N] extends void ? [] : [payload: Signals[N]])
+    ]
+): void;
+
+dispatch("resize", { w: 1 });
+dispatch("hide");
+"#,
+    );
+    assert!(
+        !codes.contains(&2345),
+        "renamed-binder inline conditional must behave identically; got: {codes:?}"
+    );
+}
+
+/// Method (not free function) carrying the inline conditional rest spread, with
+/// a structured payload — the kysely/event-emitter shape the residual blocked.
+#[test]
+fn inline_conditional_rest_spread_method_structured_payload_no_ts2345() {
+    let codes = check_source_codes(
+        r#"
+interface Ev {
+    click: { x: number; y: number };
+    focus: void;
+}
+
+declare class Emitter {
+    on<K extends keyof Ev>(
+        ...args: [event: K, ...(Ev[K] extends void ? [] : [data: Ev[K]])]
+    ): void;
+}
+
+declare const e: Emitter;
+e.on("click", { x: 1, y: 2 });
+e.on("focus");
+"#,
+    );
+    assert!(
+        !codes.contains(&2345),
+        "method inline conditional rest spread must accept the structured payload; got: {codes:?}"
     );
 }
 
