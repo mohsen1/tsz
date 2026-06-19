@@ -1019,7 +1019,27 @@ pub fn check_source_with_libs(
             checker.ctx.diagnostics.clone()
         });
     }
+    with_checked_source_with_libs(source, file_name, options, lib_files, |checker, _types| {
+        checker.ctx.diagnostics.clone()
+    })
+}
 
+/// Run the canonical parse → bind → check pipeline **with `lib_files` wired
+/// in**, handing the post-check `CheckerState` and the live [`TypeInterner`]
+/// to `extract`. Shared body for the libs-based public helpers so any change
+/// to lib-context setup applies to all of them, and so callers that need the
+/// interner (e.g. type-count probes) don't have to copy the pipeline.
+///
+/// Callers that want the no-libs fast path should special-case
+/// `lib_files.is_empty()` and route to [`with_checked_source`]; this helper
+/// always installs lib contexts (an empty list when `lib_files` is empty).
+fn with_checked_source_with_libs<R>(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+    extract: impl FnOnce(&CheckerState<'_>, &TypeInterner) -> R,
+) -> R {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -1047,7 +1067,32 @@ pub fn check_source_with_libs(
     checker.ctx.set_actual_lib_file_count(lib_files.len());
 
     checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
+    extract(&checker, &types)
+}
+
+/// Parse, bind, and type-check `source` with `lib_files`, returning the
+/// diagnostics alongside the number of types interned during the check
+/// ([`TypeInterner::len`]).
+///
+/// This is the in-process analogue of `tsz --extendedDiagnostics`'s
+/// "Types" counter: it exposes how much of the lib-type graph a check
+/// materialized. Lazy lib-interface heritage/member work (#12101, #13933,
+/// #13935, #13936) is measured exactly by this count — a regression that
+/// re-eagerly materializes a receiver's transitive `extends` closure shows
+/// up here as a multi-thousand-type jump even when diagnostics stay
+/// byte-identical. The absolute value depends on the bundled stripped lib
+/// assets (so it differs from the `dist` binary's full-lib numbers), but it
+/// is deterministic for a fixed lib set, which is what a regression guard
+/// needs.
+pub fn check_source_with_libs_type_count(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> (Vec<Diagnostic>, usize) {
+    with_checked_source_with_libs(source, file_name, options, lib_files, |checker, types| {
+        (checker.ctx.diagnostics.clone(), types.len())
+    })
 }
 
 /// `(code, message_text)` projection of [`check_source_with_libs`].
