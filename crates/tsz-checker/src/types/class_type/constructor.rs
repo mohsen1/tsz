@@ -48,10 +48,19 @@ impl<'a> CheckerState<'a> {
         apply_module_augmentations: bool,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
-        let had_instance_cache = self.ctx.class_instance_type_cache.contains_key(&class_idx);
+        let had_instance_cache = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .contains_key(&class_idx);
         if apply_module_augmentations
             && request.is_empty()
-            && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
+            && let Some(cached) = self
+                .ctx
+                .class_constructor_type_cache
+                .borrow()
+                .get(&class_idx)
+                .copied()
         {
             return cached;
         }
@@ -74,7 +83,13 @@ impl<'a> CheckerState<'a> {
                 // constructor type. Using the instance type as the fallback causes
                 // false TS2339 errors when accessing static members via the class
                 // name (e.g., `Bar.instance`).
-                if let Some(&cached_ctor) = self.ctx.class_constructor_type_cache.get(&class_idx) {
+                if let Some(cached_ctor) = self
+                    .ctx
+                    .class_constructor_type_cache
+                    .borrow()
+                    .get(&class_idx)
+                    .copied()
+                {
                     return cached_ctor;
                 }
                 // Check symbol_types for a partial constructor type. If the
@@ -86,12 +101,7 @@ impl<'a> CheckerState<'a> {
                 // a safe fallback so property access succeeds without a false
                 // error; the correct constructor type will be resolved once
                 // the outer call completes.
-                let fallback = self
-                    .ctx
-                    .symbol_types
-                    .get(&sym_id)
-                    .copied()
-                    .unwrap_or(TypeId::ERROR);
+                let fallback = self.ctx.symbol_types.get(&sym_id).unwrap_or(TypeId::ERROR);
                 if crate::query_boundaries::common::callable_shape_for_type(
                     self.ctx.types,
                     fallback,
@@ -180,6 +190,7 @@ impl<'a> CheckerState<'a> {
         if can_use_cache {
             self.ctx
                 .class_constructor_type_cache
+                .borrow_mut()
                 .insert(class_idx, result);
         }
 
@@ -194,7 +205,10 @@ impl<'a> CheckerState<'a> {
         // provisional instance type — recomputing here would still observe the
         // mid-resolution foreign class and re-cache a degraded shape.
         if apply_module_augmentations && did_insert && !had_instance_cache {
-            self.ctx.class_instance_type_cache.remove(&class_idx);
+            self.ctx
+                .class_instance_type_cache
+                .borrow_mut()
+                .remove(&class_idx);
             if !nested_in_foreign_class_window {
                 let _ = self.get_class_instance_type(class_idx, class);
             }
@@ -382,8 +396,12 @@ impl<'a> CheckerState<'a> {
         // compute_class_symbol_type built it before the constructor type), prefer
         // the cached instance type over the rough approximation. This ensures that
         // `new C()` inside static methods infers the correct return type.
-        let rough_instance_return_type = if let Some(&cached) =
-            self.ctx.class_instance_type_cache.get(&class_idx)
+        let rough_instance_return_type = if let Some(cached) = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&class_idx)
+            .copied()
             && cached != TypeId::ERROR
         {
             cached
@@ -646,10 +664,10 @@ impl<'a> CheckerState<'a> {
                             has_contextual_member = true;
                             self.invalidate_initializer_for_context_change(prop.initializer);
                         }
-                        let prev_sym_cached = current_sym
-                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
-                        let prev_name_sym_cached = class_name_sym
-                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let prev_sym_cached =
+                            current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
+                        let prev_name_sym_cached =
+                            class_name_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
                         let partial_ctor =
                             self.build_partial_static_constructor_type(StaticMemberBuildData {
                                 current_sym,
@@ -766,10 +784,10 @@ impl<'a> CheckerState<'a> {
                         // These diagnostics will be re-emitted correctly during the
                         // proper checking phase.
                         let diag_count_before = self.ctx.diagnostics.len();
-                        let prev_sym_cached_acc = current_sym
-                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
-                        let prev_name_sym_cached_acc = class_name_sym
-                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let prev_sym_cached_acc =
+                            current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
+                        let prev_name_sym_cached_acc =
+                            class_name_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
                         let partial_ctor_acc =
                             self.build_partial_static_constructor_type(StaticMemberBuildData {
                                 current_sym,
@@ -884,7 +902,7 @@ impl<'a> CheckerState<'a> {
                     // For static methods, `this` refers to the constructor type
                     // Get it from the symbol if available
                     let prev_sym_cached =
-                        current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
                     if let Some(sym_id) = current_sym {
                         let partial_ctor =
                             self.build_partial_static_constructor_type(StaticMemberBuildData {
@@ -902,7 +920,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
                     let static_this_type = current_sym
-                        .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                        .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id))
                         .or_else(|| {
                             self.ctx
                                 .binder
@@ -996,8 +1014,8 @@ impl<'a> CheckerState<'a> {
                         let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
-                            let prev_sym_cached = current_sym
-                                .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                            let prev_sym_cached =
+                                current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id));
                             if let Some(sym_id) = current_sym {
                                 let partial_ctor = self.build_partial_static_constructor_type(
                                     StaticMemberBuildData {
@@ -1228,9 +1246,8 @@ impl<'a> CheckerState<'a> {
         // (like `resolve_lazy_class_to_constructor` for method return types) continue
         // to see the original `Lazy(DefId)` placeholder.
         let instance_type = {
-            let prev_sym_cached = current_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
-            let prev_inst_cached =
-                current_sym.and_then(|s| self.ctx.symbol_instance_types.get(&s).copied());
+            let prev_sym_cached = current_sym.and_then(|s| self.ctx.symbol_types.get(&s));
+            let prev_inst_cached = current_sym.and_then(|s| self.ctx.symbol_instance_types.get(&s));
             if let Some(sym_id) = current_sym {
                 // ── Partial CONSTRUCTOR type (for VALUE references) ──
                 // Build from already-processed static members + inherited base statics.
@@ -1264,7 +1281,7 @@ impl<'a> CheckerState<'a> {
                             type_idx
                         };
                         if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
-                            && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
+                            && let Some(base_type) = self.ctx.symbol_types.get(&base_sym_id)
                         {
                             let base_props = self.static_properties_from_type(base_type);
                             let own_names: FxHashSet<_> =
@@ -1390,7 +1407,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .symbol_instance_types
                         .get(&sym_id)
-                        .is_some_and(|&t| t == TypeId::ERROR)
+                        .is_some_and(|t| t == TypeId::ERROR)
                     {
                         self.ctx.symbol_instance_types.remove(&sym_id);
                     }
@@ -1713,7 +1730,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .symbol_types
                         .get(&base_sym_id)
-                        .copied()
                         .filter(|&cached| {
                             crate::query_boundaries::common::callable_shape_for_type(
                                 self.ctx.types,
@@ -1727,7 +1743,7 @@ impl<'a> CheckerState<'a> {
                                 .get(&base_sym_id)
                                 .copied()
                         })
-                        .or_else(|| self.ctx.symbol_types.get(&base_sym_id).copied())
+                        .or_else(|| self.ctx.symbol_types.get(&base_sym_id))
                         .unwrap_or_else(|| {
                             self.get_class_constructor_type(base_class_idx, base_class)
                         })

@@ -392,12 +392,7 @@ impl<'a> CheckerState<'a> {
             let shape_base = application_base
                 .map(|base| {
                     crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
-                        .and_then(|sym| {
-                            self.ctx
-                                .symbol_types
-                                .get(&tsz_binder::SymbolId(sym.0))
-                                .copied()
-                        })
+                        .and_then(|sym| self.ctx.symbol_types.get(&tsz_binder::SymbolId(sym.0)))
                         .unwrap_or(base)
                 })
                 .or_else(|| {
@@ -411,14 +406,13 @@ impl<'a> CheckerState<'a> {
                             .file_locals
                             .get(name)
                             .and_then(|sym| self.ctx.symbol_types.get(&sym))
-                            .copied()
                             .or_else(|| {
                                 self.ctx
                                     .binder
                                     .symbols
                                     .find_all_by_name(name)
                                     .iter()
-                                    .find_map(|sym| self.ctx.symbol_types.get(sym).copied())
+                                    .find_map(|sym| self.ctx.symbol_types.get(sym))
                             })
                     } else {
                         None

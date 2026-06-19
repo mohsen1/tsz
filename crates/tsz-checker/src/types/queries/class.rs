@@ -1423,7 +1423,13 @@ impl<'a> CheckerState<'a> {
                 && cached != TypeId::ERROR
             {
                 let cached_count = object_property_count(self, cached);
-                if let Some(&in_progress) = self.ctx.class_instance_type_cache.get(&class_idx)
+                let in_progress = self
+                    .ctx
+                    .class_instance_type_cache
+                    .borrow()
+                    .get(&class_idx)
+                    .copied();
+                if let Some(in_progress) = in_progress
                     && in_progress != TypeId::ANY
                     && in_progress != TypeId::ERROR
                     && object_property_count(self, in_progress) > cached_count

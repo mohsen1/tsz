@@ -541,7 +541,7 @@ impl<'a> CheckerState<'a> {
             // The re-entrant get_class_instance_type hits the in-progress guard and
             // returns ERROR/ANY, which would corrupt the previously-cached correct type.
             if (instance_type == TypeId::ANY || instance_type == TypeId::ERROR)
-                && let Some(&existing) = self.ctx.symbol_instance_types.get(&sym_id)
+                && let Some(existing) = self.ctx.symbol_instance_types.get(&sym_id)
                 && existing != TypeId::ANY
                 && existing != TypeId::ERROR
             {

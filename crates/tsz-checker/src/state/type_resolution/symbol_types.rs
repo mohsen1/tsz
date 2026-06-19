@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
                             // SymbolId collisions, but keep valid entries that may
                             // include heritage merging delegation cannot reproduce.
                             let should_overwrite =
-                                self.ctx.symbol_types.get(&sym_id).is_none_or(|&cached| {
+                                self.ctx.symbol_types.get(&sym_id).is_none_or(|cached| {
                                     cached == TypeId::ERROR || cached == TypeId::UNKNOWN
                                 });
                             if should_overwrite {

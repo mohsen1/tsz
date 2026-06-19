@@ -1045,7 +1045,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // If we already have a concrete cached type, keep it.
-            if let Some(&cached) = self.ctx.symbol_types.get(&sym_id)
+            if let Some(cached) = self.ctx.symbol_types.get(&sym_id)
                 && cached != TypeId::UNKNOWN
                 && cached != TypeId::ANY
                 && cached != TypeId::ERROR

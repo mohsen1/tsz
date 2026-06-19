@@ -30,10 +30,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(&instance_type) = self.ctx.class_instance_type_cache.get(&stmt_idx) else {
+        let Some(instance_type) = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&stmt_idx)
+            .copied()
+        else {
             return false;
         };
-        let Some(&constructor_type) = self.ctx.class_constructor_type_cache.get(&stmt_idx) else {
+        let Some(constructor_type) = self
+            .ctx
+            .class_constructor_type_cache
+            .borrow()
+            .get(&stmt_idx)
+            .copied()
+        else {
             return false;
         };
         if matches!(instance_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
@@ -747,8 +759,12 @@ impl<'a> CheckerState<'a> {
         // in-progress initializer and return `TypeId::ERROR` for it. The
         // snapshot preserved here is consumed by such re-entrant lookups
         // (see `class_property_arrow_lexical_this_type`).
-        let prior_instance_type_snapshot =
-            self.ctx.class_instance_type_cache.get(&stmt_idx).copied();
+        let prior_instance_type_snapshot = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&stmt_idx)
+            .copied();
 
         self.ctx.enclosing_class = Some(EnclosingClassInfo {
             name: class_name,
@@ -781,7 +797,10 @@ impl<'a> CheckerState<'a> {
         // constructor type. The cache is definitively cleared and refreshed
         // after member checking completes (see below).
         if !preserve_stable_class_shape_cache {
-            self.ctx.class_instance_type_cache.remove(&stmt_idx);
+            self.ctx
+                .class_instance_type_cache
+                .borrow_mut()
+                .remove(&stmt_idx);
         }
         // Clear the constructor type cache for a fresh view. Save the old
         // value so it can be temporarily restored during member checking to
@@ -792,7 +811,10 @@ impl<'a> CheckerState<'a> {
         // detection. Without a valid fallback, the cycle returns the instance
         // type instead of the constructor type, causing false TS2339 errors.
         if !preserve_stable_class_shape_cache {
-            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+            self.ctx
+                .class_constructor_type_cache
+                .borrow_mut()
+                .remove(&stmt_idx);
         }
         if !preserve_stable_class_shape_cache {
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
@@ -1003,7 +1025,10 @@ impl<'a> CheckerState<'a> {
         // Refresh them after the checked pass so following statements observe the
         // finalized constructor signatures and instance return types.
         if !preserve_stable_class_shape_cache {
-            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+            self.ctx
+                .class_constructor_type_cache
+                .borrow_mut()
+                .remove(&stmt_idx);
         }
         for sym_id in refresh_symbols {
             self.ctx.symbol_types.remove(&sym_id);

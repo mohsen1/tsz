@@ -910,11 +910,16 @@ impl<'a> CheckerState<'a> {
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
             {
-                let base_instance_type = self
+                // Copy the cached value out and drop the borrow before the
+                // fallback closure: `get_class_instance_type` re-borrows this
+                // same `RefCell`.
+                let cached_base_instance_type = self
                     .ctx
                     .class_instance_type_cache
+                    .borrow()
                     .get(&base_class_idx)
-                    .copied()
+                    .copied();
+                let base_instance_type = cached_base_instance_type
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let (base_type_params, base_type_param_updates) =
                     self.push_type_parameters(&base_class.type_parameters);

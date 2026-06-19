@@ -155,8 +155,8 @@ impl<'a> CheckerContext<'a> {
             .type_node_scope_types
             .clear();
         self.request_node_types.clear();
-        self.class_instance_type_cache.clear();
-        self.class_constructor_type_cache.clear();
+        self.class_instance_type_cache.get_mut().clear();
+        self.class_constructor_type_cache.get_mut().clear();
         self.class_instance_type_to_decl.clear();
         self.flow_narrowed_nodes.clear();
         self.daa_error_nodes.clear();

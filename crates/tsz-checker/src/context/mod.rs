@@ -338,11 +338,19 @@ pub struct TypeCache {
 
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
-    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101): an
+    /// on-demand `&self` forcing resolver can publish a computed instance type
+    /// without a `&mut` borrow of the whole checker. Behavior is identical to
+    /// the previous plain map.
+    pub class_instance_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
     /// Avoids recomputing constructor shape/inheritance on repeated class queries.
-    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see
+    /// `class_instance_type_cache`.
+    pub class_constructor_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Set of import specifier nodes that should be elided from JavaScript output.
     /// These are imports that reference type-only declarations (interfaces, type aliases).
@@ -416,8 +424,8 @@ impl TypeCache {
         );
         size += entry(self.flow_analysis_cache.len(), 8 + sym + id, id);
         size += entry(self.class_instance_type_to_decl.len(), id, node);
-        size += entry(self.class_instance_type_cache.len(), node, id);
-        size += entry(self.class_constructor_type_cache.len(), node, id);
+        size += entry(self.class_instance_type_cache.borrow().len(), node, id);
+        size += entry(self.class_constructor_type_cache.borrow().len(), node, id);
         size += entry(self.type_only_nodes.len(), node, 0);
         size += entry(
             self.namespace_module_names.len(),
@@ -993,11 +1001,17 @@ pub struct CheckerContext<'a> {
 
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
-    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see the
+    /// matching field on `TypeCache`.
+    pub class_instance_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
     /// Avoids recomputing constructor inheritance checks in class-heavy programs.
-    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
+    ///
+    /// Wrapped in `RefCell` for `&self` interior mutability (#12101); see the
+    /// matching field on `TypeCache`.
+    pub class_constructor_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Cache for class chain summaries (class declaration `NodeIndex` -> summary).
     /// Avoids recomputing the full inheritance chain member walk on every property

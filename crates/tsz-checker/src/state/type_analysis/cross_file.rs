@@ -1125,7 +1125,7 @@ impl CheckerState<'_> {
                 // reads (see `class_instance_recoverable`, #13185).
                 if !symbol_type_cache_from_symbol_arena
                     && cross_file_symbol_is_class
-                    && let Some(inst) = self.ctx.symbol_instance_types.get(&sym_id).copied()
+                    && let Some(inst) = self.ctx.symbol_instance_types.get(&sym_id)
                 {
                     self.ctx.cache_cross_file_class_instance_type(
                         sym_id,

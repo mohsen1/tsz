@@ -199,6 +199,7 @@ impl<'a> CheckerState<'a> {
         let class_type = self
             .ctx
             .class_instance_type_cache
+            .borrow()
             .get(&class_idx)
             .copied()?;
         let name_atom = self.ctx.types.intern_string(name);

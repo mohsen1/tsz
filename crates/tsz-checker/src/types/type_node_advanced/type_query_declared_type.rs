@@ -22,7 +22,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .symbol_types
             .get(&sym_id)
-            .copied()
             .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
         {
             return Some(type_id);

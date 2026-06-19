@@ -7,7 +7,7 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        let partial = self.ctx.symbol_types.get(&sym_id).copied()?;
+        let partial = self.ctx.symbol_types.get(&sym_id)?;
         crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, partial)
             .is_some()
             .then_some(partial)

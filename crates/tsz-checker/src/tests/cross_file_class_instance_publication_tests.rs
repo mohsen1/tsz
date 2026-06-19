@@ -135,7 +135,7 @@ let item: BoxThing | undefined;
                 "requester env should resolve the class DefId to the delegated instance"
             );
             assert_eq!(
-                checker.ctx.symbol_instance_types.get(&sym_id).copied(),
+                checker.ctx.symbol_instance_types.get(&sym_id),
                 Some(instance_type),
                 "requester should memoize the delegated class instance by symbol"
             );
@@ -173,7 +173,7 @@ let item: BoxThing | undefined;
                 .type_env
                 .borrow()
                 .snapshot_class_instance_types();
-            let symbol_cache_before = checker.ctx.symbol_instance_types.get(&sym_id).copied();
+            let symbol_cache_before = checker.ctx.symbol_instance_types.get(&sym_id);
 
             let (instance_type, params) = checker
                 .class_instance_type_with_params_from_symbol(sym_id)
@@ -181,7 +181,7 @@ let item: BoxThing | undefined;
             assert!(!instance_type.is_any_unknown_or_error());
             assert!(params.is_empty());
             assert_eq!(
-                checker.ctx.symbol_instance_types.get(&sym_id).copied(),
+                checker.ctx.symbol_instance_types.get(&sym_id),
                 symbol_cache_before,
                 "source class delegation must not publish the requester symbol instance"
             );

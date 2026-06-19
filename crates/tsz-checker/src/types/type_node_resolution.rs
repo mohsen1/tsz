@@ -820,7 +820,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             {
                 drop(env);
                 // Body not registered for this DefId — register it now
-                if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
+                if let Some(type_id) = self.ctx.symbol_types.get(&sym_id) {
                     if type_id == TypeId::UNKNOWN
                         || type_id == TypeId::ERROR
                         || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
@@ -841,9 +841,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
             if self.ctx.symbol_types.get(&sym_id).is_some_and(|type_id| {
-                *type_id != TypeId::UNKNOWN
-                    && *type_id != TypeId::ERROR
-                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, *type_id)
+                type_id != TypeId::UNKNOWN
+                    && type_id != TypeId::ERROR
+                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
                         != Some(def_id)
             }) {
                 return;

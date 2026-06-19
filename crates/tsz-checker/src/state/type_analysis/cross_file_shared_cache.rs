@@ -300,7 +300,7 @@ mod tests {
             "shared actual-lib cache hits must preserve generic metadata"
         );
         assert_eq!(
-            state.ctx.symbol_types.get(&sym_id).copied(),
+            state.ctx.symbol_types.get(&sym_id),
             Some(array_iterator_type)
         );
         assert!(

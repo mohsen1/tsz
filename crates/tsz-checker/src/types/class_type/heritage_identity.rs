@@ -48,6 +48,7 @@ impl<'a> CheckerState<'a> {
         let Some(stale_instance) = self
             .ctx
             .class_instance_type_cache
+            .borrow()
             .get(&class_idx)
             .copied()
             .filter(|&cached| cached != final_instance && cached != TypeId::ERROR)
@@ -69,7 +70,13 @@ impl<'a> CheckerState<'a> {
         stale_instance: TypeId,
         final_instance: TypeId,
     ) {
-        let Some(&constructor_type) = self.ctx.class_constructor_type_cache.get(&class_idx) else {
+        let Some(constructor_type) = self
+            .ctx
+            .class_constructor_type_cache
+            .borrow()
+            .get(&class_idx)
+            .copied()
+        else {
             return;
         };
         let Some(shape) = callable_shape_for_type(self.ctx.types, constructor_type) else {
@@ -99,12 +106,13 @@ impl<'a> CheckerState<'a> {
         });
         self.ctx
             .class_constructor_type_cache
+            .borrow_mut()
             .insert(class_idx, refreshed);
         if self
             .ctx
             .symbol_types
             .get(&sym_id)
-            .is_some_and(|&cached| cached == constructor_type)
+            .is_some_and(|cached| cached == constructor_type)
         {
             self.ctx.symbol_types.insert(sym_id, refreshed);
         }

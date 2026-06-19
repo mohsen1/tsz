@@ -1243,11 +1243,15 @@ impl<'a> CheckerState<'a> {
             if ctor_already_resolving {
                 // Try cached constructor type first
                 if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                    && let Some(&cached_ctor) =
-                        self.ctx.class_constructor_type_cache.get(&class_idx)
+                    && let Some(cached_ctor) = self
+                        .ctx
+                        .class_constructor_type_cache
+                        .borrow()
+                        .get(&class_idx)
+                        .copied()
                 {
                     cached_ctor
-                } else if let Some(&partial) = self.ctx.symbol_types.get(&sym_id)
+                } else if let Some(partial) = self.ctx.symbol_types.get(&sym_id)
                     && common_query::callable_shape_for_type(self.ctx.types, partial).is_some()
                 {
                     // A partial constructor type (built during static-property

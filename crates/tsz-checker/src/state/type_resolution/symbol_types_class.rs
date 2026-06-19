@@ -40,7 +40,6 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_instance_types
             .get(&sym_id)
-            .copied()
             .filter(|&t| !t.is_any_unknown_or_error())?;
         if instance_type == value_type {
             return None;

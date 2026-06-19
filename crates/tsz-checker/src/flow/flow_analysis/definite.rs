@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(&binding_initial) = self.ctx.symbol_types.get(binding_sym) else {
+            let Some(binding_initial) = self.ctx.symbol_types.get(binding_sym) else {
                 continue;
             };
 
@@ -952,7 +952,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the sibling's initial type (from the union source)
-            let Some(&sib_initial) = self.ctx.symbol_types.get(sib_sym) else {
+            let Some(sib_initial) = self.ctx.symbol_types.get(sib_sym) else {
                 continue;
             };
 

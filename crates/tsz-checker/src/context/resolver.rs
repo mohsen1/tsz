@@ -558,7 +558,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
-        self.symbol_types.get(&sym_id).copied()
+        self.symbol_types.get(&sym_id)
     }
 
     /// Resolve a `typeof X` query to its VALUE-space type.
@@ -709,7 +709,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         let type_alias_self_wrapper = kind == DefKind::TypeAlias
                             && crate::query_boundaries::definition_identity::is_lazy_def_identity(
                                 self.types,
-                                *instance_type,
+                                instance_type,
                                 def_id,
                             );
                         // A type-alias self wrapper is its public identity,
@@ -717,7 +717,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         // fall through to the type environment or
                         // DefinitionStore body for transparent aliases.
                         if !type_alias_self_wrapper {
-                            return Some(*instance_type);
+                            return Some(instance_type);
                         }
                     }
                 } else {
@@ -732,7 +732,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                                 | symbol_flags::TYPE_ALIAS,
                         )
                     {
-                        return Some(*instance_type);
+                        return Some(instance_type);
                     }
                 }
             }
@@ -763,7 +763,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             // the type environment a chance to provide the real body first.
             if !is_atomics
                 && !has_local_symbol_collision
-                && let Some(&ty) = self.symbol_types.get(&sym_id)
+                && let Some(ty) = self.symbol_types.get(&sym_id)
             {
                 if ty == TypeId::ERROR {
                     // Skip poisoned ERROR entries (e.g., from stack overflow protection
@@ -836,7 +836,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
         if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
             && !has_local_symbol_collision
-            && let Some(&ty) = self.symbol_types.get(&sym_id)
+            && let Some(ty) = self.symbol_types.get(&sym_id)
             && crate::query_boundaries::common::lazy_def_id(self.types, ty) == Some(def_id)
             && self
                 .definition_store
@@ -934,7 +934,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             }
             // Fallback within enclosing class: look up the instance type via the binder symbol.
             if let Some(sym_id) = self.binder.get_node_symbol(class_info.class_idx)
-                && let Some(ty) = self.symbol_instance_types.get(&sym_id).copied()
+                && let Some(ty) = self.symbol_instance_types.get(&sym_id)
             {
                 return Some(ty);
             }
@@ -1041,10 +1041,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 // Look up the cached type for the parent symbol
                 // For classes, we need the instance type, not constructor type
                 if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
-                    return Some(*instance_type);
+                    return Some(instance_type);
                 }
                 // Fallback to symbol_types (constructor type) if instance type not available
-                return self.symbol_types.get(parent_sym_id).copied();
+                return self.symbol_types.get(parent_sym_id);
             }
             return None;
         }
@@ -1056,10 +1056,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             if let Some(&parent_sym_id) = parents.first() {
                 // For classes, try instance_types first; for interfaces, use symbol_types
                 if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
-                    return Some(*instance_type);
+                    return Some(instance_type);
                 }
                 // Fallback to symbol_types (for interfaces)
-                return self.symbol_types.get(&parent_sym_id).copied();
+                return self.symbol_types.get(&parent_sym_id);
             }
         }
 
@@ -1076,7 +1076,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         // Step 4: Parent SymbolId -> Parent TypeId (Instance Type)
                         if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id)
                         {
-                            return Some(*instance_type);
+                            return Some(instance_type);
                         }
                     }
                 }

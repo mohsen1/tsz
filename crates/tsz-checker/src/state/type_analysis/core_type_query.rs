@@ -711,7 +711,6 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_types
             .get(&sym_id)
-            .copied()
             .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
         {
             return Some(type_id);

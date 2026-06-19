@@ -135,9 +135,16 @@ impl CheckerState<'_> {
                     // declared members (annotated properties and constructor params).
                     if base_in_resolution_set {
                         if let Some(base_class_idx) = base_class_decl {
-                            if let Some(&cached_partial) =
-                                self.ctx.class_instance_type_cache.get(&base_class_idx)
-                            {
+                            // Copy the cached value out and release the borrow before
+                            // the body, which re-enters the checker (and can re-borrow
+                            // this same `RefCell`).
+                            let cached_partial = self
+                                .ctx
+                                .class_instance_type_cache
+                                .borrow()
+                                .get(&base_class_idx)
+                                .copied();
+                            if let Some(cached_partial) = cached_partial {
                                 self.merge_base_instance_properties(
                                     cached_partial,
                                     &mut b.properties,
@@ -248,11 +255,16 @@ impl CheckerState<'_> {
                 // We already resolved a concrete class declaration (`base_class_idx`) above, so
                 // we can read through the declaration cache directly and avoid an extra symbol
                 // resolution round trip on this hot inheritance path.
-                let base_instance_type = self
+                // Copy the cached value out and drop the cache borrow before the
+                // fallback closure runs: `get_class_instance_type` re-borrows the
+                // same `RefCell`, so holding the read guard across it would panic.
+                let cached_base_instance_type = self
                     .ctx
                     .class_instance_type_cache
+                    .borrow()
                     .get(&base_class_idx)
-                    .copied()
+                    .copied();
+                let base_instance_type = cached_base_instance_type
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
                 let mut base_type_params = Vec::new();

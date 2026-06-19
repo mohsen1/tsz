@@ -943,7 +943,7 @@ impl<'a> CheckerState<'a> {
             // For for-in/for-of loop variables, the element type has already been cached
             // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(facts.decl_idx)
-                && let Some(&cached) = self.ctx.symbol_types.get(&sym_id)
+                && let Some(cached) = self.ctx.symbol_types.get(&sym_id)
                 && cached != TypeId::ANY
                 && cached != TypeId::ERROR
             {
