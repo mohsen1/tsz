@@ -118,6 +118,54 @@ fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
 }
 
 #[test]
+fn arrow_concise_body_optional_chain_temp_declared_in_es5_body() {
+    // A concise-body arrow whose expression downlevels to hoisted temps
+    // (`node?.parent?.id`) must declare `var _a, _b;` at the top of the
+    // synthesized ES5 function body. The synthesized `{ return <expr>; }` is not
+    // a real block, so it bypasses `emit_block`'s function-body temp hoisting;
+    // without the splice the temps are referenced but never declared, a
+    // ReferenceError under `"use strict"`.
+    let source = "const readNode = (node?: { parent?: { id?: number } }) => node?.parent?.id ?? 0;";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("function (node) { var _a, _b; return (_b = (_a = node === null || node === void 0 ? void 0 : node.parent) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 0; }"),
+        "Concise-body optional-chain temps must be declared inside the ES5 function body.\nOutput:\n{output}"
+    );
+    // The temps must not leak to the enclosing (module) scope.
+    assert!(
+        !output.trim_start().starts_with("var _a"),
+        "Concise-body temps must not be hoisted to the enclosing scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn arrow_concise_body_optional_chain_temp_is_name_agnostic() {
+    // Same shape, different binder spellings: the hoist follows the optional
+    // chain's structure, not any particular identifier.
+    let source = "const pick = (cfg?: { opts?: { port?: number } }) => cfg?.opts?.port;";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("function (cfg) { var _a; return (_a = cfg === null || cfg === void 0 ? void 0 : cfg.opts) === null || _a === void 0 ? void 0 : _a.port; }"),
+        "Renamed binders must still get the body-scoped optional-chain temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn arrow_concise_body_optional_chain_temp_above_param_default_prologue() {
+    // Concise body with a parameter default: tsc declares the body's hoisted
+    // `var _a;` above the parameter-default prologue (`if (entry === void 0)`).
+    let source = "const withFallback = (entry = { meta: undefined as undefined | { tag?: string } }) => entry?.meta?.tag;";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("function (entry) {\n    var _a;\n    if (entry === void 0) { entry = { meta: undefined }; }\n    return (_a = entry === null || entry === void 0 ? void 0 : entry.meta) === null || _a === void 0 ? void 0 : _a.tag;\n}"),
+        "Body optional-chain temp must be declared above the parameter-default prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn optional_parameter_missing_initializer_skips_question_after_trivia() {
     let source = "function f(a ? = ) {}\n";
     let output = parse_lower_print(source, PrintOptions::es6());

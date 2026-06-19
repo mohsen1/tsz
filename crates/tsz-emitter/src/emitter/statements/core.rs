@@ -791,6 +791,16 @@ impl<'a> Printer<'a> {
         &mut self,
         anchor: HoistAnchor,
     ) {
+        // Common path: most function bodies hoist no temps. Skip the indent
+        // string allocation and the buffer-shifting insert when there is
+        // nothing to declare.
+        if self.hoisted_assignment_temps.is_empty()
+            && self.hoisted_for_of_temps.is_empty()
+            && self.hoisted_assignment_value_temps.is_empty()
+        {
+            return;
+        }
+
         let indent = self.writer.indent_string_at(anchor.indent_level);
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
