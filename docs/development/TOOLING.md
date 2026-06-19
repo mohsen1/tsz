@@ -429,6 +429,41 @@ Use for long-running or memory-intensive commands such as a full
 not override the CI-only rule for full conformance, emit, or fourslash suites:
 keep those full suites out of normal local development and let CI run them.
 
+### `scripts/test/nextest-guard.sh`
+
+Serializes local `cargo nextest` runs and self-heals a wedged orchestrator.
+`cargo-nextest` can wedge at ~0% CPU — the orchestrator stays alive but idle
+with no `rustc` running and no output — when two nextest invocations run
+concurrently, or after a nextest is killed mid-build (issue #13982). The guard
+encodes the reliable manual workaround ("serialize nextest, never kill it
+mid-build") as tooling:
+
+- it holds a host-wide advisory lock for the wrapped command, so a second
+  guarded run queues behind the first instead of racing the orchestrator into a
+  wedge;
+- on startup, if the previous lock holder died abnormally, it reaps the
+  orchestrator process tree that the prior guarded run recorded (and only that
+  tree — never an unrelated `cargo-nextest` it did not start), then takes the
+  lock and proceeds.
+
+```bash
+# Run targeted unit tests serialized against any other guarded nextest
+scripts/test/nextest-guard.sh -- cargo nextest run -p tsz-checker --lib <name>
+
+# Compose with safe-run.sh (memory guard) in either order
+scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- cargo nextest run
+
+# Fail fast instead of waiting if another guarded run holds the lock
+scripts/test/nextest-guard.sh --no-wait -- cargo nextest run -p tsz-solver
+```
+
+The lock is advisory: it only constrains commands launched through the guard,
+and it never changes test behavior or output. `--scope target` narrows
+serialization to runs that share a `CARGO_TARGET_DIR`; the default (`global`)
+serializes every guarded nextest on the host, because the wedge reproduces even
+across distinct target dirs. The behavior is covered by
+`scripts/test/nextest-guard-test.sh`.
+
 ### `scripts/setup/reset-ts-submodule.sh`
 
 Resets the TypeScript submodule to the pinned commit SHA. Called automatically by the pre-commit hook.
