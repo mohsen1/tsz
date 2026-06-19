@@ -654,7 +654,11 @@ impl<'a> IRPrinter<'a> {
         // Map the re-emitted node back to its original source position so a
         // downleveled generator/async body carries source mappings (tsc emits a
         // mapping at the start of each such node). No-op unless capture is on.
-        self.record_ast_ref_mapping(*idx);
+        if self.suppress_ast_ref_mapping_at_output_len == Some(self.output.len()) {
+            self.suppress_ast_ref_mapping_at_output_len = None;
+        } else {
+            self.record_ast_ref_mapping(*idx);
+        }
         // Check if this node has a transform directive that we should apply
         if let Some(arena) = self.arena
             && let Some(node) = arena.get(*idx)

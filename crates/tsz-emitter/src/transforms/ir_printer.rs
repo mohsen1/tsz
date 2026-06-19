@@ -109,6 +109,10 @@ pub struct IRPrinter<'a> {
     /// `ASTRef` node. Off by default so emits without source maps pay no
     /// position-scan cost.
     capture_mappings: bool,
+    /// Output byte offset where a surrounding `Positioned` node already recorded
+    /// a mapping. The next `ASTRef` emitted at that same offset skips its own
+    /// automatic mapping to avoid duplicate source-map entries.
+    suppress_ast_ref_mapping_at_output_len: Option<usize>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -289,6 +293,7 @@ impl<'a> IRPrinter<'a> {
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
+            suppress_ast_ref_mapping_at_output_len: None,
         }
     }
 
@@ -324,6 +329,7 @@ impl<'a> IRPrinter<'a> {
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
+            suppress_ast_ref_mapping_at_output_len: None,
         }
     }
 
@@ -359,6 +365,7 @@ impl<'a> IRPrinter<'a> {
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
+            suppress_ast_ref_mapping_at_output_len: None,
         }
     }
 
@@ -1663,7 +1670,11 @@ impl<'a> IRPrinter<'a> {
                 // Record a mapping at the start of the lowered node's output,
                 // then emit it transparently.
                 self.record_ast_ref_mapping(*source);
+                let previous_suppression = self
+                    .suppress_ast_ref_mapping_at_output_len
+                    .replace(self.output.len());
                 self.emit_node(inner);
+                self.suppress_ast_ref_mapping_at_output_len = previous_suppression;
             }
 
             IRNode::ASTRefWithGeneratorThis {
