@@ -101,106 +101,115 @@ impl ModuleResolver {
         importing_module_kind: ImportingModuleKind,
         importer_package_type: Option<super::PackageType>,
     ) -> Result<ResolvedModule, ResolutionFailure> {
-        // Walk up directory tree looking for package.json with imports field
-        let mut current = containing_dir.to_path_buf();
-
-        loop {
-            let package_json_path = current.join("package.json");
-
-            if cached_is_file(&package_json_path)
-                && let Ok(package_json) = self.read_package_json(&package_json_path)
-                && let Some(imports) = &package_json.imports
-            {
-                let conditions = self.get_export_conditions(importing_module_kind);
-                // `#imports` always resolve inside the importer's own package,
-                // so use the package_json we just read to anchor the extension
-                // priority. The importer's own context is the fallback when
-                // this package.json has no `"type"` field.
-                let host_pt =
-                    self.target_package_type_from_json(&package_json, importer_package_type);
-
-                for (target, resolved_using_ts_extension, is_types_condition) in
-                    self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
-                {
-                    // Per Node.js PACKAGE_IMPORTS_RESOLVE spec, the resolved
-                    // (post-substitution) target must either be a relative
-                    // path within the package (`./...`) or a bare package
-                    // specifier. Absolute paths and parent escapes are
-                    // invalid targets and must not resolve.
-                    if target.starts_with("./") {
-                        let Some(resolved_path) = package_relative_target_path(&current, &target)
-                        else {
-                            continue;
-                        };
-                        // Imports targets follow the same PACKAGE_TARGET_RESOLVE
-                        // algorithm as exports targets, so route them through the
-                        // shared runtime probe (`try_export_target`) rather than
-                        // the classic `try_file_or_directory`. This makes an
-                        // extensionless imports target (e.g. `"#core/*":
-                        // "./src/core/*"` imported as `#core/sharedOptions`)
-                        // refuse extension/directory-index addition under
-                        // Node16/NodeNext/Bundler, matching tsc, while explicit
-                        // `.js`->`.ts` substitution still applies.
-                        //
-                        // A types-flavored condition (`types`/`types@<range>`)
-                        // keeps declaration-aware probing via `try_types_entry`
-                        // so an extensionless versioned-types target still finds
-                        // its `.d.ts` sibling, mirroring the exports path.
-                        let probed = if is_types_condition {
-                            self.try_types_entry(&resolved_path, host_pt)
-                                .or_else(|| self.try_export_target(&resolved_path, host_pt))
-                        } else {
-                            self.try_export_target(&resolved_path, host_pt)
-                        };
-                        if let Some(resolved) = probed {
-                            return Ok(ResolvedModule {
-                                resolved_path: resolved.clone(),
-                                resolved_using_ts_extension,
-                                is_external: false,
-                                package_name: package_json.name.clone(),
-                                original_specifier: specifier.to_string(),
-                                extension: ModuleExtension::from_path(&resolved),
-                            });
-                        }
-                        continue;
-                    }
-
-                    if !is_valid_bare_imports_target(&target) {
-                        continue;
-                    }
-
-                    // Bare specifier: resolve as a package (PACKAGE_RESOLVE),
-                    // supporting self-referencing imports like
-                    // `"#type": "some-package"`.
-                    match self.resolve_bare_specifier(
-                        &target,
-                        &current,
-                        containing_file,
-                        specifier_span,
-                        importing_module_kind,
-                    ) {
-                        Ok(resolved) => return Ok(resolved),
-                        Err(
-                            ResolutionFailure::NotFound { .. }
-                            | ResolutionFailure::AmbiguousProjectRoot { .. },
-                        ) => continue,
-                        Err(other) => return Err(other),
-                    }
-                }
-            }
-
-            // Move to parent directory
-            match current.parent() {
-                Some(parent) if parent != current => current = parent.to_path_buf(),
-                _ => break,
-            }
-        }
-
-        Err(ResolutionFailure::NotFound {
+        let not_found = || ResolutionFailure::NotFound {
             specifier: specifier.to_string(),
             containing_file: containing_file.to_string(),
             span: specifier_span,
-        })
+        };
+
+        // Per Node.js LOOKUP_PACKAGE_SCOPE + PACKAGE_IMPORTS_RESOLVE (and tsc's
+        // `getPackageScopeForPath` / `loadModuleFromImports`), a `#`-prefixed
+        // specifier resolves against the SINGLE nearest enclosing package.json —
+        // the importer's own package scope. We walk up only to *find* that scope
+        // (the importer may live in a subdirectory such as `src/`); once a
+        // readable package.json is found we resolve `#imports` against it alone
+        // and never fall through to an ancestor package, even when the nearest
+        // scope has no `imports` field or no matching key.
+        //
+        // (An unreadable/invalid package.json is not a usable scope, so we keep
+        // walking past it rather than treating a parse failure as a hard wall.)
+        let mut current = containing_dir.to_path_buf();
+        let (package_json, scope_dir) = loop {
+            let package_json_path = current.join("package.json");
+            // `read_package_json` caches both hit and miss, so it doubles as the
+            // existence check — no separate `cached_is_file` probe needed.
+            if let Ok(package_json) = self.read_package_json(&package_json_path) {
+                break (package_json, current);
+            }
+            let Some(parent) = current.parent().filter(|&p| p != current) else {
+                return Err(not_found());
+            };
+            current = parent.to_path_buf();
+        };
+
+        let Some(imports) = &package_json.imports else {
+            // Nearest package scope defines no `imports` map: fail here without
+            // searching ancestor packages, matching tsc.
+            return Err(not_found());
+        };
+
+        let conditions = self.get_export_conditions(importing_module_kind);
+        // `#imports` always resolve inside the importer's own package, so use the
+        // scope package.json we just read to anchor the extension priority. The
+        // importer's own context is the fallback when it has no `"type"` field.
+        let host_pt = self.target_package_type_from_json(&package_json, importer_package_type);
+
+        for (target, resolved_using_ts_extension, is_types_condition) in
+            self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
+        {
+            // Per Node.js PACKAGE_IMPORTS_RESOLVE spec, the resolved
+            // (post-substitution) target must either be a relative path within
+            // the package (`./...`) or a bare package specifier. Absolute paths
+            // and parent escapes are invalid targets and must not resolve.
+            if target.starts_with("./") {
+                let Some(resolved_path) = package_relative_target_path(&scope_dir, &target) else {
+                    continue;
+                };
+                // Imports targets follow the same PACKAGE_TARGET_RESOLVE
+                // algorithm as exports targets, so route them through the
+                // shared runtime probe (`try_export_target`) rather than the
+                // classic `try_file_or_directory`. This makes an extensionless
+                // imports target (e.g. `"#core/*": "./src/core/*"` imported as
+                // `#core/sharedOptions`) refuse extension/directory-index
+                // addition under Node16/NodeNext/Bundler, matching tsc, while
+                // explicit `.js`->`.ts` substitution still applies.
+                //
+                // A types-flavored condition (`types`/`types@<range>`) keeps
+                // declaration-aware probing via `try_types_entry` so an
+                // extensionless versioned-types target still finds its `.d.ts`
+                // sibling, mirroring the exports path.
+                let probed = if is_types_condition {
+                    self.try_types_entry(&resolved_path, host_pt)
+                        .or_else(|| self.try_export_target(&resolved_path, host_pt))
+                } else {
+                    self.try_export_target(&resolved_path, host_pt)
+                };
+                if let Some(resolved) = probed {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        resolved_using_ts_extension,
+                        is_external: false,
+                        package_name: package_json.name.clone(),
+                        original_specifier: specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    });
+                }
+                continue;
+            }
+
+            if !is_valid_bare_imports_target(&target) {
+                continue;
+            }
+
+            // Bare specifier: resolve as a package (PACKAGE_RESOLVE), supporting
+            // self-referencing imports like `"#type": "some-package"`.
+            match self.resolve_bare_specifier(
+                &target,
+                &scope_dir,
+                containing_file,
+                specifier_span,
+                importing_module_kind,
+            ) {
+                Ok(resolved) => return Ok(resolved),
+                Err(
+                    ResolutionFailure::NotFound { .. }
+                    | ResolutionFailure::AmbiguousProjectRoot { .. },
+                ) => continue,
+                Err(other) => return Err(other),
+            }
+        }
+
+        Err(not_found())
     }
 
     /// Resolve imports field subpath into ordered target candidates.

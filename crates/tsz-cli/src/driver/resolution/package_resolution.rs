@@ -346,94 +346,97 @@ pub(crate) fn resolve_package_imports_specifier(
 ) -> Option<PathBuf> {
     let conditions = export_conditions(options);
     let compiler_version = types_versions_compiler_version(options);
+
+    // Per Node.js LOOKUP_PACKAGE_SCOPE + PACKAGE_IMPORTS_RESOLVE (and tsc's
+    // `getPackageScopeForPath` / `loadModuleFromImports`), a `#`-prefixed
+    // specifier resolves against the SINGLE nearest enclosing package.json — the
+    // importer's own package scope. We walk up only to *find* that scope (the
+    // importer may live in a subdirectory such as `src/`), bounded by `base_dir`;
+    // once a readable package.json is found we resolve `#imports` against it alone
+    // and never fall through to an ancestor package, even when the nearest scope
+    // has no `imports` field or no matching key. (An unreadable/invalid
+    // package.json is not a usable scope, so we keep walking past it.)
     let mut current = from_file.parent().unwrap_or(base_dir);
-
-    loop {
+    let (package_json, scope_dir) = loop {
         let package_json_path = current.join("package.json");
-        if let Some(package_json) = resolution_cache.read_package_json(&package_json_path)
-            && let Some(imports) = package_json.imports.as_ref()
-        {
-            let package_type = package_type_from_json(Some(&package_json));
-            // Node.js (and tsc) resolve `imports`/`exports` targets via
-            // PACKAGE_TARGET_RESOLVE: the target is taken verbatim, with no
-            // directory-index lookup and no extension invention. tsc only
-            // remaps an explicit `.js`/`.mjs`/`.cjs` target to its `.ts`
-            // sibling. Under the `exports`/`imports`-aware modes
-            // (Node16/NodeNext/Bundler) an EXTENSIONLESS runtime target must
-            // therefore NOT resolve. The legacy `Node`(node10)/`Classic`
-            // modes predate this and keep classic extension/index probing.
-            let strict_extensionless = matches!(
-                options.effective_module_resolution(),
-                ModuleResolutionKind::Node16
-                    | ModuleResolutionKind::NodeNext
-                    | ModuleResolutionKind::Bundler
-            );
-            for (target, is_types_condition) in resolve_imports_subpath_candidates_with_flavor(
-                imports,
-                module_specifier,
-                &conditions,
-                compiler_version,
-            ) {
-                let target = target.trim();
-                if target.starts_with("./") {
-                    if package_relative_target_path(current, target).is_none() {
-                        continue;
-                    }
-                } else if !is_valid_bare_imports_target(target) {
-                    continue;
-                }
-
-                // An extensionless relative target under a spec'd mode does not
-                // gain a `.ts`/`index.*` lookup — unless the value came through
-                // a types-flavored condition, which keeps declaration-aware
-                // probing (`./types/api` -> `./types/api.d.ts`) exactly like the
-                // `exports` field and `typesVersions`.
-                if strict_extensionless
-                    && target.starts_with("./")
-                    && split_path_extension(Path::new(target)).is_none()
-                {
-                    if is_types_condition
-                        && let Some(resolved) = resolve_declaration_package_entry(
-                            current,
-                            target,
-                            options,
-                            package_type,
-                            resolution_cache,
-                        )
-                    {
-                        return Some(resolved);
-                    }
-                    continue;
-                }
-
-                if let Some(resolved) =
-                    resolve_package_entry(current, target, options, package_type, resolution_cache)
-                {
-                    return Some(resolved);
-                }
-                // Output-to-source remapping for package imports.
-                // When outDir/declarationDir is set, import targets like "./dist/index.js"
-                // point to the output directory which doesn't exist at compile time.
-                // Remap back to source files (e.g., "./index.ts").
-                if let Some(resolved) = try_remap_output_to_source(
-                    current,
-                    target,
-                    from_file,
-                    options,
-                    resolution_cache,
-                ) {
-                    return Some(resolved);
-                }
-            }
+        if let Some(package_json) = resolution_cache.read_package_json(&package_json_path) {
+            break (package_json, current);
         }
-
         if current == base_dir {
-            break;
+            return None;
         }
-        let Some(parent) = current.parent() else {
-            break;
-        };
-        current = parent;
+        current = current.parent()?;
+    };
+
+    // Nearest package scope defines no `imports` map: fail here without searching
+    // ancestor packages, matching tsc.
+    let imports = package_json.imports.as_ref()?;
+    let package_type = package_type_from_json(Some(&package_json));
+    // Node.js (and tsc) resolve `imports`/`exports` targets via
+    // PACKAGE_TARGET_RESOLVE: the target is taken verbatim, with no
+    // directory-index lookup and no extension invention. tsc only remaps an
+    // explicit `.js`/`.mjs`/`.cjs` target to its `.ts` sibling. Under the
+    // `exports`/`imports`-aware modes (Node16/NodeNext/Bundler) an EXTENSIONLESS
+    // runtime target must therefore NOT resolve. The legacy `Node`(node10)/
+    // `Classic` modes predate this and keep classic extension/index probing.
+    let strict_extensionless = matches!(
+        options.effective_module_resolution(),
+        ModuleResolutionKind::Node16
+            | ModuleResolutionKind::NodeNext
+            | ModuleResolutionKind::Bundler
+    );
+    for (target, is_types_condition) in resolve_imports_subpath_candidates_with_flavor(
+        imports,
+        module_specifier,
+        &conditions,
+        compiler_version,
+    ) {
+        let target = target.trim();
+        if target.starts_with("./") {
+            if package_relative_target_path(scope_dir, target).is_none() {
+                continue;
+            }
+        } else if !is_valid_bare_imports_target(target) {
+            continue;
+        }
+
+        // An extensionless relative target under a spec'd mode does not gain a
+        // `.ts`/`index.*` lookup — unless the value came through a types-flavored
+        // condition, which keeps declaration-aware probing (`./types/api` ->
+        // `./types/api.d.ts`) exactly like the `exports` field and
+        // `typesVersions`.
+        if strict_extensionless
+            && target.starts_with("./")
+            && split_path_extension(Path::new(target)).is_none()
+        {
+            if is_types_condition
+                && let Some(resolved) = resolve_declaration_package_entry(
+                    scope_dir,
+                    target,
+                    options,
+                    package_type,
+                    resolution_cache,
+                )
+            {
+                return Some(resolved);
+            }
+            continue;
+        }
+
+        if let Some(resolved) =
+            resolve_package_entry(scope_dir, target, options, package_type, resolution_cache)
+        {
+            return Some(resolved);
+        }
+        // Output-to-source remapping for package imports.
+        // When outDir/declarationDir is set, import targets like "./dist/index.js"
+        // point to the output directory which doesn't exist at compile time.
+        // Remap back to source files (e.g., "./index.ts").
+        if let Some(resolved) =
+            try_remap_output_to_source(scope_dir, target, from_file, options, resolution_cache)
+        {
+            return Some(resolved);
+        }
     }
 
     None
