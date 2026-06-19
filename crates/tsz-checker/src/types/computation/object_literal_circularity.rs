@@ -5,9 +5,218 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    /// Whether an object-literal member, when its body is checked, binds the
+    /// synthetic object-literal `this` type — i.e. a member whose `this` refers
+    /// to the surrounding object literal rather than the enclosing scope.
+    ///
+    /// Methods, get/set accessors, and `function`-expression property
+    /// initializers all capture the object as `this`. Arrow-function property
+    /// initializers do NOT: an arrow inherits `this` lexically from the
+    /// enclosing scope, so a data member declared after an arrow is irrelevant
+    /// to that arrow's `this`.
+    fn object_literal_member_captures_synthetic_this(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return false;
+        };
+        if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+            || elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            return true;
+        }
+        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+            return false;
+        };
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        self.ctx
+            .arena
+            .get(initializer)
+            .is_some_and(|init_node| init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+    }
+
+    /// Best-effort `PropertyInfo` entries for the object literal's non-method
+    /// members (data properties, shorthands, and accessors) declared *after* the
+    /// first `this`-capturing callable member.
+    ///
+    /// `tsc` types `this` inside an object-literal method/accessor/function
+    /// property as the *complete* object literal type. tsz instead builds the
+    /// synthetic `this` incrementally, so a member declared after the callable
+    /// is invisible to it, producing spurious `TS2339` (and the consequent
+    /// `TS7023` circular-return diagnostic) on `this.<laterMember>`. Members
+    /// declared *before* the first callable are already present in the
+    /// incremental `properties` map by the time the callable body is checked,
+    /// and method / `function` / arrow-function members are already represented
+    /// in `obj_all_method_names`, so only the trailing non-method members need a
+    /// prescan.
+    ///
+    /// The prescan is deliberately free of expression-checker side effects: it
+    /// never invokes `get_type_of_node` (which would populate `node_types` and
+    /// suppress the main loop's diagnostics on the subsequent authoritative
+    /// pass). Trailing data properties with a literal initializer get their
+    /// precise widened type via `literal_type_from_initializer`; every other
+    /// trailing member is recorded as `any`, which is enough to make the member
+    /// *exist* on `this` (clearing the spurious error) without ever introducing
+    /// a new diagnostic.
+    pub(super) fn object_literal_trailing_member_props(
+        &mut self,
+        elements: &[NodeIndex],
+    ) -> FxHashMap<Atom, tsz_solver::PropertyInfo> {
+        let mut result: FxHashMap<Atom, tsz_solver::PropertyInfo> = FxHashMap::default();
+        if self.ctx.in_destructuring_target {
+            return result;
+        }
+        let Some(first_callable_pos) = elements
+            .iter()
+            .position(|&elem_idx| self.object_literal_member_captures_synthetic_this(elem_idx))
+        else {
+            return result;
+        };
+        // Common arrangement ("data first, methods last"): nothing is declared
+        // after the only/last callable, so the incremental `properties` map is
+        // already complete and no prescan work is needed.
+        if first_callable_pos + 1 >= elements.len() {
+            return result;
+        }
+
+        // Names declared with a `set` accessor anywhere in the literal — a
+        // trailing get-accessor is only `readonly` when it has no paired setter.
+        let setter_names: FxHashSet<Atom> = elements
+            .iter()
+            .filter_map(|&elem_idx| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+                if elem_node.kind != syntax_kind_ext::SET_ACCESSOR {
+                    return None;
+                }
+                let accessor = self.ctx.arena.get_accessor(elem_node)?;
+                self.get_property_name_resolved(accessor.name)
+                    .map(|name| self.ctx.types.intern_string(&name))
+            })
+            .collect();
+
+        let in_const = self.ctx.in_const_assertion;
+        for (pos, &elem_idx) in elements.iter().enumerate().skip(first_callable_pos + 1) {
+            let Some((name_atom, type_id, readonly)) =
+                self.object_literal_trailing_member_prop_entry(elem_idx, &setter_names)
+            else {
+                continue;
+            };
+            result.insert(
+                name_atom,
+                tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: readonly || in_const,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: (pos + 1) as u32,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                },
+            );
+        }
+        result
+    }
+
+    /// Compute `(name, read_type, readonly)` for a single trailing non-method
+    /// member, or `None` when the member is already represented elsewhere
+    /// (methods / `function` / arrow properties) or carries no statically
+    /// resolvable name.
+    fn object_literal_trailing_member_prop_entry(
+        &mut self,
+        elem_idx: NodeIndex,
+        setter_names: &FxHashSet<Atom>,
+    ) -> Option<(Atom, TypeId, bool)> {
+        let elem_node = self.ctx.arena.get(elem_idx)?;
+
+        // Accessors contribute a data-shaped property read through `this`.
+        if elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let accessor_name = self.ctx.arena.get_accessor(elem_node)?.name;
+            if self.object_literal_computed_key_is_wide_symbol(accessor_name) {
+                return None;
+            }
+            let name = self.get_property_name_resolved(accessor_name)?;
+            let name_atom = self.ctx.types.intern_string(&name);
+            // Read type is left as `any`: the member only needs to *exist* on
+            // the synthetic `this` to clear the spurious error, and inferring an
+            // un-annotated accessor body here would re-run the checker.
+            let readonly = elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && !setter_names.contains(&name_atom);
+            return Some((name_atom, TypeId::ANY, readonly));
+        }
+
+        // Shorthand property: { x } — the value is an outer binding; record the
+        // member as existing without resolving its symbol (which would touch the
+        // node cache / flow diagnostics).
+        if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            let shorthand = self.ctx.arena.get_shorthand_property(elem_node)?;
+            let ident = self
+                .ctx
+                .arena
+                .get(shorthand.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))?;
+            let name_atom = self.ctx.types.intern_string(&ident.escaped_text);
+            return Some((name_atom, TypeId::ANY, false));
+        }
+
+        // Data property assignment. `function`/arrow initializers are already
+        // represented in `obj_all_method_names`, so they are skipped here.
+        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        if self.ctx.arena.get(initializer).is_some_and(|init_node| {
+            init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        }) {
+            return None;
+        }
+        if self.object_literal_computed_key_is_wide_symbol(prop.name) {
+            return None;
+        }
+        let name = self.get_property_name_resolved(prop.name)?;
+        let name_atom = self.ctx.types.intern_string(&name);
+        // A literal initializer has a statically known type; an object-literal
+        // data property widens it (e.g. `v: 1` → `number`). Anything else stays
+        // `any` (member exists, no spurious error). `as const` / type-assertion
+        // initializers are non-widening, but `literal_type_from_initializer`
+        // does not descend into assertion nodes, so those fall through to `any`.
+        let type_id = match self.literal_type_from_initializer(prop.initializer) {
+            Some(literal) => self.widen_literal_type(literal),
+            None => TypeId::ANY,
+        };
+        Some((name_atom, type_id, false))
+    }
+
+    /// Merge trailing-member entries into a synthetic-`this` property vector,
+    /// skipping any name already present (earlier members and methods take
+    /// precedence). The entries already carry their final `readonly` flag (the
+    /// `const`-assertion case is baked in by `object_literal_trailing_member_props`).
+    pub(crate) fn merge_trailing_member_props(
+        this_props: &mut Vec<tsz_solver::PropertyInfo>,
+        trailing_member_props: &FxHashMap<Atom, tsz_solver::PropertyInfo>,
+    ) {
+        for (&name_atom, info) in trailing_member_props {
+            if this_props.iter().any(|p| p.name == name_atom) {
+                continue;
+            }
+            this_props.push(info.clone());
+        }
+    }
+
     pub(super) fn object_literal_callable_member_names(
         &mut self,
         elements: &[NodeIndex],
@@ -412,7 +621,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
         obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
-        member_previews: &rustc_hash::FxHashMap<
+        trailing_member_props: &rustc_hash::FxHashMap<
             tsz_common::interner::Atom,
             tsz_solver::PropertyInfo,
         >,
@@ -427,6 +636,10 @@ impl<'a> CheckerState<'a> {
                 prop.readonly = true;
             }
         }
+
+        // Members declared after the current method are not yet in `properties`;
+        // splice them in so `this.<laterMember>` resolves like the full object.
+        Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
 
         let current_method_name_atom = self.ctx.types.intern_string(current_method_name);
         for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
@@ -590,7 +803,6 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.extend_this_props_with_member_previews(&mut this_props, member_previews);
         self.ctx.types.factory().object(this_props)
     }
 
@@ -601,12 +813,11 @@ impl<'a> CheckerState<'a> {
     /// The synthetic type includes:
     /// - All already-processed properties from the object literal
     /// - Placeholder signatures for pre-scanned method declarations
-    /// - Previews for later data properties and accessors
     pub(super) fn build_object_literal_fn_property_synthetic_this_type(
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
         obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, (NodeIndex, u32)>,
-        member_previews: &rustc_hash::FxHashMap<
+        trailing_member_props: &rustc_hash::FxHashMap<
             tsz_common::interner::Atom,
             tsz_solver::PropertyInfo,
         >,
@@ -619,6 +830,10 @@ impl<'a> CheckerState<'a> {
                 prop.readonly = true;
             }
         }
+
+        // Members declared after this function-expression property are not yet
+        // in `properties`; splice them in so `this.<laterMember>` resolves.
+        Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
 
         // Add placeholder callable types for pre-scanned method declarations
         for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
@@ -716,293 +931,7 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.extend_this_props_with_member_previews(&mut this_props, member_previews);
         self.ctx.types.factory().object(this_props)
-    }
-
-    /// Append placeholders for object-literal **data properties** and
-    /// **accessors** (computed once via [`object_literal_member_previews`]) to a
-    /// synthetic `this` member list, skipping any name already present.
-    ///
-    /// `tsc` types `this` inside an object-literal method / accessor /
-    /// `function`-expression property as the *complete* object literal type,
-    /// independent of member declaration order. The incremental builders above
-    /// only see members processed *before* the current one plus the callable
-    /// pre-scan, so later non-function data properties and accessors would
-    /// otherwise be invisible (spurious `TS2339` / `TS7023`). The precise types
-    /// of already-processed members (in `this_props`) take precedence over the
-    /// previews.
-    pub(super) fn extend_this_props_with_member_previews(
-        &self,
-        this_props: &mut Vec<PropertyInfo>,
-        member_previews: &FxHashMap<Atom, PropertyInfo>,
-    ) {
-        if member_previews.is_empty() {
-            return;
-        }
-        let existing: FxHashSet<Atom> = this_props.iter().map(|p| p.name).collect();
-        for (&name_atom, preview) in member_previews {
-            if existing.contains(&name_atom) {
-                continue;
-            }
-            let mut preview = preview.clone();
-            if self.ctx.in_const_assertion {
-                preview.readonly = true;
-            }
-            this_props.push(preview);
-        }
-    }
-
-    /// Forward-scan an object literal's elements and build placeholder
-    /// [`PropertyInfo`]s for every statically-named **data property** and
-    /// **accessor**, so a member's synthetic `this` can see members declared
-    /// *after* it (matching `tsc`'s order-independent object-literal `this`).
-    ///
-    /// Methods and `function`/arrow-valued data properties are intentionally
-    /// excluded — they are already represented through the callable pre-scan
-    /// (`object_literal_callable_member_names`).
-    ///
-    /// Data-property previews carry the (widened) initializer type so a real
-    /// `this.value` mismatch still surfaces (e.g. `TS2322`). To keep early
-    /// preview evaluation from diverging from in-order resolution, a data
-    /// property whose initializer references the enclosing object's own
-    /// variable binding (`const o = { m() { this.v }, v: o.x }`) falls back to
-    /// `any` rather than being evaluated out of order.
-    ///
-    /// Returns an empty map unless a synthetic `this` will actually be built —
-    /// i.e. the object literal has no `ThisType<T>` marker, no contextual type,
-    /// and no enclosing `this`. Restricting eager evaluation to that case keeps
-    /// the data-property initializer previews off the contextual path (where
-    /// the in-order computation uses a different, contextual cache) and avoids
-    /// needless work.
-    pub(super) fn object_literal_synthetic_this_member_previews(
-        &mut self,
-        obj_idx: NodeIndex,
-        elements: &[NodeIndex],
-        marker_this_type: Option<TypeId>,
-        contextual_type: Option<TypeId>,
-    ) -> FxHashMap<Atom, PropertyInfo> {
-        if self.ctx.in_destructuring_target
-            || marker_this_type.is_some()
-            || contextual_type.is_some()
-            || self.current_this_type().is_some()
-            || !self.object_literal_has_synthetic_this_member(elements)
-        {
-            return FxHashMap::default();
-        }
-        self.object_literal_member_previews(obj_idx, elements)
-    }
-
-    fn object_literal_has_synthetic_this_member(&self, elements: &[NodeIndex]) -> bool {
-        elements.iter().any(|&elem_idx| {
-            let Some(node) = self.ctx.arena.get(elem_idx) else {
-                return false;
-            };
-            if matches!(
-                node.kind,
-                syntax_kind_ext::METHOD_DECLARATION
-                    | syntax_kind_ext::GET_ACCESSOR
-                    | syntax_kind_ext::SET_ACCESSOR
-            ) {
-                return true;
-            }
-            let Some(prop) = self.ctx.arena.get_property_assignment(node) else {
-                return false;
-            };
-            let initializer = self
-                .ctx
-                .arena
-                .skip_parenthesized_and_assertions(prop.initializer);
-            self.ctx
-                .arena
-                .get(initializer)
-                .is_some_and(|init_node| init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-        })
-    }
-
-    fn object_literal_member_previews(
-        &mut self,
-        obj_idx: NodeIndex,
-        elements: &[NodeIndex],
-    ) -> FxHashMap<Atom, PropertyInfo> {
-        let mut previews: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-
-        // Name of the enclosing object's own variable binding, if any. Used to
-        // guard against self-referential initializers (see doc comment).
-        let self_ref_name = self.object_literal_variable_initializer_name(obj_idx);
-
-        // Pre-collect setter names so getter-only accessors are marked readonly.
-        let mut setter_names: FxHashSet<Atom> = FxHashSet::default();
-        for &elem_idx in elements {
-            let Some(node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(accessor) = self.ctx.arena.get_accessor(node)
-                && let Some(name) = self.get_property_name_resolved(accessor.name)
-            {
-                setter_names.insert(self.ctx.types.intern_string(&name));
-            }
-        }
-
-        for (pos, &elem_idx) in elements.iter().enumerate() {
-            let Some(node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-            let decl_order = (pos + 1) as u32;
-
-            // Accessor: { get x() {} } / { set x(v) {} }
-            if matches!(
-                node.kind,
-                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
-            ) {
-                let Some(accessor) = self.ctx.arena.get_accessor(node) else {
-                    continue;
-                };
-                if self.object_literal_computed_key_is_wide_symbol(accessor.name) {
-                    continue;
-                }
-                let Some(name) = self.get_property_name_resolved(accessor.name) else {
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
-                let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
-                // A setter that shares its name with a getter is subordinate to
-                // the getter's read type; only fill in a setter-only entry.
-                if !is_getter && previews.contains_key(&name_atom) {
-                    continue;
-                }
-                let member_type = if is_getter {
-                    if accessor.type_annotation.is_some() {
-                        self.get_type_from_type_node(accessor.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    }
-                } else {
-                    self.object_literal_setter_parameter_type(accessor)
-                };
-                let mut preview =
-                    Self::object_literal_preview_data_property(name_atom, member_type, decl_order);
-                // A getter with no paired setter is readonly on the object type.
-                preview.readonly = is_getter && !setter_names.contains(&name_atom);
-                previews.insert(name_atom, preview);
-                continue;
-            }
-
-            // Shorthand data property: { x }
-            if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                let Some(shorthand) = self.ctx.arena.get_shorthand_property(node) else {
-                    continue;
-                };
-                let Some(name) = self.get_property_name_resolved(shorthand.name) else {
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
-                if previews.contains_key(&name_atom) {
-                    continue;
-                }
-                let member_type =
-                    self.object_literal_preview_data_type(shorthand.name, self_ref_name.as_deref());
-                previews.insert(
-                    name_atom,
-                    Self::object_literal_preview_data_property(name_atom, member_type, decl_order),
-                );
-                continue;
-            }
-
-            // Regular data property: { x: <expr> }
-            let Some(prop) = self.ctx.arena.get_property_assignment(node) else {
-                continue;
-            };
-            // Function/arrow initializers are covered by the callable pre-scan.
-            let initializer = self
-                .ctx
-                .arena
-                .skip_parenthesized_and_assertions(prop.initializer);
-            if self.ctx.arena.get(initializer).is_some_and(|init_node| {
-                matches!(
-                    init_node.kind,
-                    syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                )
-            }) {
-                continue;
-            }
-            // Skip computed / unresolved keys.
-            let Some(name) = self.get_property_name_resolved(prop.name) else {
-                continue;
-            };
-            let name_atom = self.ctx.types.intern_string(&name);
-            if previews.contains_key(&name_atom) {
-                continue;
-            }
-            // `prop.initializer == prop.name` is the parser's error-recovery
-            // sentinel for a missing value expression.
-            let member_type = if prop.initializer == prop.name {
-                TypeId::ANY
-            } else {
-                self.object_literal_preview_data_type(prop.initializer, self_ref_name.as_deref())
-            };
-            previews.insert(
-                name_atom,
-                Self::object_literal_preview_data_property(name_atom, member_type, decl_order),
-            );
-        }
-
-        previews
-    }
-
-    /// Build the (widened) preview type of a data-property initializer for the
-    /// synthetic `this`, falling back to `any` for self-referential
-    /// initializers (see [`object_literal_member_previews`]).
-    fn object_literal_preview_data_type(
-        &mut self,
-        initializer: NodeIndex,
-        self_ref_name: Option<&str>,
-    ) -> TypeId {
-        if let Some(name) = self_ref_name
-            && self.object_literal_initializer_references_name(initializer, name)
-        {
-            return TypeId::ANY;
-        }
-        let raw = self.get_type_of_node(initializer);
-        if self.ctx.in_const_assertion {
-            raw
-        } else {
-            self.widen_literal_type(raw)
-        }
-    }
-
-    const fn object_literal_preview_data_property(
-        name_atom: Atom,
-        member_type: TypeId,
-        decl_order: u32,
-    ) -> PropertyInfo {
-        PropertyInfo {
-            declaration_order: decl_order,
-            ..PropertyInfo::new(name_atom, member_type)
-        }
-    }
-
-    fn object_literal_setter_parameter_type(
-        &mut self,
-        accessor: &tsz_parser::parser::node::AccessorData,
-    ) -> TypeId {
-        accessor
-            .parameters
-            .nodes
-            .first()
-            .and_then(|&param_idx| {
-                let param = self
-                    .ctx
-                    .arena
-                    .get(param_idx)
-                    .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
-                param
-                    .type_annotation
-                    .is_some()
-                    .then(|| self.get_type_from_type_node(param.type_annotation))
-            })
-            .unwrap_or(TypeId::ANY)
     }
 
     /// Name of the variable binding an object literal initializes, if it is the
