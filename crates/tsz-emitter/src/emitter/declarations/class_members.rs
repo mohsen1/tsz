@@ -1145,7 +1145,7 @@ impl<'a> Printer<'a> {
         block_idx: NodeIndex,
         param_props: &[String],
         field_inits: &[crate::emitter::core::FieldInit],
-        auto_accessor_inits: &[(String, Option<NodeIndex>)],
+        auto_accessor_inits: &[(String, Option<NodeIndex>, u32)],
     ) {
         let Some(block_node) = self.arena.get(block_idx) else {
             return;
@@ -1411,7 +1411,7 @@ impl<'a> Printer<'a> {
         &mut self,
         param_props: &[String],
         field_inits: &[crate::emitter::core::FieldInit],
-        auto_accessor_inits: &[(String, Option<NodeIndex>)],
+        auto_accessor_inits: &[(String, Option<NodeIndex>, u32)],
     ) {
         // Emit `_X_instances.add(this)` for private methods/accessors
         if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
@@ -1452,20 +1452,35 @@ impl<'a> Printer<'a> {
             }
             self.write_line();
         }
-        // Emit private and public instance field initializers in source order
-        // after parameter properties. Both are field initializers for ordering
-        // purposes even though private fields lower to `WeakMap.set`.
+        // Emit `#private`, public, and auto-accessor backing-storage instance field
+        // initializers in source order after parameter properties. All three are
+        // field initializers for ordering purposes even though `#private` fields and
+        // auto-accessor storage lower to `WeakMap.set` — `tsc` evaluates their
+        // initializers (which may have observable side effects) strictly in source
+        // declaration order, so they must be interleaved by source position rather
+        // than emitting the auto-accessor inits last.
         let private_inits = self.pending_private_field_constructor_inits.clone();
         let mut private_idx = 0;
         let mut public_idx = 0;
-        while private_idx < private_inits.len() || public_idx < field_inits.len() {
+        let mut accessor_idx = 0;
+        while private_idx < private_inits.len()
+            || public_idx < field_inits.len()
+            || accessor_idx < auto_accessor_inits.len()
+        {
             let next_private_order = private_inits
                 .get(private_idx)
                 .map_or(u32::MAX, |(_, _, _, _, _, source_order, _)| *source_order);
             let next_public_order = field_inits
                 .get(public_idx)
                 .map_or(u32::MAX, |(_, _, _, _, _, source_order)| *source_order);
-            if next_private_order <= next_public_order {
+            let next_accessor_order = auto_accessor_inits
+                .get(accessor_idx)
+                .map_or(u32::MAX, |(_, _, source_order)| *source_order);
+            // Pick the next initializer by source position. On ties (which should
+            // not occur for distinct members) `#private` precedes public, which
+            // precedes auto-accessor storage, for deterministic output.
+            if next_private_order <= next_public_order && next_private_order <= next_accessor_order
+            {
                 let (
                     weakmap_name,
                     has_initializer,
@@ -1484,21 +1499,34 @@ impl<'a> Printer<'a> {
                     *storage_kind,
                 );
                 private_idx += 1;
-            } else {
+            } else if next_public_order <= next_accessor_order {
                 self.emit_public_field_constructor_init(&field_inits[public_idx]);
                 public_idx += 1;
+            } else {
+                let (storage_name, initializer, _) = &auto_accessor_inits[accessor_idx];
+                self.emit_auto_accessor_constructor_init(storage_name, *initializer);
+                accessor_idx += 1;
             }
         }
-        for (name, init_idx) in auto_accessor_inits {
-            self.write(name);
-            self.write(".set(this, ");
-            match init_idx {
-                Some(init) => self.emit_expression(*init),
-                None => self.write("void 0"),
-            }
-            self.write(");");
-            self.write_line();
+    }
+
+    /// Emit a single auto-accessor backing-storage initializer
+    /// (`storage.set(this, <init>)`) in the constructor prologue. Mirrors
+    /// `emit_private_field_constructor_init` / `emit_public_field_constructor_init`
+    /// so the three-way source-order merge dispatches uniformly.
+    fn emit_auto_accessor_constructor_init(
+        &mut self,
+        storage_name: &str,
+        initializer: Option<NodeIndex>,
+    ) {
+        self.write(storage_name);
+        self.write(".set(this, ");
+        match initializer {
+            Some(init) => self.emit_expression(init),
+            None => self.write("void 0"),
         }
+        self.write(");");
+        self.write_line();
     }
 
     fn emit_private_field_constructor_init(
