@@ -1156,6 +1156,16 @@ pub fn classify_element_indexable_with_resolver<R: crate::relations::subtype::Ty
     match db.lookup(evaluated) {
         Some(TypeData::Array(_)) => ElementIndexableKind::Array,
         Some(TypeData::Tuple(_)) => ElementIndexableKind::Tuple,
+        // `readonly T[]` / `readonly [A, B]` (and any other `readonly` wrapper)
+        // is exactly as element-indexable as the type it wraps — the `readonly`
+        // modifier constrains assignment, not indexing. Classify by the inner
+        // type. Without this the wrapper falls through to `Other`, so a
+        // `ReadonlyType` member of an intersection (e.g. the `readonly A[]` half of
+        // a `ReadonlyNonEmptyArray = readonly A[] & { readonly 0: A }`) is treated
+        // as non-indexable, producing a false TS7053 on `x[n]`.
+        Some(TypeData::ReadonlyType(inner)) => {
+            classify_element_indexable_with_resolver(db, resolver, inner)
+        }
         Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             let has_late_bound = shape
