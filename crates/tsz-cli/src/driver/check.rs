@@ -227,6 +227,17 @@ fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
+fn is_node_modules_declaration_file(name: &str) -> bool {
+    is_declaration_file(name)
+        && Path::new(name)
+            .components()
+            .any(|component| component.as_os_str() == "node_modules")
+}
+
+fn defer_node_modules_declaration_roots(work_items: &mut [usize], program: &MergedProgram) {
+    work_items.sort_by_key(|&idx| is_node_modules_declaration_file(&program.files[idx].file_name));
+}
+
 #[cfg(test)]
 thread_local! {
     static FILE_SESSION_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
@@ -1299,6 +1310,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 work_items.push(file_idx);
             }
         }
+        defer_node_modules_declaration_roots(&mut work_items, program);
         for mut file_diags in collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
             files: &program.files,
             file_indices: &skipped_file_indices,

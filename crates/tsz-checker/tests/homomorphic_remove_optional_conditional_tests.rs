@@ -1,11 +1,16 @@
 //! Tests for homomorphic `-?` mapped types where the value template is a
 //! conditional type that references `T[K]` (issue #9759).
 //!
-//! Structural rule: when a homomorphic mapped type has `-?` (remove optional)
-//! and the template contains `T[K]`, tsc evaluates `T[K]` as the DECLARED
-//! property type (without `| undefined` from optionality), not the read type.
-//! This ensures the conditional result does not inadvertently carry `undefined`
-//! from the source property's optional nature.
+//! Structural rule: when a homomorphic mapped type has `-?` (remove optional),
+//! tsc instantiates the template with the *read* type `T[K]` — which still
+//! includes `| undefined` for an optional source key — and only removes the
+//! resulting top-level `undefined` from the final property type afterwards
+//! (`getTypeOfMappedSymbol` -> `getTypeWithFacts(type, NEUndefined)`). The
+//! `undefined` is therefore visible to the template: a conditional check
+//! `T[K] extends X` sees `Declared | undefined`, and a distributive template
+//! `V extends W<infer U> ? ...` distributes over the `undefined` member. After
+//! the template runs the top-level `undefined` is stripped, so for a template
+//! that simply returns `T[K]` the net result is the de-optionalized type.
 
 use tsz_checker::test_utils::check_source_diagnostics;
 
@@ -66,8 +71,9 @@ const x: { b: number } = r.x;
 }
 
 /// Renamed iteration variable `X`, primitive conditional (`extends string`).
-/// Source: `{ x?: number }`. Declared type is `number`.
-/// Template: `T[X] extends string ? "s" : T[X]` with declared `number` → `number`.
+/// Source: `{ x?: number }`. The check `(number | undefined) extends string` is
+/// `false`, so the value branch `T[X]` (= `number | undefined`) is taken; the
+/// `-?` strip then removes the top-level `undefined`, leaving `number`.
 #[test]
 fn remove_optional_primitive_conditional_renamed_var_no_error() {
     no_errors(
@@ -100,22 +106,52 @@ const a: { b: number } = r.a;
 }
 
 // ---------------------------------------------------------------------------
-// Negative control: conditional that never re-introduces the source value
+// The conditional *check* sees `Declared | undefined`
 // ---------------------------------------------------------------------------
 
-/// When the conditional's value never flows back from `T[K]` (both branches
-/// are constant), the output type is determined by the conditional alone —
-/// no undefined can creep in from optionality. Both tsz and tsc give the
-/// same result regardless of `-?` on the source.
+/// Even with constant branches (`true`/`false`), the conditional's CHECK is
+/// `T[K] extends number`, and `-?` does not de-optionalize the type fed into
+/// the template: the check sees the read type `number | undefined`, which does
+/// NOT extend `number`, so the branch taken is `false`. tsc evaluates `r.a` and
+/// `r.b` as `false` (verified against tsc 6.0.x); a previous version of this
+/// test asserted `r.a: true`, encoding tsz's old behavior of feeding the
+/// de-optionalized declared type into the template.
 #[test]
-fn remove_optional_conditional_constant_branches_no_error() {
+fn remove_optional_conditional_check_sees_optional_undefined() {
     no_errors(
         r#"
 type M<T> = { [K in keyof T]-?: T[K] extends number ? true : false };
 type R = M<{ a?: number; b?: string }>;
 declare const r: R;
-const a: true = r.a;
+const a: false = r.a;
 const b: false = r.b;
+"#,
+    );
+    // The opposite annotation must now be a type error: `r.a` is `false`,
+    // not `true`.
+    has_errors(
+        r#"
+type M<T> = { [K in keyof T]-?: T[K] extends number ? true : false };
+type R = M<{ a?: number }>;
+declare const r: R;
+const a: true = r.a;
+"#,
+    );
+}
+
+/// A genuinely undefined-insensitive check confirms the strip still happens:
+/// `number | undefined extends string | number | undefined` is `true` whether
+/// or not `undefined` is present, so the value branch is selected and its
+/// constant result is undefined-free.
+#[test]
+fn remove_optional_conditional_undefined_insensitive_check() {
+    no_errors(
+        r#"
+type M<T> = { [K in keyof T]-?: T[K] extends string | number | undefined ? "yes" : "no" };
+type R = M<{ a?: number; b?: string }>;
+declare const r: R;
+const a: "yes" = r.a;
+const b: "yes" = r.b;
 "#,
     );
 }
@@ -182,8 +218,9 @@ const c: string = r.c;
 // Union template: T[K] | null with -?
 // ---------------------------------------------------------------------------
 
-/// Template is a union `T[K] | null` (not a conditional). The `T[K]` part
-/// must use the declared type when `-?` is present.
+/// Template is a union `T[K] | null` (not a conditional). The template sees the
+/// read type `number | undefined`, producing `number | undefined | null`; the
+/// `-?` strip removes the top-level `undefined`, leaving `number | null`.
 #[test]
 fn remove_optional_union_template_no_error() {
     no_errors(
