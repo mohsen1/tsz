@@ -27,6 +27,25 @@ pub enum TypeSymbolResolution {
     NotFound,
 }
 
+/// `true` when the type-position resolution memo
+/// (`CheckerContext::type_position_resolution_cache`) is disabled via the
+/// `TSZ_DISABLE_TYPE_POSITION_RESOLUTION_CACHE` environment variable (any
+/// non-empty value other than `0`).
+///
+/// The memo is speed-only — it caches the alias/global/namespace resolution of
+/// a type-position identifier, which is a pure function of `(arena, node)` for a
+/// fixed binder + lib context. Disabling it must therefore leave diagnostics
+/// byte-identical; the kill switch exists so that equivalence can be proven in
+/// CI / A-B runs (issue #13987).
+fn type_position_resolution_cache_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_TYPE_POSITION_RESOLUTION_CACHE")
+            .is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 // =============================================================================
 // Symbol Resolution Methods
 // =============================================================================
@@ -884,36 +903,70 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a type-position identifier, memoizing the context-free portion.
+    ///
+    /// The enclosing-type-parameter fast path is context-sensitive — the same
+    /// lexical node binds to different type-parameter symbols across
+    /// instantiation / return contexts (the
+    /// `return_context_type_param_shadowing_tests` shape) — so it is resolved on
+    /// every call and never cached. Everything past it (alias / global /
+    /// namespace / module-augmentation resolution, the dominant scope-walk +
+    /// by-name `HashMap` cost) is a pure function of `(arena, node)` for a fixed
+    /// binder + lib context, so it is memoized under the same `(arena pointer,
+    /// node index)` key the binder's own `resolve_identifier` cache uses. This
+    /// collapses the per-recursion-level re-resolution that dominated recursive
+    /// type evaluation (issue #13987).
     fn resolve_identifier_symbol_in_type_position_inner(
         &self,
         idx: NodeIndex,
     ) -> TypeSymbolResolution {
-        // A type-position identifier's resolution is determined by its lexical
-        // position (enclosing type-parameter scopes walked via `arena`) and the
-        // binder/lib symbol tables — all immutable for the context's lifetime —
-        // so the result is stable across every call for a given node. Memoize
-        // on node idx to collapse the repeated by-name scope walks that
-        // dominate recursive type evaluation (a recursive alias re-resolves the
-        // same body identifiers once per recursion level). The underlying
-        // `_uncached` resolver is side-effect free (its only mutation is a
-        // function-local `Cell`), so a cache hit is behavior-identical.
+        // Context-sensitive fast path: an enclosing type parameter binds by
+        // symbol, and the same lexical node can bind to different symbols across
+        // instantiation / return contexts, so this is never cached. Reaching the
+        // cache below therefore implies this node has *no* matching enclosing
+        // type parameter — which is what makes the memoized resolution
+        // independent of the dynamic type-parameter scope (and so sound),
+        // regardless of how `_uncached` arrives at its answer.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+            && let Some(sym_id) =
+                self.resolve_enclosing_type_parameter_symbol(idx, ident.escaped_text.as_str())
+        {
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
+        if type_position_resolution_cache_disabled() {
+            return self.resolve_identifier_symbol_in_type_position_uncached(idx);
+        }
+
+        // Borrow in two phases (read-then-drop, compute, write) rather than an
+        // `entry(..).or_insert_with(..)`: `_uncached` recursively resolves the
+        // alias body's nested identifiers, re-entering this same `RefCell`, so
+        // holding a borrow across the computation would panic.
+        let key = (std::ptr::from_ref(self.ctx.arena) as usize, idx.0);
         if let Some(cached) = self
             .ctx
             .type_position_resolution_cache
             .borrow()
-            .get(&idx.0)
+            .get(&key)
             .copied()
         {
             return cached;
         }
-        let resolved = self.resolve_identifier_symbol_in_type_position_uncached(idx);
+        let result = self.resolve_identifier_symbol_in_type_position_uncached(idx);
         self.ctx
             .type_position_resolution_cache
             .borrow_mut()
-            .insert(idx.0, resolved);
-        resolved
+            .insert(key, result);
+        result
     }
 
+    /// The uncached body of [`Self::resolve_identifier_symbol_in_type_position_inner`].
+    ///
+    /// Only ever reached for identifiers that are *not* an enclosing type
+    /// parameter (that fast path is handled, uncached, by the caller). The
+    /// result is a pure function of `(arena, node)` for a fixed binder + lib
+    /// context, which is what makes the caller's memo sound.
     fn resolve_identifier_symbol_in_type_position_uncached(
         &self,
         idx: NodeIndex,
@@ -927,10 +980,6 @@ impl<'a> CheckerState<'a> {
             None => return TypeSymbolResolution::NotFound,
         };
         let name = ident.escaped_text.as_str();
-
-        if let Some(sym_id) = self.resolve_enclosing_type_parameter_symbol(idx, name) {
-            return TypeSymbolResolution::Type(sym_id);
-        }
 
         if let Some(sym_id) =
             self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)

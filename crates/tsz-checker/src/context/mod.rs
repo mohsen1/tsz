@@ -65,7 +65,6 @@ pub mod typing_request;
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
-use crate::symbol_resolver::TypeSymbolResolution;
 pub use aliases::*;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
@@ -965,16 +964,6 @@ pub struct CheckerContext<'a> {
     /// This avoids repeated deep traversals in `ensure_refs_resolved`.
     pub refs_resolved: FxHashSet<TypeId>,
 
-    /// Memo of type-position identifier resolution keyed on node idx
-    /// (`NodeIndex::0`). A type-position identifier's resolution is fixed by
-    /// its lexical position and the binder/lib symbol tables, both immutable
-    /// for the context's lifetime, so the resolved symbol is stable across
-    /// every call for a given node. Recursive type evaluation re-resolves the
-    /// same alias/type-parameter identifier nodes once per recursion level
-    /// (`resolve_identifier_symbol_in_type_position`), and the by-name scope
-    /// walk dominates those repeats; the memo collapses them to one lookup.
-    pub type_position_resolution_cache: RefCell<FxHashMap<u32, TypeSymbolResolution>>,
-
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
@@ -1074,6 +1063,30 @@ pub struct CheckerContext<'a> {
     /// method's readiness walk O(1) instead of O(signature size). Pure speed
     /// memo: identical to recomputing on demand.
     pub(crate) type_queries_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[tsz_solver::SymbolRef]>>>,
+
+    /// Memoizes type-position identifier resolution
+    /// (`resolve_identifier_symbol_in_type_position`) keyed by
+    /// `(arena pointer, node index)`.
+    ///
+    /// Recursive type evaluation (e.g. `DeepReadonly<T>` over a deeply-nested
+    /// object) re-lowers the same alias-body identifier nodes at every recursion
+    /// level, re-resolving each by name through scope walks and the binder's
+    /// by-name `HashMap` — the dominant non-lib recompute cliff (issue #13987,
+    /// where `resolve_identifier_symbol_in_type_position_inner` was 75.6%
+    /// inclusive). The alias/global/namespace/module-augmentation resolution is a
+    /// pure function of `(arena, node)` for a fixed binder + lib context — the
+    /// same key the binder's own `resolve_identifier` cache uses — so caching it
+    /// is a pure speed memo, identical to recomputing on demand.
+    ///
+    /// Only context-free resolutions are stored: the enclosing-type-parameter
+    /// fast path (`resolve_enclosing_type_parameter_symbol`) is *never* cached
+    /// here because the same lexical node can bind to different type-parameter
+    /// symbols across instantiation/return contexts (the
+    /// `return_context_type_param_shadowing_tests` shape). The arena pointer is
+    /// per-file, so the cache shares the per-file lifecycle and is cleared on
+    /// `reset_for_next_source_file`.
+    pub(crate) type_position_resolution_cache:
+        RefCell<FxHashMap<(usize, u32), crate::symbol_resolver::TypeSymbolResolution>>,
 
     /// Per-`DefId` history of body `TypeId`s already published to the
     /// definition store, used to suppress redundant cache invalidation when a
