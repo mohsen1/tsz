@@ -214,6 +214,9 @@ mod environment_capabilities_tests;
 #[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
 mod flow_assignment_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/flow_for_of_destructure_closure_assignment_tests.rs"]
+mod flow_for_of_destructure_closure_assignment_tests;
+#[cfg(test)]
 #[path = "tests/flow_guard_boundary_tests.rs"]
 mod flow_guard_boundary_tests;
 #[cfg(test)]
