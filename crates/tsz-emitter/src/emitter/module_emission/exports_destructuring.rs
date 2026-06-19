@@ -10,6 +10,7 @@
 
 use super::super::Printer;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -29,13 +30,13 @@ enum DestructBase {
 
 impl DestructBase {
     /// Extend the source with one more member access (`.prop` / `[i]`).
-    fn with_access(&self, suffix: &str) -> DestructBase {
+    fn with_access(&self, suffix: &str) -> Self {
         match self {
-            DestructBase::Str(text) => DestructBase::Str(format!("{text}{suffix}")),
-            DestructBase::Inline {
+            Self::Str(text) => Self::Str(format!("{text}{suffix}")),
+            Self::Inline {
                 node,
                 suffix: existing,
-            } => DestructBase::Inline {
+            } => Self::Inline {
                 node: *node,
                 suffix: format!("{existing}{suffix}"),
             },
@@ -43,7 +44,7 @@ impl DestructBase {
     }
 }
 
-impl<'a> Printer<'a> {
+impl Printer<'_> {
     /// Lower an ES2015+ CommonJS `export const <pattern> = <init>` through the
     /// recursive destructuring form `tsc` uses (`flattenDestructuringAssignment`).
     ///
@@ -151,7 +152,7 @@ impl<'a> Printer<'a> {
                     (self.get_identifier_text(elem.name), None)
                 };
                 excluded_props.push(prop_text.clone());
-                self.destructuring_export_property_suffix(&prop_text, prop_kind)
+                Self::destructuring_export_property_suffix(&prop_text, prop_kind)
             };
             let access_base = base.with_access(&access_suffix);
 
@@ -255,10 +256,7 @@ impl<'a> Printer<'a> {
                 // `1.foo` is a parse error (the `.` reads as a decimal point);
                 // `tsc` emits a second dot for a numeric-literal receiver.
                 if suffix.starts_with('.')
-                    && self
-                        .arena
-                        .get(*node)
-                        .is_some_and(|n| n.is_numeric_literal())
+                    && self.arena.get(*node).is_some_and(Node::is_numeric_literal)
                 {
                     self.write(".");
                 }
@@ -269,11 +267,7 @@ impl<'a> Printer<'a> {
 
     /// Build the property-access suffix for an object binding element, choosing
     /// dotted, numeric-indexed, or quoted-bracket form to match `tsc`.
-    fn destructuring_export_property_suffix(
-        &self,
-        prop_text: &str,
-        prop_kind: Option<u16>,
-    ) -> String {
+    fn destructuring_export_property_suffix(prop_text: &str, prop_kind: Option<u16>) -> String {
         if prop_kind == Some(SyntaxKind::NumericLiteral as u16) {
             format!("[{prop_text}]")
         } else if prop_kind == Some(SyntaxKind::StringLiteral as u16)
