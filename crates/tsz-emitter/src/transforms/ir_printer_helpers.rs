@@ -4,9 +4,63 @@
 //! parameters, multiline comment formatting, and arrow function ES5 emission.
 
 use super::*;
+use tsz_common::source_map::Mapping;
 use tsz_parser::syntax_kind_ext;
 
 impl<'a> IRPrinter<'a> {
+    /// Enable source-map mapping capture for [`IRNode::SourceMapped`] nodes,
+    /// using a line map of the original source text (built once by the caller)
+    /// to resolve original byte offsets to (line, column).
+    pub fn enable_source_map_capture(
+        &mut self,
+        source_line_map: crate::output::source_writer::LineMap<'a>,
+    ) {
+        self.source_map_line_map = Some(source_line_map);
+    }
+
+    /// Take the mappings captured during emission. Coordinates are relative to
+    /// this printer's own output; the caller offsets them to the splice point.
+    pub fn take_captured_mappings(&mut self) -> Vec<Mapping> {
+        std::mem::take(&mut self.captured_mappings)
+    }
+
+    /// Advance the lazily-tracked generated line/column counters to the current
+    /// end of `output`. Columns are counted in UTF-16 code units to match the
+    /// parent [`crate::output::source_writer`].
+    fn advance_generated_position(&mut self) {
+        let tail = &self.output[self.mapping_scan_offset..];
+        for ch in tail.chars() {
+            if ch == '\n' {
+                self.mapping_generated_line += 1;
+                self.mapping_generated_column = 0;
+            } else {
+                self.mapping_generated_column += ch.len_utf16() as u32;
+            }
+        }
+        self.mapping_scan_offset = self.output.len();
+    }
+
+    /// Record a source-map mapping from the current generated position to the
+    /// original `source_pos` byte offset. No-op unless capture was enabled.
+    pub(super) fn record_source_mapping(&mut self, source_pos: u32) {
+        let Some((original_line, original_column)) = self
+            .source_map_line_map
+            .as_ref()
+            .map(|line_map| line_map.line_col(source_pos))
+        else {
+            return;
+        };
+        self.advance_generated_position();
+        self.captured_mappings.push(Mapping {
+            generated_line: self.mapping_generated_line,
+            generated_column: self.mapping_generated_column,
+            source_index: 0,
+            original_line,
+            original_column,
+            name_index: None,
+        });
+    }
+
     pub(super) fn temp_counter_after_name(name: &str) -> Option<u32> {
         let rest = name.strip_prefix('_')?;
         if rest.len() == 1 {

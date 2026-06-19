@@ -45,6 +45,7 @@ use crate::transforms::ir::{
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::tslib_helper_naming::TslibHelperNaming;
+use tsz_common::source_map::Mapping;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -95,6 +96,24 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    /// Line map of the original source text, built once when source-map capture
+    /// is enabled. When present, [`IRNode::SourceMapped`] nodes record a mapping
+    /// at their generated position (relative to this printer's own output) into
+    /// [`Self::captured_mappings`]; the caller merges those into the parent
+    /// source map at the splice point. `None` (the default) disables capture —
+    /// most IR printing happens without a source map.
+    source_map_line_map: Option<crate::output::source_writer::LineMap<'a>>,
+    /// Mappings captured during emission, in this printer's own output
+    /// coordinate space (generated line 0 = first line of `output`).
+    captured_mappings: Vec<Mapping>,
+    /// Byte offset in `output` up to which the generated line/column counters
+    /// below have already been advanced. Lets mapping capture stay amortized
+    /// O(output length) instead of rescanning the whole buffer per mapping.
+    mapping_scan_offset: usize,
+    /// Generated line counter for captured mappings (advanced lazily).
+    mapping_generated_line: u32,
+    /// Generated column counter (UTF-16 code units) for captured mappings.
+    mapping_generated_column: u32,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -272,6 +291,11 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            source_map_line_map: None,
+            captured_mappings: Vec::new(),
+            mapping_scan_offset: 0,
+            mapping_generated_line: 0,
+            mapping_generated_column: 0,
         }
     }
 
@@ -304,6 +328,11 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            source_map_line_map: None,
+            captured_mappings: Vec::new(),
+            mapping_scan_offset: 0,
+            mapping_generated_line: 0,
+            mapping_generated_column: 0,
         }
     }
 
@@ -336,6 +365,11 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            source_map_line_map: None,
+            captured_mappings: Vec::new(),
+            mapping_scan_offset: 0,
+            mapping_generated_line: 0,
+            mapping_generated_column: 0,
         }
     }
 
@@ -1397,6 +1431,10 @@ impl<'a> IRPrinter<'a> {
                     self.emit_node(val);
                 }
                 self.write("]");
+            }
+            IRNode::SourceMapped { node, source_pos } => {
+                self.record_source_mapping(*source_pos);
+                self.emit_node(node);
             }
             IRNode::GeneratorSent => {
                 self.write(self.generator_state_name);

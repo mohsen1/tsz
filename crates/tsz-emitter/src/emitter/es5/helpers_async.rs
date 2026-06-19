@@ -613,7 +613,7 @@ impl<'a> Printer<'a> {
         use crate::transforms::async_es5_ir::AsyncES5Transformer;
         use crate::transforms::ir_printer::IRPrinter;
         let mut transformer = AsyncES5Transformer::new(self.arena);
-        if let Some(text) = self.source_text {
+        if let Some(text) = self.source_text.or_else(|| self.source_text_for_map()) {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
@@ -632,13 +632,28 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }
+        if self.writer.has_source_map()
+            && let Some(map_text) = self.source_text_for_map()
+        {
+            printer.enable_source_map_capture(crate::output::source_writer::LineMap::new(map_text));
+        }
         printer.set_indent_level(self.writer.indent_level());
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             printer.set_tslib_prefix(true);
             printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         printer.emit(&ir);
+        // Splice the IR-printed generator body into the parent output. Source-map
+        // mappings the IR printer captured for downleveled suspension operands
+        // (`yield`/`await` expressions) are offset to the splice point and merged
+        // into the parent map — the IR body is otherwise written as opaque text
+        // and would carry no mappings (matching tsc, which maps these operands).
+        let base_line = self.writer.current_line();
+        let base_column = self.writer.current_column();
+        let captured_mappings = printer.take_captured_mappings();
         self.write(&printer.take_output());
+        self.writer
+            .add_offset_mappings(base_line, base_column, &captured_mappings);
         if let Some(node) = self.arena.get(function_node) {
             while self.comment_emit_idx < self.all_comments.len()
                 && self.all_comments[self.comment_emit_idx].end <= node.end

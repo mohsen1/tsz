@@ -177,6 +177,17 @@ pub enum IRNode {
         expression: Box<Self>,
     },
 
+    /// An expression node tagged with the byte offset of the original source
+    /// expression it was lowered from. The IR printer records a source-map
+    /// mapping at the wrapped node's generated position before emitting it,
+    /// then emits `node` unchanged. This is otherwise transparent: every IR
+    /// traversal delegates through to `node`.
+    ///
+    /// Used for downleveled generator/async suspension operands (`yield expr`,
+    /// `await expr`), whose original source positions would otherwise be lost
+    /// when the operand is converted to position-less IR.
+    SourceMapped { node: Box<Self>, source_pos: u32 },
+
     // =========================================================================
     // Statements
     // =========================================================================
@@ -1154,6 +1165,7 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_identifier(name)),
+            Self::SourceMapped { node, .. } => node.contains_identifier(name),
             Self::IfBreak { condition, .. } => condition.contains_identifier(name),
             Self::PrivateFieldSet {
                 receiver, value, ..
@@ -1360,6 +1372,7 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_captured_this_reference()),
+            Self::SourceMapped { node, .. } => node.contains_captured_this_reference(),
             Self::AwaiterCall {
                 this_arg,
                 generator_body,

@@ -32,10 +32,13 @@ impl IRPrinter<'_> {
     }
 
     const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
-        matches!(
-            expr,
-            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
-        )
+        match expr {
+            // Stay transparent to the source-position wrapper: inline-ness is a
+            // property of the wrapped expression.
+            IRNode::SourceMapped { node, .. } => Self::is_generator_inline_throw_expression(node),
+            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent => true,
+            _ => false,
+        }
     }
 
     pub(super) fn should_indent_sequence_child(node: &IRNode) -> bool {

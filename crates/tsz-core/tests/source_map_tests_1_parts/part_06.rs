@@ -363,7 +363,6 @@ fn test_source_map_es5_transform_async_for_of_destructuring_mapping() {
 }
 
 #[test]
-#[ignore = "regressed after remote changes: yield expression source map mappings no longer generated"]
 fn test_source_map_es5_transform_generator_yield_mapping() {
     let source = "function* gen() { yield first(); yield second(); }";
     let (parser, root) = parse_test_source(source);
@@ -425,6 +424,55 @@ fn test_source_map_es5_transform_generator_yield_mapping() {
     assert!(
         has_yield1_mapping || has_yield2_mapping,
         "expected at least one mapping for yield expressions. mappings: {mappings}"
+    );
+}
+
+/// Adjacent case: the mapping for a downleveled generator suspension operand is
+/// keyed on the operand's source position, not on any binder spelling. Every
+/// identifier here is renamed relative to the witness above, and the asserted
+/// mapping must still land on the `compute(...)` call that is yielded.
+#[test]
+fn test_source_map_es5_generator_yield_mapping_renamed_binders() {
+    let source = "function* iterate() { yield compute(); }";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    assert!(
+        printer.get_output().contains("__generator("),
+        "expected generator downlevel output, got: {}",
+        printer.get_output()
+    );
+
+    let map_json = printer.generate_source_map_json().expect("source map");
+    let map_value: Value = serde_json::from_str(&map_json).expect("parse source map");
+    let mappings = map_value
+        .get("mappings")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let decoded = decode_mappings(mappings);
+
+    let (yield_line, yield_col) = find_line_col(source, "yield compute");
+    let has_yield_mapping = decoded.iter().any(|entry| {
+        entry.original_line == yield_line
+            && entry.original_column >= yield_col
+            && entry.original_column <= yield_col + 14
+    });
+    assert!(
+        has_yield_mapping,
+        "expected a mapping for the yielded `compute()` operand regardless of \
+         binder names. mappings: {mappings}"
     );
 }
 

@@ -176,10 +176,28 @@ impl<'a> AsyncES5Transformer<'a> {
     pub(super) fn generator_yield_operand_to_ir(&self, idx: NodeIndex) -> IRNode {
         let operand = self.expression_to_ir(idx);
         let Some(comment) = self.yield_operand_line_comment(idx) else {
-            return operand;
+            return self.source_mapped_operand(idx, operand);
         };
         let operand_text = crate::transforms::ir_printer::IRPrinter::emit_to_string(&operand);
         IRNode::Raw(format!("\n                {comment}\n                {operand_text}").into())
+    }
+
+    /// Tag a lowered suspension operand with the byte offset of the original
+    /// source expression so the IR printer can record a source-map mapping at
+    /// the operand's generated position. Anchors on the operand's leftmost leaf
+    /// token (e.g. the callee identifier of `first()`), falling back to the
+    /// node start. Transparent when no position is resolvable.
+    pub(super) fn source_mapped_operand(&self, idx: NodeIndex, operand: IRNode) -> IRNode {
+        let Some(source_pos) = self
+            .expression_leaf_start(idx)
+            .or_else(|| self.arena.get(idx).map(|node| node.pos))
+        else {
+            return operand;
+        };
+        IRNode::SourceMapped {
+            node: Box::new(operand),
+            source_pos,
+        }
     }
 
     fn yield_operand_line_comment(&self, idx: NodeIndex) -> Option<String> {
