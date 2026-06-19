@@ -661,6 +661,7 @@ impl<'a> CheckerState<'a> {
                     arg_types: &overload_resolution.arg_types,
                     callee_type: callee_type_for_resolution,
                     callee_has_declared_generic_signature: false,
+                    raw_callee_shape: None,
                     is_super_call: false,
                     is_optional_chain: nullish_cause.is_some(),
                     allow_contextual_mismatch_deferral: false,
@@ -1565,6 +1566,7 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .any(|sig| !sig.type_params.is_empty())
                     }),
+            raw_callee_shape: original_callee_shape.as_ref(),
             is_super_call,
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,

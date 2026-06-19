@@ -1353,6 +1353,17 @@ impl<'a> CheckerState<'a> {
             result = crate::query_boundaries::common::CallResult::Success(fallback_return);
         }
 
+        // Raw (uninstantiated) callee signature, used only for the literal-display
+        // heuristic in `handle_call_result` to inspect declared parameter slots.
+        let raw_callee_shape_owned = is_generic_call
+            .then(|| {
+                call_checker::get_contextual_signature_for_arity(
+                    self.ctx.types,
+                    callee_type_for_resolution,
+                    args.len(),
+                )
+            })
+            .flatten();
         let call_context = super::call_result::CallResultContext {
             callee_expr,
             call_idx: idx,
@@ -1360,6 +1371,7 @@ impl<'a> CheckerState<'a> {
             arg_types: &arg_types,
             callee_type: callee_type_for_call,
             callee_has_declared_generic_signature: is_generic_call,
+            raw_callee_shape: raw_callee_shape_owned.as_ref(),
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,

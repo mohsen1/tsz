@@ -521,6 +521,10 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .any(|sig| !sig.type_params.is_empty())
                         }),
+                // Tagged-template arguments map positionally to the tag's
+                // declared parameters; the literal-display heuristic that
+                // consumes `raw_callee_shape` does not apply here.
+                raw_callee_shape: None,
                 is_super_call: false,
                 is_optional_chain: false,
                 allow_contextual_mismatch_deferral: true,

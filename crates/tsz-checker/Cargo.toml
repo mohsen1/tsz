@@ -821,6 +821,9 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
 [[test]]
+name = "inline_conditional_rest_spread_negative_display_tests"
+path = "tests/inline_conditional_rest_spread_negative_display_tests.rs"
+[[test]]
 name = "inline_conditional_infer_return_tests"
 path = "tests/inline_conditional_infer_return_tests.rs"
 [[test]]
