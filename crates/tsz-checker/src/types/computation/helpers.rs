@@ -471,7 +471,17 @@ impl<'a> CheckerState<'a> {
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
-                    if evaluator.is_bigint_like(resolved) {
+                    // `is_bigint_like` reports `true` for `any` (and the error
+                    // sentinel), but a unary arithmetic operator (`+`/`-`/`~`/`++`/
+                    // `--`) on an `any` operand yields `number` in tsc, not `bigint`
+                    // — only a genuinely bigint-typed operand produces `bigint`.
+                    // Without this guard `--x`/`+x` on `any` became `bigint`, which
+                    // then poisoned downstream comparisons (false TS2367) and
+                    // arithmetic (false TS2365).
+                    if resolved != TypeId::ANY
+                        && resolved != TypeId::ERROR
+                        && evaluator.is_bigint_like(resolved)
+                    {
                         TypeId::BIGINT
                     } else {
                         TypeId::NUMBER
@@ -510,7 +520,17 @@ impl<'a> CheckerState<'a> {
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
-                    if evaluator.is_bigint_like(resolved) {
+                    // `is_bigint_like` reports `true` for `any` (and the error
+                    // sentinel), but a unary arithmetic operator (`+`/`-`/`~`/`++`/
+                    // `--`) on an `any` operand yields `number` in tsc, not `bigint`
+                    // — only a genuinely bigint-typed operand produces `bigint`.
+                    // Without this guard `--x`/`+x` on `any` became `bigint`, which
+                    // then poisoned downstream comparisons (false TS2367) and
+                    // arithmetic (false TS2365).
+                    if resolved != TypeId::ANY
+                        && resolved != TypeId::ERROR
+                        && evaluator.is_bigint_like(resolved)
+                    {
                         TypeId::BIGINT
                     } else {
                         TypeId::NUMBER
@@ -585,7 +605,17 @@ impl<'a> CheckerState<'a> {
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
-                    if evaluator.is_bigint_like(resolved) {
+                    // `is_bigint_like` reports `true` for `any` (and the error
+                    // sentinel), but a unary arithmetic operator (`+`/`-`/`~`/`++`/
+                    // `--`) on an `any` operand yields `number` in tsc, not `bigint`
+                    // — only a genuinely bigint-typed operand produces `bigint`.
+                    // Without this guard `--x`/`+x` on `any` became `bigint`, which
+                    // then poisoned downstream comparisons (false TS2367) and
+                    // arithmetic (false TS2365).
+                    if resolved != TypeId::ANY
+                        && resolved != TypeId::ERROR
+                        && evaluator.is_bigint_like(resolved)
+                    {
                         TypeId::BIGINT
                     } else {
                         TypeId::NUMBER
