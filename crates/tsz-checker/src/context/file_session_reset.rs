@@ -340,6 +340,9 @@ impl<'a> CheckerContext<'a> {
         self.type_parameter_scope.clear();
         self.type_reference_validation_caches.arg_validation.clear();
         self.type_reference_validation_caches
+            .bare_param_base_inst_constraint
+            .clear();
+        self.type_reference_validation_caches
             .type_node_validation
             .clear();
         self.type_reference_validation_caches
@@ -359,6 +362,12 @@ impl<'a> CheckerContext<'a> {
             .clear();
         self.type_reference_validation_caches
             .indexed_object_map_branch_constraint
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_true_branch_relation_successes
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_true_branch_narrowing
             .clear();
         self.type_reference_validation_caches
             .type_param_default_constraint

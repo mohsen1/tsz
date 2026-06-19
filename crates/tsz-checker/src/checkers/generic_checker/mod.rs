@@ -233,6 +233,34 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
     ) -> bool {
         let constraint = self.resolve_lazy_type(constraint);
+        let cache_key = (
+            arg_idx.0,
+            constraint,
+            self.type_reference_arg_validation_scope_key(),
+            self.active_resolving_alias_set_key(),
+        );
+        if let Some(&cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .conditional_true_branch_narrowing
+            .get(&cache_key)
+        {
+            return cached;
+        }
+        let result =
+            self.type_argument_is_narrowed_by_conditional_true_branch_uncached(arg_idx, constraint);
+        self.ctx
+            .type_reference_validation_caches
+            .conditional_true_branch_narrowing
+            .insert(cache_key, result);
+        result
+    }
+
+    fn type_argument_is_narrowed_by_conditional_true_branch_uncached(
+        &mut self,
+        arg_idx: NodeIndex,
+        constraint: TypeId,
+    ) -> bool {
         // Collect extends types from all enclosing conditional true branches
         // where the type argument is (or references) the check type.
         // In nested conditionals like `T extends A ? T extends B ? X<T> : ...`,

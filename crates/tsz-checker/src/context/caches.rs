@@ -120,6 +120,9 @@ pub struct TypeReferenceValidationCaches {
     /// Type-reference argument validations that completed without diagnostics
     /// in the current lexical type-parameter scope.
     pub arg_validation: FxHashSet<(u32, u32, u64)>,
+    /// Stable results for bare type-parameter base constraint checks in the
+    /// current file session.
+    pub bare_param_base_inst_constraint: FxHashMap<(TypeId, TypeId, TypeId, u16, bool), bool>,
     /// Type-node validations that completed without diagnostics in the
     /// current lexical type-parameter scope and active alias-resolution
     /// context.
@@ -147,6 +150,12 @@ pub struct TypeReferenceValidationCaches {
     /// underneath `conditional_branch_constraint` because different conditional
     /// aliases can expose the same mapped-object branch/value constraint pair.
     pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Successful conditional true-branch constraint relations for prepared
+    /// source/target types in the current file session.
+    pub conditional_true_branch_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
+    /// Results for syntactic conditional true-branch narrowing proofs keyed by
+    /// `(arg node, constraint, type-parameter scope, active alias set)`.
+    pub conditional_true_branch_narrowing: FxHashMap<(u32, TypeId, u64, u64), bool>,
     /// Type-parameter default/constraint validations that completed without
     /// diagnostics for the active checker file.
     pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>,
@@ -194,6 +203,8 @@ pub struct SharedConstraintProofCache {
     pub conditional_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
     /// Mirror of `indexed_object_map_branch_constraint`, `true` results only.
     pub indexed_object_map_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
+    /// Mirror of `conditional_true_branch_relation_successes`.
+    pub conditional_true_branch_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
