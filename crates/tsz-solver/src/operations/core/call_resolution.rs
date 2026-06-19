@@ -89,10 +89,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Evaluate the application type to properly instantiate its base type with arguments
                 let evaluated = self.checker.evaluate_type(func_type);
                 if evaluated != func_type {
-                    self.resolve_call(evaluated, arg_types)
-                } else {
-                    CallResult::NotCallable { type_id: func_type }
+                    return self.resolve_call(evaluated, arg_types);
                 }
+                // `evaluate_type` cannot expand a *cross-file* generic alias/interface
+                // application whose base carries no `SymbolId` in the calling file's
+                // context (the resolver-less case: the base survives lowering as a bare
+                // `Lazy(DefId)`/`TypeQuery`/`UnresolvedTypeName`). The constraint walker
+                // and generic-call inference already recover this through
+                // `expand_type_alias_application`, which resolves the base via its
+                // declaring `DefId` and instantiates the open body. The call boundary
+                // did not, so a callable generic alias/interface reached as a call
+                // target (e.g. an imported `type Create<R> = Sig<R>` where `Sig` is a
+                // callable interface) collapsed to a spurious `NotCallable` — the
+                // untyped-call / not-callable family tracked in #13947. Expand the alias
+                // application and retry; callability is still decided structurally, so a
+                // genuinely non-callable application stays `NotCallable`.
+                if let Some(expanded) = self.checker.expand_type_alias_application(func_type)
+                    && expanded != func_type
+                {
+                    return self.resolve_call(expanded, arg_types);
+                }
+                CallResult::NotCallable { type_id: func_type }
             }
             TypeData::TypeParameter(param_info) => {
                 // For type parameters with callable constraints (e.g., T extends { (): string }),
