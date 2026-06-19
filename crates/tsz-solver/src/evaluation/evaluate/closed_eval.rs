@@ -56,8 +56,45 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Try to return a cached evaluation result for a cacheable, substitution-
     /// independent `type_id`. Returns `None` on a miss or an ineligible node.
     pub(super) fn try_closed_eval_read(&self, type_id: TypeId) -> Option<TypeId> {
-        if !closed_eval_cache_enabled()
-            || !self.is_closed_cacheable_kind(type_id)
+        if !closed_eval_cache_enabled() {
+            return None;
+        }
+        // A *limited-resolver* evaluator (the checker's first-pass
+        // `TypeEnvironment` evaluation, whose `Lazy` resolution is intentionally
+        // partial) must recompute a meta-operation
+        // (`IndexAccess`/`KeyOf`/`Application`) rather than consume the
+        // authoritative pass's stored result. A stored meta-operation result is a
+        // *fully materialized* form (e.g. a generic interface instance such as
+        // `Validator<NonNullable<string>>` flattened to its structural callable),
+        // produced by the complete resolver. Feeding that materialized form into
+        // the limited evaluator's in-flight inference — where a freshly recomputed
+        // result keeps the operand in the deferred / application form an `infer`
+        // match still recognizes — yields a different (under-reduced) answer. The
+        // limited evaluator memoizes that answer further up, poisoning the
+        // still-deferred outer application's evaluation, and a later authoritative
+        // read then observes the poisoned form:
+        // `RequiredKeys<V> = { … extends Validator<infer T> ? … }[keyof V]`
+        // collapses to `never`, dropping required keys and flipping a downstream
+        // conditional into a spurious `TS2322`. This is the read-side mirror of the
+        // write gate, which already commits these meta-operation kinds only from
+        // the authoritative (complete-resolver) pass (see `commit_closed_eval_writes`
+        // and the `limited_resolver` field): the limited evaluator's results are
+        // context-dependent, so it neither publishes nor consumes a materialized
+        // meta-operation across the partial/complete boundary. A closed
+        // `Conditional` stays readable (its stored value is always a fully-resolved
+        // branch), and authoritative / plain query-backed evaluators keep reading
+        // every kind, so the deep-recursion meta-operation reuse is preserved. The
+        // cheap field check short-circuits before the eligibility walks below for
+        // every non-limited evaluator.
+        if self.limited_resolver
+            && matches!(
+                self.interner.lookup(type_id),
+                Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Application(_))
+            )
+        {
+            return None;
+        }
+        if !self.is_closed_cacheable_kind(type_id)
             || crate::type_queries::is_substitution_dependent_type(self.interner, type_id)
         {
             return None;
@@ -404,11 +441,50 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
     use crate::construction::TypeInterner;
     use crate::def::DefId;
 
     fn evaluator(interner: &TypeInterner) -> TypeEvaluator<'_> {
         TypeEvaluator::new(interner)
+    }
+
+    /// A limited-resolver evaluator (the checker's intentionally-partial
+    /// first-pass `TypeEnvironment` evaluation) must *recompute* a cacheable
+    /// `IndexAccess`/`KeyOf` rather than consume the authoritative pass's stored,
+    /// fully-materialized result — consuming it across the partial/complete
+    /// boundary poisons its in-flight inference (a `propTypeValidatorInference`
+    /// style false `TS2322`). A non-limited (authoritative / plain query-backed)
+    /// evaluator keeps reading the cache, so the meta-operation reuse is
+    /// preserved. The cache key (`no_unchecked_indexed_access`/`exact_optional`)
+    /// is supplied by the same `QueryCache` for both store and read, so a hit is
+    /// exactly the stored value.
+    #[test]
+    fn limited_resolver_does_not_read_cached_meta_operations() {
+        let interner = TypeInterner::new();
+        // Two cacheable meta-operations over a plain (non-index-signature) object.
+        let idx = interner.index_access(TypeId::OBJECT, TypeId::STRING);
+        let keyof = interner.keyof(TypeId::OBJECT);
+        let cache = QueryCache::new(&interner);
+        cache.insert_closed_eval_cache(idx, false, TypeId::NUMBER);
+        cache.insert_closed_eval_cache(keyof, false, TypeId::BOOLEAN);
+
+        // Non-limited evaluator: reads the authoritative stored result.
+        let authoritative = TypeEvaluator::new(&cache);
+        assert_eq!(
+            authoritative.try_closed_eval_read(idx),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            authoritative.try_closed_eval_read(keyof),
+            Some(TypeId::BOOLEAN)
+        );
+
+        // Limited-resolver evaluator: must not consume the materialized result.
+        let limited = TypeEvaluator::new(&cache).with_limited_resolver();
+        assert_eq!(limited.try_closed_eval_read(idx), None);
+        assert_eq!(limited.try_closed_eval_read(keyof), None);
     }
 
     /// The substitution-independent cache is eligible for `IndexAccess`/`KeyOf`
