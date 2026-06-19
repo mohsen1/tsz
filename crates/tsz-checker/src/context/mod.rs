@@ -39,8 +39,6 @@ pub(crate) mod eval_memo_purity;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
-mod lib_type_resolution_caches;
-pub use lib_type_resolution_caches::LibTypeResolutionCaches;
 mod def_declaration;
 mod def_mapping;
 mod def_mapping_flow_mirror;
