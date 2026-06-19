@@ -18,12 +18,22 @@ use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
     /// Compute the VALUE-space type a `typeof X` query should resolve to for a
-    /// symbol declared as both an interface and a value.
+    /// symbol whose value meaning is merged with a deferred type-space
+    /// declaration sharing its `SymbolRef`/`DefId`.
+    ///
+    /// `typeof X` is always value-space, but `resolve_ref`/`symbol_types` holds
+    /// the TYPE-space type when the symbol also carries an interface or type
+    /// alias declaration. Both forms occur in real code:
+    /// - interface+value: lib `Date`/`Request`, or user `interface Foo {}
+    ///   declare var Foo: {...}` — the instance interface type is stored.
+    /// - type-alias+value: the fp-ts higher-kinded-types tag idiom `const URI =
+    ///   "IOEither"; type URI = typeof URI` — the (self-referential) alias body
+    ///   is stored, so resolving `typeof URI` through it cycles to `undefined`.
     ///
     /// Returns the lib `*Constructor` companion when present (e.g. `Date` ->
     /// `DateConstructor`), otherwise the value declaration's type. Returns `None`
-    /// for non-merged symbols, class+interface merges (whose constructor type is
-    /// already routed through the class env entry), and when no value type can be
+    /// for non-merged symbols, class merges (whose constructor type is already
+    /// routed through the class env entry), and when no value type can be
     /// determined — leaving the normal `SymbolRef`/`DefId` resolution untouched.
     pub(crate) fn merged_interface_value_typeof_type(
         &mut self,
@@ -31,7 +41,7 @@ impl CheckerState<'_> {
     ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !(symbol.has_any_flags(symbol_flags::VALUE)
-            && symbol.has_any_flags(symbol_flags::INTERFACE))
+            && symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
         {
             return None;
         }

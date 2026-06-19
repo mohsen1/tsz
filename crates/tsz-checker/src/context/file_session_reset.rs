@@ -238,6 +238,7 @@ impl<'a> CheckerContext<'a> {
         self.node_resolution_stack.clear();
         self.import_resolution_stack.clear();
         self.typeof_resolution_stack.borrow_mut().clear();
+        self.omitted_default_constraint_stack.borrow_mut().clear();
         self.symbol_resolution_depth.set(0);
 
         // Implicit-any tracking sets.
