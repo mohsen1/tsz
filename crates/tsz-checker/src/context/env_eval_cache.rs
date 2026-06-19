@@ -163,6 +163,60 @@ impl<'a> CheckerContext<'a> {
         self.env_eval_cache.borrow_mut().clear();
     }
 
+    /// Drop the single top-level `env_eval_cache` entry keyed by `type_id`, if
+    /// present. Returns whether an entry was actually removed.
+    ///
+    /// This is the minimal targeted counterpart to [`Self::clear_env_eval_cache`]
+    /// (global flush) and [`Self::clear_type_evaluation_caches_for_def`]
+    /// (per-`DefId` sweep): it invalidates exactly one evaluation result without
+    /// disturbing any other entry or paying an `O(cache)` structural scan. Use it
+    /// when a specific `type_id` must be re-evaluated — e.g. re-resolving a type
+    /// under a different resolution mode after a speculative (bounded) verdict —
+    /// so the next [`Self::lookup_env_eval_cache`] recomputes rather than
+    /// short-circuiting to the stale entry.
+    pub(crate) fn invalidate_env_eval_for(&self, type_id: TypeId) -> bool {
+        self.env_eval_cache.borrow_mut().remove(&type_id).is_some()
+    }
+
+    /// Drop every `env_eval_cache` entry structurally reachable from `type_id`:
+    /// the entry for `type_id` itself plus every entry whose key **or** cached
+    /// result is a structural sub-term of `type_id`. Returns the number of
+    /// entries removed.
+    ///
+    /// Re-evaluating a type under a different resolution mode is not enough to
+    /// invalidate just its top-level result: the first (e.g. shallow/bounded)
+    /// pass also cached results for the sub-terms it walked, and a later full
+    /// pass would short-circuit to those stale sub-results. This transitive
+    /// variant clears the type's reachable sub-evaluations in one pass so the
+    /// re-evaluation recomputes the whole reachable closure.
+    ///
+    /// The reachable set is collected once (`collect_referenced_types`, which
+    /// includes the root) and entries are tested by O(1) membership, so the
+    /// sweep is `O(reachable(type_id)) + O(cache)` rather than re-walking per
+    /// entry. The result side is matched with the same key-and-result discipline
+    /// as [`Self::clear_type_evaluation_caches_for_def`]: an entry whose result
+    /// embeds a reachable sub-term holds that sub-term's pre-re-evaluation form,
+    /// so it is dropped too. Over-matching only forces a deterministic recompute;
+    /// it never changes a result.
+    ///
+    /// Scope is the `env_eval_cache` only. Unlike the per-`DefId` sweep, this
+    /// does not touch the narrowing `resolve_cache`/`contextual_resolve_cache`:
+    /// those are invalidated through the def-keyed path and are not part of a
+    /// per-type evaluation closure.
+    pub(crate) fn invalidate_env_eval_reachable_from(&self, type_id: TypeId) -> usize {
+        let mut cache = self.env_eval_cache.borrow_mut();
+        if cache.is_empty() {
+            // Nothing to drop: skip the structural walk entirely (mirrors the
+            // empty-cache early-out in `env_eval_cache_seed_entries`).
+            return 0;
+        }
+        let reachable =
+            crate::query_boundaries::common::collect_referenced_types(self.types, type_id);
+        let before = cache.len();
+        cache.retain(|&key, value| !reachable.contains(&key) && !reachable.contains(&value.result));
+        before - cache.len()
+    }
+
     pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
         self.env_eval_cache.borrow_mut().retain(|&key, value| {
             !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value.result, def_id)
