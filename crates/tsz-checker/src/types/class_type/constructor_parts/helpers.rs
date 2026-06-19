@@ -15,6 +15,46 @@ use tsz_solver::{
 use super::StaticMemberBuildData;
 
 impl<'a> CheckerState<'a> {
+    /// Deferred fallback for a re-entrant constructor query: a `Lazy` reference
+    /// to the class's `ClassConstructor` companion `DefId`, get-or-created so
+    /// the same stable identity the completed computation sets the body on
+    /// (the `get_class_constructor_type_inner` registration path) is the one the
+    /// cycle returns. The companion resolves to the real constructor type once
+    /// the outer, non-cyclic computation publishes its body; until then it
+    /// behaves like any other unresolved `Lazy` (no eager `any` to cache or
+    /// propagate cross-arena). Mirrors the instance side's `Lazy(classDef)`
+    /// deferral (issue #13947).
+    pub(super) fn deferred_constructor_companion_lazy(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        sym_id: tsz_binder::SymbolId,
+    ) -> TypeId {
+        let class_def = self.ctx.get_or_create_def_id(sym_id);
+        let ctor_def = match self.ctx.definition_store.get_constructor_def(class_def) {
+            Some(existing) => existing,
+            None => {
+                // No pre-populated companion (anonymous classes, or classes not
+                // covered by pre-population): create one with no body yet and
+                // pin the mapping, so the completing computation reuses this
+                // identity via `get_constructor_def` and `set_body`s onto it.
+                let display_name = self.class_constructor_display_name(class_idx, class);
+                let name = self.ctx.types.intern_string(&display_name);
+                let created = self.ctx.definition_store.register(
+                    tsz_solver::def::DefinitionInfo::class_constructor_companion(
+                        name,
+                        Some(sym_id.0),
+                    ),
+                );
+                self.ctx
+                    .definition_store
+                    .register_constructor_companion(class_def, created);
+                created
+            }
+        };
+        self.ctx.types.factory().lazy(ctor_def)
+    }
+
     /// Get the constructor type of a class declaration (static members,
     /// construct signatures, inherited statics, accessibility, abstractness).
     pub(crate) fn get_class_constructor_type(

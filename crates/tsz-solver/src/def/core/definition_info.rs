@@ -266,6 +266,34 @@ impl DefinitionInfo {
         }
     }
 
+    /// Create a minimal, body-less `ClassConstructor` companion identity for a
+    /// class that has no `SemanticDefEntry` to source from (anonymous classes,
+    /// or classes not covered by binder pre-population). The body is filled in
+    /// later via `set_body` once the constructor type is computed.
+    pub const fn class_constructor_companion(name: Atom, symbol_id: Option<u32>) -> Self {
+        Self {
+            kind: DefKind::ClassConstructor,
+            name,
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+            symbol_id,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
+            is_global_augmentation: false,
+            is_declare: false,
+        }
+    }
+
     /// Create a `ClassConstructor` companion from a class `SemanticDefEntry`.
     pub fn class_constructor_from_semantic_def(
         entry: &tsz_binder::SemanticDefEntry,
