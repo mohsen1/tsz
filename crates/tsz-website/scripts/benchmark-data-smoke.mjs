@@ -145,6 +145,59 @@ await fs.writeFile(artifact, `${JSON.stringify({
         dts_status: "not in scope (noEmit project check)",
       },
     },
+    {
+      name: "umami-project",
+      lines: 204,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {
+          tsconfig_path: "umami/tsconfig.json",
+          source_root: "umami/src",
+          first_failure_path: null,
+          first_failure_line: null,
+          first_failure_column: null,
+          first_failure_code: null,
+          reduced_repro_path: null,
+          command: "$TSZ_BIN --noEmit -p umami/tsconfig.json",
+        },
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [] },
+        files_reached: 204,
+        files_reached_reason: null,
+        peak_memory_bytes: 209715200,
+        peak_memory_bytes_reason: null,
+        fixture_sources: [
+          {
+            name: "umami",
+            repository: "https://github.com/umami-software/umami.git",
+            ref: "9f3a52f7b62d875d8b6f2ef6b6e4fc621876d2be",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
@@ -387,6 +440,13 @@ try {
   assert.equal(typeChallengesSolutionsPage.failed, true);
   assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
 
+  const umamiPage = pages.find((page) => page.name === "umami-project");
+  assert.ok(umamiPage, "expected compile-canary Umami application page");
+  assert.equal(umamiPage.category, "Projects: applications");
+  assert.equal(umamiPage.kind, "project");
+  assert.equal(umamiPage.failed, true);
+  assert.match(umamiPage.status_label, /compile canary/i);
+
   const valibotPage = pages.find((page) => page.name === "valibot-project");
   assert.ok(valibotPage, "expected compile-canary Valibot project page");
   assert.equal(valibotPage.category, "Projects: external libraries");
@@ -410,6 +470,7 @@ try {
   assert.match(compatibilityDashboard, /utility-types[\s\S]*10 files/);
   assert.match(compatibilityDashboard, /utility-types[\s\S]*100 MiB peak/);
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
+  assert.match(compatibilityDashboard, /umami[\s\S]*compat-state green[\s\S]*204 files[\s\S]*200 MiB peak/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;

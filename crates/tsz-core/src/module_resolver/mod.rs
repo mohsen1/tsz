@@ -359,24 +359,11 @@ impl ModuleResolver {
 
         // Determine the module kind of the importing file, honoring any explicit
         // driver-provided resolution-mode override from import attributes.
-        let importing_module_kind =
-            importing_module_kind_override.unwrap_or_else(|| match import_kind {
-                ImportKind::DynamicImport => ImportingModuleKind::Esm,
-                ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
-                ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
-                    ModuleKind::Preserve => {
-                        let extension = ModuleExtension::from_path(containing_file);
-                        if extension.forces_esm() {
-                            ImportingModuleKind::Esm
-                        } else if extension.forces_cjs() {
-                            ImportingModuleKind::CommonJs
-                        } else {
-                            ImportingModuleKind::Esm
-                        }
-                    }
-                    _ => self.get_importing_module_kind(containing_file),
-                },
-            });
+        let importing_module_kind = self.importing_module_kind_for_import(
+            containing_file,
+            import_kind,
+            importing_module_kind_override,
+        );
         // The IMPORTER's package type drives extension-priority choices for
         // any file probing that lives in the importer's own package context
         // (relative paths, baseUrl/path-mapping targets, classic walk-up).
@@ -495,6 +482,51 @@ impl ModuleResolver {
             }
         } else {
             ImportingModuleKind::CommonJs
+        }
+    }
+
+    /// Canonical ESM/CJS classification for an import *site*.
+    ///
+    /// This is the single owner of the rule every resolution entry point (and
+    /// the checker's resolution-mode map in the CLI driver) must agree on. The
+    /// classification decides which conditional-`exports`/`imports` branch
+    /// (`import` vs `require`) and which Node16/NodeNext extension priority a
+    /// lookup uses, so any divergence between entry points silently resolves the
+    /// same import two different ways:
+    ///
+    /// - An explicit driver-supplied `resolution_mode_override` (from an import
+    ///   attribute / `resolution-mode`) wins over everything else.
+    /// - A dynamic `import()` is always ESM; a `require(...)` is always CJS,
+    ///   regardless of the importing file's extension or package type.
+    /// - An ordinary `import` / `export ... from` under `module: preserve` is
+    ///   ESM unless the importing file's extension forces CJS (`.cts`/`.cjs`);
+    ///   `.mts`/`.mjs` and the extensionless default are ESM. (`module:
+    ///   preserve` is tsc's bundler-style mode, where ordinary imports resolve
+    ///   with the `import` condition.)
+    /// - Otherwise the importing file's extension, `module` target, and nearest
+    ///   `package.json#type` decide, via [`Self::get_importing_module_kind`].
+    pub fn importing_module_kind_for_import(
+        &mut self,
+        containing_file: &Path,
+        import_kind: ImportKind,
+        resolution_mode_override: Option<ImportingModuleKind>,
+    ) -> ImportingModuleKind {
+        if let Some(over) = resolution_mode_override {
+            return over;
+        }
+        match import_kind {
+            ImportKind::DynamicImport => ImportingModuleKind::Esm,
+            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+            ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
+                ModuleKind::Preserve => {
+                    if ModuleExtension::from_path(containing_file).forces_cjs() {
+                        ImportingModuleKind::CommonJs
+                    } else {
+                        ImportingModuleKind::Esm
+                    }
+                }
+                _ => self.get_importing_module_kind(containing_file),
+            },
         }
     }
 
@@ -722,26 +754,11 @@ impl ModuleResolver {
             return ModuleLookupResult::ambient();
         }
 
-        let importing_module_kind_for_lookup =
-            request
-                .resolution_mode_override
-                .unwrap_or_else(|| match import_kind {
-                    ImportKind::DynamicImport => ImportingModuleKind::Esm,
-                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
-                    ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
-                        ModuleKind::Preserve => {
-                            let extension = ModuleExtension::from_path(containing_file);
-                            if extension.forces_esm() {
-                                ImportingModuleKind::Esm
-                            } else if extension.forces_cjs() {
-                                ImportingModuleKind::CommonJs
-                            } else {
-                                ImportingModuleKind::Esm
-                            }
-                        }
-                        _ => self.get_importing_module_kind(containing_file),
-                    },
-                });
+        let importing_module_kind_for_lookup = self.importing_module_kind_for_import(
+            containing_file,
+            import_kind,
+            request.resolution_mode_override,
+        );
 
         // 1. Try primary resolution
         match self.resolve_with_kind_and_module_kind(
@@ -937,9 +954,13 @@ impl ModuleResolver {
                 if matches!(
                     failure,
                     ResolutionFailure::NotFound { .. } | ResolutionFailure::PackageJsonError { .. }
-                ) && let Some(js_path) =
-                    self.probe_js_file(specifier, containing_file, span, import_kind)
-                {
+                ) && let Some(js_path) = self.probe_js_file(
+                    specifier,
+                    containing_file,
+                    span,
+                    import_kind,
+                    request.resolution_mode_override,
+                ) {
                     return ModuleLookupResult::untyped_js(
                         js_path,
                         request.no_implicit_any,
@@ -1029,6 +1050,7 @@ impl ModuleResolver {
         containing_file: &Path,
         specifier_span: Span,
         import_kind: ImportKind,
+        resolution_mode_override: Option<ImportingModuleKind>,
     ) -> Option<PathBuf> {
         if self.allow_js {
             return None; // Already tried JS in normal resolution
@@ -1038,7 +1060,16 @@ impl ModuleResolver {
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
-        let importing_module_kind = self.get_importing_module_kind(containing_file);
+        // Classify the import site exactly as the primary resolution did, so the
+        // probe re-resolves the same specifier under the same export condition /
+        // extension priority. Using the raw `get_importing_module_kind` here
+        // diverged under `module: preserve`, letting the probe bind a
+        // `require`-only JS target the ESM primary resolution had rejected.
+        let importing_module_kind = self.importing_module_kind_for_import(
+            containing_file,
+            import_kind,
+            resolution_mode_override,
+        );
 
         self.allow_js = true;
         let importer_package_type = self.importer_package_type(importing_module_kind);

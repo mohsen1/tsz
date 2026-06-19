@@ -832,19 +832,25 @@ impl Server {
                     .position_to_offset(loc.range.end, &loc_source)
                     .unwrap_or(start);
                 let len = end.saturating_sub(start);
+                // Only a location whose text matches this seed's symbol name is a
+                // reference for the seed's group. Claim it (within-group and
+                // globally) *after* that text check — claiming before it lets an
+                // earlier group burn chain locations it then discards on
+                // text-mismatch, starving the group that actually owns them (e.g.
+                // the export alias-side token of a re-export `X as "<other>"`).
+                let loc_text = loc_source
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default()
+                    .trim();
+                if loc_text != seed_text {
+                    continue;
+                }
                 let key = (loc.file_path.clone(), start, len);
                 if !groups[group_idx].seen_refs.insert(key) {
                     continue;
                 }
                 let global_key = (loc.file_path.clone(), start, len);
                 if !seen_refs_global.insert(global_key) {
-                    continue;
-                }
-                let loc_text = loc_source
-                    .get(start as usize..end as usize)
-                    .unwrap_or_default()
-                    .trim();
-                if loc_text != seed_text {
                     continue;
                 }
 
