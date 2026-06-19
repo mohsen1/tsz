@@ -21,6 +21,7 @@ pub(crate) mod property_access;
 mod property_index_key_helpers;
 pub(crate) mod readonly;
 mod source_file;
+mod source_file_env_reconcile;
 mod strict_names;
 
 pub(crate) use self::strict_names::is_eval_or_arguments;
