@@ -64,6 +64,7 @@ daa_error_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationSta
 deferred_ts2454_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 flow_narrowed_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking; also reset at file-session boundary" }
 refs_resolved = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_position_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "memo of type-position identifier resolution keyed on this file's arena node idx; reset at file-session boundary" }
 application_symbols_resolved = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 application_symbols_resolution_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_module_names = { lifetime = "FileLocalReset", capability = "EmitSummaryState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

@@ -178,6 +178,19 @@ fn test_env_eval_threads_seed_persist_to_cache_entry_collection() {
     );
 }
 
+/// File-session invariant: type-position identifier resolution is cached by
+/// file-local `NodeIndex`, so it must be reset before checking the next file.
+#[test]
+fn test_type_position_resolution_cache_clears_at_file_boundary() {
+    let reset_source = fs::read_to_string("src/context/file_session_reset.rs")
+        .expect("failed to read file_session_reset.rs");
+    assert!(
+        reset_source.contains("type_position_resolution_cache")
+            && reset_source.contains("type_position_resolution_cache.borrow_mut().clear()"),
+        "type-position node-index cache must clear at the file-session boundary"
+    );
+}
+
 /// Boundary invariant: every `evaluate_type_with_cache` call must pass the
 /// explicit cache-entry collection flag. This keeps the speed-only drain gate
 /// visible at call sites instead of relying on a hidden default.
