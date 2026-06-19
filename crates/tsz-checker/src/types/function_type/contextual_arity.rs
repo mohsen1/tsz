@@ -3,7 +3,7 @@ use crate::state::CheckerState;
 use tsz_solver::{ParamInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn contextual_signature_accepts_required_callback_params(
+    pub(crate) fn contextual_signature_accepts_required_callback_params(
         &mut self,
         expected: TypeId,
         required_param_count: usize,

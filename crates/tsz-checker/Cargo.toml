@@ -434,6 +434,9 @@ path = "tests/ts2636_method_bivariance_tests.rs"
 name = "function_bivariance"
 path = "tests/function_bivariance.rs"
 [[test]]
+name = "function_expression_excess_param_implicit_any_tests"
+path = "tests/function_expression_excess_param_implicit_any_tests.rs"
+[[test]]
 name = "global_type_tests"
 path = "tests/global_type_tests.rs"
 [[test]]
