@@ -3,10 +3,17 @@ use std::path::Path;
 
 #[test]
 fn keyof_assignability_suppression_uses_relation_outcome_boundary() {
+    // The `should_suppress_assignability_diagnostic` cluster (including the
+    // evaluated-keyof `keyof_diagnostic_suppression_relation_outcome` probe) was
+    // extracted from `assignability_checker.rs` into the
+    // `query_boundaries/assignability_suppression.rs` module to stay under the
+    // 2000-LOC architecture cap; read it so the routing contract holds wherever
+    // the cluster physically resides.
     let checker = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assignability/assignability_checker.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/query_boundaries/assignability_suppression.rs"),
     )
-    .expect("failed to read assignability_checker.rs");
+    .expect("failed to read query_boundaries/assignability_suppression.rs");
     let helpers = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/assignability/application_keyof_helpers.rs"),

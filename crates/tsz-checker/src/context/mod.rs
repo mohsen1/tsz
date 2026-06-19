@@ -339,10 +339,8 @@ pub struct TypeCache {
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
     ///
-    /// Wrapped in `RefCell` for `&self` interior mutability (#12101): an
-    /// on-demand `&self` forcing resolver can publish a computed instance type
-    /// without a `&mut` borrow of the whole checker. Behavior is identical to
-    /// the previous plain map.
+    /// `RefCell` for `&self` interior mutability (#12101); an on-demand `&self`
+    /// forcing resolver can publish without a `&mut` borrow. Behavior identical.
     pub class_instance_type_cache: RefCell<FxHashMap<NodeIndex, TypeId>>,
 
     /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.

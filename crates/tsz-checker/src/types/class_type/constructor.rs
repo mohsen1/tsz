@@ -14,6 +14,8 @@ use tsz_solver::{CallSignature, CallableShape, IndexSignature, PropertyInfo, Typ
 
 use super::can_skip_base_instantiation;
 
+#[path = "constructor_parts/build_data.rs"]
+mod build_data;
 #[path = "constructor_parts/helpers.rs"]
 mod helpers;
 #[path = "constructor_parts/inferred_predicates.rs"]
@@ -23,21 +25,8 @@ mod member_aggregates;
 #[path = "constructor_parts/rough_partial.rs"]
 mod rough_partial;
 
+use build_data::StaticMemberBuildData;
 use member_aggregates::{AccessorAggregate, MethodAggregate};
-
-struct StaticMemberBuildData<'a> {
-    current_sym: Option<tsz_binder::SymbolId>,
-    properties: &'a FxHashMap<Atom, PropertyInfo>,
-    methods: &'a FxHashMap<Atom, MethodAggregate>,
-    accessors: &'a FxHashMap<Atom, AccessorAggregate>,
-    static_string_index: &'a Option<IndexSignature>,
-    static_number_index: &'a Option<IndexSignature>,
-    /// Property being injected mid-pass, before it has a cached type entry.
-    extra_property: Option<PropertyInfo>,
-    inherited_static_props: &'a [PropertyInfo],
-    all_static_member_names: &'a [Atom],
-    construct_signatures: &'a [CallSignature],
-}
 
 impl<'a> CheckerState<'a> {
     fn get_class_constructor_type_with_request_and_mode(

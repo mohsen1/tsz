@@ -12,7 +12,7 @@ use tsz_solver::{
     TypePredicate, Visibility,
 };
 
-use super::StaticMemberBuildData;
+use super::build_data::StaticMemberBuildData;
 
 impl<'a> CheckerState<'a> {
     /// Deferred fallback for a re-entrant constructor query: a `Lazy` reference
