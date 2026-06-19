@@ -1333,8 +1333,31 @@ impl<'a> CheckerState<'a> {
     // Type Evaluation for Assignability
     // =========================================================================
 
-    /// Ensure all Lazy/Ref types in a type are resolved into the type environment.
+    /// Ensure the type's *root* Lazy/Ref refs are resolved into the type
+    /// environment so a relation can start consuming it.
+    ///
+    /// # On-demand forcing (#12101)
+    ///
+    /// Historically this did an eager **transitive** pre-walk: it pushed every
+    /// resolved `DefId` body back onto the worklist and recursively materialized
+    /// the whole referenced graph (e.g. the entire DOM/webworker heritage
+    /// closure) up front. That transitive walk was ~53% of comlink check time
+    /// even though comlink structurally consumes only a handful of lib
+    /// interfaces.
+    ///
+    /// With on-demand forcing enabled (the default; toggle via
+    /// `TSZ_DISABLE_ON_DEMAND_FORCING`) the transitive push is dropped: only the
+    /// `type_id`'s **own** directly-referenced `DefId`s are resolved here so the
+    /// relation can begin. Tail interfaces reached transitively (a member's type,
+    /// a heritage base) stay `Lazy(DefId)` and are materialized on demand when a
+    /// relation/evaluation structurally consumes them — at the
+    /// [`CheckerContext::resolve_lazy`] miss via
+    /// [`CheckerContext::force_def_on_miss`], or explicitly by the `&mut`
+    /// consumers that need the full shape (property-access materialization,
+    /// keyof/spread, await-unwrap). `refs_resolved` therefore now means "root
+    /// forced", not "transitively walked".
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+        use crate::state_checking::lazy_lib_member::on_demand_forcing_disabled;
         use crate::state_domain::type_environment::lazy::{
             enter_refs_resolution_scope, exit_refs_resolution_scope,
             global_resolution_fuel_exhausted, increment_global_resolution_fuel,
@@ -1344,6 +1367,10 @@ impl<'a> CheckerState<'a> {
         if self.ctx.refs_resolved.contains(&type_id) {
             return;
         }
+
+        // Default: on-demand forcing. The legacy eager transitive pre-walk is
+        // only used when the kill-switch is set, for byte-parity comparison.
+        let transitive = on_demand_forcing_disabled();
 
         let is_outermost = enter_refs_resolution_scope();
 
@@ -1398,10 +1425,24 @@ impl<'a> CheckerState<'a> {
                 // checker to treat unresolved Lazy types as compatible (issue #12144).
                 // When at the fuel limit we still resolve the direct def_id but skip
                 // adding its result to the worklist so transitive work stays bounded.
+                //
+                // On-demand forcing (#12101): when `def_id` is a force-eligible simple
+                // lib interface, its referenced tail (members, heritage bases) is made
+                // of lib refs that `CheckerContext::force_def_on_miss` materializes on
+                // demand at the consuming `resolve_lazy` miss, so its body is NOT
+                // pushed back onto the worklist — this is what drops the eager
+                // DOM/webworker heritage-graph pre-walk. For every other def
+                // (cross-file class/namespace, user types, generic/augmented lib
+                // interfaces) the transitive push is preserved so its tail is
+                // materialized exactly as the legacy eager path did, keeping
+                // byte-parity. With the kill-switch set, `transitive` is always true
+                // (legacy eager pre-walk).
+                let push_tail = transitive || !self.force_eligible_lib_def(def_id);
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
                     && !at_fuel_limit
+                    && push_tail
                 {
                     worklist.push(result);
                 }

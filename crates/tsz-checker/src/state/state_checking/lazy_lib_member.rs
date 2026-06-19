@@ -88,22 +88,17 @@ pub(crate) fn global_lazy_receiver_preserve_disabled() -> bool {
 ///
 /// # Status
 ///
-/// Scaffolding only. No caller gates on this flag yet: the on-demand forcing
-/// path (Steps 4-9 of the rework) is not implemented. The companion
-/// cache-poisoning backstop (suppressing the `env_eval_cache` write when an
-/// evaluation observed an unresolved `DefId`) is installed and inert today
-/// because the current eager pre-walk pre-resolves every referenced `DefId`
-/// before a committed relation, so `unresolved_def_seen` never fires. This
-/// kill-switch becomes live only when the eager pre-walk is later removed.
+/// Live. With the flag unset (default) the eager transitive `ensure_refs_resolved`
+/// pre-walk is dropped: only the root's direct lazy `DefId`s are resolved, and the
+/// referenced (heritage/member) tail interfaces are forced on demand at the
+/// `CheckerContext::resolve_lazy` miss via [`CheckerContext::force_def_on_miss`].
+/// Setting `TSZ_DISABLE_ON_DEMAND_FORCING=1` restores the legacy eager transitive
+/// pre-walk and disables miss-forcing, so the two paths can be compared
+/// byte-for-byte. The companion cache-poisoning backstop (suppressing the
+/// `env_eval_cache` write when an evaluation observed an unresolved `DefId`)
+/// becomes load-bearing once the eager pre-walk is dropped.
 ///
 /// Cached in a `OnceLock` so the environment is read at most once per process.
-// Scaffolding for the #12101 on-demand-forcing rework; the gating caller lands
-// with Steps 4-9. `expect` (not `allow`) is deliberate: it self-clears — once a
-// caller exists the unfulfilled-lint warning forces this attribute's removal.
-#[expect(
-    dead_code,
-    reason = "on-demand-forcing kill-switch caller lands in #12101 Steps 4-9"
-)]
 pub(crate) fn on_demand_forcing_disabled() -> bool {
     use std::sync::OnceLock;
     static DISABLED: OnceLock<bool> = OnceLock::new();
@@ -178,6 +173,24 @@ impl CheckerState<'_> {
         }
 
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
+        self.force_eligible_lib_def(def_id).then_some(def_id)
+    }
+
+    /// Whether `def_id` names a simple lib interface eligible for on-demand
+    /// single-shape forcing: a non-generic, unmerged, unaugmented, unshadowed
+    /// interface from the actual/cloned standard library.
+    ///
+    /// This is the shared eligibility predicate for both the value-position
+    /// single-member fast path
+    /// ([`Self::lazy_lib_member_receiver_def_id`]) and the relation/eval
+    /// on-demand forcing path ([`crate::context::CheckerContext::force_def_on_miss`]
+    /// and the `ensure_refs_resolved` transitive-skip decision). Cached per
+    /// `DefId` in [`crate::context::LibTypeResolutionCaches::lazy_member_receivers`].
+    ///
+    /// Ignores the [`lazy_lib_member_access_disabled`] kill-switch (which only
+    /// gates the value-position member fast path); the forcing path is gated by
+    /// [`on_demand_forcing_disabled`] at its own call sites.
+    pub(crate) fn force_eligible_lib_def(&self, def_id: DefId) -> bool {
         if let Some(&eligible) = self
             .ctx
             .lib_type_resolution_caches
@@ -185,7 +198,7 @@ impl CheckerState<'_> {
             .borrow()
             .get(&def_id)
         {
-            return eligible.then_some(def_id);
+            return eligible;
         }
 
         let eligible = (|| {
@@ -236,7 +249,7 @@ impl CheckerState<'_> {
             .lazy_member_receivers
             .borrow_mut()
             .insert(def_id, eligible);
-        eligible.then_some(def_id)
+        eligible
     }
 
     /// Whether a lib interface `name` has any global augmentation declarations
