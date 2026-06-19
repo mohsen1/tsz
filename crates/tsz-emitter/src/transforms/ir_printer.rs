@@ -39,12 +39,14 @@ use ir_printer_namespace::NamespaceIifeContext;
 
 use crate::context::transform::TransformContext;
 use crate::emitter::{Printer as AstPrinter, PrinterOptions};
+use crate::output::source_writer::compute_line_col;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::ir::{
     EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::tslib_helper_naming::TslibHelperNaming;
+use tsz_common::source_map::Mapping;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -95,6 +97,17 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    /// Source-map mappings recorded for re-emitted `ASTRef` nodes while
+    /// `capture_mappings` is set. Generated positions are relative to the start
+    /// of this printer's own output, so a caller splices them with a base
+    /// offset via `Printer::write_with_offset_mappings`.
+    mappings: Vec<Mapping>,
+    /// Source index recorded on captured mappings.
+    source_index: u32,
+    /// When true, record a source mapping at the start of each re-emitted
+    /// `ASTRef` node. Off by default so emits without source maps pay no
+    /// position-scan cost.
+    capture_mappings: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -272,6 +285,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -304,6 +320,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -336,6 +355,9 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            mappings: Vec::new(),
+            source_index: 0,
+            capture_mappings: false,
         }
     }
 
@@ -457,6 +479,52 @@ impl<'a> IRPrinter<'a> {
     /// Set the source text for `ASTRef` emission
     pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+    }
+
+    /// Enable recording of source-map mappings for re-emitted `ASTRef` nodes.
+    /// Callers enable this only when a source map is being generated.
+    pub const fn enable_mapping_capture(&mut self) {
+        self.capture_mappings = true;
+    }
+
+    /// Set the source index recorded on captured mappings.
+    pub const fn set_source_map_source_index(&mut self, index: u32) {
+        self.source_index = index;
+    }
+
+    /// Take the source-map mappings recorded during emission. Generated
+    /// positions are relative to the start of this printer's output.
+    pub fn take_mappings(&mut self) -> Vec<Mapping> {
+        std::mem::take(&mut self.mappings)
+    }
+
+    /// Record a source mapping from the current generated output position to the
+    /// token start of `idx` in the original source. Mirrors `tsc`, which emits a
+    /// mapping at the start of each node re-emitted into a lowered generator or
+    /// async body; without this the entire downleveled body has no mappings.
+    pub(super) fn record_ast_ref_mapping(&mut self, idx: NodeIndex) {
+        if !self.capture_mappings {
+            return;
+        }
+        let (Some(arena), Some(text)) = (self.arena, self.source_text) else {
+            return;
+        };
+        let Some(node) = arena.get(idx) else {
+            return;
+        };
+        let token_start =
+            crate::transforms::emit_utils::skip_trivia_forward(Some(text), node.pos, node.end);
+        let (original_line, original_column) = compute_line_col(text, token_start);
+        let (generated_line, generated_column) =
+            compute_line_col(&self.output, self.output.len() as u32);
+        self.mappings.push(Mapping {
+            generated_line,
+            generated_column,
+            source_index: self.source_index,
+            original_line,
+            original_column,
+            name_index: None,
+        });
     }
 
     /// Set the indentation level
@@ -1635,6 +1703,13 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(body);
             }
             IRNode::ASTRef(_) => self.emit_ast_ref_node(node),
+
+            IRNode::Positioned { source, inner } => {
+                // Record a mapping at the start of the lowered node's output,
+                // then emit it transparently.
+                self.record_ast_ref_mapping(*source);
+                self.emit_node(inner);
+            }
 
             IRNode::ASTRefWithGeneratorThis {
                 node,

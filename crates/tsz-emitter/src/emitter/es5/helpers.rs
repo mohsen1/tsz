@@ -932,6 +932,7 @@ impl<'a> Printer<'a> {
         async_emitter.set_indent_level(self.writer.indent_level() + 1);
         if let Some(text) = self.source_text_for_map() {
             async_emitter.set_source_map_context(text, self.writer.current_source_index());
+            async_emitter.set_capture_mappings(self.writer.has_source_map());
         }
         if let Some(generator_this_arg) = &self.async_arrow_generator_this_arg {
             async_emitter.set_generator_this_arg(generator_this_arg.clone());

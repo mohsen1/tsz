@@ -441,6 +441,13 @@ pub enum IRNode {
         comment: Option<Cow<'static, str>>,
     },
 
+    /// A child node tagged with the source `NodeIndex` it was lowered from, so
+    /// the printer can emit a source-map mapping at the start of its output.
+    /// Transparent: it emits exactly `inner` and forwards all traversal to it.
+    /// Used to preserve source positions across the lowering of generator/async
+    /// bodies, where expressions are otherwise decomposed into position-less IR.
+    Positioned { source: NodeIndex, inner: Box<Self> },
+
     /// _`a.sent()` - get the sent value in generator
     GeneratorSent,
 
@@ -1154,6 +1161,7 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_identifier(name)),
+            Self::Positioned { inner, .. } => inner.contains_identifier(name),
             Self::IfBreak { condition, .. } => condition.contains_identifier(name),
             Self::PrivateFieldSet {
                 receiver, value, ..
@@ -1387,6 +1395,7 @@ impl IRNode {
             Self::WeakMapSet { key, value, .. } => {
                 key.contains_captured_this_reference() || value.contains_captured_this_reference()
             }
+            Self::Positioned { inner, .. } => inner.contains_captured_this_reference(),
             _ => false,
         }
     }
