@@ -1,4 +1,39 @@
-#[ignore = "regressed by blDAJ binder change; needs LSP follow-through"]
+/// True when some references-full `entry` carries a `definition` whose
+/// `textSpan` lies in `file` and slices to exactly `expected_text` within
+/// `source`. Shared by the export-alias-side span assertions below.
+fn references_full_has_definition_span_with_text(
+    entries: &[serde_json::Value],
+    file: &str,
+    source: &str,
+    expected_text: &str,
+) -> bool {
+    entries.iter().any(|entry| {
+        if entry["definition"]
+            .get("fileName")
+            .and_then(serde_json::Value::as_str)
+            != Some(file)
+        {
+            return false;
+        }
+        let Some(start) = entry["definition"]["textSpan"]
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+        else {
+            return false;
+        };
+        let Some(length) = entry["definition"]["textSpan"]
+            .get("length")
+            .and_then(serde_json::Value::as_u64)
+        else {
+            return false;
+        };
+        let end = start.saturating_add(length);
+        source
+            .get(start as usize..end as usize)
+            .is_some_and(|text| text == expected_text)
+    })
+}
+
 #[test]
 fn test_references_full_quoted_alias_includes_export_alias_side_definition_span() {
     let mut server = make_server();
@@ -39,40 +74,80 @@ fn test_references_full_quoted_alias_includes_export_alias_side_definition_span(
         .as_array()
         .expect("references-full response should be array");
 
-    let has_export_alias_side_span = entries.iter().any(|entry| {
-        let Some(def_file) = entry["definition"]
-            .get("fileName")
-            .and_then(serde_json::Value::as_str)
-        else {
-            return false;
-        };
-        if def_file != "/bar.ts" {
-            return false;
-        }
-        let Some(start) = entry["definition"]["textSpan"]
-            .get("start")
-            .and_then(serde_json::Value::as_u64)
-        else {
-            return false;
-        };
-        let Some(length) = entry["definition"]["textSpan"]
-            .get("length")
-            .and_then(serde_json::Value::as_u64)
-        else {
-            return false;
-        };
-        let end = start.saturating_add(length);
-        let bar_source = server
-            .open_files
-            .get("/bar.ts")
-            .expect("bar.ts should be open");
-        bar_source
-            .get(start as usize..end as usize)
-            .is_some_and(|text| text == "\"<other>\"")
-    });
+    let bar_source = server
+        .open_files
+        .get("/bar.ts")
+        .expect("bar.ts should be open");
     assert!(
-        has_export_alias_side_span,
+        references_full_has_definition_span_with_text(
+            entries,
+            "/bar.ts",
+            bar_source,
+            "\"<other>\"",
+        ),
         "expected one references-full definition span to anchor on export alias-side token \"<other>\": {entries:?}"
+    );
+}
+
+// Same re-export structure as the witness above, but every binder name and the
+// quoted-alias spellings differ, so a pass here proves the export alias-side
+// definition span is surfaced because of the alias *shape*, not a particular
+// spelling. The fix (claim a reference location globally only after its text
+// matches the seed's symbol name) must be name-agnostic.
+#[test]
+fn test_references_full_quoted_alias_export_alias_side_span_is_name_agnostic() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/mod-a.ts".to_string(),
+        [
+            "type Payload = \"p\";",
+            "export { type Payload as \"wire::payload\" };",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/mod-b.ts".to_string(),
+        [
+            "import { type \"wire::payload\" as localA } from \"./mod-a\";",
+            "export { type \"wire::payload\" as \"wire::relay\" } from \"./mod-a\";",
+            "import { type \"wire::relay\" as localB } from \"./mod-b\";",
+            "const useA: localA = \"p\";",
+            "const useB: localB = \"p\";",
+        ]
+        .join("\n"),
+    );
+
+    // Query on the quoted export alias-side token in mod-a:
+    // `export { type Payload as "wire::payload" };` — offset 27 lands inside
+    // the `"wire::payload"` string literal.
+    let req = make_request(
+        "references-full",
+        serde_json::json!({
+            "file": "/mod-a.ts",
+            "line": 2,
+            "offset": 27
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references-full should return body");
+    let entries = body
+        .as_array()
+        .expect("references-full response should be array");
+
+    let mod_b_source = server
+        .open_files
+        .get("/mod-b.ts")
+        .expect("mod-b.ts should be open");
+    assert!(
+        references_full_has_definition_span_with_text(
+            entries,
+            "/mod-b.ts",
+            mod_b_source,
+            "\"wire::relay\"",
+        ),
+        "expected a references-full definition span anchored on the re-export \
+         alias-side token \"wire::relay\": {entries:?}"
     );
 }
 
