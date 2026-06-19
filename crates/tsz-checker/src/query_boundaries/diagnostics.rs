@@ -609,6 +609,16 @@ pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: Ty
     tsz_solver::operations::widening::widen_argument_type_for_display(db, type_id)
 }
 
+/// Apparent type of an element-access receiver for the implicit-any index
+/// diagnostic (`TS7053`). `tsc` renders `typeToString(getApparentType(objectType))`,
+/// so the `object` intrinsic prints as its apparent type `{}` and a bare
+/// primitive as its boxed wrapper interface (`string` -> `String`, ...); every
+/// other type is the identity, letting the caller keep its annotation-aware
+/// display path.
+pub(crate) fn index_receiver_apparent_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::objects::index_receiver_apparent_type(db, type_id)
+}
+
 /// Display the boolean-literal-array element form (`boolean[]` rather than the
 /// `(true | false)[]` fresh form) for argument-mismatch diagnostics.
 pub(crate) fn boolean_literal_array_display_type(

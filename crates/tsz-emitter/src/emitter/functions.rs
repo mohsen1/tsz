@@ -1656,6 +1656,46 @@ mod tests {
         );
     }
 
+    /// An ES2018 object-rest parameter synthesizes a `var { a } = _a, rest =
+    /// __rest(_a, [...])` preamble into the function body. tsc keeps a
+    /// single-line source body on one line and writes that preamble inline;
+    /// tsz previously forced the body multi-line whenever such a preamble was
+    /// present. The body must stay single-line to match tsc byte-for-byte.
+    #[test]
+    fn object_rest_param_keeps_single_line_function_body() {
+        let source = "function f({ a, b = 2, ...rest }: any) { return a + b; }";
+        let (parser, root) = parse_test_source(source);
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "function f(_a) { var { a, b = 2 } = _a, rest = __rest(_a, [\"a\", \"b\"]); return a + b; }"
+            ),
+            "Object-rest parameter must keep a single-line body on one line (matching tsc).\nOutput:\n{output}"
+        );
+    }
+
+    /// When a single-line body also hoists optional-chaining / logical-assignment
+    /// temps (`var _b, _c;`), tsc emits those temp declarations BEFORE the
+    /// object-rest destructuring preamble. Lock that ordering.
+    #[test]
+    fn object_rest_param_single_line_body_hoists_temps_before_preamble() {
+        let source = "function f({ a, ...rest }: any) { return g.h?.() ?? a; }";
+        let (parser, root) = parse_test_source(source);
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _b, _c; var { a } = _a, rest = __rest(_a, [\"a\"]);"),
+            "Hoisted optional-chaining temps must precede the object-rest preamble on the single line.\nOutput:\n{output}"
+        );
+    }
+
     #[test]
     fn function_with_empty_parameter_comment_preserves_comment() {
         let source = "function foo(/** nothing */) { return 1; }";

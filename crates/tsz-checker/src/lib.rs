@@ -556,6 +556,9 @@ mod ts7036_tests;
 #[path = "../tests/ts7041_tests.rs"]
 mod ts7041_tests;
 #[cfg(test)]
+#[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
+mod ts7053_apparent_receiver_display_tests;
+#[cfg(test)]
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]
@@ -1176,6 +1179,9 @@ mod polymorphic_this_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/predicate_narrowed_lib_union_access_tests.rs"]
 mod predicate_narrowed_lib_union_access_tests;
+#[cfg(test)]
+#[path = "tests/predicate_narrowed_top_type_source_display_tests.rs"]
+mod predicate_narrowed_top_type_source_display_tests;
 #[cfg(test)]
 #[path = "tests/predicate_narrowed_unknown_any_source_display_tests.rs"]
 mod predicate_narrowed_unknown_any_source_display_tests;
