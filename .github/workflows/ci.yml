@@ -1225,10 +1225,19 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Pure-IO aggregate: run_conformance_aggregate prefers the downloaded
+    # .conformance-shards artifacts (github-suite.sh conformance-aggregate reads
+    # no dist binary) and only falls back to GCS when that dir yields no shard
+    # JSON; the download-artifact step below always populates it, so the gsutil
+    # path is never taken. An empty/partial shard set still fails the job via
+    # the shard_count/coverage checks (return 1 — fail-safe, no false green), so
+    # the GCS recovery is not load-bearing and a stock runner without gsutil
+    # cannot weaken the conformance floor. A free ubuntu-latest runner suffices
+    # and frees a scarce Cloud Run slot (mirrors emit-aggregate /
+    # project-compile-canary-aggregate, #13745).
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
       TSZ_CI_CONFORMANCE_SHARDS: 4

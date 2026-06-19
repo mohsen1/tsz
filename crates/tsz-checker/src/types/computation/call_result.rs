@@ -13,7 +13,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ParamInfo, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -22,6 +22,10 @@ pub(super) struct CallResultContext<'a> {
     pub(super) arg_types: &'a [TypeId],
     pub(super) callee_type: TypeId,
     pub(super) callee_has_declared_generic_signature: bool,
+    /// Uninstantiated callee signature (with `type_params` and raw parameter
+    /// types) used for structural display decisions that must inspect the
+    /// *declared* parameter slot rather than its post-inference instantiation.
+    pub(super) raw_callee_shape: Option<&'a FunctionShape>,
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
     pub(super) allow_contextual_mismatch_deferral: bool,
@@ -668,37 +672,10 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
     }
 
-    /// Whether the *declared* parameter occupying argument slot `index` in the
-    /// raw (uninstantiated) callee signature is a bare type parameter (e.g.
-    /// `y: T`), rather than a derived type that merely mentions one (e.g.
-    /// `value: Handlers[K]`, an indexed access that reduces to a concrete type).
-    ///
-    /// The sibling-literal reconstruction in
-    /// `preferred_literal_expected_for_mismatch` is only sound for a bare
-    /// type-parameter slot: there the displayed primitive *is* the widened
-    /// inference of that parameter, so a sibling literal that widens to it is a
-    /// genuine display candidate. When the slot is a derived type, the expected
-    /// primitive is an independent concrete type and must be shown verbatim.
-    fn mismatch_slot_is_bare_type_parameter(
-        &self,
-        callee_type: TypeId,
-        index: usize,
-        arg_count: usize,
-    ) -> bool {
-        let ctx = common::ContextualTypeContext::with_expected(self.ctx.types, callee_type);
-        ctx.get_parameter_type_for_call(index, arg_count)
-            .is_some_and(|param| {
-                crate::query_boundaries::checkers::generic::is_bare_type_parameter(
-                    self.ctx.types,
-                    param,
-                )
-            })
-    }
-
     fn preferred_literal_expected_for_mismatch(
         &self,
-        callee_type: TypeId,
         callee_has_declared_generic_signature: bool,
+        raw_callee_shape: Option<&FunctionShape>,
         arg_types: &[TypeId],
         args: &[NodeIndex],
         actual: TypeId,
@@ -741,15 +718,16 @@ impl<'a> CheckerState<'a> {
         if !callee_has_declared_generic_signature {
             return expected;
         }
-        // Reconstructing a sibling literal in place of the expected primitive is
-        // only correct when the mismatch slot's declared parameter is a bare
-        // type parameter (e.g. `foo<T>(x: T, y: T); foo(1, '')` → `'""'`/`'1'`).
-        // For a slot whose declared type is derived (e.g.
-        // `...args: [key: K, ...(Handlers[K] extends void ? [] : [value: Handlers[K]])]`,
-        // where the payload slot reduces to a concrete `string`), the expected
-        // type is independent of the sibling `key` argument and must be kept.
-        if !self.mismatch_slot_is_bare_type_parameter(callee_type, mismatch_index, arg_types.len())
-        {
+        // Repaint the widened-primitive `expected` with a sibling argument's
+        // literal type *only* when the declared parameter slot at `mismatch_index`
+        // is the bare type parameter that the sibling pinned (e.g. `f<T>(a: T, b: T)`
+        // called as `f("x", 1)` reports `"x"`). When the slot is a structural type
+        // that merely *evaluates* to the primitive — such as a conditional/indexed
+        // rest element `...[key: K, ...(Handlers[K] extends void ? [] : [value:
+        // Handlers[K]])]` whose `value` slot resolves to `string` — the widened
+        // `expected` is the genuine target, and a coincidental sibling literal
+        // (the `key`) must not replace it (#13956).
+        if !self.mismatch_param_slot_is_bare_type_parameter(raw_callee_shape, mismatch_index) {
             return expected;
         }
         arg_types
@@ -772,6 +750,48 @@ impl<'a> CheckerState<'a> {
                     })
             })
             .unwrap_or(expected)
+    }
+
+    /// Whether the declared parameter slot consumed by argument `arg_index` is a
+    /// bare type parameter (`T`) in the callee's *uninstantiated* signature.
+    ///
+    /// Inspects the raw (pre-inference) signature so a slot whose declared type
+    /// is itself `TypeData::TypeParameter` (e.g. `b: T`) is distinguished from a
+    /// structural type that merely *evaluates* to a primitive after inference
+    /// (e.g. `value: Handlers[K]`). Tuple rest parameters (`...args: [a: T,
+    /// ...Rest]`) are flattened into their per-position slots first (mirroring
+    /// the accept path). Name-agnostic: keys on type structure, not on
+    /// identifier or file-name strings.
+    fn mismatch_param_slot_is_bare_type_parameter(
+        &self,
+        raw_callee_shape: Option<&FunctionShape>,
+        arg_index: usize,
+    ) -> bool {
+        let Some(shape) = raw_callee_shape else {
+            return false;
+        };
+        let unpacked: Vec<ParamInfo> = shape
+            .params
+            .iter()
+            .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
+            .collect();
+        unpacked
+            .get(arg_index)
+            .or_else(|| unpacked.last().filter(|param| param.rest))
+            .is_some_and(|param| {
+                // When the consumed slot is itself a trailing rest (array-backed)
+                // element, the declared element is the array's element type.
+                let slot_type = if param.rest {
+                    common::array_element_type(self.ctx.types, param.type_id)
+                        .unwrap_or(param.type_id)
+                } else {
+                    param.type_id
+                };
+                crate::query_boundaries::checkers::call::is_type_parameter_type(
+                    self.ctx.types,
+                    slot_type,
+                )
+            })
     }
 
     fn is_generic_callable_against_nongeneric_target(
@@ -871,6 +891,7 @@ impl<'a> CheckerState<'a> {
             arg_types,
             callee_type,
             callee_has_declared_generic_signature,
+            raw_callee_shape,
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
@@ -1138,8 +1159,8 @@ impl<'a> CheckerState<'a> {
                         .generic_callable_mismatch_display_target(actual, expected)
                         .unwrap_or(expected);
                     self.preferred_literal_expected_for_mismatch(
-                        callee_type,
                         callee_has_declared_generic_signature,
+                        raw_callee_shape,
                         arg_types,
                         args,
                         reported_actual,

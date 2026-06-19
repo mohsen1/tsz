@@ -567,15 +567,33 @@ impl<'a> Printer<'a> {
         } else {
             PrivateDuplicateConflictPlan::default()
         };
-        let constructor_auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>)> =
-            auto_accessor_instance_inits
+        // Auto-accessor backing-storage initializers are field initializers for
+        // ordering purposes: `tsc` evaluates them in source order interleaved with
+        // regular/public and `#private` field initializers (initializers can have
+        // observable side effects). Carry each accessor's source position so the
+        // constructor prologue can merge them by source order rather than appending
+        // them last. Both `auto_accessor_members` (non-private accessors) and
+        // `private_auto_accessors` retain the declaring member index.
+        let member_source_pos =
+            |member_idx: NodeIndex| self.arena.get(member_idx).map_or(u32::MAX, |n| n.pos);
+        let constructor_auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>, u32)> =
+            auto_accessor_members
                 .iter()
-                .cloned()
+                .filter(|(_, _, _, is_static)| !is_static)
+                .map(|(member_idx, storage_name, init, _)| {
+                    (storage_name.clone(), *init, member_source_pos(*member_idx))
+                })
                 .chain(
                     private_auto_accessors
                         .iter()
                         .filter(|a| !a.is_static)
-                        .map(|a| (a.storage_name.clone(), a.initializer)),
+                        .map(|a| {
+                            (
+                                a.storage_name.clone(),
+                                a.initializer,
+                                member_source_pos(a.member_idx),
+                            )
+                        }),
                 )
                 .collect();
 

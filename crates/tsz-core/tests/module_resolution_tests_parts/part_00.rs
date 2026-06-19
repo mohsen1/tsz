@@ -238,6 +238,58 @@ fn test_dynamic_import_of_node_builtin_uses_ts2591_with_no_types_and_symbols() {
 }
 
 #[test]
+fn test_dynamic_import_of_node_scheme_only_builtin_uses_ts2591() {
+    // `node:test`/`node:sqlite`/`node:sea` are builtins reachable only through
+    // the `node:` scheme, so they must classify exactly like `node:path`: the
+    // "install @types/node" family, never a raw TS2307.
+    let diags = check_with_module_not_found_errors(
+        r#"import("node:test");"#,
+        "no.ts",
+        vec![],
+        vec!["node:test"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::Preserve,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "Dynamic import of unresolved node:-only builtin should emit TS2591, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Dynamic import of unresolved node:-only builtin should not emit TS2307, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_bare_test_package_is_not_a_node_builtin() {
+    // `test` (without the `node:` scheme) is a real, published npm package, not
+    // a builtin. It must keep the user-package module-not-found path rather than
+    // the "install @types/node" family that the `node:test` builtin uses.
+    let diags = check_with_module_not_found_errors(
+        r#"import("test");"#,
+        "no.ts",
+        vec![],
+        vec!["test"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::Preserve,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_module_not_found(&diags),
+        "Bare `test` npm package should emit a module-not-found error, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2591),
+        "Bare `test` npm package must not take the @types/node TS2591 path, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_no_types_and_symbols_keeps_ts2591_for_node_builtin_imports() {
     let diags = check_with_module_not_found_errors(
         r#"import { parse } from "url";
