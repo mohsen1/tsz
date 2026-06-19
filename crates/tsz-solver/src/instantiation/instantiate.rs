@@ -61,11 +61,6 @@ pub struct TypeInstantiator<'a> {
     /// `instantiate_type_with_this`) where the substitution legitimately
     /// means "specialize this method body for this class".
     pub shallow_this_only: bool,
-    /// When `Some((source, iter_var, declared_type))`, any `IndexAccess(source, K)` where
-    /// `K` is a `TypeParameter` with name == `iter_var` is replaced with `declared_type`
-    /// instead of being evaluated. Used in homomorphic `-?` mapped type evaluation to feed
-    /// the declared (non-optional) property type into the template, matching tsc behavior.
-    pub declared_index_type: Option<(TypeId, Atom, TypeId)>,
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
@@ -98,7 +93,6 @@ impl<'a> TypeInstantiator<'a> {
             preserve_unsubstituted_type_params: false,
             this_type: None,
             shallow_this_only: false,
-            declared_index_type: None,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,

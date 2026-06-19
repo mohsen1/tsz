@@ -889,34 +889,6 @@ pub(crate) fn instantiate_type_with_shadowed_cached(
     instantiator.instantiate(type_id)
 }
 
-/// Like [`instantiate_type_preserving`] but also replaces every
-/// `IndexAccess(source, K)` in the template with `declared_type`, where `K`
-/// is any `TypeParameter` whose name equals `iter_var`.
-///
-/// This is used for homomorphic `-?` mapped type evaluation. When `-?` strips
-/// the optional modifier, tsc feeds the DECLARED property type (without the
-/// `| undefined` that normal read access adds for optional properties) into the
-/// template. Applying this substitution before the `K → key_literal` step
-/// ensures that conditional and other composite templates that reference `T[K]`
-/// see the de-optionalized type, matching tsc behavior.
-pub(crate) fn instantiate_type_preserving_with_declared(
-    interner: &dyn TypeDatabase,
-    type_id: TypeId,
-    substitution: &TypeSubstitution,
-    source: TypeId,
-    iter_var: Atom,
-    declared_type: TypeId,
-) -> TypeId {
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-    let mut instantiator = TypeInstantiator::new(interner, substitution);
-    instantiator.preserve_unsubstituted_type_params = true;
-    instantiator.declared_index_type = Some((source, iter_var, declared_type));
-    // Keep the relation-preserving bail value on overflow (see #13652).
-    instantiator.instantiate(type_id)
-}
-
 /// Cache-aware variant of [`instantiate_type`].
 ///
 /// `query_db = Some(db)` enables the cross-call instantiation cache on

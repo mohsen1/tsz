@@ -11,7 +11,6 @@ mod keys_guard;
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type_cached, instantiate_type_preserving_cached,
-    instantiate_type_preserving_with_declared,
 };
 use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::TypeResolver;
@@ -583,11 +582,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 src,
             )
         });
-        // Whether to use the declared (non-optional) property type for T[K] inside
-        // the template when `-?` is present. True when: homomorphic source exists,
-        // no type-param contamination, and `-?` will strip optional. The per-key
-        // `source_optional` check runs inside the loops.
-        let remove_optional_with_declared = is_homomorphic
+        // Whether this homomorphic mapped type removes optionality (`-?`), so the
+        // top-level `undefined` an originally-optional source property contributed
+        // through its read type `T[K]` must be stripped from the *evaluated*
+        // property type. tsc instantiates the template with the read type (which
+        // includes `| undefined` for optional keys) and only afterwards removes the
+        // resulting top-level `undefined` via `getTypeWithFacts(type, NEUndefined)`.
+        // The per-key `source_optional` check runs inside the loops.
+        let homomorphic_removes_optional = is_homomorphic
             && !source_has_type_params
             && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
             && source_object.is_some();
@@ -655,29 +657,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 subst.clear();
                 subst.insert(mapped.type_param.name, key_literal);
 
-                let instantiated_template = if remove_optional_with_declared
-                    && source_optional
-                    && let Some(&(_, _, declared_type, _, _, _)) = source_info
-                    && let Some(source) = source_object
-                {
-                    // tsc feeds the DECLARED property type (not the read type with
-                    // `| undefined`) into the template when `-?` removes optionality.
-                    instantiate_type_preserving_with_declared(
-                        self.interner(),
-                        mapped.template,
-                        &subst,
-                        source,
-                        mapped.type_param.name,
-                        declared_type,
-                    )
-                } else {
-                    instantiate_type_preserving_cached(
-                        self.interner(),
-                        self.query_db(),
-                        mapped.template,
-                        &subst,
-                    )
-                };
+                // Always instantiate the template with the *read* type `T[K]`
+                // (which includes `| undefined` for an optional source key). A
+                // distributive template such as `V extends Validator<infer T> ? T
+                // : any` must see that `undefined` so it distributes to `any`,
+                // exactly as tsc does; the resulting top-level `undefined` is
+                // removed below when `-?` strips optionality.
+                let instantiated_template = instantiate_type_preserving_cached(
+                    self.interner(),
+                    self.query_db(),
+                    mapped.template,
+                    &subst,
+                );
                 let evaluated = self.evaluate(instantiated_template);
 
                 // Check if evaluation hit depth limit
@@ -689,7 +680,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let property_type = self.strip_removed_optional_undefined(
                 property_type,
-                remove_optional_with_declared && source_optional,
+                homomorphic_removes_optional && source_optional,
             );
 
             // Naming flags an identity key inherits from its homomorphic source.
@@ -783,27 +774,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 subst.clear();
                 subst.insert(mapped.type_param.name, *symbol_key_id);
-                let instantiated = if remove_optional_with_declared
-                    && source_optional
-                    && let Some(&(_, _, declared_type, _, _, _)) = source_info
-                    && let Some(source) = source_object
-                {
-                    instantiate_type_preserving_with_declared(
-                        self.interner(),
-                        mapped.template,
-                        &subst,
-                        source,
-                        mapped.type_param.name,
-                        declared_type,
-                    )
-                } else {
-                    instantiate_type_preserving_cached(
-                        self.interner(),
-                        self.query_db(),
-                        mapped.template,
-                        &subst,
-                    )
-                };
+                // See the string-key loop: instantiate with the read type `T[K]`
+                // (with `| undefined` for optional keys) and strip the resulting
+                // top-level `undefined` afterwards when `-?` removes optionality.
+                let instantiated = instantiate_type_preserving_cached(
+                    self.interner(),
+                    self.query_db(),
+                    mapped.template,
+                    &subst,
+                );
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
                     return TypeId::ERROR;
@@ -813,7 +792,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let property_type = self.strip_removed_optional_undefined(
                 property_type,
-                remove_optional_with_declared && source_optional,
+                homomorphic_removes_optional && source_optional,
             );
 
             for remapped_sym_id in remapped_syms {

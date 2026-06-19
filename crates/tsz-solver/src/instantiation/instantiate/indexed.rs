@@ -15,24 +15,7 @@ impl<'a> TypeInstantiator<'a> {
     ///
     /// Task #46: Meta-type reduction for O(1) equality
     pub(super) fn instantiate_index_access(&mut self, obj: &TypeId, idx: &TypeId) -> TypeId {
-        // For homomorphic -? mapped type evaluation, T[K] must use the
-        // declared property type (without the `| undefined` that
-        // `optional_property_type` adds for read access). Check *idx
-        // BEFORE instantiation so we can detect the iteration variable
-        // (K → key_literal substitution hasn't happened yet).
-        let is_iter_var = self.declared_index_type.is_some_and(|(_, iter_var, _)| {
-            matches!(
-                self.interner.lookup(*idx),
-                Some(TypeData::TypeParameter(p)) if p.name == iter_var
-            )
-        });
         let inst_obj = self.instantiate(*obj);
-        if let Some((override_source, _, replacement)) = self.declared_index_type
-            && is_iter_var
-            && inst_obj == override_source
-        {
-            return replacement;
-        }
         let inst_idx = self.instantiate(*idx);
         // Don't eagerly evaluate if either part still contains type parameters.
         // This prevents premature evaluation of `T[K]` or `T[keyof T]` where T

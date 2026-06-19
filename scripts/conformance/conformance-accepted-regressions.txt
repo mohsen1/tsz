@@ -65,7 +65,20 @@
 #      existing leading-zero exception). Covered by
 #      parser_improvement_class_member_recovery_tests::misplaced_case_clause_* and
 #      parser_improvement_expression_recovery_tests::empty_element_access_*.
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+# propTypeValidatorInference.ts: RESOLVED. tsc emits no diagnostics; tsz raised a
+# false TS2322 on `ExtractedProps extends ExtractedPropsWithoutAnnotation`. Root
+# cause: a homomorphic `-?` mapped type (`InferPropsInner<...>` over `Pick<...>`,
+# and `Required`-shaped maps in general) instantiated its template with the
+# de-optionalized DECLARED property type instead of the read type `T[K]`. tsc
+# feeds the read type (which carries `| undefined` for an optional source key)
+# into the template and only strips the resulting top-level `undefined`
+# afterwards (`getTypeOfMappedSymbol` -> `getTypeWithFacts(type, NEUndefined)`).
+# So `InferType<Validator<...> | undefined>` — a distributive conditional alias —
+# distributed over `undefined` to `any` in tsc but stayed a narrow non-`any`
+# union in tsz, making the structural relation fail. The mapped evaluator now
+# always instantiates the template with the read type and strips `undefined`
+# after. Covered by mapped_strip_optional_template_undefined_tests and the
+# corrected homomorphic_remove_optional_conditional_tests.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 # deeplyNestedMappedTypes.ts: PARTIAL. tsc 6.0.3 emits 5 TS2322 (`foo2`, `foo4`,
 # and the three `problematicFunction` returns; no error on `bar2`). The earlier
