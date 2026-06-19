@@ -293,8 +293,7 @@ use tsz_checker::test_utils::check_source_code_messages;
 fn ts2345_message(source: &str) -> String {
     let msgs = check_source_code_messages(source);
     msgs.into_iter()
-        .find(|(code, _)| *code == 2345)
-        .map(|(_, m)| m)
+        .find_map(|(code, m)| (code == 2345).then_some(m))
         .unwrap_or_else(|| panic!("expected a TS2345 for source:\n{source}"))
 }
 
