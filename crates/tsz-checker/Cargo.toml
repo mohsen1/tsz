@@ -39,6 +39,9 @@ path = "tests/reexport_generic_typeref_instantiation_tests.rs"
 name = "cross_file_recursive_alias_intersection_tests"
 path = "tests/cross_file_recursive_alias_intersection_tests.rs"
 [[test]]
+name = "qualified_namespace_generic_substitution_tests"
+path = "tests/qualified_namespace_generic_substitution_tests.rs"
+[[test]]
 name = "heritage_reexport_generic_type_params_tests"
 path = "tests/heritage_reexport_generic_type_params_tests.rs"
 [[test]]
