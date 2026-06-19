@@ -1173,19 +1173,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Skip the scan when the failing reference lives in a foreign/library
-        // arena borrowed by a cross-arena delegation child checker (e.g. a lib
-        // namespace's own internal type references resolved on demand while
-        // computing a user-visible type). Such diagnostics are never surfaced —
-        // only user-file diagnostics are reported — so computing a spelling
-        // suggestion for them is pure waste. tsc likewise never reports
-        // cannot-find-name (and so never offers a suggestion) for the trusted
-        // standard library it resolves through. The cap counter above is still
-        // charged so its sequencing is unchanged.
-        if !self.ctx.current_arena_is_user_file() {
-            return false;
-        }
-
         true
     }
 

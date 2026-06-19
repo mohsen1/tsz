@@ -436,22 +436,6 @@ impl<'a> CheckerContext<'a> {
         self.all_arenas = Some(arenas);
     }
 
-    /// Whether the arena currently being processed (`self.arena`) belongs to the
-    /// program's user-file set (`all_arenas`) rather than a foreign/library arena
-    /// borrowed by a cross-arena delegation child checker.
-    ///
-    /// Diagnostics are only surfaced for user files, so a `false` result means
-    /// any diagnostic emitted against the current arena (e.g. a lib namespace's
-    /// internal type reference) is discarded downstream. Returns `true` when
-    /// there is no cross-file arena set (single-arena / standalone contexts),
-    /// preserving behavior outside the cross-file pipeline.
-    pub fn current_arena_is_user_file(&self) -> bool {
-        match self.all_arenas.as_ref() {
-            Some(arenas) => arenas.iter().any(|a| std::ptr::eq(a.as_ref(), self.arena)),
-            None => true,
-        }
-    }
-
     /// Build a mapping from `file_id` -> module specifier for import-qualified type display.
     /// Returns `file_idx -> stem` for each source file in the arenas.
     pub(crate) fn build_module_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {

@@ -1083,7 +1083,13 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
     use crate::test_utils::check_source_diagnostics;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
 
     #[test]
     fn name_resolution_request_constructors() {
@@ -1158,6 +1164,48 @@ mod tests {
                     .iter()
                     .map(|d| (d.code, d.message_text.clone()))
                     .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Deferred spelling-suggestion eligibility follows the diagnostic that will
+    /// be emitted, not whether the current arena is part of the user-file arena
+    /// set. Selected declaration libs can surface missing-name diagnostics too,
+    /// so a foreign/current arena must not pre-disable the later suggestion scan.
+    #[test]
+    fn deferred_spelling_scan_remains_eligible_in_foreign_current_arena() {
+        for (decl, typo) in [
+            ("NearbyType", "NearblyType"),
+            ("CalendarThing", "CalenderThing"),
+        ] {
+            let mut user_parser =
+                ParserState::new("entry.ts".to_string(), format!("type {decl} = number;\n"));
+            let user_root = user_parser.parse_source_file();
+            let mut user_binder = BinderState::new();
+            user_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+            let mut foreign_parser =
+                ParserState::new("selected-lib.d.ts".to_string(), format!("let v: {typo};\n"));
+            let foreign_root = foreign_parser.parse_source_file();
+            let mut foreign_binder = BinderState::new();
+            foreign_binder.bind_source_file(foreign_parser.get_arena(), foreign_root);
+
+            let types = TypeInterner::new();
+            let mut checker = CheckerState::new(
+                foreign_parser.get_arena(),
+                &foreign_binder,
+                &types,
+                "selected-lib.d.ts".to_string(),
+                CheckerOptions::default(),
+            );
+            checker
+                .ctx
+                .set_all_arenas(Arc::new(vec![Arc::new(user_parser.get_arena().clone())]));
+            checker.ctx.set_lib_contexts(Vec::new());
+
+            assert!(
+                checker.suggestion_scan_eligible(typo, foreign_root),
+                "foreign/current arena must not suppress deferred suggestions for `{typo}`"
             );
         }
     }
