@@ -238,6 +238,7 @@ typescript_dom_replacement_has_self = { lifetime = "ProgramStable", capability =
 flow_graph = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 async_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 typeof_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+omitted_default_constraint_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "typeof/default-constraint expansion recursion guard; cleared at file-session boundary before a new file check" }
 inside_closure_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 in_const_assertion = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 preserve_literal_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

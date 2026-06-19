@@ -238,20 +238,27 @@ impl CheckerState<'_> {
         }
     }
 
-    /// Register the VALUE-space type of a merged interface+value symbol for
-    /// `typeof` resolution.
+    /// Register the VALUE-space type of a value symbol merged with a deferred
+    /// type-space declaration for `typeof` resolution.
     ///
-    /// When `expr` is an identifier resolving to a symbol declared as both an
-    /// interface and a value (declaration merging, e.g. lib `Date`/`Request`,
-    /// or user `interface Foo {} declare var Foo: {...}`), its shared
-    /// `DefId`/`SymbolRef` holds the TYPE-space (instance) type. The value-space
-    /// type computed here (via the value-space identifier path, which models lib
-    /// globals through their `*Constructor` companion) is recorded in the type
-    /// environment so the solver's `resolve_type_query` returns the
-    /// value/constructor side for a deferred `TypeQuery(SymbolRef)` produced by
-    /// nested `typeof` positions (indexed-access, conditional, tuple). Pure
-    /// values (vars/functions/classes) already resolve correctly through the
-    /// normal `SymbolRef`/`DefId` paths and are left untouched.
+    /// When `expr` is an identifier resolving to a symbol whose value meaning
+    /// shares its `DefId`/`SymbolRef` with an interface or a type-alias
+    /// declaration, that shared entry holds the TYPE-space type, which is wrong
+    /// for a `typeof` query. Two real-world forms:
+    /// - interface+value (declaration merging, e.g. lib `Date`/`Request`, or
+    ///   user `interface Foo {} declare var Foo: {...}`) — stores the instance
+    ///   type;
+    /// - type-alias+value (the fp-ts HKT tag idiom `const URI = "IOEither";
+    ///   type URI = typeof URI`) — stores the self-referential alias body, so
+    ///   resolving `typeof URI` through it cycles to `undefined`.
+    ///
+    /// The value-space type computed here (via the value-space identifier path,
+    /// which models lib globals through their `*Constructor` companion) is
+    /// recorded in the type environment so the solver's `resolve_type_query`
+    /// returns the value/constructor side for a deferred `TypeQuery(SymbolRef)`
+    /// produced by nested `typeof` positions (indexed-access, conditional,
+    /// tuple). Pure values (vars/functions/classes) already resolve correctly
+    /// through the normal `SymbolRef`/`DefId` paths and are left untouched.
     fn register_merged_value_typeof_type(&mut self, expr: NodeIndex) {
         use tsz_binder::symbol_flags;
         if expr == NodeIndex::NONE {
@@ -266,11 +273,11 @@ impl CheckerState<'_> {
         let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, expr) else {
             return;
         };
-        let is_merged_interface_value = self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+        let is_merged_type_value = self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
             symbol.has_any_flags(symbol_flags::VALUE)
-                && symbol.has_any_flags(symbol_flags::INTERFACE)
+                && symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
         });
-        if !is_merged_interface_value {
+        if !is_merged_type_value {
             return;
         }
         let value_type = self.get_type_of_identifier(expr);
