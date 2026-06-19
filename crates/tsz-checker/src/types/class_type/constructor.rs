@@ -124,24 +124,12 @@ impl<'a> CheckerState<'a> {
                 {
                     return window_partial;
                 }
-                // Re-entrant constructor resolution with no usable cached or
-                // window partial: return a *deferred* reference to this class's
-                // `ClassConstructor` companion `DefId` rather than a bare `any`.
-                //
-                // The instance side already survives such cycles by deferring
-                // through `Lazy(classDef)` (resolved once the class body is
-                // registered); the constructor/value side had no equivalent, so
-                // it collapsed to `any`. When the cycle spans an import cycle
-                // between a class+namespace-merge module and its consumers, that
-                // transient `any` was cached/merged cross-arena and made every
-                // `Class.method<…>(…)` an untyped call (issue #13947, runtypes
-                // `Runtype.create` → false `TS2347` cascade). Deferring through
-                // the companion lets the call site observe the real constructor
-                // type once the outer (non-cyclic) computation sets the
-                // companion body, exactly as the instance deferral does — and
-                // the companion resolves to the *constructor* type, not the
-                // instance type, so it does not reintroduce the static-member
-                // `TS2339` the historical `any` fallback was guarding against.
+                // Re-entrant constructor resolution with no usable partial:
+                // defer through the `ClassConstructor` companion instead of
+                // caching `any` across files. The companion is filled by the
+                // outer computation and resolves to the constructor side, so it
+                // avoids both untyped static calls (#13947) and instance-side
+                // false `TS2339`.
                 return self.deferred_constructor_companion_lazy(class_idx, class, sym_id);
             }
         } else {
