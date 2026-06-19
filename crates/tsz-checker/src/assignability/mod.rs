@@ -24,6 +24,7 @@ mod nullish_error_targets;
 mod overload_subtype_pass;
 mod polymorphic_this_diagnostics;
 mod readonly_tuple_diagnostics;
+mod refs_resolution;
 mod relation_outcome_helpers;
 pub mod subtype_identity_checker;
 mod typeof_this_guard;

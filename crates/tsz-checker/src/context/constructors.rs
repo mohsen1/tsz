@@ -298,7 +298,7 @@ impl<'a> CheckerContext<'a> {
             flow_narrowed_nodes: crate::context::CowCache::new(
                 FxHashSet::with_capacity_and_hasher(256, Default::default()),
             ),
-            refs_resolved: FxHashSet::default(),
+            refs_resolved: Default::default(),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),

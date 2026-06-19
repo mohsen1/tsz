@@ -948,13 +948,12 @@ impl DefinitionStore {
     /// Returns the number of definitions marked. Driver-invoked only when
     /// the experiment is enabled.
     pub fn mark_non_program_interface_defs_deferred(&self) -> usize {
-        /// `tsz_binder` symbols without a program declaration file (every
-        /// lib-binder symbol) carry `u32::MAX` as `decl_file_idx`.
-        const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
         let mut marked = 0usize;
         for entry in &self.definitions {
             let info = entry.value();
-            if info.kind == DefKind::Interface && info.file_id == Some(NON_PROGRAM_FILE_SENTINEL) {
+            if info.kind == DefKind::Interface
+                && info.file_id == Some(Self::NON_PROGRAM_FILE_SENTINEL)
+            {
                 self.state_flags.mark_deferred_publish(*entry.key());
                 marked += 1;
             }
@@ -1370,6 +1369,21 @@ impl DefinitionStore {
     /// definitions use the `u32::MAX` sentinel.
     pub fn get_file_id(&self, id: DefId) -> Option<u32> {
         self.definitions.get(&id).and_then(|r| r.file_id)
+    }
+
+    /// `file_id` sentinel for definitions that do not originate from a program
+    /// source file. Every builtin-lib (`tsz_binder` lib-binder) definition
+    /// carries this in place of a real `decl_file_idx`.
+    pub const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
+
+    /// Whether `id` is a builtin-lib (non-program) definition.
+    ///
+    /// Lib definitions are global and bound before checking, so their
+    /// resolution is arena/requester-independent — unlike program defs, which
+    /// can resolve per requester under cross-arena/`CommonJS` delegation. This
+    /// is the single named home for the `u32::MAX` file-id sentinel check.
+    pub fn def_is_lib_resident(&self, id: DefId) -> bool {
+        self.get_file_id(id) == Some(Self::NON_PROGRAM_FILE_SENTINEL)
     }
 
     /// Add an export to an existing definition.

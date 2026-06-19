@@ -60,6 +60,7 @@ mod module_entity;
 mod package_resolution;
 mod program_context;
 pub use program_context::ProgramContext;
+mod refs_resolution_cache;
 mod request_cache;
 mod resolver;
 mod source_file_symbol_type_cache_scope;
@@ -939,9 +940,8 @@ pub struct CheckerContext<'a> {
     /// double-narrowing (e.g., `any` → `string` → `string & Object`).
     pub flow_narrowed_nodes: CowCache<FxHashSet<u32>>,
 
-    /// `TypeIds` whose lazy/type-query refs have been walked and resolved.
-    /// This avoids repeated deep traversals in `ensure_refs_resolved`.
-    pub refs_resolved: FxHashSet<TypeId>,
+    /// Short-circuit caches for `ensure_refs_resolved`: entered-entry guard plus fully-resolved lib-pure closures (#13936).
+    pub refs_resolved: refs_resolution_cache::RefsResolutionCache,
 
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.

@@ -385,6 +385,9 @@ mod override_incompatibility_elaboration_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "tests/refs_closure_lib_reuse_tests.rs"]
+mod refs_closure_lib_reuse_tests;
+#[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
 #[cfg(test)]
