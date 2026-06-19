@@ -311,8 +311,6 @@ impl CheckerContext<'_> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> DefId {
-        use tsz_solver::def::DefinitionInfo;
-
         let cached_def_id = self.symbol_to_def.borrow().get(&sym_id).copied();
         if let Some(def_id) = cached_def_id {
             if self
@@ -430,69 +428,7 @@ impl CheckerContext<'_> {
             return def_id;
         }
 
-        let name = self.types.intern_string(&symbol.escaped_name);
-        let kind = if symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
-            tsz_solver::def::DefKind::TypeAlias
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
-            tsz_solver::def::DefKind::Class
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
-            tsz_solver::def::DefKind::Interface
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
-            tsz_solver::def::DefKind::Enum
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE,
-        ) {
-            tsz_solver::def::DefKind::Namespace
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION) {
-            tsz_solver::def::DefKind::Function
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
-                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
-        ) {
-            tsz_solver::def::DefKind::Variable
-        } else {
-            tsz_solver::def::DefKind::TypeAlias
-        };
-        let span = symbol.first_declaration_span().or_else(|| {
-            if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span()
-            } else {
-                None
-            }
-        });
-
-        let info = DefinitionInfo {
-            kind,
-            name,
-            type_params: Vec::new(),
-            body: None,
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(),
-            file_id: Some(file_idx),
-            span,
-            symbol_id: Some(sym_id.0),
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
-            is_global_augmentation: false,
-            is_declare: false,
-        };
-
-        // Atomic mint — see `get_or_create_def_id`: concurrent checkers
-        // stabilizing the same `(symbol, file)` identity converge on one
-        // `DefId` instead of each minting its own.
-        let (def_id, _minted) = self
-            .definition_store
-            .register_for_symbol(sym_id.0, file_idx, info);
-        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
-        self.register_def_kind_in_envs(def_id, kind);
-        def_id
+        self.mint_def_for_symbol_in_file(sym_id, symbol, file_idx)
     }
 
     /// Get or create a `DefId` for a lib symbol.
@@ -817,19 +753,12 @@ impl CheckerContext<'_> {
     // The flow-env mirror was already deferred via `deferred_flow_env_writes`
     // (TODO #8269); the evaluator env now uses `deferred_eval_env_writes`.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
-    fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
+    pub(super) fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
         self.apply_to_eval_env(op.clone());
         self.mirror_to_flow_env(op);
     }
 
-    /// Apply (or defer) a single registration to the authoritative evaluator
-    /// env (`type_env`).
-    ///
-    /// On a successful borrow, first replays any previously-deferred evaluator
-    /// writes (in order) so the env catches up, then applies `op`. On a borrow
-    /// conflict (recursive resolution already holds `type_env`), `op` is queued
-    /// for later replay so neither the local cache nor the shared
-    /// `DefinitionStore` write-through is ever lost.
+    /// Apply (or defer) one registration to the authoritative evaluator env.
     fn apply_to_eval_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_env.try_borrow_mut() {
             Ok(mut env) => {
@@ -842,9 +771,7 @@ impl CheckerContext<'_> {
         }
     }
 
-    /// Replay every queued deferred evaluator-env write into an already-borrowed
-    /// evaluator env, clearing the queue. A single borrow: `take` leaves an
-    /// empty queue, so the loop is a no-op when nothing was deferred.
+    /// Replay queued evaluator-env writes into an already-borrowed env.
     fn drain_deferred_eval_env_writes_into(&self, env: &mut TypeEnvironment) {
         let pending = std::mem::take(&mut *self.deferred_eval_env_writes.borrow_mut());
         for op in pending {
@@ -857,7 +784,11 @@ impl CheckerContext<'_> {
     /// On a successful borrow, first replays any previously-deferred writes (in
     /// order) so the env catches up, then applies `op`. On a borrow conflict,
     /// `op` is queued for later replay.
-    pub(super) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
+    ///
+    /// Exposed `pub(crate)` so the `get_type_of_symbol` caching path can mirror
+    /// its `DefId` writes through this race-safe queue instead of a direct
+    /// `try_borrow_mut` that silently drops on contention (#13086/#13944).
+    pub(crate) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
             Ok(mut env) => {
                 self.drain_deferred_flow_env_writes_into(&mut env);
@@ -1117,7 +1048,7 @@ impl CheckerContext<'_> {
     /// Prior to this helper, pre-population and fallback paths only propagated
     /// `DefKind` to `type_env`, leaving `type_environment` without the mapping
     /// until the full checker walk populated it incidentally.
-    fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
+    pub(crate) fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
         self.register_in_envs(DeferredFlowEnvWrite::InsertDefKind { def_id, kind });
     }
 

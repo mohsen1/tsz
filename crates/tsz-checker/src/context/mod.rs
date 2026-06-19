@@ -35,9 +35,11 @@ pub(crate) mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
+mod def_declaration;
 mod def_mapping;
 mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
+mod def_mapping_resolved_env;
 mod deferred_flow_env_write;
 mod unresolved_import;
 pub use deferred_flow_env_write::DeferredFlowEnvWrite;
@@ -58,7 +60,11 @@ mod source_file_symbol_type_cache_scope;
 pub(crate) mod speculation;
 mod strict_mode;
 mod symbol_file_targets;
+mod type_parameter_scope_cache_key;
 pub mod typing_request;
+use crate::control_flow::FlowGraph;
+use crate::diagnostics::Diagnostic;
+use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 pub use aliases::*;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
@@ -69,17 +75,13 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
-use tsz_common::interner::Atom;
-pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
-
-use crate::control_flow::FlowGraph;
-use crate::diagnostics::Diagnostic;
-use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{PropertyInfo, TypeId};
-
+pub use type_parameter_scope_cache_key::TypeParameterScopeCacheKey;
+pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 // Re-export context-facing types used by downstream crates.
 pub use tsz_binder::LibContext;
 use tsz_binder::{BinderState, ModuleAugmentation};
@@ -95,32 +97,6 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
-
-/// Cache key for type-node results resolved under active generic bindings.
-///
-/// Plain `node_types` entries are keyed only by `NodeIndex`, so they are safe
-/// only when no dynamic type-parameter scope is active. When generic bindings
-/// are present, the same annotation node can resolve to different `TypeId`s.
-/// This key records the active name-to-type binding set in deterministic order
-/// so equivalent scopes share work without letting different generic contexts
-/// alias each other.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TypeParameterScopeCacheKey(Vec<(String, TypeId)>);
-
-impl TypeParameterScopeCacheKey {
-    #[must_use]
-    pub fn from_scope(scope: &FxHashMap<String, TypeId>) -> Option<Self> {
-        if scope.is_empty() {
-            return None;
-        }
-        let mut entries: Vec<_> = scope
-            .iter()
-            .map(|(name, &type_id)| (name.clone(), type_id))
-            .collect();
-        entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-        Some(Self(entries))
-    }
-}
 
 /// Overflow state observed from relation checks that feed assignability
 /// diagnostics.

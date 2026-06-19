@@ -285,17 +285,39 @@ pub(crate) fn is_known_node_global(name: &str) -> bool {
 /// instead of TS2307 ("Cannot find module 'X'").
 ///
 /// This is the single source of truth for "is this a Node.js builtin module
-/// specifier?". The list mirrors `@types/node`'s ambient `declare module`
+/// specifier?". The set mirrors `@types/node`'s ambient `declare module`
 /// surface and includes the documented subpath builtins (`fs/promises`,
 /// `stream/promises`, `path/posix`, …). tsc classifies a subpath builtin
 /// exactly like its base module, so they must share one set — otherwise the
 /// same import shape produces TS2591 for `fs` but TS2307 for `fs/promises`.
-/// The `node:`-prefixed spelling names the same builtin, so it is stripped
-/// before matching. Adding a name here means tsz no longer treats it as a
-/// resolvable user package on resolution failure.
+///
+/// Node builtins come in two spelling classes, and conflating them
+/// misclassifies real npm packages:
+/// - *Dual-spelled* builtins (`fs`, `fs/promises`, …) are reachable as both
+///   the bare name and the `node:`-prefixed name; `@types/node` declares both
+///   `declare module "fs"` and `declare module "node:fs"`.
+/// - *`node:`-scheme-only* builtins (`node:test`, `node:sqlite`, `node:sea`)
+///   are only reachable through the `node:` scheme; `@types/node` declares only
+///   the `node:`-prefixed form. The bare names (`test`, `sqlite`, `sea`) are
+///   valid, published npm packages, so they must keep the user-package TS2307
+///   path — an unconditional `node:` strip would wrongly classify
+///   `import "test"` as a Node builtin.
+///
+/// Adding a name here means tsz no longer treats it as a resolvable user
+/// package on resolution failure.
 pub(crate) fn is_known_node_module(specifier: &str) -> bool {
-    // Handle `node:` prefix (e.g., `node:fs`, `node:path`)
-    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    match specifier.strip_prefix("node:") {
+        // `node:`-prefixed specifiers may name either class of builtin.
+        Some(name) => is_dual_spelled_node_builtin(name) || is_node_scheme_only_builtin(name),
+        // Bare specifiers only name a builtin if it is dual-spelled; the bare
+        // forms of the `node:`-only builtins are real npm packages.
+        None => is_dual_spelled_node_builtin(specifier),
+    }
+}
+
+/// Builtins `@types/node` declares under both the bare and `node:`-prefixed
+/// spellings (`fs`/`node:fs`, `fs/promises`/`node:fs/promises`, …).
+fn is_dual_spelled_node_builtin(name: &str) -> bool {
     matches!(
         name,
         "assert"
@@ -353,6 +375,13 @@ pub(crate) fn is_known_node_module(specifier: &str) -> bool {
             | "worker_threads"
             | "zlib"
     )
+}
+
+/// Builtins reachable only through the `node:` scheme. `@types/node` declares
+/// only the `node:`-prefixed form for these; their bare names are published
+/// npm packages, so they must not be matched without the scheme.
+fn is_node_scheme_only_builtin(name: &str) -> bool {
+    matches!(name, "test" | "test/reporters" | "sea" | "sqlite")
 }
 
 /// Check if a name is a known DOM/ScriptHost global that requires 'dom' lib (TS2584).
@@ -516,6 +545,26 @@ mod tests {
             assert!(
                 !is_known_node_module(other),
                 "expected non-builtin {other} to NOT be recognized"
+            );
+        }
+    }
+
+    #[test]
+    fn test_node_scheme_only_builtins_require_prefix() {
+        // `node:test`, `node:sqlite`, `node:sea` are builtins reachable only
+        // through the `node:` scheme; `@types/node` declares only the prefixed
+        // form. They must be recognized when prefixed...
+        for scheme_only in ["test", "test/reporters", "sea", "sqlite"] {
+            assert!(
+                is_known_node_module(&format!("node:{scheme_only}")),
+                "expected node:{scheme_only} to be recognized"
+            );
+            // ...and must NOT be recognized bare: `test`, `sea`, and `sqlite`
+            // are real, published npm packages. Treating the bare name as a
+            // builtin would steal the user-package TS2307 path.
+            assert!(
+                !is_known_node_module(scheme_only),
+                "expected bare {scheme_only} (an npm package) to NOT be recognized"
             );
         }
     }
