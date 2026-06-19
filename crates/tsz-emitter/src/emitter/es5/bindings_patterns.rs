@@ -1,6 +1,7 @@
 //! ES5 destructuring - binding element patterns and parameter bindings.
 
 use super::super::Printer;
+use super::bindings::NestedBindingBase;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -144,6 +145,19 @@ impl<'a> Printer<'a> {
                 return Some(rest_prop);
             }
 
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ObjectProperty {
+                    key_idx,
+                    computed_temp: computed_key_temp.as_deref(),
+                },
+                None,
+            ) {
+                return Some(rest_prop);
+            }
+
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
@@ -259,6 +273,16 @@ impl<'a> Printer<'a> {
         }
 
         if self.is_binding_pattern(elem.name) {
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ArrayElement(index),
+                None,
+            ) {
+                return;
+            }
+
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
@@ -359,6 +383,16 @@ impl<'a> Printer<'a> {
         }
 
         if self.is_binding_pattern(elem.name) {
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ArrayElement(index),
+                None,
+            ) {
+                return None;
+            }
+
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
@@ -468,6 +502,16 @@ impl<'a> Printer<'a> {
         }
 
         if self.is_binding_pattern(elem.name) {
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ArrayElement(index),
+                Some(first),
+            ) {
+                return None;
+            }
+
             let value_name = self.get_temp_var_name();
             if !*first {
                 self.write(", ");
@@ -591,6 +635,19 @@ impl<'a> Printer<'a> {
                     computed_key_temp.as_deref(),
                     Some(first),
                 );
+                return Some(rest_prop);
+            }
+
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ObjectProperty {
+                    key_idx,
+                    computed_temp: computed_key_temp.as_deref(),
+                },
+                Some(first),
+            ) {
                 return Some(rest_prop);
             }
 
@@ -844,6 +901,16 @@ impl<'a> Printer<'a> {
         }
 
         if self.is_binding_pattern(elem.name) {
+            if self.try_emit_inline_nested_binding(
+                elem.name,
+                elem.initializer,
+                temp_name,
+                NestedBindingBase::ArrayElement(index),
+                Some(first),
+            ) {
+                return;
+            }
+
             let value_name = self.get_temp_var_name();
             if !*first {
                 self.write(", ");

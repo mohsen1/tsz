@@ -195,6 +195,10 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "destructuring_es5_nested_single_inline_tests"
+path = "tests/destructuring_es5_nested_single_inline_tests.rs"
+
+[[test]]
 name = "destructuring_assignment_es5_shorthand_default_tests"
 path = "tests/destructuring_assignment_es5_shorthand_default_tests.rs"
 
