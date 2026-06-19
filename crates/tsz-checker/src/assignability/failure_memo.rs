@@ -43,8 +43,7 @@ impl CheckerState<'_> {
     /// relation walk can grow the type environments, and the captured
     /// analysis is valid for that *post*-pass state.
     ///
-    /// `lazy_failures_at_entry` is a snapshot of
-    /// [`lazy_resolve_failure_count`](crate::query_boundaries::common::lazy_resolve_failure_count)
+    /// `lazy_failures_at_entry` is a snapshot of `lazy_resolve_failure_count`
     /// taken by the caller immediately before it ran the captured relation. If
     /// the count advanced during the relation, the walk compared against a
     /// `Lazy(DefId)` whose body was not yet registered (`note_lazy_resolve_failure`),
