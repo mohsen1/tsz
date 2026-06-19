@@ -331,6 +331,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lazy_lib_heritage_guard_tests.rs"]
+mod lazy_lib_heritage_guard_tests;
+#[cfg(test)]
 #[path = "tests/lazy_lib_member_access_tests.rs"]
 mod lazy_lib_member_access_tests;
 #[cfg(test)]

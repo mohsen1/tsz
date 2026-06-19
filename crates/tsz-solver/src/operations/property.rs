@@ -19,7 +19,7 @@ pub use super::property_readonly::{
 
 // Child module: resolution helpers (mapped types, primitives, arrays, applications, etc.)
 #[path = "property_helpers.rs"]
-mod property_helpers;
+pub(crate) mod property_helpers;
 
 // =============================================================================
 // Property Access Resolution

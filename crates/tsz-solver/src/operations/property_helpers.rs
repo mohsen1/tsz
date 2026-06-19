@@ -13,7 +13,15 @@ use crate::types::{
     TypeParamInfo,
 };
 
-fn is_array_mutating_method(prop_name: &str) -> bool {
+/// The `Array<T>` members that `ReadonlyArray<T>` does not declare.
+///
+/// These are exactly the mutating methods stripped from the readonly array
+/// surface, so this predicate is the canonical structural difference between the
+/// mutable and readonly array member sets. Property access on `readonly T[]` uses
+/// it to reject mutating-method access; the subtype dispatch uses it to recognize
+/// a heritage-flattened `extends ReadonlyArray<T>` source (which carries the
+/// non-mutating subset) against a readonly-array target.
+pub(crate) fn is_array_mutating_method(prop_name: &str) -> bool {
     matches!(
         prop_name,
         "copyWithin"
