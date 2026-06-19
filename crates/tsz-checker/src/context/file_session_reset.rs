@@ -307,6 +307,7 @@ impl<'a> CheckerContext<'a> {
         self.jsdoc_generic_typedef_resolving.borrow_mut().clear();
         self.resolving_jsdoc_typedefs.borrow_mut().clear();
         self.refs_resolved.clear();
+        self.type_position_resolution_cache.borrow_mut().clear();
         self.application_symbols_resolved.clear();
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
