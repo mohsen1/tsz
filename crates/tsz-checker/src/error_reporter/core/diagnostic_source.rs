@@ -460,6 +460,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A source identifier declared `unknown`/`any` but flow-narrowed to a
+        // concrete type must render its narrowed type, not its stale declared
+        // annotation; `tsc` prints the narrowed type here.
+        if self.source_identifier_narrowed_from_unknown_or_any(expr_idx, expr_type) {
+            return false;
+        }
         let annotation = annotation_text.trim();
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
@@ -1464,6 +1470,47 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// True when `expr_idx` references an identifier whose *declared* type is
+    /// `unknown` or `any`, but whose value at this position has been
+    /// flow-narrowed to a concrete type `source` (e.g. by a `x is T`
+    /// type-predicate guard).
+    ///
+    /// In that case the written `unknown`/`any` annotation no longer describes
+    /// the value, so the diagnostic source display must render the narrowed
+    /// type rather than repainting it with the declared annotation text. `tsc`
+    /// renders the narrowed type here, so the annotation-recovery heuristics
+    /// (which exist to recover lost alias/parameter *names*, not to widen back
+    /// to a supertype) must be suppressed.
+    ///
+    /// The check is intentionally scoped to the `unknown`/`any` declarations
+    /// only: those are the universal supertypes for which narrowing to a
+    /// concrete type is unambiguous, and a concrete declared type already
+    /// equals its own narrowed form (so the annotation faithfully describes the
+    /// value). It performs no relation work, so it is free of the cache
+    /// side-effects that gate the surrounding display heuristics.
+    pub(in crate::error_reporter) fn source_identifier_narrowed_from_unknown_or_any(
+        &mut self,
+        expr_idx: NodeIndex,
+        source: TypeId,
+    ) -> bool {
+        if matches!(source, TypeId::UNKNOWN | TypeId::ANY | TypeId::ERROR) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+        matches!(
+            self.get_type_of_symbol(sym_id),
+            TypeId::UNKNOWN | TypeId::ANY
+        )
+    }
+
     pub(in crate::error_reporter) fn declared_identifier_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -1488,6 +1535,13 @@ impl<'a> CheckerState<'a> {
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        // A flow-narrowed `any` operand keeps its declared `any` here via the
+        // `prefer_declared_display` path below; suppress it so the narrowed type
+        // is rendered, matching `tsc`. (`unknown` is already handled by the
+        // guard above.)
+        if self.source_identifier_narrowed_from_unknown_or_any(expr_idx, expr_display_type) {
             return None;
         }
         if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)

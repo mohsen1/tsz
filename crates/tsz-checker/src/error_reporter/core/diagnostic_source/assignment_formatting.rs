@@ -138,6 +138,20 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        // A source identifier declared `unknown`/`any` but flow-narrowed to a
+        // concrete type (e.g. by a `x is T` guard) must render its narrowed
+        // type, not its stale `unknown`/`any` annotation. The annotation-recovery
+        // heuristics below exist to recover lost alias/parameter *names*; for a
+        // narrowed `unknown`/`any` operand they would widen the display back to
+        // the declared supertype, diverging from `tsc` (which prints the narrowed
+        // type). Render the narrowed `source` structurally instead.
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && self.source_identifier_narrowed_from_unknown_or_any(expr_idx, source)
+        {
+            return self.format_type_for_assignability_message(source);
+        }
         // For property-access source expressions whose underlying value type is
         // a `unique symbol` (e.g. `Symbol.toPrimitive`), tsc displays the source
         // as `typeof <expr>` rather than widening to `symbol`. Match that here

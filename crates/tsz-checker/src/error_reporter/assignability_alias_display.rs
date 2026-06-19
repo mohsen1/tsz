@@ -149,9 +149,20 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<(String, String)> {
-        if let Some(expr_idx) = self
+        // When the source is an identifier declared `unknown`/`any` that has
+        // been flow-narrowed to a concrete type, its declared annotation is
+        // stale: `tsc` renders the narrowed type, so none of the
+        // annotation-recovery repaints below may repaint the *source* display.
+        // (Target repaints stay enabled — the target is never the narrowed
+        // operand here.)
+        let source_expr = self
             .direct_diagnostic_source_expression(anchor_idx)
-            .or_else(|| self.assignment_source_expression(anchor_idx))
+            .or_else(|| self.assignment_source_expression(anchor_idx));
+        let source_narrowed_from_unknown_any = source_expr.is_some_and(|expr_idx| {
+            self.source_identifier_narrowed_from_unknown_or_any(expr_idx, source)
+        });
+        if !source_narrowed_from_unknown_any
+            && let Some(expr_idx) = source_expr
             && let Some(source_display) =
                 self.bare_type_parameter_annotation_for_assignment_identifier(expr_idx)
         {
@@ -177,18 +188,24 @@ impl<'a> CheckerState<'a> {
             let target_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
             return Some((source_display.to_string(), target_display));
         }
-        if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
-            anchor_idx,
-            source_fact,
-            source_display,
-            target_display,
-        ) {
+        if !source_narrowed_from_unknown_any
+            && let Some(source_display) = self
+                .declared_generic_alias_source_display_for_target_display(
+                    anchor_idx,
+                    source_fact,
+                    source_display,
+                    target_display,
+                )
+        {
             return Some((source_display, target_display.to_string()));
         }
         if self
             .static_schema_array_structural_display(source_fact, target)
             .is_some()
         {
+            return None;
+        }
+        if source_narrowed_from_unknown_any {
             return None;
         }
 
