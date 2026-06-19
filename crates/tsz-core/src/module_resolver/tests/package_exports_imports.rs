@@ -1257,12 +1257,12 @@ fn exports_present_still_resolves_exported_subpath() {
         types_versions_compiler_version: Some("3.1.0".to_string()),
         ..Default::default()
     });
-    let resolved = resolver
+    let exported_subpath = resolver
         .resolve("gizmo/panel", &dir.join("src/app.ts"), Span::new(0, 1))
         .expect("an exported subpath must still resolve through exports");
 
     assert_eq!(
-        resolved.resolved_path,
+        exported_subpath.resolved_path,
         dir.join("node_modules/gizmo/panel.d.ts")
     );
 }
@@ -1293,7 +1293,7 @@ fn no_exports_subpath_still_uses_types_versions() {
         types_versions_compiler_version: Some("3.1.0".to_string()),
         ..Default::default()
     });
-    let resolved = resolver
+    let legacy_types_version_subpath = resolver
         .resolve(
             "doohickey/internals",
             &dir.join("src/app.ts"),
@@ -1302,7 +1302,7 @@ fn no_exports_subpath_still_uses_types_versions() {
         .expect("without an exports map, typesVersions still resolves the subpath");
 
     assert_eq!(
-        resolved.resolved_path,
+        legacy_types_version_subpath.resolved_path,
         dir.join("node_modules/doohickey/typed/internals.d.ts")
     );
 }
