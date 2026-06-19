@@ -35,11 +35,12 @@ mod ir_printer_namespace;
 mod ir_printer_node_predicates;
 #[path = "ir_printer_recovery.rs"]
 mod ir_printer_recovery;
+#[path = "ir_printer_source_map.rs"]
+mod ir_printer_source_map;
 use ir_printer_namespace::NamespaceIifeContext;
 
 use crate::context::transform::TransformContext;
 use crate::emitter::{Printer as AstPrinter, PrinterOptions};
-use crate::output::source_writer::compute_line_col;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::ir::{
     EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
@@ -479,52 +480,6 @@ impl<'a> IRPrinter<'a> {
     /// Set the source text for `ASTRef` emission
     pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
-    }
-
-    /// Enable recording of source-map mappings for re-emitted `ASTRef` nodes.
-    /// Callers enable this only when a source map is being generated.
-    pub const fn enable_mapping_capture(&mut self) {
-        self.capture_mappings = true;
-    }
-
-    /// Set the source index recorded on captured mappings.
-    pub const fn set_source_map_source_index(&mut self, index: u32) {
-        self.source_index = index;
-    }
-
-    /// Take the source-map mappings recorded during emission. Generated
-    /// positions are relative to the start of this printer's output.
-    pub fn take_mappings(&mut self) -> Vec<Mapping> {
-        std::mem::take(&mut self.mappings)
-    }
-
-    /// Record a source mapping from the current generated output position to the
-    /// token start of `idx` in the original source. Mirrors `tsc`, which emits a
-    /// mapping at the start of each node re-emitted into a lowered generator or
-    /// async body; without this the entire downleveled body has no mappings.
-    pub(super) fn record_ast_ref_mapping(&mut self, idx: NodeIndex) {
-        if !self.capture_mappings {
-            return;
-        }
-        let (Some(arena), Some(text)) = (self.arena, self.source_text) else {
-            return;
-        };
-        let Some(node) = arena.get(idx) else {
-            return;
-        };
-        let token_start =
-            crate::transforms::emit_utils::skip_trivia_forward(Some(text), node.pos, node.end);
-        let (original_line, original_column) = compute_line_col(text, token_start);
-        let (generated_line, generated_column) =
-            compute_line_col(&self.output, self.output.len() as u32);
-        self.mappings.push(Mapping {
-            generated_line,
-            generated_column,
-            source_index: self.source_index,
-            original_line,
-            original_column,
-            name_index: None,
-        });
     }
 
     /// Set the indentation level

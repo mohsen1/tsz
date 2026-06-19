@@ -237,7 +237,7 @@ impl<'a> AsyncES5Emitter<'a> {
     }
 
     /// Forward this emitter's source-map capture state to an inner `IRPrinter`.
-    fn configure_printer_capture(&self, printer: &mut IRPrinter<'a>) {
+    const fn configure_printer_capture(&self, printer: &mut IRPrinter<'a>) {
         if self.capture_mappings {
             printer.enable_mapping_capture();
             printer.set_source_map_source_index(self.source_index);
