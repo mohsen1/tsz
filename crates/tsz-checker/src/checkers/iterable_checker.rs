@@ -677,7 +677,23 @@ impl<'a> CheckerState<'a> {
         match classify_for_of_element_type(self.ctx.types, type_id) {
             ForOfElementKind::Array(elem) => elem,
             ForOfElementKind::Tuple(elements) => {
-                let member_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+                // A rest element (`...T[]`) contributes the iterated ELEMENT type of
+                // its array, not the array type itself; fixed (non-rest) elements
+                // contribute their own type. Iterating `[Base, ...Base[]]` yields
+                // `Base`, not `Base | Base[]`. Computing the rest's element type via
+                // the same iterable element-type query keeps it a solver-backed
+                // decision and resolves concrete arrays, readonly arrays, and generic
+                // `T extends U[]` rests uniformly.
+                let member_types: Vec<TypeId> = elements
+                    .iter()
+                    .map(|e| {
+                        if e.rest {
+                            self.for_of_element_type_classified(e.type_id, depth + 1)
+                        } else {
+                            e.type_id
+                        }
+                    })
+                    .collect();
                 tsz_solver::utils::union_or_single(self.ctx.types, member_types)
             }
             ForOfElementKind::Union(members) => {

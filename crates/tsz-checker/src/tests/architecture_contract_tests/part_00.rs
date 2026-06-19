@@ -597,6 +597,87 @@ fn test_env_eval_cache_def_invalidation_is_targeted() {
 }
 
 #[test]
+fn test_invalidate_env_eval_for_targets_single_entry() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let target = types.lazy(DefId(11_001));
+    let neighbor = types.lazy(DefId(11_002));
+
+    ctx.cache_env_eval_result(target, TypeId::STRING, false);
+    ctx.cache_env_eval_result(neighbor, TypeId::NUMBER, false);
+
+    // Removing the targeted key drops only that entry and reports the removal.
+    assert!(ctx.invalidate_env_eval_for(target));
+    assert!(ctx.lookup_env_eval_cache(target).is_none());
+    assert_eq!(
+        ctx.lookup_env_eval_cache(neighbor)
+            .map(|entry| entry.result),
+        Some(TypeId::NUMBER),
+        "unrelated entries must survive a targeted single-key invalidation",
+    );
+
+    // A second invalidation of the now-absent key is a no-op and reports false.
+    assert!(!ctx.invalidate_env_eval_for(target));
+}
+
+#[test]
+fn test_invalidate_env_eval_reachable_from_clears_structural_closure() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    // `composite` structurally reaches `member_a` and `member_b`; `outsider`
+    // and the `keep_*` lazies are not part of its reachable closure.
+    let member_a = types.lazy(DefId(12_001));
+    let member_b = types.lazy(DefId(12_002));
+    let composite = types.union(vec![member_a, member_b]);
+    let outsider = types.lazy(DefId(12_003));
+    let keep_key = types.lazy(DefId(12_004));
+    let keep_result = types.lazy(DefId(12_005));
+
+    // Root entry (key == composite) and a sub-term entry (key reachable).
+    ctx.cache_env_eval_result(composite, TypeId::STRING, false);
+    ctx.cache_env_eval_result(member_a, TypeId::NUMBER, false);
+    // Result-side staleness: an unrelated key whose cached result embeds a
+    // reachable sub-term must also be dropped.
+    ctx.cache_env_eval_result(outsider, member_b, false);
+    // Wholly unrelated entry: neither key nor result is reachable.
+    ctx.cache_env_eval_result(keep_key, keep_result, false);
+
+    let removed = ctx.invalidate_env_eval_reachable_from(composite);
+    assert_eq!(
+        removed, 3,
+        "root, reachable sub-term key, and result-side mention should be cleared",
+    );
+
+    assert!(ctx.lookup_env_eval_cache(composite).is_none());
+    assert!(ctx.lookup_env_eval_cache(member_a).is_none());
+    assert!(ctx.lookup_env_eval_cache(outsider).is_none());
+    assert_eq!(
+        ctx.lookup_env_eval_cache(keep_key)
+            .map(|entry| entry.result),
+        Some(keep_result),
+        "entries outside the reachable closure must survive",
+    );
+}
+
+#[test]
 fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
     let arena = NodeArena::new();
     let binder = BinderState::new();

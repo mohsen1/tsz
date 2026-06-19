@@ -42,6 +42,13 @@ pub(crate) fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: T
     tsz_solver::type_queries::contains_application_unknown_arg(db, type_id)
 }
 
+pub(crate) fn collect_referenced_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> rustc_hash::FxHashSet<TypeId> {
+    tsz_solver::visitor::collect_referenced_types(db, type_id)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriteTargetLogicalOperator {
     LogicalOr,

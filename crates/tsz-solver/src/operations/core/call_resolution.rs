@@ -74,25 +74,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let shape = self.interner.callable_shape(c_id);
                 self.resolve_callable_call(shape.as_ref(), arg_types)
             }
-            TypeData::Union(list_id) => {
-                // Handle union types: if all members are callable with compatible signatures,
-                // the union is callable
-                self.resolve_union_call(func_type, list_id, arg_types)
-            }
+            TypeData::Union(list_id) => self.resolve_union_call(func_type, list_id, arg_types),
             TypeData::Intersection(list_id) => {
                 // Handle intersection types: if any member is callable, use that
                 // This handles cases like: Function & { prop: number }
                 self.resolve_intersection_call(func_type, list_id, arg_types)
             }
             TypeData::Application(_app_id) => {
-                // Handle Application types (e.g., GenericCallable<string>)
-                // Evaluate the application type to properly instantiate its base type with arguments
                 let evaluated = self.checker.evaluate_type(func_type);
                 if evaluated != func_type {
-                    self.resolve_call(evaluated, arg_types)
-                } else {
-                    CallResult::NotCallable { type_id: func_type }
+                    return self.resolve_call(evaluated, arg_types);
                 }
+                // Resolver-less cross-file generic aliases can survive as
+                // unexpanded applications. Retry through the same alias
+                // expansion used by constraints and generic-call inference;
+                // callability is still decided structurally after expansion.
+                if let Some(expanded) = self.checker.expand_type_alias_application(func_type)
+                    && expanded != func_type
+                {
+                    return self.resolve_call(expanded, arg_types);
+                }
+                CallResult::NotCallable { type_id: func_type }
             }
             TypeData::TypeParameter(param_info) => {
                 // For type parameters with callable constraints (e.g., T extends { (): string }),
@@ -1381,16 +1383,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // For intersection types: if ANY member is callable, the intersection is callable
-        // This is different from unions where ALL members must be callable
-        // We try each member in order and use the first callable one
         for &member in members.iter() {
             let result = self.resolve_call(member, arg_types);
             match result {
-                CallResult::Success(return_type) => {
-                    // Found a callable member - use its return type
-                    return CallResult::Success(return_type);
-                }
+                CallResult::Success(return_type) => return CallResult::Success(return_type),
                 CallResult::NotCallable { .. } => {
                     // This member is not callable, try the next one
                     continue;
