@@ -72,6 +72,57 @@ impl<'a> CheckerState<'a> {
         resolved
     }
 
+    /// tsc resolves a *concrete* indexed-access type (`Obj["m"]` where the
+    /// object type and key are fully resolved, with no free type parameters) to
+    /// the member type during type construction (`getIndexedAccessType`), so it
+    /// never renders the `Obj["m"]` form in a diagnostic — it shows the reduced
+    /// member type. tsz keeps the indexed access deferred and rendered the
+    /// unreduced `Obj["m"]` form (e.g. `Property 'bar' is missing in type
+    /// 'Obj["m"]'` where tsc says `... in type '{ foo: string; }'`).
+    ///
+    /// Reduce it here for display, but only when concrete: an indexed access
+    /// that carries a free type parameter is *legitimately* deferred (tsc keeps
+    /// `T["m"]` too), and pre-resolving it risks `TS2589` on deeply-recursive
+    /// generic forms — so those are left opaque. This mirrors the deliberate
+    /// exclusion of [`Self::resolve_indexed_access_alias_for_display`] from the
+    /// assignment roles, but is strictly narrower: only a bare,
+    /// type-parameter-free indexed access with a literal key is touched.
+    pub(in crate::error_reporter) fn resolve_concrete_indexed_access_for_display(
+        &mut self,
+        ty: TypeId,
+    ) -> TypeId {
+        use crate::query_boundaries::common;
+        let db = self.ctx.types.as_type_database();
+        let Some(indexed) = common::get_indexed_access_type(db, ty) else {
+            return ty;
+        };
+        // Only a single string/number literal key reduces to one member;
+        // `keyof`/union keys keep the indexed-access form in tsc too. A literal
+        // key also structurally carries no free type parameters, so only the
+        // object side is checked for deferral below.
+        if !matches!(
+            common::classify_literal_type(db, indexed.index_type),
+            common::LiteralTypeKind::String(_) | common::LiteralTypeKind::Number(_)
+        ) {
+            return ty;
+        }
+        // A free type parameter in the object means the access is legitimately
+        // deferred (tsc renders `T["m"]`); never force-evaluate those.
+        if common::contains_free_type_parameters(db, indexed.object_type) {
+            return ty;
+        }
+        let resolved = self.evaluate_type_with_env(ty);
+        if resolved == ty
+            || crate::query_boundaries::diagnostics::is_unresolved_for_display(
+                self.ctx.types.as_type_database(),
+                resolved,
+            )
+        {
+            return ty;
+        }
+        resolved
+    }
+
     /// Widen literal annotations of `ty` for diagnostic display (#13075),
     /// using the type environment for display-time evaluation when it is
     /// available (so generic applications that evaluate to literals widen
@@ -125,6 +176,13 @@ impl<'a> CheckerState<'a> {
             | DiagnosticTypeDisplayRole::CallParameter { .. }
             | DiagnosticTypeDisplayRole::WeakCallParameter { .. } => {
                 self.resolve_indexed_access_alias_for_display(ty)
+            }
+            // A bare, concrete (type-parameter-free) indexed access is reduced
+            // to its member type, matching tsc's eager `getIndexedAccessType`.
+            // Generic/deferred accesses stay opaque (see the helper's docs).
+            DiagnosticTypeDisplayRole::AssignmentSource { .. }
+            | DiagnosticTypeDisplayRole::AssignmentTarget { .. } => {
+                self.resolve_concrete_indexed_access_for_display(ty)
             }
             _ => ty,
         };
