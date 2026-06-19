@@ -655,7 +655,18 @@ impl AssignabilityEvalMemo {
     /// Record an evaluation result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        self.entries.insert(type_id, result);
+        let _previous = self.entries.insert(type_id, result);
+        // Debug-only purity invariant (#13980): under a fixed stamp this is a
+        // pure function, so overwriting an entry with a *different* result means
+        // a hidden input (lib-ref resolution eagerness) leaked into type
+        // identity. The displaced value is free; no extra lookup.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::ASSIGNABILITY_EVAL_MEMO,
+            type_id,
+            _previous,
+            &result,
+        );
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions:
@@ -710,7 +721,15 @@ impl AwaitedAssignabilityEvalMemo {
     /// Record a normalization result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        self.entries.insert(type_id, result);
+        let _previous = self.entries.insert(type_id, result);
+        // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::AWAITED_ASSIGNABILITY_EVAL_MEMO,
+            type_id,
+            _previous,
+            &result,
+        );
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions
@@ -734,7 +753,7 @@ pub type AssignabilityFailureKey = (TypeId, TypeId, u16, bool);
 /// post-passes (excess-property suppression, intersection-constituent
 /// framing, array-extends weak-type suppression), which differ per consumer
 /// and must keep running on every path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CachedAssignabilityAnalysis {
     /// Pass/fail verdict of the relation.
     pub related: bool,
@@ -795,7 +814,17 @@ impl AssignabilityFailureMemo {
         analysis: CachedAssignabilityAnalysis,
     ) {
         self.roll_to(stamp);
-        self.entries.insert(key, analysis);
+        let _previous = self.entries.insert(key, analysis);
+        // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
+        // The value moved into the map, so the just-stored entry is borrowed back
+        // (a debug-only lookup) to compare against the displaced one.
+        #[cfg(debug_assertions)]
+        super::eval_memo_purity::record_insert(
+            super::eval_memo_purity::ASSIGNABILITY_FAILURE_MEMO,
+            key,
+            _previous,
+            self.entries.get(&key).expect("entry was just inserted"),
+        );
     }
 
     /// Drop all entries and forget the stamp (between file sessions; see

@@ -32,6 +32,10 @@ mod cross_file_query;
 mod diagnostic_indices;
 mod diagnostic_push;
 pub(crate) mod env_eval_cache;
+/// Debug-only purity invariant for the stamp-keyed evaluation memos (#13980).
+/// Compiles out of release builds; the wiring in `caches.rs` is gated the same.
+#[cfg(debug_assertions)]
+pub(crate) mod eval_memo_purity;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
