@@ -655,7 +655,7 @@ impl AssignabilityEvalMemo {
     /// Record an evaluation result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        let _previous = self.entries.insert(type_id, result);
+        let previous = self.entries.insert(type_id, result);
         // Debug-only purity invariant (#13980): under a fixed stamp this is a
         // pure function, so overwriting an entry with a *different* result means
         // a hidden input (lib-ref resolution eagerness) leaked into type
@@ -664,9 +664,11 @@ impl AssignabilityEvalMemo {
         super::eval_memo_purity::record_insert(
             super::eval_memo_purity::ASSIGNABILITY_EVAL_MEMO,
             type_id,
-            _previous,
+            previous,
             &result,
         );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions:
@@ -721,15 +723,17 @@ impl AwaitedAssignabilityEvalMemo {
     /// Record a normalization result computed under `stamp`.
     pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
         self.roll_to(stamp);
-        let _previous = self.entries.insert(type_id, result);
+        let previous = self.entries.insert(type_id, result);
         // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
         #[cfg(debug_assertions)]
         super::eval_memo_purity::record_insert(
             super::eval_memo_purity::AWAITED_ASSIGNABILITY_EVAL_MEMO,
             type_id,
-            _previous,
+            previous,
             &result,
         );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp. Required between file sessions
@@ -814,7 +818,7 @@ impl AssignabilityFailureMemo {
         analysis: CachedAssignabilityAnalysis,
     ) {
         self.roll_to(stamp);
-        let _previous = self.entries.insert(key, analysis);
+        let previous = self.entries.insert(key, analysis);
         // Debug-only purity invariant (#13980); see `AssignabilityEvalMemo::insert`.
         // The value moved into the map, so the just-stored entry is borrowed back
         // (a debug-only lookup) to compare against the displaced one.
@@ -822,9 +826,11 @@ impl AssignabilityFailureMemo {
         super::eval_memo_purity::record_insert(
             super::eval_memo_purity::ASSIGNABILITY_FAILURE_MEMO,
             key,
-            _previous,
+            previous,
             self.entries.get(&key).expect("entry was just inserted"),
         );
+        #[cfg(not(debug_assertions))]
+        let _ = previous;
     }
 
     /// Drop all entries and forget the stamp (between file sessions; see

@@ -85,12 +85,11 @@ pub(crate) fn record_insert<K: Debug, V: PartialEq + Debug>(
         "eval-memo purity violation: same-stamp re-evaluation produced a \
          different result — a resolution-mode -> type-identity leak (issue #13980)"
     );
-    if purity_panic_enabled() {
-        panic!(
-            "eval-memo purity violation in {memo}: key {key:?} mapped to \
-             {previous:?} then {result:?} under one stamp (issue #13980)"
-        );
-    }
+    assert!(
+        !purity_panic_enabled(),
+        "eval-memo purity violation in {memo}: key {key:?} mapped to \
+         {previous:?} then {result:?} under one stamp (issue #13980)"
+    );
     true
 }
 
@@ -103,9 +102,7 @@ pub(crate) fn divergence_count() -> u64 {
 fn purity_panic_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("TSZ_EVAL_MEMO_PURITY_PANIC")
-            .map(|v| v != "0" && !v.is_empty())
-            .unwrap_or(false)
+        std::env::var("TSZ_EVAL_MEMO_PURITY_PANIC").is_ok_and(|v| v != "0" && !v.is_empty())
     })
 }
 
