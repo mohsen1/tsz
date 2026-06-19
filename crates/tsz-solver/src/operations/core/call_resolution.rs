@@ -74,36 +74,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let shape = self.interner.callable_shape(c_id);
                 self.resolve_callable_call(shape.as_ref(), arg_types)
             }
-            TypeData::Union(list_id) => {
-                // Handle union types: if all members are callable with compatible signatures,
-                // the union is callable
-                self.resolve_union_call(func_type, list_id, arg_types)
-            }
+            TypeData::Union(list_id) => self.resolve_union_call(func_type, list_id, arg_types),
             TypeData::Intersection(list_id) => {
                 // Handle intersection types: if any member is callable, use that
                 // This handles cases like: Function & { prop: number }
                 self.resolve_intersection_call(func_type, list_id, arg_types)
             }
             TypeData::Application(_app_id) => {
-                // Handle Application types (e.g., GenericCallable<string>)
-                // Evaluate the application type to properly instantiate its base type with arguments
                 let evaluated = self.checker.evaluate_type(func_type);
                 if evaluated != func_type {
                     return self.resolve_call(evaluated, arg_types);
                 }
-                // `evaluate_type` cannot expand a *cross-file* generic alias/interface
-                // application whose base carries no `SymbolId` in the calling file's
-                // context (the resolver-less case: the base survives lowering as a bare
-                // `Lazy(DefId)`/`TypeQuery`/`UnresolvedTypeName`). The constraint walker
-                // and generic-call inference already recover this through
-                // `expand_type_alias_application`, which resolves the base via its
-                // declaring `DefId` and instantiates the open body. The call boundary
-                // did not, so a callable generic alias/interface reached as a call
-                // target (e.g. an imported `type Create<R> = Sig<R>` where `Sig` is a
-                // callable interface) collapsed to a spurious `NotCallable` — the
-                // untyped-call / not-callable family tracked in #13947. Expand the alias
-                // application and retry; callability is still decided structurally, so a
-                // genuinely non-callable application stays `NotCallable`.
+                // Resolver-less cross-file generic aliases can survive as
+                // unexpanded applications. Retry through the same alias
+                // expansion used by constraints and generic-call inference;
+                // callability is still decided structurally after expansion.
                 if let Some(expanded) = self.checker.expand_type_alias_application(func_type)
                     && expanded != func_type
                 {
@@ -1398,16 +1383,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // For intersection types: if ANY member is callable, the intersection is callable
-        // This is different from unions where ALL members must be callable
-        // We try each member in order and use the first callable one
         for &member in members.iter() {
             let result = self.resolve_call(member, arg_types);
             match result {
-                CallResult::Success(return_type) => {
-                    // Found a callable member - use its return type
-                    return CallResult::Success(return_type);
-                }
+                CallResult::Success(return_type) => return CallResult::Success(return_type),
                 CallResult::NotCallable { .. } => {
                     // This member is not callable, try the next one
                     continue;
