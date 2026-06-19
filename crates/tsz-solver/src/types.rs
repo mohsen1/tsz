@@ -429,6 +429,18 @@ pub struct RelationCacheKey {
     pub target: TypeId,
     pub relation: RelationCacheKind,
     pub config: RelationCacheConfig,
+    /// Resolved polymorphic-`this` binding under which this verdict holds, or
+    /// [`TypeId::NONE`] when the pair does not depend on a `this` binding.
+    ///
+    /// A pair that carries a polymorphic `this` resolves `ThisType` against the
+    /// current receiver, so its relation outcome is valid only under that
+    /// receiver. Encoding the resolved binding here lets such verdicts live in
+    /// the cross-checker shared cache without poisoning a sibling checker that
+    /// compares the same `(source, target)` under a different receiver (issue
+    /// #13828). It is [`TypeId::NONE`] for every non-`this` pair, so ordinary
+    /// keys are byte-identical to the pre-`this`-context protocol and share
+    /// their existing cache slots unchanged.
+    pub this_context: TypeId,
 }
 
 impl RelationCacheKey {
@@ -465,6 +477,7 @@ impl RelationCacheKey {
             target,
             relation: RelationCacheKind::Subtype,
             config,
+            this_context: TypeId::NONE,
         }
     }
 
@@ -479,6 +492,7 @@ impl RelationCacheKey {
             target,
             relation: RelationCacheKind::Assignable,
             config,
+            this_context: TypeId::NONE,
         }
     }
 
@@ -497,6 +511,7 @@ impl RelationCacheKey {
             target,
             relation: RelationCacheKind::CheckerAssignable,
             config,
+            this_context: TypeId::NONE,
         }
     }
 
@@ -511,7 +526,18 @@ impl RelationCacheKey {
             target,
             relation: RelationCacheKind::Identical,
             config,
+            this_context: TypeId::NONE,
         }
+    }
+
+    /// Return this key discriminated by a resolved polymorphic-`this` binding.
+    ///
+    /// Passing [`TypeId::NONE`] (the default) is a no-op, leaving the key
+    /// byte-identical to the undiscriminated form. See [`Self::this_context`].
+    #[must_use]
+    pub const fn with_this_context(mut self, this_context: TypeId) -> Self {
+        self.this_context = this_context;
+        self
     }
 }
 

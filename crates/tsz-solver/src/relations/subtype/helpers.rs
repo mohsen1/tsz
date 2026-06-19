@@ -215,12 +215,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// vs lax, with/without weak-type suppression, etc.) cannot
     /// contaminate each other.
     pub(crate) fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+        self.make_cache_key_with_this_context(
+            source,
+            target,
+            self.this_relation_context(source, target),
+        )
+    }
+
+    /// Build the relation cache key for `(source, target)` with an
+    /// already-resolved polymorphic-`this` discriminator.
+    ///
+    /// Callers on the hot cache-lookup path pass the discriminator they already
+    /// computed for the gate decision (see `check_subtype`'s cache section), so
+    /// the [`crate::contains_this_type`] walk in [`Self::this_relation_context`]
+    /// is not repeated per lookup. Passing [`TypeId::NONE`] produces a key
+    /// byte-identical to the legacy undiscriminated form.
+    pub(crate) fn make_cache_key_with_this_context(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        this_context: TypeId,
+    ) -> RelationCacheKey {
         RelationCacheKey::for_subtype(
             source,
             target,
             self.cache_policy()
                 .cache_config_with_cached_any_mode(self.effective_cached_any_mode()),
         )
+        .with_this_context(this_context)
+    }
+
+    /// Resolve the polymorphic-`this` discriminator for a `(source, target)`
+    /// pair (issue #13828).
+    ///
+    /// Returns the resolver's current `this` binding when the pair carries a
+    /// polymorphic `this` (so its verdict depends on that binding), else
+    /// [`TypeId::NONE`]. A `None` binding also yields [`TypeId::NONE`]: with no
+    /// receiver to resolve `ThisType` against, the pair stays on the
+    /// instance-local memo rather than the shared cache.
+    pub(crate) fn this_relation_context(&self, source: TypeId, target: TypeId) -> TypeId {
+        match self.resolver.resolve_this_type(self.interner) {
+            Some(this_ty)
+                if crate::contains_this_type(self.interner, source)
+                    || crate::contains_this_type(self.interner, target) =>
+            {
+                this_ty
+            }
+            _ => TypeId::NONE,
+        }
     }
 
     /// Project this checker's behavior-affecting relation modes to a policy.

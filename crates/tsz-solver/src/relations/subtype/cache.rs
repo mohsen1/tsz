@@ -292,29 +292,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // the identity-mode flag, so a cached `true` from a normal subtype check
         // would incorrectly short-circuit the identity check (which needs stricter
         // Application type-argument comparison at cycle points for TS2403).
-        // Types containing ThisType are context-dependent (they depend on which class
-        // is currently being checked via the resolver's this_type_stack). Caching them
-        // in the shared cache would poison it with results computed outside of any
-        // class context (e.g., during class type construction), causing later
-        // legitimate checks inside class bodies to get the wrong cached result. Such
-        // pairs instead use the instance-local fallback memo (issue #13828), which is
-        // valid for the lifetime of this checker — the `this` binding is fixed for one
-        // top-level query — and dropped afterward, so it cannot poison sibling checks.
+        // Types containing ThisType are context-dependent: they resolve `ThisType`
+        // against the receiver currently being checked (the resolver's
+        // `this_type_stack`). Their verdict depends only on that binding, so when a
+        // concrete binding is available `make_cache_key` discriminates the shared
+        // key by it (`RelationCacheKey::this_context`, issue #13828) — the verdict
+        // is then valid for any checker comparing the same pair under the same
+        // receiver and cannot poison a sibling under a different one. Without a
+        // binding (e.g. during class type construction, where `ThisType` is still
+        // free) the pair stays on the instance-local fallback memo, which is valid
+        // for the lifetime of this checker — the `this` binding is fixed for one
+        // top-level query — and dropped afterward, so it cannot poison siblings.
         //
         // Use contains_this_type (not just is_this_type) because even after
         // substitute_this_type_if_needed the *target* may still be a class instance
         // type whose method signatures carry `ThisType` return types.
         let has_this_type =
             contains_this_type(self.interner, source) || contains_this_type(self.interner, target);
+        // Resolve the `this` binding only for the `this`-bearing pairs that need
+        // it (the `||` short-circuits otherwise), reusing it below as the shared
+        // cache key's `this_context` discriminator so the gate and the key agree.
+        let this_binding = if has_this_type {
+            self.resolver.resolve_this_type(self.interner)
+        } else {
+            None
+        };
+        let this_context = this_binding.unwrap_or(TypeId::NONE);
         // Class-symbol classification is also context-dependent: the callback
         // can make the same object shape behave as a named class/interface in
         // one checker and as a plain structural object in another. Since the
         // relation cache key cannot encode an arbitrary predicate, those answers
-        // are excluded from the cross-checker shared cache and likewise served by
-        // the instance-local fallback memo, whose `is_class_symbol` closure is fixed
+        // are excluded from the cross-checker shared cache and served by the
+        // instance-local fallback memo, whose `is_class_symbol` closure is fixed
         // for the checker's lifetime.
         let has_class_check_context = self.is_class_symbol.is_some();
-        let can_use_shared_relation_cache = !has_this_type && !has_class_check_context;
+        // A `this`-bearing pair is shareable once keyed by its resolved binding;
+        // without a binding (or inside a class-check context) it stays local.
+        let can_use_shared_relation_cache =
+            !has_class_check_context && (!has_this_type || this_binding.is_some());
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
@@ -322,7 +337,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.identity_cycle_check {
             if can_use_shared_relation_cache {
                 if let Some(db) = self.query_db {
-                    let key = self.make_cache_key(source, target);
+                    let key = self.make_cache_key_with_this_context(source, target, this_context);
                     match db.lookup_subtype_cache_value(key) {
                         Some(RelationCacheValue::True) => return SubtypeResult::True,
                         Some(RelationCacheValue::False) => return SubtypeResult::False,
