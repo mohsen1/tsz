@@ -3,6 +3,7 @@
 mod assignment_formatting;
 mod assignment_source_preservation;
 mod assignment_widening;
+mod collection_source_display;
 mod compound_assignment_context;
 mod computed_index_source_display;
 mod contextual_index_display;
@@ -460,6 +461,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A source identifier declared `unknown`/`any` but flow-narrowed to a
+        // concrete type must render its narrowed type, not its stale declared
+        // annotation; `tsc` prints the narrowed type here.
+        if self.source_identifier_narrowed_from_unknown_or_any(expr_idx, expr_type) {
+            return false;
+        }
         let annotation = annotation_text.trim();
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
@@ -1464,6 +1471,47 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// True when `expr_idx` references an identifier whose *declared* type is
+    /// `unknown` or `any`, but whose value at this position has been
+    /// flow-narrowed to a concrete type `source` (e.g. by a `x is T`
+    /// type-predicate guard).
+    ///
+    /// In that case the written `unknown`/`any` annotation no longer describes
+    /// the value, so the diagnostic source display must render the narrowed
+    /// type rather than repainting it with the declared annotation text. `tsc`
+    /// renders the narrowed type here, so the annotation-recovery heuristics
+    /// (which exist to recover lost alias/parameter *names*, not to widen back
+    /// to a supertype) must be suppressed.
+    ///
+    /// The check is intentionally scoped to the `unknown`/`any` declarations
+    /// only: those are the universal supertypes for which narrowing to a
+    /// concrete type is unambiguous, and a concrete declared type already
+    /// equals its own narrowed form (so the annotation faithfully describes the
+    /// value). It performs no relation work, so it is free of the cache
+    /// side-effects that gate the surrounding display heuristics.
+    pub(in crate::error_reporter) fn source_identifier_narrowed_from_unknown_or_any(
+        &mut self,
+        expr_idx: NodeIndex,
+        source: TypeId,
+    ) -> bool {
+        if matches!(source, TypeId::UNKNOWN | TypeId::ANY | TypeId::ERROR) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+        matches!(
+            self.get_type_of_symbol(sym_id),
+            TypeId::UNKNOWN | TypeId::ANY
+        )
+    }
+
     pub(in crate::error_reporter) fn declared_identifier_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -1488,6 +1536,13 @@ impl<'a> CheckerState<'a> {
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        // A flow-narrowed `any` operand keeps its declared `any` here via the
+        // `prefer_declared_display` path below; suppress it so the narrowed type
+        // is rendered, matching `tsc`. (`unknown` is already handled by the
+        // guard above.)
+        if self.source_identifier_narrowed_from_unknown_or_any(expr_idx, expr_display_type) {
             return None;
         }
         if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
@@ -1783,174 +1838,5 @@ impl<'a> CheckerState<'a> {
                 declared_display,
             )
         })
-    }
-
-    pub(in crate::error_reporter) fn declared_numeric_literal_union_alias_source_display(
-        &mut self,
-        expr_idx: NodeIndex,
-        declared_type: TypeId,
-    ) -> Option<String> {
-        let evaluated = self.evaluate_type_for_assignability(declared_type);
-        if !diagnostic_query::is_number_literal_union(self.ctx.types, evaluated) {
-            return None;
-        }
-        let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
-        Self::annotation_text_is_plain_type_reference(&annotation_text)
-            .then(|| self.format_declared_annotation_for_diagnostic(&annotation_text))
-    }
-
-    /// Returns `true` when `narrowed`'s union members are a strict subset of
-    /// `declared`'s union members. Single non-union types are treated as a
-    /// one-element membership set against the declared union.
-    ///
-    /// This is the "narrowing eliminated some union members" check used by
-    /// `declared_identifier_source_display` to recognise that flow narrowing
-    /// produced a strictly smaller type even when the surviving member is
-    /// structurally compatible with the eliminated ones (so plain
-    /// `is_assignable_to(declared, narrowed)` returns true).
-    pub(in crate::error_reporter) fn is_strict_union_member_subset(
-        &mut self,
-        narrowed: TypeId,
-        declared: TypeId,
-    ) -> bool {
-        let Some(declared_members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, declared)
-        else {
-            return false;
-        };
-        if declared_members.len() < 2 {
-            return false;
-        }
-        let narrowed_members =
-            crate::query_boundaries::common::union_members(self.ctx.types, narrowed)
-                .unwrap_or_else(|| vec![narrowed].into());
-        if narrowed_members.is_empty() || narrowed_members.len() >= declared_members.len() {
-            return false;
-        }
-        narrowed_members
-            .iter()
-            .all(|m| declared_members.contains(m))
-    }
-
-    fn narrowed_string_literal_residual_union_display(
-        &mut self,
-        declared_type: TypeId,
-        expr_display_type: TypeId,
-        target: TypeId,
-    ) -> Option<String> {
-        if target != TypeId::NEVER || declared_type == expr_display_type {
-            return None;
-        }
-        let source_members =
-            crate::query_boundaries::common::union_members(self.ctx.types, expr_display_type)?;
-        let declared_members =
-            crate::query_boundaries::common::union_members(self.ctx.types, declared_type)?;
-        if source_members.len() < 2 || source_members.len() >= declared_members.len() {
-            return None;
-        }
-        if !source_members.iter().all(|&member| {
-            crate::query_boundaries::common::string_literal_value(self.ctx.types, member).is_some()
-        }) || !declared_members.iter().all(|&member| {
-            crate::query_boundaries::common::string_literal_value(self.ctx.types, member).is_some()
-        }) {
-            return None;
-        }
-        if !source_members
-            .iter()
-            .all(|member| declared_members.contains(member))
-        {
-            return None;
-        }
-
-        let mut ordered = source_members.to_vec();
-        ordered.sort_by_key(|member| {
-            std::cmp::Reverse(
-                declared_members
-                    .iter()
-                    .position(|declared| declared == member)
-                    .unwrap_or(usize::MAX),
-            )
-        });
-        Some(
-            ordered
-                .into_iter()
-                .map(|member| self.format_assignability_type_for_message(member, target))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        )
-    }
-
-    pub(in crate::error_reporter) fn rebuilt_array_source_display(
-        &mut self,
-        source_type: TypeId,
-        target: TypeId,
-    ) -> Option<String> {
-        if let Some(display) = self.static_schema_array_structural_display(source_type, target) {
-            return Some(display);
-        }
-        let element_type =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)?;
-        if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-        let widened_element = self.normalize_assignability_display_type(
-            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
-                self.ctx.types,
-                element_type,
-            ),
-        );
-        let rebuilt = self.ctx.types.array(widened_element);
-        // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
-        // when the source type was a readonly array (ReadonlyType(Array(...))).
-        let rebuilt = if crate::query_boundaries::type_computation::complex::is_readonly_type(
-            self.ctx.types,
-            source_type,
-        ) {
-            self.ctx.types.readonly_type(rebuilt)
-        } else {
-            rebuilt
-        };
-        Some(self.format_assignability_type_for_message(rebuilt, target))
-    }
-
-    fn call_object_literal_intersection_source_display(
-        &mut self,
-        expr_idx: NodeIndex,
-        source_type: TypeId,
-        target: TypeId,
-    ) -> Option<String> {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let node = self.ctx.arena.get(expr_idx)?;
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = self.ctx.arena.get_call_expr(node)?;
-        let first_arg = *call.arguments.as_ref()?.nodes.first()?;
-        let object_display = self.object_literal_source_type_display(first_arg, Some(target))?;
-
-        let members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, source_type)?;
-        let mut displays = Vec::with_capacity(members.len());
-        let mut replaced_object_member = false;
-
-        for &member in members.iter() {
-            let evaluated = self.evaluate_type_for_assignability(member);
-            let is_object_like_member =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
-                    .is_some()
-                    || crate::query_boundaries::common::get_merged_object_shape_for_type(
-                        self.ctx.types,
-                        evaluated,
-                    )
-                    .is_some();
-            if !replaced_object_member && is_object_like_member {
-                displays.push(object_display.clone());
-                replaced_object_member = true;
-            } else {
-                displays.push(self.format_assignability_type_for_message(member, target));
-            }
-        }
-
-        replaced_object_member.then(|| displays.join(" & "))
     }
 }

@@ -1186,6 +1186,9 @@ mod predicate_narrowed_lib_union_access_tests;
 #[path = "tests/predicate_narrowed_top_type_source_display_tests.rs"]
 mod predicate_narrowed_top_type_source_display_tests;
 #[cfg(test)]
+#[path = "tests/predicate_narrowed_unknown_any_source_display_tests.rs"]
+mod predicate_narrowed_unknown_any_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]

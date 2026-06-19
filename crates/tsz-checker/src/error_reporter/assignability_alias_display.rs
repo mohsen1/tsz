@@ -199,7 +199,6 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-
         let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))?;
