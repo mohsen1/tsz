@@ -2,8 +2,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
-use crate::query_boundaries::common::ContextualTypeContext;
-use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{ContextualTypeContext, TypeSubstitution, instantiate_type};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;

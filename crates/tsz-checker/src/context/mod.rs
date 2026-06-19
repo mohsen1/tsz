@@ -55,6 +55,8 @@ mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;
+mod lib_type_resolution_caches;
+pub use lib_type_resolution_caches::LibTypeResolutionCaches;
 mod lib_queries;
 mod module_entity;
 mod package_resolution;
