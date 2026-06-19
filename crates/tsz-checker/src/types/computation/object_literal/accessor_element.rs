@@ -11,6 +11,7 @@ use tsz_solver::{PropertyInfo, TypeId, Visibility};
 pub(super) struct ObjectLiteralAccessorContext<'b> {
     pub(super) elem_idx: NodeIndex,
     pub(super) obj_getter_names: &'b FxHashSet<String>,
+    pub(super) member_previews: &'b FxHashMap<Atom, PropertyInfo>,
     pub(super) contextual_type: Option<TypeId>,
     pub(super) marker_this_type: Option<TypeId>,
     pub(super) skip_duplicate_check: bool,
@@ -37,6 +38,7 @@ impl<'a> CheckerState<'a> {
         let ObjectLiteralAccessorContext {
             elem_idx,
             obj_getter_names,
+            member_previews,
             contextual_type,
             marker_this_type,
             skip_duplicate_check,
@@ -162,6 +164,9 @@ impl<'a> CheckerState<'a> {
                         single_quoted_name: false,
                     });
                 }
+                // Include later data properties and accessors so the accessor
+                // body's `this` sees the complete object literal (#13970).
+                self.extend_this_props_with_member_previews(&mut this_props, member_previews);
                 self.ctx
                     .this_type_stack
                     .push(self.ctx.types.factory().object(this_props));

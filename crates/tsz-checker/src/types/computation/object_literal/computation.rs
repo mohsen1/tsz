@@ -289,6 +289,14 @@ impl<'a> CheckerState<'a> {
         let circular_return_method_sites =
             self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
+        // Preview later data/accessor members for the synthetic `this` (#13970).
+        let member_previews = self.object_literal_synthetic_this_member_previews(
+            idx,
+            &obj.elements.nodes,
+            marker_this_type,
+            contextual_type,
+        );
+
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -576,6 +584,7 @@ impl<'a> CheckerState<'a> {
                                     .build_object_literal_fn_property_synthetic_this_type(
                                         &properties,
                                         &obj_all_method_names,
+                                        &member_previews,
                                         &name,
                                     );
                                 self.ctx.this_type_stack.push(synthetic_this_type);
@@ -1484,6 +1493,7 @@ impl<'a> CheckerState<'a> {
                                 .build_object_literal_method_synthetic_this_type(
                                     &properties,
                                     &obj_all_method_names,
+                                    &member_previews,
                                     elem_idx,
                                     &name,
                                     None,
@@ -1613,6 +1623,7 @@ impl<'a> CheckerState<'a> {
                             .build_object_literal_method_synthetic_this_type(
                                 &properties,
                                 &obj_all_method_names,
+                                &member_previews,
                                 elem_idx,
                                 &name,
                                 Some(refined_method_type),
@@ -1874,6 +1885,7 @@ impl<'a> CheckerState<'a> {
                 ObjectLiteralAccessorContext {
                     elem_idx,
                     obj_getter_names: &obj_getter_names,
+                    member_previews: &member_previews,
                     contextual_type,
                     marker_this_type,
                     skip_duplicate_check,
