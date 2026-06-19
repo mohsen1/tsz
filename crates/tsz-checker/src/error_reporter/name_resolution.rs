@@ -1020,6 +1020,15 @@ impl<'a> CheckerState<'a> {
         // Route through the environment capability boundary for known globals.
         // `diagnose_missing_name` returns a structured CapabilityDiagnostic that
         // tells us which error to emit, keeping the decision centralized.
+        // Route through the environment capability boundary for known globals.
+        // `diagnose_missing_name` returns a structured CapabilityDiagnostic that
+        // tells us which error to emit. The es2015 "change target library" and
+        // DOM cases are value-position specific (tsc gates es2015 on a narrow
+        // value-lib set, and the es2015/DOM type-position cases are handled by
+        // `check_missing_global_types`), so they stay here. The position-
+        // independent "install @types/X" categories (Node, jQuery, test runner,
+        // Bun) are reported the same way in value and type position, so they live
+        // in the shared `try_emit_install_types_for_missing_global` helper.
         use crate::query_boundaries::environment::CapabilityDiagnostic;
         if let Some(cap_diag) = self.ctx.capabilities.diagnose_missing_name(name) {
             match cap_diag {
@@ -1038,34 +1047,11 @@ impl<'a> CheckerState<'a> {
                     self.error_cannot_find_name_change_target_lib(name, idx);
                     return;
                 }
-                CapabilityDiagnostic::MissingJQueryGlobal { .. } => {
-                    self.error_cannot_find_name_install_jquery_types(name, idx);
-                    return;
-                }
-                CapabilityDiagnostic::MissingNodeGlobal { .. } => {
-                    // Special cases: private-name access and "module" with parse errors
-                    // fall through to TS2304 instead of TS2591.
-                    if self.is_private_name_access_base(idx)
-                        || (name == "module" && self.has_parse_errors())
-                    {
-                        // Fall through to TS2304
-                    } else {
-                        self.error_cannot_find_name_install_node_types(name, idx);
-                        return;
-                    }
-                }
-                CapabilityDiagnostic::MissingTestRunnerGlobal { .. } => {
-                    self.error_cannot_find_name_install_test_types(name, idx);
-                    return;
-                }
-                CapabilityDiagnostic::MissingBunGlobal { .. } => {
-                    self.error_cannot_find_name_install_bun_types(name, idx);
-                    return;
-                }
-                // MissingGlobalType and FeatureRequiresGlobalType are handled by
-                // check_missing_global_types, not the name resolution path.
                 _ => {}
             }
+        }
+        if self.try_emit_install_types_for_missing_global(name, idx) {
+            return;
         }
 
         // The boundary's `report_name_resolution_failure` already checked for
@@ -1084,6 +1070,59 @@ impl<'a> CheckerState<'a> {
             let diag = builder.cannot_find_name(name, loc.start, loc.length());
             self.ctx
                 .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Emit the "install @types/X" diagnostic for a missing global whose
+    /// category is reported the same way in value and type position: Node.js
+    /// (TS2591), jQuery, a test runner, or Bun. Returns `true` if a diagnostic
+    /// was emitted; `false` when `name` is not such a global (or a Node
+    /// special-case falls through), so callers emit their own position-correct
+    /// plain `Cannot find name` (TS2304).
+    ///
+    /// The es2015 "change target library" (TS2583) and DOM cases are
+    /// intentionally NOT handled here: tsc's choice there depends on
+    /// value-vs-type position (the es2015 value-lib gate, and
+    /// `check_missing_global_types` for type position), and type position
+    /// already matches tsc for those. This helper is the single source of truth
+    /// for the position-independent categories, shared by the value path
+    /// ([`error_cannot_find_name_at`]) and the type-position name-resolution
+    /// failure arm.
+    pub(crate) fn try_emit_install_types_for_missing_global(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        use crate::query_boundaries::environment::CapabilityDiagnostic;
+        let Some(cap_diag) = self.ctx.capabilities.diagnose_missing_name(name) else {
+            return false;
+        };
+        match cap_diag {
+            CapabilityDiagnostic::MissingNodeGlobal { .. } => {
+                // Private-name access bases and `module` amid parse errors fall
+                // through to plain TS2304, matching tsc and the value path.
+                if self.is_private_name_access_base(idx)
+                    || (name == "module" && self.has_parse_errors())
+                {
+                    false
+                } else {
+                    self.error_cannot_find_name_install_node_types(name, idx);
+                    true
+                }
+            }
+            CapabilityDiagnostic::MissingJQueryGlobal { .. } => {
+                self.error_cannot_find_name_install_jquery_types(name, idx);
+                true
+            }
+            CapabilityDiagnostic::MissingTestRunnerGlobal { .. } => {
+                self.error_cannot_find_name_install_test_types(name, idx);
+                true
+            }
+            CapabilityDiagnostic::MissingBunGlobal { .. } => {
+                self.error_cannot_find_name_install_bun_types(name, idx);
+                true
+            }
+            _ => false,
         }
     }
 
