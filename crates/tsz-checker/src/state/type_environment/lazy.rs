@@ -84,7 +84,7 @@ pub(crate) fn exit_refs_resolution_scope() {
     REFS_RESOLUTION_ACTIVE.set(false);
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
         use crate::query_boundaries::state::type_environment::{
             contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,

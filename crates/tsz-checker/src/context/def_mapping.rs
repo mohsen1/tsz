@@ -34,7 +34,7 @@ fn eager_warm_local_caches() -> bool {
     })
 }
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Get or create a `DefId` for a symbol.
     ///
     /// If the symbol already has a `DefId`, return it.

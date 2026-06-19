@@ -71,7 +71,10 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             "run_conformance_aggregate",
             "\n# Download shard failure lists",
         )
-        self.assertIn('local artifact_failure_list="$shard_dir/ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"', aggregate)
+        self.assertIn(
+            'find "$shard_dir" -maxdepth 4 -name "conformance-failures-${shard_name#conformance-shard-}.txt"',
+            aggregate,
+        )
         self.assertIn('cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"', aggregate)
         allowlist = self.function_body(
             "_check_conformance_regression_allowlist",
@@ -80,6 +83,91 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         local_glob = allowlist.index('compgen -G "$tmp_dir/failures-shard-*.txt"')
         gcs_copy = allowlist.index('gsutil -q -m cp "${prefix}/failures-shard-*.txt"')
         self.assertLess(local_glob, gcs_copy)
+
+    def test_aggregate_accepts_flat_artifact_failure_lists_before_gcs(self):
+        aggregate = self.function_body(
+            "run_conformance_aggregate",
+            "\n# Download shard failure lists",
+        )
+        allowlist_function = self.function_body(
+            "_check_conformance_regression_allowlist",
+            "\n# Download per-shard failure lists",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / "ci-metrics").mkdir()
+            (temp / "scripts" / "conformance").mkdir(parents=True)
+            (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
+                '{"summary":{"passed":1,"total_tests":1}}\n',
+                encoding="utf-8",
+            )
+            (temp / "accepted.txt").write_text(
+                "TypeScript/tests/cases/compiler/accepted.ts\n",
+                encoding="utf-8",
+            )
+            shard_dir = temp / ".conformance-shards" / "conformance-shard-0"
+            shard_dir.mkdir(parents=True)
+            shard_dir.joinpath("conformance.json").write_text(
+                textwrap.dedent(
+                    """\
+                    {
+                      "passed": 0,
+                      "total": 1,
+                      "expected_passed": 1,
+                      "expected_total": 1
+                    }
+                    """
+                ),
+                encoding="utf-8",
+            )
+            shard_dir.joinpath("conformance-failures-0.txt").write_text(
+                "TypeScript/tests/cases/compiler/accepted.ts\n",
+                encoding="utf-8",
+            )
+
+            script = temp / "aggregate.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+METRICS_DIR=ci-metrics
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
+TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS=accepted.txt
+_TSZ_CI_CONFORMANCE_SHARD_COUNT=1
+
+ci_section() {{ :; }}
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+cap_positive_baseline() {{ echo "$1"; }}
+ensure_gcs_auth() {{ :; }}
+gsutil() {{ return 1; }}
+publish_latest_metric() {{ :; }}
+
+{aggregate}
+
+{allowlist_function}
+
+run_conformance_aggregate
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "warning: conformance aggregate below expected only for accepted regressions",
+            result.stderr,
+        )
 
     def test_aggregate_uses_snapshot_total_for_coverage_floor(self):
         aggregate = self.function_body(
