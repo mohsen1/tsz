@@ -34,7 +34,7 @@ fn eager_warm_local_caches() -> bool {
     })
 }
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Get or create a `DefId` for a symbol.
     ///
     /// If the symbol already has a `DefId`, return it.
@@ -857,7 +857,7 @@ impl<'a> CheckerContext<'a> {
     /// On a successful borrow, first replays any previously-deferred writes (in
     /// order) so the env catches up, then applies `op`. On a borrow conflict,
     /// `op` is queued for later replay.
-    fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
+    pub(super) fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
             Ok(mut env) => {
                 self.drain_deferred_flow_env_writes_into(&mut env);
@@ -1093,52 +1093,6 @@ impl<'a> CheckerContext<'a> {
     /// borrow conflict the write is deferred and replayed rather than dropped.
     pub fn register_def_symbol_mapping_in_type_environment(&self, def_id: DefId, sym_id: SymbolId) {
         self.mirror_to_flow_env(DeferredFlowEnvWrite::RegisterDefSymbolMapping { def_id, sym_id });
-    }
-
-    /// Mirror a definition body into the flow-analyzer env (`type_environment`)
-    /// **only**, deferring on a borrow race so the write is replayed at
-    /// [`Self::flush_deferred_flow_env_writes`] rather than dropped.
-    ///
-    /// The `get_type_of_symbol` epilogue writes the authoritative body into the
-    /// evaluator env (`type_env`) directly while it already holds that env's
-    /// borrow; this keeps the flow-analyzer env in lock-step with that write.
-    /// A previous best-effort `try_borrow_mut` mirror at that site silently
-    /// **dropped** the write whenever narrowing or recursive resolution held
-    /// `type_environment`, which left the two envs disagreeing on a recursive
-    /// self-referential interface's body `DefId -> TypeId` (#13944): the
-    /// evaluator env advanced to the freshly materialized body while the
-    /// flow-analyzer env kept an earlier, distinctly-interned materialization
-    /// that `overlay_missing_from` (vacancy-only) could not reconcile.
-    pub fn mirror_def_in_type_environment(
-        &self,
-        def_id: DefId,
-        body: TypeId,
-        params: &[tsz_solver::TypeParamInfo],
-    ) {
-        let op = if params.is_empty() {
-            DeferredFlowEnvWrite::InsertDef { def_id, body }
-        } else {
-            // Variances are left unset here, matching the prior direct
-            // `insert_def_with_params` mirror at this site; declared-variance
-            // registration flows through `register_def_with_params_in_envs`.
-            DeferredFlowEnvWrite::InsertDefWithParams {
-                def_id,
-                body,
-                params: params.to_vec(),
-                variances: None,
-            }
-        };
-        self.mirror_to_flow_env(op);
-    }
-
-    /// Mirror a class instance type into the flow-analyzer env **only**,
-    /// deferring on a borrow race. Companion to
-    /// [`Self::mirror_def_in_type_environment`].
-    pub fn mirror_class_instance_in_type_environment(&self, def_id: DefId, instance_type: TypeId) {
-        self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertClassInstance {
-            def_id,
-            instance_type,
-        });
     }
 
     /// Register an augmented definition body in **both** type environments.

@@ -20,7 +20,7 @@ type TypeParamPushResult = (
     Vec<(String, Option<TypeId>, bool)>,
 );
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     fn cache_resolved_symbol_type_for_owner(&self, sym_id: SymbolId, type_id: TypeId) {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;

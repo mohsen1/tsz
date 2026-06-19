@@ -71,7 +71,14 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             "run_conformance_aggregate",
             "\n# Download shard failure lists",
         )
-        self.assertIn('local artifact_failure_list="$shard_dir/ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"', aggregate)
+        self.assertIn(
+            'find "$shard_dir" \\',
+            aggregate,
+        )
+        self.assertIn(
+            '-name "conformance-failures-${shard_name#conformance-shard-}.txt"',
+            aggregate,
+        )
         self.assertIn('cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"', aggregate)
         allowlist = self.function_body(
             "_check_conformance_regression_allowlist",

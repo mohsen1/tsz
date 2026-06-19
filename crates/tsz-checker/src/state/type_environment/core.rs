@@ -20,7 +20,7 @@ thread_local! {
 // Global instantiation depth and fuel counters live in `EvaluationSession`
 // (shared via `Rc` on `CheckerContext::eval_session`).
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     // Get type of object literal.
     // =========================================================================
     // Type Relations (uses solver::CompatChecker for assignability)
