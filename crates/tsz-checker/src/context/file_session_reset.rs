@@ -310,6 +310,10 @@ impl<'a> CheckerContext<'a> {
         self.application_symbols_resolved.clear();
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
+        // Type-position identifier resolution is memoized by (arena pointer,
+        // node index); arena pointers are per-file and can be reused across
+        // sessions, so the memo shares the per-file lifecycle (issue #13987).
+        self.type_position_resolution_cache.borrow_mut().clear();
         self.clear_env_eval_cache();
         // Body-publication history tracks oscillating re-resolutions only to
         // suppress redundant env-eval cache sweeps; it shares that cache's
