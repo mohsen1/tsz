@@ -1981,6 +1981,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(&cached) = self.eval_cache.get(&cache_key) {
             return cached;
         }
+        // Charge the failure-explanation work budget (#13243) for each distinct
+        // (cache-miss) evaluation. Cache hits above are free, so this counts the
+        // sub-types the explain pass actually drills into. Outside the explain
+        // pass the fuel is `None` and this is inert. When the budget is
+        // exhausted, return the type unevaluated and flagged unstable: the
+        // explain traversal then collapses to a coarse `TypeMismatch` (see
+        // `explain_failure_guarded`) instead of driving another combinatorial
+        // `instantiate_and_finalize_application`.
+        if let Some(fuel) = self.explain_eval_fuel.as_mut() {
+            if *fuel == 0 {
+                return (type_id, false);
+            }
+            *fuel -= 1;
+        }
         use crate::evaluation::cross_eval_guard;
         use crate::evaluation::evaluate::TypeEvaluator;
         // Per-query memo + cross-instance cycle break (#11586): the subtype checker
