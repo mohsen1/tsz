@@ -10,48 +10,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn enclosing_function_for_parameter_name(&self, param_name: NodeIndex) -> Option<NodeIndex> {
-        let param_idx = self.ctx.arena.get_extended(param_name)?.parent;
-        let func_idx = self.ctx.arena.get_extended(param_idx)?.parent;
-        let func_node = self.ctx.arena.get(func_idx)?;
-        (func_node.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
-            || func_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION)
-            .then_some(func_idx)
-    }
-
-    fn parameter_has_deferred_explicit_context(&self, param_name: NodeIndex) -> bool {
-        let Some(func_idx) = self.enclosing_function_for_parameter_name(param_name) else {
-            return false;
-        };
-        let mut current = self.ctx.arena.get_extended(func_idx).map(|ext| ext.parent);
-        while let Some(parent_idx) = current {
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                return false;
-            };
-            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
-                let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node) else {
-                    return false;
-                };
-                return var_decl.type_annotation.is_some()
-                    && self.explicit_annotation_can_defer_implicit_any_context(
-                        var_decl.type_annotation,
-                    );
-            }
-            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
-                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                return false;
-            }
-            current = self
-                .ctx
-                .arena
-                .get_extended(parent_idx)
-                .map(|ext| ext.parent);
-        }
-        false
-    }
-
     fn annotation_is_array_like_type_node(&self, annotation_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(annotation_idx) else {
             return false;

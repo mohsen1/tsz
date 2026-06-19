@@ -9,6 +9,7 @@ mod class_type_param_checks;
 mod decorator_signature_checks;
 mod function_declaration_checks;
 mod implicit_any_checks;
+mod implicit_any_param_context;
 mod index_signature_checks;
 #[cfg(test)]
 mod index_signature_checks_tests;

@@ -161,7 +161,6 @@ pub(super) fn prepare_source_resolution_setup(
                 };
                 let request_mode_key = checker_lookup_resolution_mode(
                     &mut module_resolver,
-                    options,
                     file_path,
                     *import_kind,
                     *resolution_mode_override,

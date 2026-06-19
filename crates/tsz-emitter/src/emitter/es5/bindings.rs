@@ -11,6 +11,19 @@ enum InlineBindingAccess {
     Property(NodeIndex),
 }
 
+/// How to write the parent member access of a nested destructuring element when
+/// flattening it inline (see [`Printer::try_emit_inline_nested_binding`]).
+#[derive(Clone, Copy)]
+pub(in crate::emitter) enum NestedBindingBase<'a> {
+    /// Object property access: `base.key` / `base["key"]` / `base[computed]`.
+    ObjectProperty {
+        key_idx: NodeIndex,
+        computed_temp: Option<&'a str>,
+    },
+    /// Array element access: `base[index]`.
+    ArrayElement(usize),
+}
+
 /// Represents a segment of assignment destructuring output.
 /// When the right-hand side is a simple identifier, we access properties/elements directly.
 /// When complex, we create a temp variable first.
@@ -941,13 +954,37 @@ impl<'a> Printer<'a> {
         pattern_node: &Node,
         access_path: &mut Vec<InlineBindingAccess>,
     ) -> Option<NodeIndex> {
+        let (leaf, leaf_initializer) =
+            self.nested_single_binding_chain(pattern_node, access_path)?;
+        // This caller emits the leaf binding without any default substitution, so
+        // a defaulted leaf must fall back to the temp-based path.
+        if leaf_initializer.is_some() {
+            return None;
+        }
+        Some(leaf)
+    }
+
+    /// Walk a chain of single-element (non-rest) binding patterns, recording the
+    /// member-access path to the leaf identifier so the source value can be
+    /// referenced inline (`value.a.b[0]`) instead of through an intermediate
+    /// temp. Returns the leaf binding identifier together with the leaf's
+    /// default initializer (`NodeIndex::NONE` when absent).
+    ///
+    /// This mirrors tsc's `flattenObjectBindingOrAssignmentPattern` /
+    /// `flattenArrayBindingOrAssignmentPattern` fast path: a nested pattern with
+    /// exactly one element does not introduce a temp for its source value. A
+    /// default on the final leaf is permitted (the caller applies it to a single
+    /// value temp); a default on any intermediate level forces a temp, matching
+    /// tsc, so the chain stops there.
+    fn nested_single_binding_chain(
+        &self,
+        pattern_node: &Node,
+        access_path: &mut Vec<InlineBindingAccess>,
+    ) -> Option<(NodeIndex, NodeIndex)> {
         let pattern = self.arena.get_binding_pattern(pattern_node)?;
         let elem_idx = self.single_non_rest_binding_element(pattern)?;
         let elem_node = self.arena.get(elem_idx)?;
         let elem = self.arena.get_binding_element(elem_node)?;
-        if elem.initializer.is_some() {
-            return None;
-        }
 
         match pattern_node.kind {
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
@@ -969,12 +1006,121 @@ impl<'a> Printer<'a> {
 
         let name_node = self.arena.get(elem.name)?;
         if name_node.is_identifier() {
-            return Some(elem.name);
+            return Some((elem.name, elem.initializer));
         }
         if !self.is_binding_pattern(elem.name) {
             return None;
         }
-        self.single_nested_binding_access(name_node, access_path)
+        // An intermediate nested pattern carrying a default cannot be flattened:
+        // tsc materializes a temp so the default substitution has something to
+        // test. Stop the chain and let the temp-based path handle it.
+        if elem.initializer.is_some() {
+            return None;
+        }
+        self.nested_single_binding_chain(name_node, access_path)
+    }
+
+    /// Append the member-access segments collected by
+    /// [`Self::nested_single_binding_chain`] to an already-emitted base
+    /// expression (e.g. `_a.b` -> `_a.b.c[0]`).
+    fn emit_inline_access_path_parts(&mut self, access_path: &[InlineBindingAccess]) {
+        for part in access_path {
+            match *part {
+                InlineBindingAccess::Element(index) => {
+                    self.write("[");
+                    self.write_usize(index);
+                    self.write("]");
+                }
+                InlineBindingAccess::Property(key_idx) => {
+                    self.write(".");
+                    self.write_identifier_text(key_idx);
+                }
+            }
+        }
+    }
+
+    /// Try to emit a destructuring binding element whose target is a nested
+    /// pattern *inline* — without introducing an intermediate temp for the
+    /// element's source value — when the pattern collapses to a single
+    /// non-rest identifier (`{ b: { c } }` -> `c = base.b.c`).
+    ///
+    /// `element_initializer` is the element's own default (`NodeIndex::NONE`
+    /// when absent); a default here forces the temp-based path so it is not
+    /// inlined. `first`, when `Some`, threads the leading-separator flag used by
+    /// the `*_direct` emitters. Returns `true` when the element was emitted
+    /// inline.
+    pub(in crate::emitter) fn try_emit_inline_nested_binding(
+        &mut self,
+        element_name: NodeIndex,
+        element_initializer: NodeIndex,
+        base_source: &str,
+        base: NestedBindingBase<'_>,
+        first: Option<&mut bool>,
+    ) -> bool {
+        if element_initializer.is_some() {
+            return false;
+        }
+        let Some(name_node) = self.arena.get(element_name) else {
+            return false;
+        };
+        let mut access_path = Vec::new();
+        let Some((leaf, leaf_initializer)) =
+            self.nested_single_binding_chain(name_node, &mut access_path)
+        else {
+            return false;
+        };
+        if access_path.is_empty() {
+            return false;
+        }
+
+        match first {
+            Some(first) => {
+                if !*first {
+                    self.write(", ");
+                }
+                *first = false;
+            }
+            None => self.write(", "),
+        }
+
+        if leaf_initializer.is_none() {
+            self.write_binding_identifier_text(leaf);
+            self.write(" = ");
+            self.emit_nested_binding_base(base_source, &base);
+            self.emit_inline_access_path_parts(&access_path);
+        } else {
+            let value_name = self.get_temp_var_name();
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit_nested_binding_base(base_source, &base);
+            self.emit_inline_access_path_parts(&access_path);
+            self.write(", ");
+            self.write_binding_identifier_text(leaf);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(leaf_initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+        true
+    }
+
+    fn emit_nested_binding_base(&mut self, base_source: &str, base: &NestedBindingBase<'_>) {
+        match *base {
+            NestedBindingBase::ObjectProperty {
+                key_idx,
+                computed_temp,
+            } => {
+                self.emit_assignment_target_es5_with_computed(key_idx, base_source, computed_temp);
+            }
+            NestedBindingBase::ArrayElement(index) => {
+                self.write(base_source);
+                self.write("[");
+                self.write_usize(index);
+                self.write("]");
+            }
+        }
     }
 
     fn single_non_rest_binding_element(

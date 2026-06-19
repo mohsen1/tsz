@@ -3,6 +3,7 @@
 //! production module under the 2000-line limit (§19; ratchet tracked by #9412).
 
 use super::*;
+use tsz_common::common::ModuleKind;
 
 /// Parse source text and return the `BoundFile` from a merged program.
 fn bound_file(source: &str) -> BoundFile {

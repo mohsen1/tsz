@@ -195,6 +195,10 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "destructuring_es5_nested_single_inline_tests"
+path = "tests/destructuring_es5_nested_single_inline_tests.rs"
+
+[[test]]
 name = "destructuring_assignment_es5_shorthand_default_tests"
 path = "tests/destructuring_assignment_es5_shorthand_default_tests.rs"
 
@@ -281,6 +285,10 @@ path = "tests/generator_object_literal_emit.rs"
 [[test]]
 name = "generator_downlevel_iteration_for_of_tests"
 path = "tests/generator_downlevel_iteration_for_of_tests.rs"
+
+[[test]]
+name = "generator_yield_star_es5_tests"
+path = "tests/generator_yield_star_es5_tests.rs"
 
 [[test]]
 name = "async_try_emit"

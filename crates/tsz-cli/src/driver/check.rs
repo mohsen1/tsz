@@ -72,34 +72,17 @@ use source_resolution_setup::{
 
 fn checker_lookup_resolution_mode(
     module_resolver: &mut ModuleResolver,
-    options: &ResolvedCompilerOptions,
     file_path: &Path,
     import_kind: tsz::module_resolver::ImportKind,
     resolution_mode_override: Option<tsz::module_resolver::ImportingModuleKind>,
 ) -> Option<tsz::checker::context::ResolutionModeOverride> {
-    use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleExtension};
-
-    let mode = resolution_mode_override.unwrap_or_else(|| {
-        match import_kind {
-            // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
-            // checker maps line up with the actual lookup mode used by the resolver.
-            ImportKind::DynamicImport => ImportingModuleKind::Esm,
-            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
-            ImportKind::EsmImport | ImportKind::EsmReExport => match options.checker.module {
-                ModuleKind::Preserve => {
-                    let extension = ModuleExtension::from_path(file_path);
-                    if extension.forces_esm() {
-                        ImportingModuleKind::Esm
-                    } else if extension.forces_cjs() {
-                        ImportingModuleKind::CommonJs
-                    } else {
-                        ImportingModuleKind::Esm
-                    }
-                }
-                _ => module_resolver.get_importing_module_kind(file_path),
-            },
-        }
-    });
+    // Single owner of the ESM/CJS import-site classification, so the request-keyed
+    // checker maps line up with the actual lookup mode the resolver uses.
+    let mode = module_resolver.importing_module_kind_for_import(
+        file_path,
+        import_kind,
+        resolution_mode_override,
+    );
 
     checker_resolution_mode_override(Some(mode))
 }
@@ -225,6 +208,17 @@ pub(super) struct CheckerLibSet {
 /// `.d.mts`, or `.d.<ext>.ts`).
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
+}
+
+fn is_node_modules_declaration_file(name: &str) -> bool {
+    is_declaration_file(name)
+        && Path::new(name)
+            .components()
+            .any(|component| component.as_os_str() == "node_modules")
+}
+
+fn defer_node_modules_declaration_roots(work_items: &mut [usize], program: &MergedProgram) {
+    work_items.sort_by_key(|&idx| is_node_modules_declaration_file(&program.files[idx].file_name));
 }
 
 #[cfg(test)]
@@ -1299,6 +1293,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 work_items.push(file_idx);
             }
         }
+        defer_node_modules_declaration_roots(&mut work_items, program);
         for mut file_diags in collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
             files: &program.files,
             file_indices: &skipped_file_indices,

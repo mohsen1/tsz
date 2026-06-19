@@ -37,7 +37,9 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-latest.json",
     "bench-snapshot.json",
   ];
-  const latestBenchmarkArtifact = selectLatestBenchmarkArtifact(benchmarkArtifacts)?.file;
+  const latestBenchmarkArtifact = selectLatestBenchmarkArtifact(benchmarkArtifacts, {
+    requireApplicationCompat: true,
+  })?.file;
   if (latestBenchmarkArtifact) {
     eleventyConfig.addPassthroughCopy({
       [latestBenchmarkArtifact]: "benchmark-data/latest.json",

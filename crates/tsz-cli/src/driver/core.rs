@@ -25,7 +25,7 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleResolver};
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::{ModuleKind, ScriptTarget};
+use tsz_common::common::ScriptTarget;
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_default_lib_file, is_json_file,
 };

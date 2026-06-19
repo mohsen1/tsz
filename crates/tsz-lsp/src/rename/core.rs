@@ -6,7 +6,7 @@
 
 use super::{
     PrepareRenameResult, RenameProvider, RenameSymbolKind, RenameTextEdit, RenameWorkspaceEdit,
-    TextEdit, WorkspaceEdit,
+    WorkspaceEdit,
 };
 use crate::errors::RenameError;
 use crate::navigation::references::FindReferences;
@@ -214,9 +214,28 @@ impl<'a> RenameProvider<'a> {
             .find_references_for_symbol(root, symbol_id)
             .ok_or(RenameError::SymbolNotFound)?;
 
+        // The old name drives the shorthand-context expansion (shorthand
+        // property assignment, destructuring binding element) into its
+        // `old: new` form. Without it the symbol-based path emits a plain
+        // identifier replacement that silently changes which property is
+        // destructured -- e.g. `const { name } = o` renamed to `fullName`
+        // would become `const { fullName } = o` (binds a missing property)
+        // instead of `const { name: fullName } = o`. Import/export specifiers
+        // are renamed across files by the cross-file machinery, so their
+        // `as` expansion stays disabled here (`expand_specifiers = false`).
+        let old_name = self
+            .binder
+            .symbols
+            .get(symbol_id)
+            .map(|s| s.escaped_name.clone())
+            .unwrap_or_default();
+
         let mut workspace_edit = WorkspaceEdit::new();
         for loc in Self::dedup_locations(locations) {
-            workspace_edit.add_edit(loc.file_path, TextEdit::new(loc.range, new_name.clone()));
+            let edit = self
+                .build_rename_edit(loc.range, &old_name, &new_name, false)
+                .to_text_edit();
+            workspace_edit.add_edit(loc.file_path, edit);
         }
 
         Ok(workspace_edit)
@@ -328,7 +347,7 @@ impl<'a> RenameProvider<'a> {
         let mut workspace_edit = RenameWorkspaceEdit::new();
 
         for loc in Self::dedup_locations(locations) {
-            let edit = self.build_rename_edit(loc.range, &old_name, &normalized_name);
+            let edit = self.build_rename_edit(loc.range, &old_name, &normalized_name, true);
             workspace_edit.add_edit(loc.file_path, edit);
         }
 
@@ -358,13 +377,45 @@ impl<'a> RenameProvider<'a> {
     /// Build a `RenameTextEdit` for a single reference, detecting special
     /// contexts such as shorthand property assignments and import specifiers
     /// where simple text replacement would change semantics.
-    fn build_rename_edit(&self, range: Range, old_name: &str, new_name: &str) -> RenameTextEdit {
+    ///
+    /// `expand_specifiers` controls the import/export specifier `old as new`
+    /// expansion. The position-based local rename keeps the imported/exported
+    /// name stable and so expands; the symbol-based path renames the
+    /// imported/exported binding across files through the cross-file machinery
+    /// in [`crate::project`], which rewrites the specifier directly, so it must
+    /// not expand here (`import { value }` -> `import { renamed }`, not
+    /// `import { value as renamed }`).
+    fn build_rename_edit(
+        &self,
+        range: Range,
+        old_name: &str,
+        new_name: &str,
+        expand_specifiers: bool,
+    ) -> RenameTextEdit {
         // Determine the byte offset of the reference
         let Some(offset) = self
             .line_map
             .position_to_offset(range.start, self.source_text)
         else {
             return RenameTextEdit::new(range, new_name.to_string());
+        };
+
+        // A reference location's span can reach past the identifier itself:
+        // destructuring binding elements and shorthand property assignments
+        // carry a node span that includes the following delimiter, so the raw
+        // range covers e.g. `name,` or `name }`. Tighten the replaced span to
+        // exactly the identifier text (verified against the source) so the
+        // shorthand/destructuring expansion does not consume the trailing
+        // `,`/`}` and corrupt the surrounding code.
+        let start = offset as usize;
+        let range = match self.source_text.get(start..start + old_name.len()) {
+            Some(slice) if slice == old_name => {
+                let end = self
+                    .line_map
+                    .offset_to_position(offset + old_name.len() as u32, self.source_text);
+                Range::new(range.start, end)
+            }
+            _ => range,
         };
 
         let ref_node_idx = find_node_at_offset(self.arena, offset);
@@ -420,7 +471,8 @@ impl<'a> RenameProvider<'a> {
                 // Import specifier shorthand: `import { foo } from 'mod'`
                 // When renaming foo to bar, we need
                 // `import { foo as bar } from 'mod'`.
-                if parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                if expand_specifiers
+                    && parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
                     && let Some(spec) = self.arena.get_specifier(parent_node)
                     && spec.property_name.is_none()
                 {
@@ -434,7 +486,8 @@ impl<'a> RenameProvider<'a> {
                 // Export specifier shorthand: `export { foo }`
                 // When renaming local foo to bar, we need
                 // `export { bar as foo }` to keep the public API stable.
-                if parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                if expand_specifiers
+                    && parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
                     && let Some(spec) = self.arena.get_specifier(parent_node)
                     && spec.property_name.is_none()
                 {

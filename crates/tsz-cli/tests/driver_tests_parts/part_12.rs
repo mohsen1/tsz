@@ -1490,6 +1490,123 @@ export const wrong = instance.highWaterMark
     );
 }
 
+/// A package declaration file that is also listed as a root must not poison
+/// later app roots that import the package. This mirrors conformance
+/// `propTypeValidatorInference.ts`: tsc accepts the validator map even when the
+/// harness lists `node_modules/prop-types/index.d.ts` before the importing file.
+#[test]
+fn explicit_node_modules_dts_root_does_not_poison_prop_types_importer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/prop-types/package.json"),
+        r#"{ "name": "prop-types", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/prop-types/index.d.ts"),
+        r#"export const nominalTypeHack: unique symbol;
+
+export type IsOptional<T> = undefined | null extends T ? true : undefined extends T ? true : null extends T ? true : false;
+export type RequiredKeys<V> = { [K in keyof V]-?: Exclude<V[K], undefined> extends Validator<infer T> ? IsOptional<T> extends true ? never : K : never }[keyof V];
+export type OptionalKeys<V> = Exclude<keyof V, RequiredKeys<V>>;
+export type InferPropsInner<V> = { [K in keyof V]-?: InferType<V[K]>; };
+
+export interface Validator<T> {
+    (props: object, propName: string): Error | null;
+    [nominalTypeHack]?: T;
+}
+
+export interface Requireable<T> extends Validator<T> {
+    isRequired: Validator<NonNullable<T>>;
+}
+
+export type ValidationMap<T> = { [K in keyof T]?: Validator<T[K]> };
+export type InferType<V> = V extends Validator<infer T> ? T : any;
+export type InferProps<V> =
+    & InferPropsInner<Pick<V, RequiredKeys<V>>>
+    & Partial<InferPropsInner<Pick<V, OptionalKeys<V>>>>;
+
+export const any: Requireable<any>;
+export const array: Requireable<any[]>;
+export const bool: Requireable<boolean>;
+export const string: Requireable<string>;
+export const number: Requireable<number>;
+export function shape<P extends ValidationMap<any>>(type: P): Requireable<InferProps<P>>;
+export function oneOfType<T extends Validator<any>>(types: T[]): Requireable<NonNullable<InferType<T>>>;
+"#,
+    );
+    write_file(
+        &base.join("file.ts"),
+        r#"import * as PropTypes from "prop-types";
+
+interface Props {
+    any?: any;
+    array: string[];
+    bool: boolean;
+    shape: { foo: string; bar?: boolean; baz?: any };
+    oneOfType: string | boolean | { foo?: string; bar: number };
+}
+
+type PropTypesMap = PropTypes.ValidationMap<Props>;
+
+const innerProps = {
+    foo: PropTypes.string.isRequired,
+    bar: PropTypes.bool,
+    baz: PropTypes.any
+};
+
+const arrayOfTypes = [PropTypes.string, PropTypes.bool, PropTypes.shape({
+    foo: PropTypes.string,
+    bar: PropTypes.number.isRequired
+})];
+
+const propTypes: PropTypesMap = {
+    any: PropTypes.any,
+    array: PropTypes.array.isRequired,
+    bool: PropTypes.bool.isRequired,
+    shape: PropTypes.shape(innerProps).isRequired,
+    oneOfType: PropTypes.oneOfType(arrayOfTypes).isRequired,
+};
+
+const propTypesWithoutAnnotation = {
+    any: PropTypes.any,
+    array: PropTypes.array.isRequired,
+    bool: PropTypes.bool.isRequired,
+    shape: PropTypes.shape(innerProps).isRequired,
+    oneOfType: PropTypes.oneOfType(arrayOfTypes).isRequired,
+};
+
+type ExtractedProps = PropTypes.InferProps<typeof propTypes>;
+type ExtractedPropsWithoutAnnotation = PropTypes.InferProps<typeof propTypesWithoutAnnotation>;
+type ExtractPropsMatch = ExtractedProps extends ExtractedPropsWithoutAnnotation ? true : false;
+const x: true = (null as any as ExtractPropsMatch);
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2015",
+    "module": "commonjs",
+    "noEmit": true
+  },
+  "files": ["node_modules/prop-types/index.d.ts", "file.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "explicit package declaration roots must not change imported validator \
+         inference, got: {:#?}",
+        result.diagnostics
+    );
+}
+
 // =========================================================================
 // TS5097/TS2846 for re-export and import-equals module specifiers
 //
