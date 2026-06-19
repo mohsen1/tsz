@@ -711,7 +711,9 @@ impl<'a> NarrowingContext<'a> {
                     // swallowed by `narrow_to_array`) and `has_any_compat` is
                     // set correctly for the array-like retention pass below.
                     let resolved_member = self.resolve_type(member);
-                    if self.is_any_array_compat(resolved_member) {
+                    if self.is_any_array_compat(resolved_member)
+                        || is_subtype_of(self.db, any_array, resolved_member)
+                    {
                         has_any_compat = true;
                         return Some(any_array);
                     }
@@ -783,9 +785,15 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // Non-array source compatible with `any[]`: tsc's predicate narrowing
-        // substitutes the source with `any[]`.
-        if self.is_any_array_compat(source_type) {
+        // Non-array source from which `any[]` can be narrowed: tsc's predicate
+        // narrowing (`mapType(t => isTypeSubtypeOf(any[], t) ? any[] : …)`)
+        // substitutes `any[]` either when the source is structurally array-like
+        // (an `any` string index or any numeric index, via `is_any_array_compat`)
+        // OR when the source is a SUPERTYPE of `any[]` — `object`, `{}`, an empty
+        // interface — i.e. `any[] <: source`. Without the supertype case these
+        // object-like guards narrowed to `never`, producing false TS2339 on every
+        // member access in the true branch.
+        if self.is_any_array_compat(source_type) || is_subtype_of(self.db, any_array, source_type) {
             return any_array;
         }
 

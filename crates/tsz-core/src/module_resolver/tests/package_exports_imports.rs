@@ -485,6 +485,163 @@ fn test_package_imports_target_cannot_contain_node_modules_segment() {
 }
 
 #[test]
+fn test_package_imports_resolve_only_against_nearest_package_scope() {
+    // Per Node.js LOOKUP_PACKAGE_SCOPE + PACKAGE_IMPORTS_RESOLVE (and tsc's
+    // `getPackageScopeForPath` / `loadModuleFromImports`), a `#`-prefixed
+    // specifier resolves ONLY against the nearest enclosing `package.json`. If
+    // that nearest scope has no `imports` field (or no matching key), resolution
+    // fails — the resolver must NOT keep walking up to an ancestor package that
+    // happens to define a matching `#import`.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_nearest_scope_only");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    // Outer package defines `#shared`, with a real target on disk.
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+
+    // Nearest package scope for the importer has NO `imports` field.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner"}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/src/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve(
+        "#shared",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 7),
+    );
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "#shared must NOT resolve against an ancestor package once a nearer \
+         package scope (without a matching import) is found, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_no_match_in_nearest_scope_does_not_fall_through_to_ancestor() {
+    // A variant where the nearest scope DOES have an `imports` field, but the
+    // specifier does not match any of its keys. tsc fails here too — it does not
+    // continue searching ancestor package scopes for a matching key.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_nearest_scope_nomatch");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("packages/inner/src")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"root","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+
+    // Nearest scope has an `imports` map, but only an unrelated key.
+    fs::write(
+        dir.join("packages/inner/package.json"),
+        r##"{"name":"inner","imports":{"#local":"./local.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/local.d.ts"),
+        "export declare const w: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("packages/inner/src/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    // The unrelated `#local` key in the nearest scope resolves fine.
+    let local = resolver.resolve(
+        "#local",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 6),
+    );
+    assert!(
+        local.is_ok(),
+        "#local should resolve against the nearest scope, got {local:?}"
+    );
+
+    // But `#shared`, defined only in the ancestor, must not be reached.
+    let shared = resolver.resolve(
+        "#shared",
+        &dir.join("packages/inner/src/index.ts"),
+        Span::new(0, 7),
+    );
+    assert!(
+        matches!(shared, Err(ResolutionFailure::NotFound { .. })),
+        "#shared (only in ancestor) must not fall through past the nearest \
+         import-bearing scope, got {shared:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_resolve_from_subdir_within_same_scope() {
+    // Control: walking UP to find the nearest package.json is still correct when
+    // the importer lives in a subdirectory of its own package. `#shared` must
+    // resolve from `src/nested/` against the single enclosing package scope.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_same_scope_subdir");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src/nested")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#shared":"./shared.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("shared.d.ts"), "export declare const v: number;").unwrap();
+    fs::write(
+        dir.join("src/nested/index.ts"),
+        "import { v } from '#shared'; v;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#shared", &dir.join("src/nested/index.ts"), Span::new(0, 7));
+
+    let resolved = result.expect("#shared should resolve from a subdir of its own package");
+    assert_eq!(resolved.resolved_path, dir.join("shared.d.ts"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_exports_js_target_substitutes_dts() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_exports_js_target");
