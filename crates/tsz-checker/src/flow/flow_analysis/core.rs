@@ -75,7 +75,7 @@ impl<'a> CheckerState<'a> {
             self.analyze_statement(body_idx, &FxHashSet::default(), tracked)
         };
 
-        self.flow_result_to_assigned(result)
+        self.flow_result_to_assigned(result, tracked)
     }
 
     /// Analyze a constructor body starting after the `super()` call.
@@ -132,7 +132,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Convert a `FlowResult` to a set of definitely assigned properties.
-    fn flow_result_to_assigned(&self, result: FlowResult) -> FxHashSet<PropertyKey> {
+    fn flow_result_to_assigned(
+        &self,
+        result: FlowResult,
+        tracked: &FxHashSet<PropertyKey>,
+    ) -> FxHashSet<PropertyKey> {
         let mut assigned = None;
         if let Some(normal) = result.normal {
             assigned = Some(normal);
@@ -144,7 +148,13 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        assigned.unwrap_or_default()
+        // No completion path at all (both `normal` and `exits` are `None`) means
+        // every path through the constructor exits via `throw`, so the end is
+        // unreachable. tsc treats an unreachable constructor end as vacuously
+        // satisfying definite assignment for ALL tracked properties (the
+        // instance is never observably constructed), so return the full tracked
+        // set rather than the empty set.
+        assigned.unwrap_or_else(|| tracked.clone())
     }
 
     // =========================================================================
@@ -220,15 +230,19 @@ impl<'a> CheckerState<'a> {
                 };
             }
             k if k == syntax_kind_ext::THROW_STATEMENT => {
-                let mut assigned = assigned_in.clone();
-                if let Some(ret) = self.ctx.arena.get_return_statement(node)
-                    && ret.expression.is_some()
-                {
-                    self.collect_assignments_in_expression(ret.expression, &mut assigned, tracked);
-                }
+                // A `throw` never completes the constructor: its path reaches
+                // neither the normal end nor a `return` completion, so it
+                // contributes no completion path to the definite-assignment
+                // reduction. Unlike `return` (an early *normal* completion whose
+                // assigned-set must constrain the result), a throw path is
+                // excluded entirely — otherwise an early-throw guard
+                // (`if (bad) throw;`) would wrongly cancel assignments made on
+                // the normal path that follows it. When every path throws, the
+                // resulting `(None, None)` is treated as vacuously-assigned in
+                // `flow_result_to_assigned`.
                 return FlowResult {
                     normal: None,
-                    exits: Some(assigned),
+                    exits: None,
                 };
             }
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
