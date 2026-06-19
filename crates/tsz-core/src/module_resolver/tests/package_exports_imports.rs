@@ -10,6 +10,7 @@
 //!   absolute targets, bare-imports validity)
 
 use super::super::*;
+use super::fixtures::TempFixture;
 
 #[test]
 fn test_resolver_rejects_root_slash_package_import_with_wildcard() {
@@ -1141,5 +1142,167 @@ fn test_wildcard_export_beats_directory_key_independent_of_declaration_order() {
         resolved_b,
         star_then_dir.join("node_modules/pkg/dist/foo.d.ts"),
         "`./*` must win over `./` regardless of declaration order"
+    );
+}
+
+// ===========================================================================
+// `exports` authority over the legacy `typesVersions` field
+//
+// tsc's `loadModuleFromSpecificNodeModulesDirectory` returns from
+// `loadModuleFromExports` unconditionally when a package declares `exports`
+// ("package exports are higher priority than file/directory/typesVersions
+// lookups and ... blocks them"). So under Node16/NodeNext/Bundler the legacy
+// `typesVersions` field must NOT be consulted as a fallback when `exports` is
+// present: a subpath the `exports` map does not expose is unresolved (TS2307),
+// even if a `typesVersions` pattern would otherwise map it to an existing file.
+// `typesVersions` still applies to packages that declare NO `exports` map.
+// ===========================================================================
+
+/// A non-exported subpath must not fall back to `typesVersions` when the
+/// package declares an `exports` map (Node16). Even though the `typesVersions`
+/// target file exists on disk, `exports` authority blocks it.
+#[test]
+fn exports_present_blocks_types_versions_fallback_for_subpath_node16() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/index.ts", "import {} from 'widget/internals';");
+    fixture.write(
+        "node_modules/widget/package.json",
+        r#"{
+            "name": "widget",
+            "exports": { "./panel": "./panel.js" },
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    // The `typesVersions` target exists, but `exports` is authoritative.
+    fixture.write(
+        "node_modules/widget/typed/internals.d.ts",
+        "export const x = 0;",
+    );
+    fixture.write("node_modules/widget/panel.d.ts", "export const panel = 0;");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let result = resolver.resolve(
+        "widget/internals",
+        &dir.join("src/index.ts"),
+        Span::new(0, 1),
+    );
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "exports is authoritative: a non-exported subpath must not fall back to \
+         typesVersions, got {result:?}"
+    );
+}
+
+/// Same `exports`-authority rule under Bundler resolution, with a wildcard
+/// `exports` map that still does not cover the requested subpath.
+#[test]
+fn exports_present_blocks_types_versions_fallback_for_subpath_bundler() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("app/main.ts", "import {} from 'gadget/secret';");
+    fixture.write(
+        "node_modules/gadget/package.json",
+        r#"{
+            "name": "gadget",
+            "exports": { "./public/*": "./lib/public/*.js" },
+            "typesVersions": { "*": { "*": ["legacy/*"] } }
+        }"#,
+    );
+    fixture.write(
+        "node_modules/gadget/legacy/secret.d.ts",
+        "export const s = 0;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    });
+    let result = resolver.resolve("gadget/secret", &dir.join("app/main.ts"), Span::new(0, 1));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "Bundler: a subpath outside the exports map must not resolve via \
+         typesVersions, got {result:?}"
+    );
+}
+
+/// Control: an exported subpath still resolves through `exports` (the fix must
+/// not break exports-based subpath resolution).
+#[test]
+fn exports_present_still_resolves_exported_subpath() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/app.ts", "import {} from 'gizmo/panel';");
+    fixture.write(
+        "node_modules/gizmo/package.json",
+        r#"{
+            "name": "gizmo",
+            "exports": { "./panel": "./panel.js" },
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    fixture.write("node_modules/gizmo/panel.d.ts", "export const panel = 0;");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let resolved = resolver
+        .resolve("gizmo/panel", &dir.join("src/app.ts"), Span::new(0, 1))
+        .expect("an exported subpath must still resolve through exports");
+
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules/gizmo/panel.d.ts")
+    );
+}
+
+/// Control: a package that declares NO `exports` map still honors the legacy
+/// `typesVersions` field for subpaths (the fix only blocks typesVersions when
+/// exports is present).
+#[test]
+fn no_exports_subpath_still_uses_types_versions() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("src/app.ts", "import {} from 'doohickey/internals';");
+    fixture.write(
+        "node_modules/doohickey/package.json",
+        r#"{
+            "name": "doohickey",
+            "typesVersions": { ">=3.1": { "*": ["typed/*"] } }
+        }"#,
+    );
+    fixture.write(
+        "node_modules/doohickey/typed/internals.d.ts",
+        "export const x = 0;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        types_versions_compiler_version: Some("3.1.0".to_string()),
+        ..Default::default()
+    });
+    let resolved = resolver
+        .resolve(
+            "doohickey/internals",
+            &dir.join("src/app.ts"),
+            Span::new(0, 1),
+        )
+        .expect("without an exports map, typesVersions still resolves the subpath");
+
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules/doohickey/typed/internals.d.ts")
     );
 }
