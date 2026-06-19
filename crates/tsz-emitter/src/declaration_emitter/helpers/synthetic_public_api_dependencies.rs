@@ -156,6 +156,15 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let Some(used_symbols) = self.used_symbols.as_mut() else {
+            // Usage analysis has not run, so the usage-based public-API filter
+            // cannot confirm these dependencies. Record the backing local
+            // symbols so the main statement loop keeps them in source order
+            // instead of pruning them and resurfacing them out of order at the
+            // synthetic alias. (When usage analysis did run this set is unread.)
+            for sym_id in retained_symbols {
+                self.synthetic_extends_alias_dependency_symbols
+                    .insert(sym_id);
+            }
             return;
         };
         for &sym_id in &retained_symbols {

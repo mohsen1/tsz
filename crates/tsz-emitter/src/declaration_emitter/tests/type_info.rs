@@ -986,7 +986,6 @@ class MyClass extends mixin(BaseClass) {
 }
 
 #[test]
-#[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"
 export class ExportedClass<T> {
@@ -1057,6 +1056,86 @@ export class MyClass extends getLocalClass<LocalInterface>(undefined)<string, nu
     );
     assert!(
         local_class_pos < my_class_base_pos,
+        "Expected local dependency to emit before the synthetic base alias: {output}"
+    );
+}
+
+/// Anti-hardcoding companion for
+/// [`test_named_class_extends_expression_keeps_local_dependency_in_source_order`]:
+/// every user binder is renamed and the structure is preserved, proving the
+/// source-order fix keys on the synthetic-extends-alias dependency relationship
+/// rather than on any specific identifier.
+#[test]
+fn test_named_class_extends_expression_keeps_local_dependency_in_source_order_renamed_binders() {
+    let source = r#"
+export class Widget<P> {
+    a: P;
+}
+
+class Gadget<P, Q> {
+    a: P;
+    b: Q;
+}
+
+export interface Shape {
+    a: number;
+}
+
+interface Spec {
+    a: number;
+}
+
+declare function makeGadget<P>(seed: P): typeof Gadget;
+
+export class Panel extends makeGadget<Spec>(undefined)<string, number> {}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "Panel",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let local_base_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "Gadget",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let local_base_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(local_base_sym),
+        is_abstract: false,
+    });
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, local_base_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    let local_class_pos = output.find("declare class Gadget<P, Q> {").unwrap();
+    let exported_interface_pos = output.find("export interface Shape {").unwrap();
+    let panel_base_pos = output.find("declare const Panel_base:").unwrap();
+
+    assert!(
+        local_class_pos < exported_interface_pos,
+        "Expected local class dependency to keep source order: {output}"
+    );
+    assert!(
+        local_class_pos < panel_base_pos,
         "Expected local dependency to emit before the synthetic base alias: {output}"
     );
 }

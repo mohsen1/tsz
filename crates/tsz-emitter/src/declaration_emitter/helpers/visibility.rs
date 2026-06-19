@@ -476,11 +476,16 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.public_api_filter_enabled() {
             return true;
         }
-        let Some(used) = &self.used_symbols else {
-            return false;
-        };
         let Some(binder) = self.binder else {
             return false;
+        };
+        let Some(used) = &self.used_symbols else {
+            // Usage analysis did not run, so the usage map cannot confirm
+            // liveness. Fall back to the synthetic-dependency record: a local
+            // declaration that backs a synthetic class-extends base alias is a
+            // confirmed dependency and must keep its source position rather
+            // than being pruned here and resurfaced out of order at the alias.
+            return self.name_resolves_to_synthetic_extends_alias_dependency(name_idx);
         };
         let direct_sym = binder.node_symbols.get(&name_idx.0).copied();
         if let Some(sym_id) = direct_sym
@@ -517,6 +522,56 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         false
+    }
+
+    /// Walk the declaration-name resolution chain for `name_idx` — direct
+    /// `node_symbols`, then name-based `file_locals`, then enclosing scopes —
+    /// and return whether any resolved symbol satisfies `predicate`. Used when
+    /// the name node itself may not be present in `node_symbols`.
+    fn any_resolved_symbol(
+        &self,
+        name_idx: NodeIndex,
+        predicate: impl Fn(SymbolId) -> bool,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0)
+            && predicate(sym_id)
+        {
+            return true;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && predicate(sym_id)
+        {
+            return true;
+        }
+        binder.scopes.iter().any(|scope| {
+            scope
+                .table
+                .get(&name_ident.escaped_text)
+                .is_some_and(&predicate)
+        })
+    }
+
+    /// Whether the declaration named by `name_idx` resolves to a local symbol
+    /// recorded as a synthetic class-extends base-alias dependency. Used when
+    /// usage analysis has not run, so the declaration's name node may not be in
+    /// `node_symbols`; fall back to name-based `file_locals`/scope resolution.
+    fn name_resolves_to_synthetic_extends_alias_dependency(&self, name_idx: NodeIndex) -> bool {
+        if self.synthetic_extends_alias_dependency_symbols.is_empty() {
+            return false;
+        }
+        self.any_resolved_symbol(name_idx, |sym_id| {
+            self.synthetic_extends_alias_dependency_symbols
+                .contains(&sym_id)
+        })
     }
 
     /// Check if a statement node has the `export` keyword modifier.
