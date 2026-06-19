@@ -210,8 +210,9 @@ impl<'a> CheckerContext<'a> {
             // empty-cache early-out in `env_eval_cache_seed_entries`).
             return 0;
         }
-        let reachable =
-            crate::query_boundaries::common::collect_referenced_types(self.types, type_id);
+        let reachable = crate::query_boundaries::type_computation::core::collect_referenced_types(
+            self.types, type_id,
+        );
         let before = cache.len();
         cache.retain(|&key, value| !reachable.contains(&key) && !reachable.contains(&value.result));
         before - cache.len()
