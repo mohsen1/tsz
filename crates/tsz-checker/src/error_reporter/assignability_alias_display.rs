@@ -149,9 +149,21 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<(String, String)> {
-        if let Some(expr_idx) = self
+        // When the assignment source is an identifier declared as a top type
+        // (`any`/`unknown`) but flow-narrowed to a concrete type, its declaration
+        // annotation text is stale relative to the narrowed value. `tsc` renders
+        // the narrowed type (`string`), not the declared `any`/`unknown`, so the
+        // declared-annotation source repaints below must be suppressed. The
+        // relation and the structural source display already use the narrowed
+        // type; only the annotation-text repaint diverges.
+        let source_expr = self
             .direct_diagnostic_source_expression(anchor_idx)
-            .or_else(|| self.assignment_source_expression(anchor_idx))
+            .or_else(|| self.assignment_source_expression(anchor_idx));
+        let source_narrowed_from_top_declaration = source_expr.is_some_and(|expr_idx| {
+            self.source_identifier_narrowed_from_top_declaration(expr_idx, source)
+        });
+        if !source_narrowed_from_top_declaration
+            && let Some(expr_idx) = source_expr
             && let Some(source_display) =
                 self.bare_type_parameter_annotation_for_assignment_identifier(expr_idx)
         {
@@ -177,12 +189,15 @@ impl<'a> CheckerState<'a> {
             let target_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
             return Some((source_display.to_string(), target_display));
         }
-        if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
-            anchor_idx,
-            source_fact,
-            source_display,
-            target_display,
-        ) {
+        if !source_narrowed_from_top_declaration
+            && let Some(source_display) = self
+                .declared_generic_alias_source_display_for_target_display(
+                    anchor_idx,
+                    source_fact,
+                    source_display,
+                    target_display,
+                )
+        {
             return Some((source_display, target_display.to_string()));
         }
         if self
@@ -191,10 +206,13 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        // A flow-narrowed top-type source has no faithful declared-annotation
+        // repaint (see the note above); leave the structural narrowed display.
+        if source_narrowed_from_top_declaration {
+            return None;
+        }
 
-        let expr_idx = self
-            .direct_diagnostic_source_expression(anchor_idx)
-            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let expr_idx = source_expr?;
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         // A non-generic alias whose body is a computed operator collapsing to a
         // shared singleton (or a direct intrinsic/literal) drops its alias symbol

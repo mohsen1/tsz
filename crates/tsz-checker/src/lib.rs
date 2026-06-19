@@ -1090,6 +1090,9 @@ mod mutable_binding_widening_from_const_literal_tests;
 #[path = "tests/namespace_property_mismatch_boundary_arch_tests.rs"]
 mod namespace_property_mismatch_boundary_arch_tests;
 #[cfg(test)]
+#[path = "tests/narrowed_top_type_source_display_tests.rs"]
+mod narrowed_top_type_source_display_tests;
+#[cfg(test)]
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[cfg(test)]

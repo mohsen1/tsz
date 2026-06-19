@@ -446,6 +446,39 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// True when `expr_idx` is an assignment-source identifier whose declared
+    /// symbol type is a top type (`any`/`unknown`) while `narrowed_to` — the
+    /// type actually being displayed — is a different, more specific type
+    /// produced by flow narrowing (a user-defined type-predicate guard,
+    /// `typeof`, `instanceof`, a discriminant, …).
+    ///
+    /// In that case `tsc` renders the narrowed type (`getFlowTypeOfReference`),
+    /// not the operand's stale declaration annotation (`any`/`unknown`), so the
+    /// declared-annotation source repaints in the assignability diagnostic
+    /// display must be suppressed. The relation and the structural source
+    /// display already use the narrowed type. The check is name-agnostic and
+    /// keys only on the structural top-type identity of the declared symbol
+    /// type, never on any identifier, annotation, or printer-output text.
+    pub(in crate::error_reporter) fn source_identifier_narrowed_from_top_declaration(
+        &mut self,
+        expr_idx: NodeIndex,
+        narrowed_to: TypeId,
+    ) -> bool {
+        if narrowed_to.is_any_unknown_or_error() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+        self.get_type_of_symbol(sym_id).is_any_or_unknown()
+    }
+
     pub(in crate::error_reporter) fn should_prefer_declared_source_annotation_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -457,6 +490,15 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        // A source identifier declared as a top type (`any`/`unknown`) that flow
+        // analysis narrowed to a concrete type renders the narrowed type in
+        // `tsc` (e.g. `v: unknown` narrowed by a `v is Record<string, unknown>`
+        // guard shows `Record<string, unknown>`), never the declared
+        // `any`/`unknown` annotation, so it must not be preferred here.
+        if self.source_identifier_narrowed_from_top_declaration(expr_idx, expr_type) {
             return false;
         }
 
@@ -1488,6 +1530,14 @@ impl<'a> CheckerState<'a> {
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        // A source identifier explicitly declared `any` that flow analysis
+        // narrowed to a concrete type renders the narrowed type in `tsc`
+        // (e.g. `v: any` narrowed by a `v is string` guard shows `string`),
+        // not the declared `any`. Defer to the structural narrowed display,
+        // mirroring the `unknown` early return above.
+        if self.source_identifier_narrowed_from_top_declaration(expr_idx, expr_display_type) {
             return None;
         }
         if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
