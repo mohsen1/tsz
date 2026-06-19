@@ -784,6 +784,21 @@ impl<'a> CheckerState<'a> {
         let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
         let usage_scope = self.find_enclosing_function_or_source_file(idx);
         if decl_scope != usage_scope && decl_scope.is_some() {
+            // A `for...in` / `for...of` loop binding — a simple identifier
+            // (`for (const x of …)`) or a destructuring pattern
+            // (`for (const [k, v] of …)`, `for (const { x } of …)`) — is
+            // assigned by the loop on every iteration before the body runs, so
+            // it is definitely assigned throughout the body. A reference inside
+            // a deferred closure declared in the body can only execute after
+            // that assignment, so `tsc` never reports TS2454 for it. tsz already
+            // exempts the simple-`const` shape via the `!has_initializer` +
+            // const path below; recognize destructured (`BindingElement`) and
+            // `let`/`var` loop bindings here so every loop binding is uniform.
+            if self.is_for_in_of_loop_binding(decl_id_to_check)
+                && self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope)
+            {
+                return false;
+            }
             let decl_is_source_file = self
                 .ctx
                 .arena
@@ -865,24 +880,8 @@ impl<'a> CheckerState<'a> {
             let is_function_scoped =
                 symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE);
             if is_function_scoped {
-                // Check if this var is a for-in/for-of loop variable
-                let is_for_in_of_var = self
-                    .ctx
-                    .arena
-                    .node_info(decl_id_to_check)
-                    .and_then(|info| {
-                        let list_node = self.ctx.arena.get(info.parent)?;
-                        if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                            return None;
-                        }
-                        let list_info = self.ctx.arena.node_info(info.parent)?;
-                        let for_node = self.ctx.arena.get(list_info.parent)?;
-                        Some(
-                            for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                                || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT,
-                        )
-                    })
-                    .unwrap_or(false);
+                // Check if this var is a for-in/for-of loop variable.
+                let is_for_in_of_var = self.is_for_in_of_loop_binding(decl_id_to_check);
 
                 if !is_for_in_of_var {
                     let has_type_annotation =
@@ -1563,6 +1562,57 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         false
+    }
+
+    /// Returns `true` when `decl` is the binding of a `for...in` / `for...of`
+    /// loop header — either the loop's `VariableDeclaration` directly
+    /// (`for (const x of …)`) or a `BindingElement` nested inside that
+    /// declaration's destructuring pattern (`for (const [k, v] of …)`,
+    /// `for (const { x } of …)`).
+    ///
+    /// Such a binding is assigned by the loop on every iteration before the
+    /// body runs, so it is definitely assigned throughout the loop body. The
+    /// decision is purely structural (the declaration's AST position), never
+    /// keyed on the binding's name.
+    fn is_for_in_of_loop_binding(&self, decl: NodeIndex) -> bool {
+        let arena = self.ctx.arena;
+        // Resolve the enclosing `VariableDeclaration` for `decl`: a simple
+        // binding already is one; a destructured binding is a `BindingElement`
+        // nested in the declaration's pattern, so walk up until the declaration
+        // is reached (bailing if the walk leaves its subtree). The walk always
+        // terminates — the parent chain reaches the source file or a NONE
+        // parent.
+        let mut current = decl;
+        let var_decl = loop {
+            match arena.get(current).map(|node| node.kind) {
+                Some(kind) if kind == syntax_kind_ext::VARIABLE_DECLARATION => break current,
+                Some(kind) if kind == syntax_kind_ext::SOURCE_FILE => return false,
+                Some(_) => {}
+                None => return false,
+            }
+            match arena.node_info(current) {
+                Some(info) => current = info.parent,
+                None => return false,
+            }
+        };
+        // `VariableDeclaration` → `VariableDeclarationList` → `For{Of,In}`.
+        let Some(list_info) = arena.node_info(var_decl) else {
+            return false;
+        };
+        if arena.get(list_info.parent).map(|node| node.kind)
+            != Some(syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+        {
+            return false;
+        }
+        let Some(for_info) = arena.node_info(list_info.parent) else {
+            return false;
+        };
+        matches!(
+            arena.get(for_info.parent).map(|node| node.kind),
+            Some(kind)
+                if kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    || kind == syntax_kind_ext::FOR_IN_STATEMENT
+        )
     }
 
     /// Check whether a symbol has any flow ASSIGNMENT node in the current file.
