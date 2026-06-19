@@ -205,7 +205,46 @@ impl<'a> CheckerState<'a> {
                     .map(|_| def_id)
             });
 
+        // Preserve the `Name<Args>` surface of a generic interface/class
+        // application whose instance is *callable* (it carries a call or
+        // construct signature, as in prop-types' `Validator<T>`:
+        // `interface Validator<T> { (x: object): Error | null; [brand]?: T }`).
+        // Evaluating such an application to its structural callable instance
+        // (below) resolves the def name but discards the type arguments, so the
+        // source would render as a bare `Validator` instead of
+        // `Validator<string>`, diverging from tsc. A *non-callable* generic
+        // instance (`Box<Animal>`) already reconstructs `Name<Args>` from the
+        // evaluated instance downstream and needs that instance for nested
+        // missing-member elaboration, so it is deliberately left to the normal
+        // evaluation path. A reducing *type-alias* application (`DeepReadonly<X>`)
+        // is likewise untouched, matching tsc dropping the alias name.
+        let original_application = type_id;
+        let original_is_generic_interface_or_class_application =
+            query::is_generic_application(self.ctx.types, type_id)
+                && query::type_application(self.ctx.types, type_id)
+                    .and_then(|app| query::lazy_def_id(self.ctx.types, app.base))
+                    .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                    .is_some_and(|def| {
+                        matches!(
+                            def.kind,
+                            tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+                        )
+                    });
+
         let type_id = self.evaluate_type_with_env(type_id);
+
+        if original_is_generic_interface_or_class_application
+            && (query::has_call_signatures(self.ctx.types, type_id)
+                || query::has_construct_signatures(self.ctx.types, type_id))
+        {
+            let widened = query::widen_type(self.ctx.types, original_application);
+            if let Some(def_id) = constructor_display_def {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(widened, def_id);
+            }
+            return widened;
+        }
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id) {
             let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
             if let Some(def_id) = constructor_display_def {
