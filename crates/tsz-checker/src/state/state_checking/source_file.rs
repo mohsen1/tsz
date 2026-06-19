@@ -108,31 +108,7 @@ impl<'a> CheckerState<'a> {
         // the previous unconditional full `clone()`, this neither reallocates
         // already-mirrored maps nor discards flow-analyzer-env-only entries.
         self.ctx.flush_deferred_flow_env_writes();
-        {
-            let type_env_snapshot = self.ctx.type_env.borrow();
-            let mut flow_env = self.ctx.type_environment.borrow_mut();
-            flow_env.overlay_missing_from(&type_env_snapshot);
-
-            // The two envs (#13086) are deliberately separate `RefCell`s with
-            // distinct borrow lifecycles — the flow-analyzer holds
-            // `type_environment` borrowed during narrowing while the evaluator
-            // mutates `type_env`, so they cannot share one cell without dropping
-            // writes. They are kept consistent by dual-write helpers and the
-            // vacancy-fill `overlay_missing_from` above. After reconciliation
-            // they must *agree* on every shared `DefId -> TypeId` entry; a
-            // disagreement is the silent divergence #13086 guards against, so
-            // turn it into a loud failure in debug builds.
-            if cfg!(debug_assertions)
-                && let Some((map, key, lhs, rhs)) =
-                    flow_env.first_def_divergence_from(&type_env_snapshot)
-            {
-                debug_assert!(
-                    false,
-                    "flow-analyzer env diverges from evaluator env after reconciliation \
-                     (#13086): {map}[{key}] is {lhs} in type_environment vs {rhs} in type_env"
-                );
-            }
-        }
+        self.reconcile_flow_and_evaluator_envs();
         debug_assert_eq!(
             self.ctx.deferred_flow_env_write_count(),
             0,
@@ -174,6 +150,92 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(root_idx)
+    }
+
+    /// Reconcile the flow-analyzer environment (`type_environment`) with the
+    /// evaluator environment (`type_env`) before flow analysis reads it.
+    ///
+    /// The two envs (#13086) are deliberately separate `RefCell`s with distinct
+    /// borrow lifecycles — the flow-analyzer holds `type_environment` borrowed
+    /// during narrowing while the evaluator mutates `type_env`, so they cannot
+    /// share one cell without dropping writes. They are kept consistent by
+    /// dual-write helpers and the vacancy-fill `overlay_missing_from` here.
+    ///
+    /// `overlay_missing_from` is a vacancy-only superset merge: it cannot
+    /// reconcile a `DefId` that is *present-but-different* in both envs. That
+    /// residual class is dominated by recursive self-referential interfaces
+    /// (#13944): a type like
+    /// `interface SetState { draft_: Drafted<AnySet, SetState>; ... }` interns
+    /// to distinct `TypeId`s when its self-reference is materialized at
+    /// different resolution points, so the evaluator and flow-analyzer envs can
+    /// land on two structurally identical — but non-identical-by-id — `TypeId`s
+    /// for the one def. Those are interchangeable (coinductively equal recursive
+    /// types), so canonicalize the flow-analyzer env onto the evaluator env's
+    /// authoritative value. This removes a query-site-dependent false-positive
+    /// class in release builds without changing any observable type.
+    ///
+    /// After reconciliation the two envs must *agree* on every shared
+    /// `DefId -> TypeId` entry; a genuine (non-identical) disagreement is the
+    /// silent divergence #13086 guards against and is left for the recursive
+    /// type canonicalization campaign, so turn it into a loud failure in debug
+    /// builds.
+    fn reconcile_flow_and_evaluator_envs(&mut self) {
+        // Phase 1: vacancy-fill, then collect the present-but-different
+        // `def_types` divergences while both envs are borrowed.
+        let divergences: Vec<(u32, tsz_solver::TypeId, tsz_solver::TypeId)> = {
+            let type_env_snapshot = self.ctx.type_env.borrow();
+            let mut flow_env = self.ctx.type_environment.borrow_mut();
+            flow_env.overlay_missing_from(&type_env_snapshot);
+            flow_env.collect_def_type_divergences_from(&type_env_snapshot)
+        };
+
+        if !divergences.is_empty() {
+            // `are_types_structurally_identical` resolves `Lazy` refs through the
+            // envs, so the borrows above must be dropped before classifying.
+            // Give the identity walk a fresh resolution budget — building the
+            // type environment may have spent the global fuel.
+            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+
+            // Phase 2: keep only the benign subset — divergences whose two
+            // `TypeId`s the solver deems structurally identical. If the budget is
+            // exhausted the identity walk conservatively answers "not identical",
+            // so an unconverged divergence is the fail-safe (never a wrong
+            // convergence).
+            let mut converged: Vec<(u32, tsz_solver::TypeId)> = Vec::new();
+            for (key, flow_val, eval_val) in divergences {
+                if crate::query_boundaries::assignability::are_types_structurally_identical(
+                    self.ctx.types,
+                    &self.ctx,
+                    flow_val,
+                    eval_val,
+                ) {
+                    converged.push((key, eval_val));
+                }
+            }
+
+            // Phase 3: canonicalize the flow-analyzer env onto the evaluator
+            // env's authoritative value for the benign subset.
+            if !converged.is_empty() {
+                let mut flow_env = self.ctx.type_environment.borrow_mut();
+                for (key, eval_val) in converged {
+                    flow_env.set_local_def_type(key, eval_val);
+                }
+            }
+        }
+
+        if cfg!(debug_assertions) {
+            let type_env_snapshot = self.ctx.type_env.borrow();
+            let flow_env = self.ctx.type_environment.borrow();
+            if let Some((map, key, lhs, rhs)) =
+                flow_env.first_def_divergence_from(&type_env_snapshot)
+            {
+                debug_assert!(
+                    false,
+                    "flow-analyzer env diverges from evaluator env after reconciliation \
+                     (#13086): {map}[{key}] is {lhs} in type_environment vs {rhs} in type_env"
+                );
+            }
+        }
     }
 
     /// Resolve every interface declaration with an `extends` clause in this

@@ -1591,8 +1591,22 @@ impl<'a> CheckerState<'a> {
             } else {
                 env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params);
+                    env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
+            }
+            drop(env);
+            // Mirror the DefId body into the flow-analyzer env so the two envs do
+            // not disagree on a recursive self-referential interface that is
+            // re-materialized to a distinctly-interned body during application
+            // symbol resolution (#13944). The evaluator-env write above caches
+            // that fresh body for the def; without this mirror the flow-analyzer
+            // env keeps the earlier interface-declaration body and the two
+            // `DefId -> TypeId` entries diverge past `overlay_missing_from`'s
+            // vacancy-only reach. Deferred on a borrow race, replayed at
+            // `flush_deferred_flow_env_writes`.
+            if let Some(def_id) = def_id {
+                self.ctx
+                    .mirror_def_in_type_environment(def_id, resolved, &type_params);
             }
             true
         } else {

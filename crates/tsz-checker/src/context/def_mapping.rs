@@ -1095,6 +1095,52 @@ impl<'a> CheckerContext<'a> {
         self.mirror_to_flow_env(DeferredFlowEnvWrite::RegisterDefSymbolMapping { def_id, sym_id });
     }
 
+    /// Mirror a definition body into the flow-analyzer env (`type_environment`)
+    /// **only**, deferring on a borrow race so the write is replayed at
+    /// [`Self::flush_deferred_flow_env_writes`] rather than dropped.
+    ///
+    /// The `get_type_of_symbol` epilogue writes the authoritative body into the
+    /// evaluator env (`type_env`) directly while it already holds that env's
+    /// borrow; this keeps the flow-analyzer env in lock-step with that write.
+    /// A previous best-effort `try_borrow_mut` mirror at that site silently
+    /// **dropped** the write whenever narrowing or recursive resolution held
+    /// `type_environment`, which left the two envs disagreeing on a recursive
+    /// self-referential interface's body `DefId -> TypeId` (#13944): the
+    /// evaluator env advanced to the freshly materialized body while the
+    /// flow-analyzer env kept an earlier, distinctly-interned materialization
+    /// that `overlay_missing_from` (vacancy-only) could not reconcile.
+    pub fn mirror_def_in_type_environment(
+        &self,
+        def_id: DefId,
+        body: TypeId,
+        params: &[tsz_solver::TypeParamInfo],
+    ) {
+        let op = if params.is_empty() {
+            DeferredFlowEnvWrite::InsertDef { def_id, body }
+        } else {
+            // Variances are left unset here, matching the prior direct
+            // `insert_def_with_params` mirror at this site; declared-variance
+            // registration flows through `register_def_with_params_in_envs`.
+            DeferredFlowEnvWrite::InsertDefWithParams {
+                def_id,
+                body,
+                params: params.to_vec(),
+                variances: None,
+            }
+        };
+        self.mirror_to_flow_env(op);
+    }
+
+    /// Mirror a class instance type into the flow-analyzer env **only**,
+    /// deferring on a borrow race. Companion to
+    /// [`Self::mirror_def_in_type_environment`].
+    pub fn mirror_class_instance_in_type_environment(&self, def_id: DefId, instance_type: TypeId) {
+        self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertClassInstance {
+            def_id,
+            instance_type,
+        });
+    }
+
     /// Register an augmented definition body in **both** type environments.
     ///
     /// If the definition is a class (or already has a class-instance entry),

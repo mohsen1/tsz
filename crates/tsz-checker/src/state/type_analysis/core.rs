@@ -1582,30 +1582,34 @@ impl<'a> CheckerState<'a> {
             // Mirror DefId mappings into type_environment (flow-analyzer env)
             // so both environments stay consistent. The type_env block above
             // handles SymbolRef + DefId writes to the evaluator env; this block
-            // ensures the flow-analyzer env also has the DefId entries.
-            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
-                && let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
-            {
+            // mirrors the same DefId body into the flow-analyzer env.
+            //
+            // The mirror DEFERS on a borrow race (recursive resolution or
+            // narrowing already holds `type_environment`) so it is replayed at
+            // `flush_deferred_flow_env_writes` instead of being silently
+            // dropped. A dropped mirror left the evaluator env on the freshly
+            // materialized body while the flow-analyzer env kept an earlier,
+            // distinctly-interned materialization of a recursive self-referential
+            // interface — a present-but-different `DefId -> TypeId` divergence
+            // that the vacancy-only `overlay_missing_from` cannot reconcile
+            // (#13944).
+            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                 if let Some((instance_type, _)) = &class_env_entry {
-                    if type_params.is_empty() {
-                        env.insert_def(def_id, result);
-                    } else {
-                        env.insert_def_with_params(def_id, result, type_params);
-                    }
-                    env.insert_class_instance_type(def_id, *instance_type);
+                    self.ctx
+                        .mirror_def_in_type_environment(def_id, result, &type_params);
+                    self.ctx
+                        .mirror_class_instance_in_type_environment(def_id, *instance_type);
                 } else {
-                    let lib_params = if type_params.is_empty() {
-                        self.ctx.get_def_type_params(def_id)
-                    } else {
-                        None
-                    };
-                    if let Some(params) = lib_params {
-                        env.insert_def_with_params(def_id, result, params);
-                    } else if type_params.is_empty() {
-                        env.insert_def(def_id, result);
-                    } else {
-                        env.insert_def_with_params(def_id, result, type_params);
-                    }
+                    // A non-generic lib interface (e.g. `Promise<T>`, `Array<T>`)
+                    // can have its params registered on the DefId even when
+                    // `compute_type_of_symbol` returned none; prefer those.
+                    let lib_params = type_params
+                        .is_empty()
+                        .then(|| self.ctx.get_def_type_params(def_id))
+                        .flatten();
+                    let params = lib_params.as_deref().unwrap_or(&type_params);
+                    self.ctx
+                        .mirror_def_in_type_environment(def_id, result, params);
                 }
             }
             // Register the merged interface+value `typeof` value type in both
