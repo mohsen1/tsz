@@ -220,11 +220,9 @@ impl<'a> CheckerState<'a> {
         // is likewise untouched, matching tsc dropping the alias name.
         let original_application = type_id;
         let original_is_generic_interface_or_class_application =
-            crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
-                && crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-                    .and_then(|app| {
-                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
-                    })
+            query::is_generic_application(self.ctx.types, type_id)
+                && query::type_application(self.ctx.types, type_id)
+                    .and_then(|app| query::lazy_def_id(self.ctx.types, app.base))
                     .and_then(|def_id| self.ctx.definition_store.get(def_id))
                     .is_some_and(|def| {
                         matches!(
@@ -236,14 +234,10 @@ impl<'a> CheckerState<'a> {
         let type_id = self.evaluate_type_with_env(type_id);
 
         if original_is_generic_interface_or_class_application
-            && (crate::query_boundaries::common::has_call_signatures(self.ctx.types, type_id)
-                || crate::query_boundaries::common::has_construct_signatures(
-                    self.ctx.types,
-                    type_id,
-                ))
+            && (query::has_call_signatures(self.ctx.types, type_id)
+                || query::has_construct_signatures(self.ctx.types, type_id))
         {
-            let widened =
-                crate::query_boundaries::common::widen_type(self.ctx.types, original_application);
+            let widened = query::widen_type(self.ctx.types, original_application);
             if let Some(def_id) = constructor_display_def {
                 self.ctx
                     .definition_store
