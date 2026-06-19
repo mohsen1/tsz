@@ -440,6 +440,8 @@ run_lint() {
   node scripts/ci/test-check-ci-job-timing.mjs || return $?
   node scripts/ci/test-check-main-red.mjs || return $?
   node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
+  node scripts/ci/test-gcp-cache-auth.mjs || return $?
+  node scripts/ci/test-gcp-cache-staleness.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
