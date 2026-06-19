@@ -369,6 +369,23 @@ fn is_invalid_index_type_strict_inner(
                 }
                 true
             }
+            Some(TypeData::Union(list_id)) => {
+                // A union index type is valid iff EVERY member is a valid index
+                // type: tsc distributes `T[A | B]` to `T[A] | T[B]`, so each
+                // branch must be valid. The canonical case is the `PropertyKey`
+                // alias `string | number | symbol` used as a computed
+                // destructuring key (`const { [k]: v } = obj`). Without this arm
+                // the union falls through to the `_ => false` invalid case,
+                // producing a false TS2538. When a member is itself invalid the
+                // whole union is still rejected, preserving the existing
+                // whole-union TS2538 message for partially-invalid unions.
+                for &member in db.type_list(list_id).iter() {
+                    if is_invalid_index_type_strict_inner(db, member, visited).is_some() {
+                        return Some(type_id);
+                    }
+                }
+                true
+            }
             Some(TypeData::TypeParameter(info)) => {
                 // Valid if the constraint is a valid index type
                 if let Some(constraint) = info.constraint {
