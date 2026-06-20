@@ -231,6 +231,27 @@ assert.match(
 
 assert.match(
   workflow,
+  /- name: Download required compile compatibility from triggering CI \(best-effort\)[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-compatibility[\s\S]+path: \.target\/app-compile-required-compat[\s\S]+run-id: \$\{\{ github\.event\.workflow_run\.id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}/,
+  "bench publish should download triggering-CI required compile compatibility with actions/download-artifact",
+);
+assert.match(
+  workflow,
+  /- name: Download canary compile compatibility from triggering CI \(best-effort\)[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-canary-logs[\s\S]+path: \.target\/app-compile-canary-compat[\s\S]+run-id: \$\{\{ github\.event\.workflow_run\.id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}[\s\S]+- name: List application compile compatibility/,
+  "bench publish should download triggering-CI canary compile compatibility with actions/download-artifact",
+);
+assert.match(
+  workflow,
+  /mapfile -t triggering_compat_files[\s\S]+\.target\/app-compile-required-compat[\s\S]+\.target\/app-compile-canary-compat[\s\S]+compat_args\+=\( --compat-jsonl "\$app_compat" \)/,
+  "bench publish should merge both required and canary triggering-CI project compatibility JSONL files",
+);
+assert.doesNotMatch(
+  workflow,
+  /gh run download "\$CI_RUN_ID" -n project-compile-canary-logs/,
+  "bench publish must not depend on gh being installed on the self-hosted publish runner",
+);
+
+assert.match(
+  workflow,
   /- id: readiness[\s\S]+continue-on-error: true[\s\S]+check-artifact-readiness\.mjs[\s\S]+- name: Upload merged benchmark artifact/,
   "bench publish should keep the merged artifact upload path reachable when public readiness fails",
 );

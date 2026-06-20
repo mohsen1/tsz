@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
             };
             let func_type = factory.function(sig_shape.clone());
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
-            self.ensure_relation_input_ready(func_type);
+            self.ensure_callee_relation_inputs_ready(func_type);
             let resolved_func_type =
                 if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
                     self.ctx
@@ -1332,7 +1332,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.preserve_literal_types = prev_preserve_literals2;
             self.ctx.in_const_assertion = prev_in_const_assertion;
 
-            self.ensure_relation_input_ready(func_type);
+            self.ensure_callee_relation_inputs_ready(func_type);
 
             let (mut result, instantiated_predicate, instantiated_params) = self
                 .resolve_call_with_checker_adapter_maybe_arg_sources(

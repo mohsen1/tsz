@@ -446,6 +446,42 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
+/// If every type reachable from `root` is an intrinsic, a [`TypeData::Union`]
+/// container, or a *bare* [`TypeData::Lazy`] reference — i.e. `root` is a
+/// (possibly nested) union of intrinsics and bare lazy references with no other
+/// structure ([`TypeData::Application`], conditional, function, object, type
+/// parameter, index-access, mapped, ...) — return the de-duplicated `DefId`s of
+/// those lazy references. Otherwise return `None`.
+///
+/// Used by relation-input readiness to recognise a call return type whose
+/// referenced interfaces may be deferred to on-demand forcing: the caller
+/// additionally requires every returned `DefId` to be a force-eligible simple
+/// lib interface and the set to be non-empty (a resolution-*dependent* return —
+/// anything that is not a plain union of intrinsics and bare lib refs — is read
+/// structurally by downstream computation and must not be deferred).
+pub fn union_of_bare_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Option<Vec<DefId>> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut only_union_and_lazy = true;
+
+    walk_referenced_types(types, root, |type_id| {
+        if !only_union_and_lazy || type_id.is_intrinsic() {
+            return;
+        }
+        match types.lookup(type_id) {
+            Some(TypeData::Union(_)) => {}
+            Some(TypeData::Lazy(def_id)) => {
+                if seen.insert(def_id) {
+                    out.push(def_id);
+                }
+            }
+            _ => only_union_and_lazy = false,
+        }
+    });
+
+    only_union_and_lazy.then_some(out)
+}
+
 /// Return whether `root` contains `Lazy(target_def_id)`.
 pub fn contains_lazy_def_id(types: &dyn TypeDatabase, root: TypeId, target_def_id: DefId) -> bool {
     let mut found = false;
@@ -1209,5 +1245,70 @@ impl<'a> ConstAssertionVisitor<'a> {
             return self.db.union_from_sorted_vec(const_members);
         }
         self.apply_const_assertion(type_id)
+    }
+}
+
+#[cfg(test)]
+mod union_of_bare_lazy_def_ids_tests {
+    use super::union_of_bare_lazy_def_ids;
+    use crate::construction::TypeInterner;
+    use crate::def::DefId;
+    use crate::types::{FunctionShape, TypeId};
+
+    #[test]
+    fn bare_lazy_yields_its_def() {
+        let db = TypeInterner::new();
+        let lazy = db.lazy(DefId(11));
+        assert_eq!(union_of_bare_lazy_def_ids(&db, lazy), Some(vec![DefId(11)]));
+    }
+
+    #[test]
+    fn union_of_lazies_and_intrinsics_yields_the_lazy_defs() {
+        let db = TypeInterner::new();
+        // `Lazy(11) | Lazy(12) | null` — the `getElementById`-style return shape.
+        let u = db.union(vec![db.lazy(DefId(11)), db.lazy(DefId(12)), TypeId::NULL]);
+        let got = union_of_bare_lazy_def_ids(&db, u).expect("union of bare lazies is classified");
+        assert!(got.contains(&DefId(11)) && got.contains(&DefId(12)) && got.len() == 2);
+    }
+
+    #[test]
+    fn pure_intrinsic_is_classified_with_no_defs() {
+        let db = TypeInterner::new();
+        // Deferrable-shape-wise valid, but the caller requires a non-empty set.
+        assert_eq!(
+            union_of_bare_lazy_def_ids(&db, TypeId::STRING),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn application_is_not_classified() {
+        let db = TypeInterner::new();
+        // `Lazy(11)<string>` (e.g. `Promise<string>`) is resolution-dependent.
+        let app = db.application(db.lazy(DefId(11)), vec![TypeId::STRING]);
+        assert_eq!(union_of_bare_lazy_def_ids(&db, app), None);
+    }
+
+    #[test]
+    fn union_containing_a_non_bare_member_is_not_classified() {
+        let db = TypeInterner::new();
+        let app = db.application(db.lazy(DefId(12)), vec![TypeId::NUMBER]);
+        let u = db.union(vec![db.lazy(DefId(11)), app]);
+        assert_eq!(union_of_bare_lazy_def_ids(&db, u), None);
+    }
+
+    #[test]
+    fn function_type_is_not_classified() {
+        let db = TypeInterner::new();
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: db.lazy(DefId(11)),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        assert_eq!(union_of_bare_lazy_def_ids(&db, func), None);
     }
 }
