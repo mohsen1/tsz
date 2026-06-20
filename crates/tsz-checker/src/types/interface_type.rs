@@ -909,6 +909,50 @@ impl<'a> CheckerState<'a> {
                             break;
                         }
                     }
+                    // Cross-module class base: the class declaration lives in
+                    // another file's arena, so the same-arena probe above finds
+                    // no class node. Resolve the class *instance* surface through
+                    // the symbol-based path (which delegates to the owning arena
+                    // and follows import aliases), mirroring the class-extends-
+                    // class direction in `base_instance_type_from_expression`.
+                    // Without this, `base_type` falls through to
+                    // `get_type_of_symbol` below and returns the class
+                    // *constructor* (`Callable`) type, whose properties are the
+                    // static side; the `Object`+`Callable` merge then drops every
+                    // instance member and `interface D extends ImportedClass {}`
+                    // reports all inherited members missing (TS2339).
+                    if base_type.is_none() {
+                        let class_sym = {
+                            let mut visited =
+                                crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
+                            self.resolve_alias_symbol(base_sym_id, &mut visited)
+                                .filter(|&t| t != base_sym_id)
+                                .or_else(|| self.resolve_import_alias_cross_file(base_sym_id))
+                                .unwrap_or(base_sym_id)
+                        };
+                        // Only the class-base direction routes through the
+                        // instance path. A type-alias / interface base
+                        // (`extends Omit<…>`, `extends ImportedInterface`)
+                        // must fall through to `get_type_of_symbol` below;
+                        // `class_instance_type_from_symbol` can return a broad
+                        // cached/delegated surface for a non-class symbol, which
+                        // would over-broaden the interface and swallow genuine
+                        // TS2339s. Gate on the resolved symbol's CLASS flag so
+                        // the materialization follows the declaration kind, not
+                        // the identifier.
+                        let resolved_is_class = self
+                            .get_cross_file_symbol(class_sym)
+                            .or_else(|| self.ctx.binder.get_symbol(class_sym))
+                            .is_some_and(|symbol| {
+                                symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                            });
+                        if resolved_is_class
+                            && let Some(instance_type) =
+                                self.class_instance_type_from_symbol(class_sym)
+                        {
+                            base_type = Some(instance_type);
+                        }
+                    }
                     if base_type.is_none() && base_symbol_value_declaration.is_some() {
                         let base_decl_idx = base_symbol_value_declaration;
                         if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
