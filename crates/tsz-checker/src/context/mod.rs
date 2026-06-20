@@ -476,6 +476,18 @@ pub struct NameResolutionDiagnostics {
     /// when the same type reference is resolved multiple times (e.g., due to
     /// re-evaluation in generic/contextual typing contexts).
     pub reported_nodes: FxHashSet<NodeIndex>,
+
+    /// Memoized spelling-suggestion candidate scans keyed by the failing
+    /// reference `NodeIndex`. The full-symbol-universe Levenshtein walk in
+    /// `scan_similar_identifiers` is a pure function of the binder/lib tables
+    /// (stable within a file session) and the reference site, but demand-driven
+    /// type evaluation re-resolves the *same* unresolved type reference many
+    /// times (constraint/alias/conditional/indexed-access revisits). Without a
+    /// memo the scan re-runs per revisit — `O(references × identifier-table)`
+    /// instead of `O(unique-unresolved-references)`. Caching the result per node
+    /// collapses the repeats while emitting exactly the same suggestions.
+    /// Cleared at the file-session boundary alongside `reported_nodes`.
+    pub suggestion_scan_cache: RefCell<FxHashMap<NodeIndex, Vec<String>>>,
 }
 
 /// File-session memo tables shared by flow narrowing helpers.

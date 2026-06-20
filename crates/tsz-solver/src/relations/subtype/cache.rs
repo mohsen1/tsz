@@ -399,6 +399,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // O(1) NOMINAL HERITAGE FAST-PATH (#13935)
+        // Decide a `Lazy(DefId) <: Lazy(DefId)` relation by identity/heritage
+        // BEFORE evaluation materializes the base's members. When the source
+        // nominally derives from the target through a registered heritage edge
+        // and that edge authoritatively implies a structural subtype (see
+        // `nominal_heritage_subtype`), answer `true` without lowering either
+        // side. This is the consumer-side lever for relation-saturated, deeply
+        // inherited lib/DOM interfaces (`Worker <: EventTarget`,
+        // `MessageEvent <: Event`): without it, every such relation re-forces the
+        // full heritage closure. Falls through for any non-authoritative edge.
+        if let (Some(s_def), Some(t_def)) = (
+            lazy_def_id(self.interner, source),
+            lazy_def_id(self.interner, target),
+        ) && self.nominal_heritage_subtype(s_def, t_def)
+        {
+            return SubtypeResult::True;
+        }
+
         // =========================================================================
         // Global fuel guard (cross-instance work limiter)
         // =========================================================================
