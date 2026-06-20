@@ -31,8 +31,8 @@ impl ImplicitAnyKind {
     /// The `tsc` display label (`any` / `any[]`) for the `TS7008` message.
     const fn label(self) -> &'static str {
         match self {
-            ImplicitAnyKind::Any => "any",
-            ImplicitAnyKind::AnyArray => "any[]",
+            Self::Any => "any",
+            Self::AnyArray => "any[]",
         }
     }
 }
