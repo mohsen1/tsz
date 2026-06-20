@@ -420,86 +420,215 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
 }
 
 #[test]
-fn canonicalize_function_type_params_name_preserved_in_shape() {
-    // Note: The canonicalizer preserves type parameter names in function shapes
-    // (unlike mapped types where the name is erased). This means two functions
-    // with different type param names but same structure will have different
-    // canonical TypeIds. Full alpha-equivalence for functions would require
-    // erasing names in the TypeParamInfo as well.
+fn canonicalize_function_type_params_alpha_equivalent_across_names() {
+    // Two generic functions that differ only in their type-parameter name
+    // (`<T>(x: T) => T` vs `<U>(x: U) => U`) are alpha-equivalent and must
+    // canonicalize to the SAME identity: references are positional
+    // (BoundParameter), so the declared name is identity-irrelevant — exactly
+    // as mapped types already erase it. `tsc`'s compareTypeParametersIdentical
+    // compares constraints only, never names.
+    use crate::types::{FunctionShape, ParamInfo};
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    use crate::types::{FunctionShape, ParamInfo};
-
-    let t_atom = interner.intern_string("T");
-    let t_param = interner.type_param(TypeParamInfo {
-        name: t_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-        origin: crate::types::TypeParamOrigin::User,
-    });
-    let func_t = interner.function(FunctionShape {
-        type_params: vec![TypeParamInfo {
-            name: t_atom,
+    // `<name>(x: name) => name`
+    let make = |name: &str| {
+        let info = TypeParamInfo {
+            name: interner.intern_string(name),
             constraint: None,
             default: None,
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
-        }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_param,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    let u_atom = interner.intern_string("U");
-    let u_param = interner.type_param(TypeParamInfo {
-        name: u_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-        origin: crate::types::TypeParamOrigin::User,
-    });
-    let func_u = interner.function(FunctionShape {
-        type_params: vec![TypeParamInfo {
-            name: u_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-            origin: crate::types::TypeParamOrigin::User,
-        }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: u_param,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: u_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
+        };
+        let pref = interner.type_param(info);
+        interner.function(FunctionShape {
+            type_params: vec![info],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: pref,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: pref,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
 
     let mut c1 = Canonicalizer::new(&interner, &env);
     let mut c2 = Canonicalizer::new(&interner, &env);
-    let r1 = c1.canonicalize(func_t);
-    let r2 = c2.canonicalize(func_u);
+    let r1 = c1.canonicalize(make("T"));
+    let r2 = c2.canonicalize(make("U"));
 
-    // Due to type param name preservation, these produce different canonical forms
-    // Both use BoundParameter(0) in body, but the TypeParamInfo name differs
-    assert_ne!(
+    // Both use BoundParameter(0) in body and the now-erased type-param name, so
+    // the two alpha-equivalent generic functions share one canonical identity.
+    assert_eq!(
         r1, r2,
-        "Functions with different type param names have different canonical forms \
-         (name is preserved in function shapes, unlike mapped types)"
+        "Functions differing only in type-parameter name are alpha-equivalent and \
+         must share one canonical form (name erased, like mapped types)"
+    );
+}
+
+/// Negative control: erasing the name must NOT erase the constraint. Two generic
+/// functions whose type parameters differ only in their *constraint*
+/// (`<T extends string>` vs `<U extends number>`) are not alpha-equivalent and
+/// must keep distinct canonical identities.
+#[test]
+fn canonicalize_function_distinct_constraints_stay_distinct() {
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let make = |name: &str, constraint: TypeId| {
+        let atom = interner.intern_string(name);
+        let info = TypeParamInfo {
+            name: atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        };
+        let pref = interner.type_param(info);
+        interner.function(FunctionShape {
+            type_params: vec![info],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: pref,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: pref,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let func_t = make("T", TypeId::STRING);
+    let func_u = make("U", TypeId::NUMBER);
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_ne!(
+        c1.canonicalize(func_t),
+        c2.canonicalize(func_u),
+        "type parameters with different constraints must not be alpha-equivalent"
+    );
+}
+
+/// Multi-parameter positional identity: renaming both parameters keeps identity
+/// (`<A, B>(a: A) => B` ≡ `<X, Y>(x: X) => Y`), but swapping which positional
+/// parameter the body references must change identity (`=> B` vs `=> A`). The
+/// erased name cannot collapse the positional `BoundParameter` distinction.
+#[test]
+fn canonicalize_function_multi_param_positional_identity() {
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    // `<P0, P1>(a: P0) => <return is P1 or P0?>`
+    let make = |n0: &str, n1: &str, return_second: bool| {
+        let a0 = interner.intern_string(n0);
+        let a1 = interner.intern_string(n1);
+        let mk = |atom| TypeParamInfo {
+            name: atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        };
+        let p0 = interner.type_param(mk(a0));
+        let p1 = interner.type_param(mk(a1));
+        interner.function(FunctionShape {
+            type_params: vec![mk(a0), mk(a1)],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: p0,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: if return_second { p1 } else { p0 },
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let ab = make("A", "B", true); // <A,B>(a:A) => B
+    let xy = make("X", "Y", true); // <X,Y>(x:X) => Y  — alpha-equivalent
+    let aa = make("A", "B", false); // <A,B>(a:A) => A  — different positional ref
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(ab),
+        c2.canonicalize(xy),
+        "renaming both type parameters is alpha-equivalent"
+    );
+    assert_ne!(
+        c1.canonicalize(ab),
+        c3.canonicalize(aa),
+        "the positional parameter the body references is identity-relevant"
+    );
+}
+
+/// Call-signature path (`canonicalize_signature`, used by `Callable` for both
+/// call and construct signatures): a callable with `<T>(x: T) => T` and one with
+/// `<U>(x: U) => U` are alpha-equivalent.
+#[test]
+fn canonicalize_call_signature_alpha_equivalent_across_names() {
+    use crate::types::{CallSignature, CallableShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let make = |name: &str| {
+        let atom = interner.intern_string(name);
+        let info = TypeParamInfo {
+            name: atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        };
+        let pref = interner.type_param(info);
+        let sig = CallSignature {
+            type_params: vec![info],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: pref,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: pref,
+            type_predicate: None,
+            is_method: false,
+        };
+        interner.callable(CallableShape {
+            call_signatures: vec![sig],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        })
+    };
+
+    let call_t = make("T");
+    let call_u = make("U");
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(call_t),
+        c2.canonicalize(call_u),
+        "generic call signatures differing only in type-parameter name are alpha-equivalent"
     );
 }
 
