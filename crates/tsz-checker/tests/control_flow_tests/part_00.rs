@@ -99,6 +99,7 @@ switch (x.kind) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let member_b = types.object(vec![PropertyInfo {
         name: kind_name,
@@ -114,6 +115,7 @@ switch (x.kind) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let union = types.union(vec![member_a, member_b]);
@@ -367,6 +369,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: radius_name,
@@ -382,6 +385,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
     let square = types.object(vec![
@@ -399,6 +403,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: side_name,
@@ -414,6 +419,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
     let union = types.union(vec![circle, square]);
@@ -533,6 +539,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: a_props_name,
@@ -548,6 +555,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -566,6 +574,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: b_props_name,
@@ -581,6 +590,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -599,6 +609,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: c_props_name,
@@ -614,6 +625,7 @@ switch (true) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -668,6 +680,7 @@ if (x instanceof Foo) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let union = types.union(vec![TypeId::STRING, obj_type]);
 
@@ -721,6 +734,7 @@ if ("a" in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -736,6 +750,7 @@ if ("a" in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -789,6 +804,7 @@ if ("a" in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -804,6 +820,7 @@ if ("a" in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -857,6 +874,7 @@ if (#a in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -872,6 +890,7 @@ if (#a in x) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
 

@@ -1573,7 +1573,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Create Ref(1) for ReadonlyBox type alias
@@ -1635,7 +1635,7 @@ fn test_application_ref_expansion_with_optional_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Create Ref(1) for OptionalBox type alias

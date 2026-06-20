@@ -435,6 +435,7 @@ fn test_classify_element_indexable_preserves_union_members() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Member 2: object with string index { [s: string]: number }
@@ -501,6 +502,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }],
         string_index: None,
         number_index: None,

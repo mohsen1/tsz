@@ -1071,7 +1071,7 @@ fn test_variance_method_bivariant_params() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         }],
         string_index: None,
         number_index: None,
@@ -1109,7 +1109,7 @@ fn test_variance_method_bivariant_params() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         }],
         string_index: None,
         number_index: None,
@@ -1155,7 +1155,7 @@ fn test_variance_function_property_contravariant() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Object with function property taking wide param
@@ -1185,7 +1185,7 @@ fn test_variance_function_property_contravariant() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Wide param function <: narrow param function (contravariant)

@@ -517,9 +517,17 @@ fn widen_type_cached(
                 //   class C { readonly a = [1, 2, 3] }   // → number[]
                 // Likewise, the unique-symbol primitive carve-out remains
                 // for readonly props: `readonly s: unique symbol` stays.
-                let preserve_readonly_top_level =
-                    prop.readonly && readonly_property_preserves_top_level_type(db, prop.type_id);
-                let widened_type = if preserve_readonly_top_level {
+                // A `readonly` property keeps its *own* primitive literal type,
+                // and a `non_widening` (regular) literal property — preserved at
+                // construction from an `as const`/assertion source — must never
+                // re-widen either, mirroring tsc's `getWidenedType` leaving
+                // regular literals untouched. In both cases only the *top-level*
+                // literal is preserved; compound values still recurse so nested
+                // fresh literals widen as tsc does.
+                let preserves_literal = prop.readonly || prop.non_widening;
+                let widened_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.type_id)
+                {
                     prop.type_id
                 } else {
                     widen_type_cached(
@@ -535,9 +543,9 @@ fn widen_type_cached(
                 };
 
                 // Write type follows read type logic.
-                let preserve_readonly_top_level_write = prop.readonly
-                    && readonly_property_preserves_top_level_type(db, prop.write_type);
-                let widened_write_type = if preserve_readonly_top_level_write {
+                let widened_write_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.write_type)
+                {
                     prop.write_type
                 } else {
                     widen_type_cached(
@@ -854,12 +862,17 @@ pub(crate) fn widen_object_literal_properties(
             let mut changed = false;
 
             for prop in &shape.properties {
-                let widened_type = if prop.readonly {
+                // `non_widening` properties hold a regular (non-widening) literal
+                // preserved from an `as const`/assertion source; tsc's
+                // `getWidenedType` never widens those, so skip them alongside
+                // readonly properties.
+                let preserve = prop.readonly || prop.non_widening;
+                let widened_type = if preserve {
                     prop.type_id
                 } else {
                     widen_type(db, prop.type_id)
                 };
-                let widened_write_type = if prop.readonly {
+                let widened_write_type = if preserve {
                     prop.write_type
                 } else {
                     widen_type(db, prop.write_type)

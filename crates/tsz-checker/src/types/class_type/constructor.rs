@@ -435,6 +435,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -482,6 +483,7 @@ impl<'a> CheckerState<'a> {
                                 is_string_named: false,
                                 is_symbol_named: false,
                                 single_quoted_name: false,
+                                non_widening: false,
                             });
                         }
                     }
@@ -540,6 +542,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                     _ => {}
@@ -678,6 +681,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 }),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -798,6 +802,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 }),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -876,6 +881,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         },
                     );
                 }
@@ -1167,6 +1173,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 },
             );
         }
@@ -1214,6 +1221,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 },
             );
         }
@@ -1306,6 +1314,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: false,
                     });
                 }
 
@@ -1363,6 +1372,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: false,
                     });
                 }
                 if !inst_props.is_empty() {
@@ -1443,6 +1453,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             },
         );
 

@@ -21,6 +21,7 @@ fn test_build_object_type() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }];
 
     let obj_type = builder.build_object_type(properties);
@@ -49,6 +50,7 @@ fn test_merge_spread() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }];
 
     // Create spread object { y: string, x: boolean }
@@ -67,6 +69,7 @@ fn test_merge_spread() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: db.intern_string("x"),
@@ -82,6 +85,7 @@ fn test_merge_spread() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ];
     let spread_type = db.object(spread_props);
@@ -124,6 +128,7 @@ fn test_apply_contextual_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create properties { x: 1 } (where 1 is a literal number type)
@@ -142,6 +147,7 @@ fn test_apply_contextual_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }];
 
     let contextualized = builder.apply_contextual_types(properties, ctx_type);
@@ -170,6 +176,7 @@ fn test_extract_properties_from_intersection() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let type2 = db.object(vec![PropertyInfo {
@@ -186,6 +193,7 @@ fn test_extract_properties_from_intersection() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let intersection = db.intersection2(type1, type2);
@@ -225,6 +233,7 @@ fn test_collect_spread_properties() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

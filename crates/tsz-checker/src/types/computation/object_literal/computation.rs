@@ -664,6 +664,12 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // Whether this property holds a *non-widening* (regular)
+                    // literal preserved from an `as const`/assertion source.
+                    // Recorded on the interned `PropertyInfo` so later widening
+                    // passes (inference resolution, initializer widening) leave
+                    // the literal untouched, matching tsc's regular-literal types.
+                    let mut prop_non_widening = false;
                     // When a JSDoc @type annotation is present, check assignability
                     // of the initializer against the declared type, and use the
                     // declared type as the property type (not the initializer type).
@@ -699,6 +705,17 @@ impl<'a> CheckerState<'a> {
                             || self
                                 .object_literal_property_access_literal_type(prop.initializer)
                                 .is_some();
+                        // A non-widening source (`as const`, a plain `as T` /
+                        // `<T>expr` assertion, a non-widening identifier, or a
+                        // literal index access) yields a regular literal that tsc
+                        // never widens. Record it so the interned property is
+                        // distinct from an otherwise identical fresh-literal
+                        // property and survives later widening unchanged. This is
+                        // deliberately *not* set for the object-typed-context
+                        // deferral (where `should_widen_object_property_literal`
+                        // also preserves the literal but inference must still
+                        // widen it).
+                        prop_non_widening = value_has_non_widening_source;
                         // Apply bidirectional type inference - use contextual type to narrow
                         // the value type, except for function-like values with explicit
                         // signature annotations. For those, tsc preserves the explicit
@@ -933,6 +950,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named,
                         is_symbol_named,
                         single_quoted_name,
+                        non_widening: prop_non_widening,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
@@ -1265,6 +1283,10 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(shorthand_name_idx, &shorthand_request)
                     };
 
+                    // Whether this shorthand property's value comes from a
+                    // non-widening declared source (`as const` initializer or a
+                    // literal type annotation), recorded so widening preserves it.
+                    let mut shorthand_prop_non_widening = false;
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
                         let has_uninitialized_value_decl = shorthand_sym.is_some_and(|sym_id| {
                             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1322,6 +1344,7 @@ impl<'a> CheckerState<'a> {
                         let shorthand_is_non_widening = shorthand_sym.is_some_and(|sym_id| {
                             self.sym_has_non_widening_declared_value_type(sym_id)
                         });
+                        shorthand_prop_non_widening = shorthand_is_non_widening;
                         if self.should_widen_object_property_literal(
                             value_type,
                             property_context_type,
@@ -1384,6 +1407,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: shorthand_prop_non_widening,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
@@ -1765,6 +1789,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named,
                         is_symbol_named,
                         single_quoted_name,
+                        non_widening: false,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(

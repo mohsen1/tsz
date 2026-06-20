@@ -978,6 +978,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: false,
                     });
                 }
             }
@@ -1423,6 +1424,7 @@ impl<'a> CheckerState<'a> {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         })
     }
     /// Resolve a `@typedef` referenced by name from JSDoc comments.
@@ -1888,6 +1890,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             });
         }
         let object_type = if !prop_infos.is_empty() {
