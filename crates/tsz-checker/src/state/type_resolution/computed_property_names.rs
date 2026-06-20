@@ -269,7 +269,21 @@ impl<'a> CheckerState<'a> {
         self.ctx.checking_computed_property_name = Some(name_idx);
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
-        let expr_type = self.get_type_of_node(computed.expression);
+        let mut expr_type = self.get_type_of_node(computed.expression);
+        // A `[K]` whose `K` is a type-only import (`import type { K }`) of a value
+        // `const K = 'x'` has no value meaning, so the value-position evaluation
+        // above yields no literal key. tsc still resolves the property name from
+        // the binding's declared literal type; resolve that directly as a fallback
+        // so the member is not dropped (false TS2339 on `[K]`-keyed members).
+        if crate::query_boundaries::type_computation::access::literal_property_name(
+            self.ctx.types,
+            expr_type,
+        )
+        .is_none()
+            && let Some(binding_type) = self.computed_name_binding_type(computed.expression)
+        {
+            expr_type = binding_type;
+        }
         self.ctx.preserve_literal_types = prev_preserve;
         self.ctx.checking_computed_property_name = prev;
         if let Some(name) = crate::query_boundaries::type_computation::access::literal_property_name(
@@ -284,6 +298,29 @@ impl<'a> CheckerState<'a> {
         } else {
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                 .map(|sym_ref| format!("__unique_{}", sym_ref.0))
+        }
+    }
+
+    /// The declared type of the binding a bare-identifier computed-name
+    /// expression refers to (e.g. `K` in `[K]`), following the binder's symbol
+    /// resolution — which transparently resolves type-only-import aliases to the
+    /// aliased `const`. Used only as a fallback when value-position evaluation
+    /// produced no literal key, so it never overrides a working value resolution.
+    fn computed_name_binding_type(&mut self, expr_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let ty = self.get_type_of_symbol(sym_id);
+        if ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN {
+            None
+        } else {
+            Some(ty)
         }
     }
 

@@ -1521,7 +1521,7 @@ impl FourslashTest {
         let mut marker_list = Vec::new();
         let mut file_sources = FxHashMap::default();
 
-        for (file_name, raw_source) in files {
+        for &(file_name, raw_source) in files {
             let (cleaned, markers) = parse_markers(file_name, raw_source);
             project.set_file(file_name.to_string(), cleaned.clone());
             file_sources.insert(file_name.to_string(), cleaned);

@@ -231,18 +231,23 @@ assert.match(
 
 assert.match(
   workflow,
-  /- name: Download required compile compatibility from triggering CI \(best-effort\)[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-compatibility[\s\S]+path: \.target\/app-compile-required-compat[\s\S]+run-id: \$\{\{ github\.event\.workflow_run\.id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}/,
-  "bench publish should download triggering-CI required compile compatibility with actions/download-artifact",
+  /- id: app-compat-source[\s\S]+if \[\[ "\$\{\{ github\.event_name \}\}" == "workflow_run" \]\]; then[\s\S]+run_id="\$\{\{ github\.event\.workflow_run\.id \}\}"[\s\S]+if \[\[ "\$\{candidate_sha\}" == "\$\{target_sha\}" \]\]; then[\s\S]+run_id="\$\{candidate_id\}"[\s\S]+gh run list[\s\S]+--workflow CI[\s\S]+--branch main[\s\S]+--event push[\s\S]+--status success/,
+  "bench publish should resolve application compatibility from the triggering CI or an exact-SHA successful main CI",
 );
 assert.match(
   workflow,
-  /- name: Download canary compile compatibility from triggering CI \(best-effort\)[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-canary-logs[\s\S]+path: \.target\/app-compile-canary-compat[\s\S]+run-id: \$\{\{ github\.event\.workflow_run\.id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}[\s\S]+- name: List application compile compatibility/,
-  "bench publish should download triggering-CI canary compile compatibility with actions/download-artifact",
+  /- name: Download required compile compatibility from matching CI \(best-effort\)[\s\S]+if: steps\.app-compat-source\.outputs\.run_id != ''[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-compatibility[\s\S]+path: \.target\/app-compile-required-compat[\s\S]+run-id: \$\{\{ steps\.app-compat-source\.outputs\.run_id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}/,
+  "bench publish should download matching-CI required compile compatibility with actions/download-artifact",
+);
+assert.match(
+  workflow,
+  /- name: Download canary compile compatibility from matching CI \(best-effort\)[\s\S]+if: steps\.app-compat-source\.outputs\.run_id != ''[\s\S]+uses: actions\/download-artifact@\S+[\s\S]+name: project-compile-canary-logs[\s\S]+path: \.target\/app-compile-canary-compat[\s\S]+run-id: \$\{\{ steps\.app-compat-source\.outputs\.run_id \}\}[\s\S]+github-token: \$\{\{ github\.token \}\}[\s\S]+- name: List application compile compatibility/,
+  "bench publish should download matching-CI canary compile compatibility with actions/download-artifact",
 );
 assert.match(
   workflow,
   /mapfile -t triggering_compat_files[\s\S]+\.target\/app-compile-required-compat[\s\S]+\.target\/app-compile-canary-compat[\s\S]+compat_args\+=\( --compat-jsonl "\$app_compat" \)/,
-  "bench publish should merge both required and canary triggering-CI project compatibility JSONL files",
+  "bench publish should merge both required and canary matching-CI project compatibility JSONL files",
 );
 assert.doesNotMatch(
   workflow,

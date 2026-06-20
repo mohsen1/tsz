@@ -12,14 +12,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         error_node: NodeIndex,
-        base_display: &str,
+        receiver: crate::types_domain::queries::core::GlobalReceiver,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         self.error_at_node(
             error_node,
             &format_message(
                 diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                &[name, base_display],
+                &[name, receiver.display_name()],
             ),
             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
         );

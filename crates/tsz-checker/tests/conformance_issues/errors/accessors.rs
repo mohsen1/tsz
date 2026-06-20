@@ -42,7 +42,7 @@ a();
     for module_name in &["a", "b"] {
         if let Some(exports) = binder_a.module_exports.get(*module_name).cloned() {
             std::sync::Arc::make_mut(&mut binder_b.module_exports)
-                .insert(module_name.to_string(), exports);
+                .insert((*module_name).to_string(), exports);
         }
     }
 

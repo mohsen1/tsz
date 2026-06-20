@@ -298,9 +298,14 @@ pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer =
 ///
 /// `is_directory_match` distinguishes the two pattern-key shapes:
 /// - `false` for `*`-pattern keys (e.g. `"./*"` matched against `"./foo"`):
-///   only replace `*` in the target. If the target has no `*`, leave it
-///   unchanged — Node.js does NOT append the wildcard to a `/`-ending
-///   target when the key was a `*` pattern.
+///   replace `*` in the target. Per Node.js `PACKAGE_TARGET_RESOLVE` — and
+///   tsc's `resolvedTarget.replace(/\*/g, subpath)` — **every** `*` in the
+///   target is substituted with the captured subpath, not just the first.
+///   A target with two or more `*` (e.g. `"./*": "./dist/*/*.js"`) must not
+///   leave a literal `*` behind, which would never resolve on disk and yield
+///   a spurious `TS2307`. If the target has no `*`, leave it unchanged —
+///   Node.js does NOT append the wildcard to a `/`-ending target when the key
+///   was a `*` pattern.
 /// - `true` for `/`-suffix directory keys (e.g. `"./lib/"`): also append
 ///   the wildcard to a target ending in `/`, matching Node's directory
 ///   prefix resolution.
@@ -310,7 +315,7 @@ pub(crate) fn apply_wildcard_substitution(
     is_directory_match: bool,
 ) -> String {
     if target.contains('*') {
-        target.replacen('*', wildcard, 1)
+        target.replace('*', wildcard)
     } else if is_directory_match && target.ends_with('/') {
         format!("{target}{wildcard}")
     } else {
@@ -710,6 +715,89 @@ mod tests {
         // Equal base length → longer total (longer suffix) wins.
         assert_eq!(best_key(&["./*", "./*.js"], "./a.js"), Some("./*.js"));
         assert_eq!(best_key(&["./*.js", "./*"], "./a.js"), Some("./*.js"));
+    }
+
+    #[test]
+    fn apply_wildcard_substitution_replaces_every_star_in_pattern_target() {
+        // Node `PACKAGE_TARGET_RESOLVE` / tsc `replace(/\*/g, subpath)`: a
+        // pattern target with two or more `*` substitutes the captured subpath
+        // into ALL of them. The prior `replacen(.., 1)` left a literal `*` in
+        // the resolved path, which never exists on disk → spurious TS2307.
+        assert_eq!(
+            apply_wildcard_substitution("./dist/*/*.js", "button", false),
+            "./dist/button/button.js"
+        );
+        assert_eq!(
+            apply_wildcard_substitution("./*/*/*.d.ts", "a/b", false),
+            "./a/b/a/b/a/b.d.ts"
+        );
+        // Single-star and no-star targets are unchanged by the fix (the common
+        // case): the two replacement strategies coincide for one occurrence.
+        assert_eq!(
+            apply_wildcard_substitution("./dist/*.js", "index", false),
+            "./dist/index.js"
+        );
+        assert_eq!(
+            apply_wildcard_substitution("./dist/index.js", "ignored", false),
+            "./dist/index.js"
+        );
+    }
+
+    #[test]
+    fn substitute_wildcard_in_exports_replaces_every_star_through_nesting() {
+        // The multi-`*` substitution must hold through conditional/array
+        // nesting, since `substitute_wildcard_in_exports` recurses to every
+        // string leaf. A barrel like `"./*": { "types": "./types/*/*.d.ts",
+        // "default": "./dist/*/*.js" }` must not strand a literal `*`.
+        let value = PackageExports::Conditional(vec![
+            (
+                "types".to_string(),
+                PackageExports::String("./types/*/*.d.ts".to_string()),
+            ),
+            (
+                "default".to_string(),
+                PackageExports::Array(vec![
+                    PackageExports::String("./dist/*/*.mjs".to_string()),
+                    PackageExports::String("./dist/*.cjs".to_string()),
+                ]),
+            ),
+        ]);
+
+        let substituted = substitute_wildcard_in_exports(&value, "widget", false);
+
+        let PackageExports::Conditional(entries) = substituted else {
+            panic!("expected a conditional value after substitution");
+        };
+        let leaves: Vec<String> = entries
+            .iter()
+            .flat_map(|(_, v)| collect_string_leaves(v))
+            .collect();
+        assert_eq!(
+            leaves,
+            vec![
+                "./types/widget/widget.d.ts".to_string(),
+                "./dist/widget/widget.mjs".to_string(),
+                "./dist/widget.cjs".to_string(),
+            ]
+        );
+        // No literal `*` survives anywhere in the substituted tree.
+        assert!(leaves.iter().all(|leaf| !leaf.contains('*')));
+    }
+
+    /// Flatten the string leaves of a `PackageExports` value in source order.
+    fn collect_string_leaves(value: &PackageExports) -> Vec<String> {
+        match value {
+            PackageExports::String(s) => vec![s.clone()],
+            PackageExports::Conditional(entries) => entries
+                .iter()
+                .flat_map(|(_, v)| collect_string_leaves(v))
+                .collect(),
+            PackageExports::Array(elements) => {
+                elements.iter().flat_map(collect_string_leaves).collect()
+            }
+            PackageExports::Map(map) => map.values().flat_map(collect_string_leaves).collect(),
+            PackageExports::Null => Vec::new(),
+        }
     }
 
     #[test]

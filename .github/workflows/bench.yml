@@ -1140,7 +1140,7 @@ jobs:
           # flakiness never blocks required benchmark publishing.
           - label: bench-applications
             timeout: 135
-            filter: 'umami-project|dub-project|formbricks-project|lobe-chat-project|supabase-studio-project|infisical-project|payload-project|trigger-dev-project|directus-project|n8n-project|documenso-project|immich-server-project'
+            filter: 'umami-project|excalidraw-project|dub-project|formbricks-project|typebot-project|lobe-chat-project|supabase-studio-project|infisical-project|payload-project|medusa-project|outline-project|trigger-dev-project|joplin-project|directus-project|n8n-project|cal-com-project|documenso-project|affine-project|immich-server-project|rocketchat-project'
           - label: large-ts-repo
             timeout: 135
             filter: '^large-ts-repo$'
@@ -1530,45 +1530,90 @@ jobs:
             .target/project-compile-guard/
 
       # The category:"application" canary rows (umami, excalidraw, ...) are
-      # compiled with full compat by the TRIGGERING CI run's
-      # project-compile-canary matrix (no skip flag), but the PGO compat step
-      # above runs with TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 (to fit its
-      # budget) so it emits no compat line for them. Without an application
-      # compat row the site's compatibilityState() renders them gray
-      # ("missing or incomplete artifact"). Reuse the already-computed canary
-      # compat from the triggering run so they show real status/files/peak.
+      # compiled with full compat by main CI's project-compile-canary matrix
+      # (no skip flag), but the PGO compat step above runs with
+      # TSZ_PROJECT_COMPILE_SKIP_APPLICATIONS=1 (to fit its budget) so it emits
+      # no compat line for them. Without an application compat row the site's
+      # compatibilityState() renders them gray ("missing or incomplete
+      # artifact"). Reuse the already-computed compat from the matching CI run
+      # so application rows show real status/files/peak.
       #
-      # Best-effort by design: only the workflow_run (push-to-main) publish
-      # path has a triggering CI run; a missing/old artifact must NEVER block
-      # publishing the timing benchmarks (app rows just fall back to gray).
-      - name: Download required compile compatibility from triggering CI (best-effort)
-        if: github.event_name == 'workflow_run'
+      # Best-effort by design: a missing exact-SHA CI artifact must never publish
+      # mismatched compatibility. The readiness gate below refuses the artifact
+      # instead of updating the public site with gray application rows.
+      - id: app-compat-source
+        name: Resolve application compile compatibility CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          source_label=""
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            run_id="${{ github.event.workflow_run.id }}"
+            source_label="triggering workflow_run CI"
+          else
+            target_sha="${BENCH_TARGET_SHA:-${GITHUB_SHA}}"
+            while IFS=$'\t' read -r candidate_id candidate_sha candidate_url; do
+              [[ -n "${candidate_id:-}" ]] || continue
+              if [[ "${candidate_sha}" == "${target_sha}" ]]; then
+                run_id="${candidate_id}"
+                source_label="successful main CI for ${target_sha}"
+                echo "Resolved application compatibility CI run: ${candidate_url}"
+                break
+              fi
+            done < <(
+              gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow CI \
+                --branch main \
+                --event push \
+                --status success \
+                --limit 50 \
+                --json databaseId,headSha,url \
+                --jq '.[] | [.databaseId, .headSha, .url] | @tsv'
+            )
+
+            if [[ -z "${run_id}" ]]; then
+              echo "::warning::no successful main CI run found for ${target_sha}; application rows will render gray unless a later run publishes exact compatibility"
+            fi
+          fi
+
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "source_label=${source_label}" >> "$GITHUB_OUTPUT"
+
+      - name: Download required compile compatibility from matching CI (best-effort)
+        if: steps.app-compat-source.outputs.run_id != ''
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: project-compile-compatibility
           path: .target/app-compile-required-compat
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.app-compat-source.outputs.run_id }}
           github-token: ${{ github.token }}
 
-      - name: Download canary compile compatibility from triggering CI (best-effort)
-        if: github.event_name == 'workflow_run'
+      - name: Download canary compile compatibility from matching CI (best-effort)
+        if: steps.app-compat-source.outputs.run_id != ''
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: project-compile-canary-logs
           path: .target/app-compile-canary-compat
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.app-compat-source.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: List application compile compatibility
-        if: github.event_name == 'workflow_run'
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${{ steps.app-compat-source.outputs.source_label }}" ]]; then
+            echo "Application compatibility source: ${{ steps.app-compat-source.outputs.source_label }}"
+          fi
           if ! find .target/app-compile-required-compat .target/app-compile-canary-compat \
             -name 'project-compatibility.jsonl' -type f -size +0c 2>/dev/null | grep -q .; then
-            echo "::warning::no triggering-CI project compatibility JSONL downloaded; application rows will render gray this run"
+            echo "::warning::no matching-CI project compatibility JSONL downloaded; application rows will render gray this run"
           fi
           find .target/app-compile-required-compat .target/app-compile-canary-compat \
             -type f -print 2>/dev/null || true
@@ -1604,7 +1649,7 @@ jobs:
             echo "complete=true" >> "$GITHUB_OUTPUT"
           fi
           compat_args=( --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" )
-          # Add the application-row compat from the triggering CI run if present
+          # Add the application-row compat from the matching CI run if present
           # (mergeCompatibilityCanaries is idempotent: re-attaching the same
           # canary compat is harmless and required rows are never overwritten).
           mapfile -t triggering_compat_files < <(
@@ -1615,7 +1660,7 @@ jobs:
           )
           if [[ "${#triggering_compat_files[@]}" -gt 0 ]]; then
             for app_compat in "${triggering_compat_files[@]}"; do
-              echo "Including application compile compatibility from triggering CI run: $app_compat"
+              echo "Including application compile compatibility from matching CI run: $app_compat"
               compat_args+=( --compat-jsonl "$app_compat" )
             done
           else

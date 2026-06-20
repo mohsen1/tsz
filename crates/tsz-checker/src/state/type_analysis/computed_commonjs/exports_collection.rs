@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     fn aliases(names: &[&str]) -> FxHashSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
+        names.iter().map(|&s| s.to_string()).collect()
     }
 
     #[test]

@@ -35,6 +35,15 @@ impl<'a> CheckerState<'a> {
             {
                 return (self.builtin_iterator_return_intrinsic_type(), Vec::new());
             }
+            // Resolve the self-`typeof` unique-symbol merge before the generic
+            // alias body path can re-enter this symbol and poison the cached
+            // result with the circular-guard error type.
+            if flags & symbol_flags::VALUE != 0
+                && let Some(unique) =
+                    self.merged_self_typeof_unique_symbol_type(declarations, escaped_name)
+            {
+                return (unique, Vec::new());
+            }
             let decl_idx = declarations
                 .iter()
                 .copied()
@@ -1063,33 +1072,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            let has_local_non_import_declaration = declarations.iter().copied().any(|decl_idx| {
-                if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&sym_id) {
-                    return false;
-                }
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
-                    return false;
-                };
-                if matches!(
-                    node.kind,
-                    syntax_kind_ext::IMPORT_SPECIFIER
-                        | syntax_kind_ext::EXPORT_SPECIFIER
-                        | syntax_kind_ext::IMPORT_CLAUSE
-                        | syntax_kind_ext::NAMESPACE_IMPORT
-                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                ) {
-                    return false;
-                }
-                if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                    return true;
-                }
-                self.ctx
-                    .arena
-                    .get_export_decl(node)
-                    .is_some_and(|export_decl| {
-                        export_decl.module_specifier.is_none() || export_decl.is_default_export
-                    })
-            });
+            let has_local_non_import_declaration =
+                self.alias_has_local_non_import_declaration(sym_id, declarations);
 
             if import_module.is_some() && has_local_non_import_declaration && value_decl.is_some() {
                 return (
@@ -1529,114 +1513,12 @@ impl<'a> CheckerState<'a> {
                     && (self.source_file_import_uses_system_default_namespace_fallback(module_name)
                         || uses_module_exports_require_interop
                         || is_node_esm_importing_cjs)
-                {
-                    if self
-                        .ctx
-                        .module_namespace_resolution_set
-                        .contains(module_name)
-                    {
-                        return (TypeId::ANY, Vec::new());
-                    }
-                    self.ctx
-                        .module_namespace_resolution_set
-                        .insert(module_name.to_string());
-
-                    if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+                    && let Some(module_type) = self.resolve_default_import_namespace_fallback(
                         module_name,
-                        Some(self.ctx.current_file_idx),
-                    ) {
-                        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
-                        if exports_table.has("export=")
-                            && let Some(export_eq_sym) = exports_table.get("export=")
-                        {
-                            let export_eq_type = self.get_type_of_symbol(export_eq_sym);
-                            let export_eq_type =
-                                crate::query_boundaries::common::widen_literal_type(
-                                    self.ctx.types,
-                                    export_eq_type,
-                                );
-                            let export_eq_type = self
-                                .widen_fresh_object_literal_properties_for_display(export_eq_type);
-                            self.ctx.module_namespace_resolution_set.remove(module_name);
-                            return (export_eq_type, Vec::new());
-                        }
-
-                        use tsz_solver::PropertyInfo;
-                        let mut props: Vec<PropertyInfo> = Vec::new();
-                        for &(name, export_sym_id) in &ordered_exports {
-                            if self.should_skip_namespace_export_name(
-                                &exports_table,
-                                name,
-                                export_sym_id,
-                            ) {
-                                continue;
-                            }
-                            let declaration_order = if name == "default" {
-                                1
-                            } else {
-                                props.len() as u32 + 2
-                            };
-                            let prop_type = self.get_type_of_symbol(export_sym_id);
-                            let name_atom = self.ctx.types.intern_string(name);
-                            props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: prop_type,
-                                write_type: prop_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                            });
-                        }
-                        Self::normalize_namespace_export_declaration_order(&mut props);
-                        let module_type = factory.object(props);
-                        self.ctx.namespace_module_names.insert(
-                            module_type,
-                            self.imported_namespace_display_module_name(module_name),
-                        );
-                        self.ctx.module_namespace_resolution_set.remove(module_name);
-                        return (module_type, Vec::new());
-                    }
-
-                    if is_node_esm_importing_cjs
-                        && let Some(default_sym_id) = self.resolve_cross_file_export_from_file(
-                            module_name,
-                            "default",
-                            Some(self.ctx.current_file_idx),
-                        )
-                    {
-                        use tsz_solver::PropertyInfo;
-                        let default_type = self.get_type_of_symbol(default_sym_id);
-                        let module_type = factory.object(vec![PropertyInfo {
-                            name: self.ctx.types.intern_string("default"),
-                            type_id: default_type,
-                            write_type: default_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 1,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                        }]);
-                        self.ctx.namespace_module_names.insert(
-                            module_type,
-                            self.imported_namespace_display_module_name(module_name),
-                        );
-                        self.ctx.module_namespace_resolution_set.remove(module_name);
-                        return (module_type, Vec::new());
-                    }
-
-                    self.ctx.module_namespace_resolution_set.remove(module_name);
+                        is_node_esm_importing_cjs,
+                    )
+                {
+                    return (module_type, Vec::new());
                 }
 
                 // Check if the module exists first (for proper error differentiation)
@@ -1683,6 +1565,14 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(export_sym_id) = export_sym_id {
+                    // A re-exported binding (`export { X } from "./other"`) whose
+                    // ultimate target is a name-merged value+type symbol must, in
+                    // value position, resolve to the const's VALUE side rather than
+                    // collapse to the `typeof X` type-alias body (#13855/#14129).
+                    if let Some(val_type) = self.reexported_merged_alias_value_type(export_sym_id) {
+                        return (val_type, Vec::new());
+                    }
+
                     // Detect cross-file SymbolIds: the driver copies target file's
                     // module_exports into the local binder, so SymbolIds may be from
                     // another binder. Check if the SymbolId maps to the expected name
@@ -1962,16 +1852,9 @@ impl<'a> CheckerState<'a> {
                             // ALIAS symbols don't carry `value_declaration`, so the
                             // pre-existing `value_decl == *_SPECIFIER` guard
                             // never fires for them. Inspect `declarations` instead.
-                            let specifier_alias_decl = declarations.iter().copied().find(|&decl| {
-                                self.ctx.arena.get(decl).is_some_and(|node| {
-                                    matches!(
-                                        node.kind,
-                                        tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
-                                            | tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
-                                    )
-                                })
-                            });
-                            if specifier_alias_decl.is_some() {
+                            if self
+                                .alias_declarations_include_import_or_export_specifier(declarations)
+                            {
                                 return (TypeId::ERROR, Vec::new());
                             }
                             self.emit_no_exported_member_error(

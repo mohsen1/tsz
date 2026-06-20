@@ -199,6 +199,12 @@ impl<'a> CheckerState<'a> {
                         );
                         return;
                     }
+                    // A property access whose receiver has no nameable text (e.g. a
+                    // `this`-rooted `this.version`) is reported by tsc as the object
+                    // being possibly nullish (TS2532/2531/2533), like an element
+                    // access — not the literal-value TS18050 fallback below.
+                    self.report_nullish_object(idx, cause, false);
+                    return;
                 } else if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
                     self.report_nullish_object(idx, cause, false);
                     return;

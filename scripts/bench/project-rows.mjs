@@ -702,6 +702,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "28a9b1711dc0625b8ab5d643dc871810ee13642f",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -761,6 +762,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "c82ac4324a61376b3de3c8b75ccfad7c03f59e7a",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -860,6 +862,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "38725ac274d764031b52f6f35f7951aa9b3bb2a8",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -879,6 +882,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "62d5c25bd3f34c8914be6f8ab219b43e51854534",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -918,6 +922,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "1106aa85be38c84f883e6663a18ec3399d4c1fbd",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -977,6 +982,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "561cf889abc776d8553f9c692a16c47b5d1a5a03",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -1016,6 +1022,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "da7781a75171140fd966c6cfbe05da9f1fb111d6",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
   {
@@ -1055,6 +1062,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "02b80089e0f65df5e01d7d3c9422cf56c3771d86",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "application",
   },
 ];

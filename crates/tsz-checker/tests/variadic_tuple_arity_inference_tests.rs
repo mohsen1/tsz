@@ -379,3 +379,156 @@ type _ = Assert<Eq<Probe<["a", "b", "c", "a"]>, "a">>;
         "repeated infer resolves identically through alias indirection",
     );
 }
+
+// =============================================================================
+// Optional leading element before a rest: `[(infer H)?, ...infer T]`
+// =============================================================================
+//
+// Structural rule: a leading *optional* tuple element may be absent in the
+// source, so an empty/short source still matches `[(infer H)?, ...rest]` and
+// the conditional takes its TRUE branch. An inference variable that receives no
+// candidate resolves to its declared constraint, or its position default
+// otherwise — `unknown` for a plain `infer`, `unknown[]` for a rest
+// `...infer T`. `tsz` previously counted the optional prefix as required and
+// rejected the empty source on arity (false branch), inverting the base case of
+// tuple-deconstruction utilities (remeda `TupleParts`/`Head`). Binder names are
+// varied per case so the behavior is structural, not name-driven.
+
+#[test]
+fn empty_source_matches_optional_prefix_rest_true_branch() {
+    // The exact witness from the bug report: the conditional must take the
+    // true branch instead of the false branch.
+    assert_no_errors(
+        r#"
+type Test = readonly [] extends readonly [(infer _H)?, ...infer _T] ? "MATCH" : "NO_MATCH";
+const t: Test = "MATCH";
+"#,
+        "empty tuple matches optional-prefix rest pattern (true branch)",
+    );
+}
+
+#[test]
+fn empty_source_optional_prefix_takes_false_branch_when_asserted_no_match() {
+    // The negative control: asserting the false-branch literal must now be the
+    // type error tsc reports, proving tsz no longer silently takes the false
+    // branch.
+    assert_only_one_2322(
+        r#"
+type Test = readonly [] extends readonly [(infer _H)?, ...infer _T] ? "MATCH" : "NO_MATCH";
+const t: Test = "NO_MATCH";
+"#,
+        "asserting NO_MATCH against the true branch must be TS2322",
+    );
+}
+
+#[test]
+fn empty_source_optional_prefix_infers_unknown_and_unknown_array() {
+    // tsc: `H = unknown` (absent optional, no candidate), `T = unknown[]`
+    // (rest with no source elements to match).
+    assert_matches_tsc(
+        r#"
+type Parts<A extends readonly unknown[]> =
+  A extends readonly [(infer H)?, ...infer T] ? [H, T] : "none";
+type _ = Assert<Eq<Parts<[]>, [unknown, unknown[]]>>;
+"#,
+        "empty source infers H=unknown, T=unknown[]",
+    );
+}
+
+#[test]
+fn single_element_source_optional_prefix_infers_head_and_empty_rest() {
+    // With the optional prefix fully consumed, the rest gets the (empty) middle
+    // slice: `H = 1`, `T = []` — distinct from the empty-source case.
+    assert_matches_tsc(
+        r#"
+type Parts<A extends readonly unknown[]> =
+  A extends readonly [(infer H)?, ...infer T] ? [H, T] : "none";
+type _ = Assert<Eq<Parts<[1]>, [1, []]>>;
+"#,
+        "single-element source infers H=1, T=[]",
+    );
+}
+
+#[test]
+fn multi_element_source_optional_prefix_infers_head_and_rest() {
+    assert_matches_tsc(
+        r#"
+type Parts<A extends readonly unknown[]> =
+  A extends readonly [(infer H)?, ...infer T] ? [H, T] : "none";
+type _ = Assert<Eq<Parts<[1, 2, 3]>, [1, [2, 3]]>>;
+"#,
+        "multi-element source infers H=1, T=[2, 3]",
+    );
+}
+
+#[test]
+fn two_optional_prefix_slots_partially_filled() {
+    // A single-element source fills the first optional slot but not the second;
+    // the absent slot is `unknown` and the rest defaults to `unknown[]` because
+    // the prefix was not fully consumed.
+    assert_matches_tsc(
+        r#"
+type Parts<A extends readonly unknown[]> =
+  A extends readonly [(infer H1)?, (infer H2)?, ...infer T] ? [H1, H2, T] : "none";
+type _ = Assert<Eq<Parts<[9]>, [9, unknown, unknown[]]>>;
+"#,
+        "partially-filled optional prefix: H2=unknown, T=unknown[]",
+    );
+}
+
+#[test]
+fn constrained_optional_prefix_defaults_to_constraint() {
+    // A constrained `infer H extends string` with no candidate resolves to its
+    // constraint (`string`), not `unknown`.
+    assert_matches_tsc(
+        r#"
+type Head<A extends readonly unknown[]> =
+  A extends readonly [(infer H extends string)?, ...infer _] ? H : "none";
+type _ = Assert<Eq<Head<[]>, string>>;
+"#,
+        "constrained absent optional prefix defaults to the constraint",
+    );
+}
+
+#[test]
+fn constrained_rest_infer_defaults_to_constraint() {
+    // A constrained rest `...infer T extends number[]` with no candidate
+    // resolves to its constraint (`number[]`), not `unknown[]`.
+    assert_matches_tsc(
+        r#"
+type Rest<A extends readonly unknown[]> =
+  A extends readonly [(infer _)?, ...(infer T extends number[])] ? T : "none";
+type _ = Assert<Eq<Rest<[]>, number[]>>;
+"#,
+        "constrained absent rest infer defaults to the constraint",
+    );
+}
+
+#[test]
+fn required_prefix_before_rest_still_rejects_short_source() {
+    // Guard: a *required* leading element still imposes the minimum arity, so an
+    // empty source against `[infer H, ...infer T]` takes the false branch.
+    assert_matches_tsc(
+        r#"
+type Head<A extends readonly unknown[]> =
+  A extends readonly [infer H, ...infer _] ? H : "none";
+type _ = Assert<Eq<Head<[]>, "none">>;
+"#,
+        "required prefix still rejects an empty source (false branch)",
+    );
+}
+
+#[test]
+fn optional_prefix_then_required_suffix_via_required_prefix() {
+    // A required prefix, optional middle slot, and rest: a 1-element source
+    // fills the required head, leaves the optional slot absent (`unknown`), and
+    // the rest defaults to `unknown[]`.
+    assert_matches_tsc(
+        r#"
+type Parts<A extends readonly unknown[]> =
+  A extends readonly [infer H, (infer M)?, ...infer T] ? [H, M, T] : "none";
+type _ = Assert<Eq<Parts<[1]>, [1, unknown, unknown[]]>>;
+"#,
+        "required head consumed, optional middle absent, rest unknown[]",
+    );
+}
