@@ -13,6 +13,7 @@ import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchma
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
+import { PROJECT_DESCRIPTIONS } from "./project_descriptions.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -625,7 +626,7 @@ function compatibilityState(row) {
   if (!Object.keys(compatibility).length) {
     return {
       className: "gray",
-      stateLabel: "Gray",
+      stateLabel: "Not measured",
       exitClass: "missing or incomplete artifact",
       phase: "artifact",
       diagnosticDeltas: "not available",
@@ -634,7 +635,7 @@ function compatibilityState(row) {
   if (recordedState === "gray") {
     return {
       className: "gray",
-      stateLabel: "Gray",
+      stateLabel: "Not measured",
       exitClass: firstPresent(compatibility.exit_class, "missing or incomplete artifact"),
       phase: firstPresent(compatibility.phase, "artifact"),
       diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
@@ -647,7 +648,7 @@ function compatibilityState(row) {
   if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
     return {
       className: "green",
-      stateLabel: "Green",
+      stateLabel: "Passing",
       exitClass: firstPresent(compatibility.exit_class, "exit success"),
       phase: firstPresent(compatibility.phase, "check"),
       diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
@@ -658,7 +659,7 @@ function compatibilityState(row) {
     if (diagnosticStatus && diagnosticStatus !== "none") {
       return {
         className: "yellow",
-        stateLabel: "Yellow",
+        stateLabel: "Errors",
         exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
         phase: firstPresent(compatibility.phase, "check"),
         diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
@@ -666,7 +667,7 @@ function compatibilityState(row) {
     }
     return {
       className: "green",
-      stateLabel: "Green",
+      stateLabel: "Passing",
       exitClass: firstPresent(compatibility.exit_class, "exit success"),
       phase: firstPresent(compatibility.phase, "check"),
       diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
@@ -677,7 +678,7 @@ function compatibilityState(row) {
   if (!row || status.includes("not recorded") || status.includes("fixture") || status.includes("tsc fixture")) {
     return {
       className: "gray",
-      stateLabel: "Gray",
+      stateLabel: "Not measured",
       exitClass: firstPresent(
         compatibility.exit_class,
         status.includes("tsc fixture") ? "fixture invalid" : "missing or incomplete artifact",
@@ -690,17 +691,19 @@ function compatibilityState(row) {
   if (status.includes("diagnostic mismatch") || diagnosticStatus.includes("diagnostic mismatch")) {
     return {
       className: "yellow",
-      stateLabel: "Yellow",
+      stateLabel: "Errors",
       exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
       phase: firstPresent(compatibility.phase, "check"),
       diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
     };
   }
 
+  const isTimeout = status.includes("timeout") ||
+    String(compatibility.exit_class || "").toLowerCase().includes("timeout");
   return {
     className: "red",
-    stateLabel: "Red",
-    exitClass: firstPresent(compatibility.exit_class, status.includes("timeout") ? "timeout" : "nonzero exit"),
+    stateLabel: isTimeout ? "Timeout" : "Fails",
+    exitClass: firstPresent(compatibility.exit_class, isTimeout ? "timeout" : "nonzero exit"),
     phase: firstPresent(compatibility.phase, "check"),
     diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
   };
@@ -1105,7 +1108,7 @@ function benchmarkFocus(row, category) {
     return "Generated fixture that type-checks typed-array constructor and from() overload surfaces.";
   }
   if (isProjectCategory(category)) {
-    return "Full project type-check throughput, including module graph setup and cross-file type analysis.";
+    return PROJECT_DESCRIPTIONS[name] ?? "Full project type-check throughput, including module graph setup and cross-file type analysis.";
   }
   if (name.includes("Recursive generic")) {
     return "Recursive generic instantiation and cache behavior under deep type expansion.";
@@ -1364,13 +1367,28 @@ function benchmarkCommand(row, category, compiler) {
   return `${compiler} --noEmit ${name.endsWith(".ts") ? name : `${name}.ts`}`;
 }
 
+function projectReadmeRemoteUrls(definition) {
+  // Derive raw.githubusercontent.com URLs from the project row's repo + ref +
+  // readme_candidates. Only works for GitHub-hosted repos.
+  const { repo, ref, readme_candidates: candidates } = definition;
+  if (!repo || !ref || !Array.isArray(candidates) || !candidates.length) return [];
+  const match = String(repo).match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (!match) return [];
+  const slug = match[1];
+  return candidates.map(
+    (candidate) => `https://raw.githubusercontent.com/${slug}/${ref}/${candidate}`,
+  );
+}
+
 function readProjectReadme(row, category) {
   if (!isProjectCategory(category)) return null;
 
   if (row.readme) return truncateReadme(row.readme);
 
-  const candidates = PROJECT_README_PATHS[row.name] || [];
-  for (const candidate of candidates) {
+  // 1. Try hardcoded local paths (legacy entries that pre-date project-rows.mjs
+  //    metadata, or that use non-standard fixture paths).
+  const localCandidates = PROJECT_README_PATHS[row.name] || [];
+  for (const candidate of localCandidates) {
     try {
       const text = fs.readFileSync(path.join(ROOT, candidate), "utf8").trim();
       if (!text) continue;
@@ -1380,10 +1398,35 @@ function readProjectReadme(row, category) {
     }
   }
 
+  // 2. Try dynamic local paths derived from fixture_dir + readme_candidates
+  //    (covers all project-rows.mjs entries automatically).
+  const definition = PROJECT_ROWS_BY_NAME[row.name];
+  if (definition?.fixture_dir && Array.isArray(definition.readme_candidates)) {
+    const fixtureBase = path.join(ROOT, ".target-bench/external", definition.fixture_dir);
+    for (const candidate of definition.readme_candidates) {
+      try {
+        const text = fs.readFileSync(path.join(fixtureBase, candidate), "utf8").trim();
+        if (!text) continue;
+        return truncateReadme(text);
+      } catch {
+        // Fixture may not be cloned locally.
+      }
+    }
+  }
+
   if (row.name === "nextjs-fresh-app") return NEXTJS_FRESH_APP_README;
 
-  const remoteReadme = readRemoteText(PROJECT_README_URLS[row.name]);
-  if (remoteReadme) return truncateReadme(remoteReadme);
+  // 3. Try hardcoded remote URLs (legacy, kept for compatibility).
+  const hardcodedRemote = readRemoteText(PROJECT_README_URLS[row.name]);
+  if (hardcodedRemote) return truncateReadme(hardcodedRemote);
+
+  // 4. Try dynamic remote URLs derived from project-rows.mjs metadata.
+  if (definition) {
+    for (const url of projectReadmeRemoteUrls(definition)) {
+      const remote = readRemoteText(url);
+      if (remote) return truncateReadme(remote);
+    }
+  }
 
   return null;
 }
@@ -1779,7 +1822,7 @@ export function getProjectCompatibilityDashboard() {
       <tbody>
         ${rows.map((row) => `<tr class="compat-item" data-project="${escapeHtml(row.label)}">
           <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
-          <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.className)}</span></td>
+          <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.stateLabel)}</span></td>
           <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
           <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
           <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
