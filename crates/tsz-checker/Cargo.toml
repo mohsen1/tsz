@@ -60,6 +60,9 @@ path = "tests/const_assertion_tests.rs"
 name = "freshness_stripping_tests"
 path = "tests/freshness_stripping_tests.rs"
 [[test]]
+name = "assertion_freshness_elaboration_tests"
+path = "tests/assertion_freshness_elaboration_tests.rs"
+[[test]]
 name = "any_user_predicate_keeps_any_for_object_function_tests"
 path = "tests/any_user_predicate_keeps_any_for_object_function_tests.rs"
 [[test]]
