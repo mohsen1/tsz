@@ -707,7 +707,13 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
+            # The perf-comparison canary shard intentionally charts tsz-vs-tsgo
+            # even when tsz is much slower than tsgo — that gap IS the comparison
+            # we want to surface. The slowdown-failure gate nulls the timing
+            # (ERR,ERR), which would drop every canary off the chart, so it must
+            # not apply to the bench-canaries shard. Required project rows keep it.
             if [ "$winner" = "tsgo" ] \
+                && [ "${TSZ_BENCH_SHARD_LABEL:-}" != "bench-canaries" ] \
                 && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
                 local threshold
                 threshold="$(tsz_project_slowdown_failure_factor)"

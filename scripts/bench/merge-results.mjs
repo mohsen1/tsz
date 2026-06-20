@@ -117,7 +117,13 @@ function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
           continue;
         }
         existing.compatibility = compatibility;
-        existing.status ||= "compile canary tracked in CI; not timed by vs-tsgo benchmarks";
+        // Only stamp the "not timed" placeholder when the row genuinely lacks
+        // timing. A perf-timed canary (the bench-canaries shard) already carries
+        // real tsz_ms/tsgo_ms and an empty status; stamping a status here would
+        // make isGreen() false and silently drop it from the perf chart.
+        if (existing.tsz_ms == null) {
+          existing.status ||= "compile canary tracked in CI; not timed by vs-tsgo benchmarks";
+        }
         continue;
       }
 
