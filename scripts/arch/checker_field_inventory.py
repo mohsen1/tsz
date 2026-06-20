@@ -101,6 +101,39 @@ VALID_CAPABILITIES = frozenset(
     }
 )
 
+# Canonical lifetime-class -> destination decomposition shell.
+#
+# Each field's lifetime class names the shell that owns it once the
+# `CheckerContext` god-object is split per the T2.1 decomposition (see the
+# `crates/tsz-checker/src/context/lifetime_shells.rs` module doc). That mapping
+# previously lived only in prose, so the shells could silently drift from the
+# manifest taxonomy and the field-migration PRs had no machine-checked
+# destination. Encoding it here makes the decomposition target a CI-enforced
+# contract: a new lifetime class must declare its destination shell, and a
+# mapped shell must exist as a real `pub struct`.
+LIFETIME_DESTINATION_SHELL = {
+    "ProgramStable": "ProgramContext",
+    "WorkerReusable": "WorkerContext",
+    "FileLocalReset": "FileSession",
+    "DiagnosticsOnly": "FileSession",
+    "SpeculationScoped": "SpeculationScope",
+    "LspPersistent": "LspPersistentCache",
+}
+
+# `ProgramContext` predates the T2.1 shells and lives in its own module; the
+# remaining shells live in `lifetime_shells.rs`. Both files are scanned for the
+# `pub struct <Shell>` declaration so the destination contract stays honest if a
+# shell is renamed or removed.
+LIFETIME_SHELLS_RS = (
+    ROOT / "crates" / "tsz-checker" / "src" / "context" / "lifetime_shells.rs"
+)
+PROGRAM_CONTEXT_RS = (
+    ROOT / "crates" / "tsz-checker" / "src" / "context" / "program_context.rs"
+)
+DESTINATION_SHELL_SOURCES = (LIFETIME_SHELLS_RS, PROGRAM_CONTEXT_RS)
+
+PUB_STRUCT_RE = re.compile(r"^\s*pub struct ([A-Za-z_][A-Za-z_0-9]*)", re.MULTILINE)
+
 SIMPLE_INLINE_ENTRY_RE = re.compile(
     r'^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*\{\s*'
     r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
@@ -311,6 +344,99 @@ def check_inventory(
     return failures
 
 
+def declared_shell_structs(
+    sources: tuple[pathlib.Path, ...] = DESTINATION_SHELL_SOURCES,
+) -> set[str]:
+    """Return the set of `pub struct <Name>` declarations across `sources`.
+
+    Used to prove that every destination shell named by
+    `LIFETIME_DESTINATION_SHELL` actually exists as a real type, so the
+    decomposition target cannot silently drift from the manifest taxonomy.
+    """
+    names: set[str] = set()
+    for path in sources:
+        if not path.exists():
+            continue
+        names.update(PUB_STRUCT_RE.findall(path.read_text(encoding="utf-8")))
+    return names
+
+
+def check_destination_shells(declared_shells: set[str]) -> list[str]:
+    """Enforce the lifetime-class -> destination-shell decomposition contract.
+
+    Returns a list of failure messages (empty means PASS). Fails when a valid
+    lifetime class has no destination shell mapped, or when a mapped shell does
+    not exist as a `pub struct`. This keeps the `lifetime_shells.rs`
+    decomposition target in lockstep with the manifest's lifetime taxonomy.
+    """
+    failures: list[str] = []
+
+    unmapped = sorted(VALID_LIFETIMES - LIFETIME_DESTINATION_SHELL.keys())
+    if unmapped:
+        failures.append(
+            f"{len(unmapped)} lifetime class(es) with no destination shell in "
+            "LIFETIME_DESTINATION_SHELL (every valid lifetime must name its "
+            "decomposition target shell):"
+        )
+        for cls in unmapped:
+            failures.append(f"  - {cls}")
+
+    missing_shells = sorted(
+        {
+            shell
+            for shell in LIFETIME_DESTINATION_SHELL.values()
+            if shell not in declared_shells
+        }
+    )
+    if missing_shells:
+        shell_files = " / ".join(
+            str(path.relative_to(ROOT)) for path in DESTINATION_SHELL_SOURCES
+        )
+        failures.append(
+            f"{len(missing_shells)} destination shell(s) mapped by a lifetime "
+            f"class but not declared as `pub struct` (expected in {shell_files}):"
+        )
+        for shell in missing_shells:
+            owners = sorted(
+                cls
+                for cls, dest in LIFETIME_DESTINATION_SHELL.items()
+                if dest == shell
+            )
+            failures.append(f"  - {shell} (owns: {', '.join(owners)})")
+
+    return failures
+
+
+def render_shell_progress(
+    fields: list[Field],
+    manifest: dict[str, dict[str, str]],
+) -> str:
+    """Render the per-shell migration burndown: how many `CheckerContext`
+    fields still live in the god-object for each destination shell."""
+    counts: dict[str, int] = {}
+    for f in fields:
+        entry = manifest.get(f.name)
+        if entry is None:
+            continue
+        shell = LIFETIME_DESTINATION_SHELL.get(entry["lifetime"], "UNMAPPED")
+        counts[shell] = counts.get(shell, 0) + 1
+
+    lines = [
+        "# CheckerContext Decomposition Burndown",
+        "",
+        "Fields still owned by the `CheckerContext` god-object, grouped by the",
+        "destination shell that will own them after the T2.1 split.",
+        "",
+        f"Total fields: {len(fields)}",
+        "",
+        "| Destination shell | Fields remaining in CheckerContext |",
+        "| --- | ---: |",
+    ]
+    for shell in sorted(counts, key=lambda s: (-counts[s], s)):
+        lines.append(f"| `{shell}` | {counts[shell]} |")
+    return "\n".join(lines)
+
+
 def render_markdown(
     fields: list[Field],
     manifest: dict[str, dict[str, str]],
@@ -378,6 +504,11 @@ def render_markdown(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--render", action="store_true", help="Print markdown report.")
+    ap.add_argument(
+        "--shells",
+        action="store_true",
+        help="Print the per-shell decomposition burndown table.",
+    )
     ap.add_argument("--list", action="store_true", help="Print raw field list.")
     args = ap.parse_args()
 
@@ -393,21 +524,28 @@ def main() -> int:
         print(render_markdown(fields, manifest))
         return 0
 
+    if args.shells:
+        print(render_shell_progress(fields, manifest))
+        return 0
+
     failures = check_inventory(fields, manifest)
+    failures += check_destination_shells(declared_shell_structs())
     if failures:
         print("Checker field-lifetime inventory FAILED:", file=sys.stderr)
         for line in failures:
             print(line, file=sys.stderr)
         print(
             "\nFix by editing the manifest at "
-            f"{MANIFEST_TOML.relative_to(ROOT)} per PERFORMANCE_PLAN.md §6.",
+            f"{MANIFEST_TOML.relative_to(ROOT)} (lifetime/capability classes) or "
+            f"the destination shells in {LIFETIME_SHELLS_RS.relative_to(ROOT)} "
+            "(decomposition contract).",
             file=sys.stderr,
         )
         return 1
 
     print(
         f"Checker field-lifetime inventory passed: {len(fields)} field(s) "
-        "all classified."
+        "all classified; destination-shell contract intact."
     )
     return 0
 

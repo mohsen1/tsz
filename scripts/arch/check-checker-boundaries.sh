@@ -30,6 +30,8 @@ else
 fi
 
 # T2.1.A field-lifetime inventory: every CheckerContext field must be
-# classified in `crates/tsz-checker/src/context/checker_context_lifetimes.toml`.
-# See `docs/plan/PERFORMANCE_PLAN.md` §6.
+# classified in `crates/tsz-checker/src/context/checker_context_lifetimes.toml`,
+# and every lifetime class must map to an existing destination shell
+# (`LIFETIME_DESTINATION_SHELL`). See `context/lifetime_shells.rs`. Run with
+# `--shells` for the (informational) per-shell decomposition burndown.
 python3 scripts/arch/checker_field_inventory.py

@@ -21,15 +21,24 @@
 //! until the corresponding T2.1.B/C/D PR**, where the migration of the
 //! relevant fields is reviewed alongside the new behavior.
 //!
-//! Mapping from `PERFORMANCE_PLAN.md` §6:
+//! Mapping from each manifest lifetime class to its destination shell:
 //!
 //! ```text
-//! ProgramContext      — already exists (renamed from ProjectEnv in PR 5B)
-//! WorkerContext       — this file
-//! FileSession         — this file
-//! SpeculationScope    — this file
-//! LspPersistentCache  — this file
+//! ProgramStable      -> ProgramContext      — already exists (renamed from ProjectEnv in PR 5B)
+//! WorkerReusable     -> WorkerContext       — this file
+//! FileLocalReset     -> FileSession         — this file
+//! DiagnosticsOnly    -> FileSession         — this file
+//! SpeculationScoped  -> SpeculationScope    — this file
+//! LspPersistent      -> LspPersistentCache  — this file
 //! ```
+//!
+//! This class -> shell mapping is **CI-enforced** by
+//! `scripts/arch/checker_field_inventory.py` (the `LIFETIME_DESTINATION_SHELL`
+//! contract): every classifiable lifetime must name a destination shell, and
+//! every named shell must exist as a `pub struct` here (or, for
+//! `ProgramContext`, in `program_context.rs`). Run
+//! `python3 scripts/arch/checker_field_inventory.py --shells` for the
+//! per-shell migration burndown.
 
 /// Worker-scoped reusable scratch state.
 ///
