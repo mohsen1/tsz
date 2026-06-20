@@ -884,3 +884,215 @@ export default class Helper {
         );
     }
 
+    // ------------------------------------------------------------------
+    // tsc-parity guard: real-world npm import shapes (witnesses from #13826)
+    // must keep resolving the way tsc resolves them, across every module
+    // resolution mode. The resolver entry points are being actively
+    // consolidated (e.g. #14037 merges the import-site classification copies),
+    // so these shapes need a regression floor: `node:` builtin protocol
+    // specifiers (resolved via @types/node ambient `declare module` blocks,
+    // including the triple-slash-split layout @types/node actually ships),
+    // legacy `/lib/*` subpaths in a package WITHOUT an `exports` map (fp-ts
+    // shape), an `exports` subpath map (next/server shape), and a scoped
+    // package with a wildcard `exports` pattern (@mswjs/interceptors/* shape).
+    //
+    // The assertions encode tsc behavior: under node16/nodenext/bundler all
+    // four shapes resolve; under legacy node10 the `exports`-only packages are
+    // unresolved (node10 ignores `package.json` `exports`) while the `node:`
+    // ambient and the physical `/lib/*` subpath still resolve.
+    // ------------------------------------------------------------------
+
+    fn resolve_shapes_diagnostics(
+        file_paths: &[PathBuf],
+        base: &Path,
+        module: &str,
+        module_resolution: &str,
+    ) -> Vec<Diagnostic> {
+        let resolved = tsz::config::resolve_compiler_options(Some(&tsz::config::CompilerOptions {
+            target: Some("es2020".to_string()),
+            module: Some(module.to_string()),
+            module_resolution: Some(module_resolution.to_string()),
+            strict: Some(true),
+            ..Default::default()
+        }))
+        .expect("resolve options");
+        let SourceReadResult { sources, .. } =
+            super::read_source_files(file_paths, base, &resolved, None, None)
+                .expect("read source files");
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths =
+            super::resolve_effective_lib_paths(&resolved, &sources, base, disable_default_libs)
+                .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+        collect_diagnostics(
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: base,
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
+            None,
+            &type_cache_output,
+        )
+        .diagnostics
+    }
+
+    fn write_real_world_shape_fixture(base: &Path) -> PathBuf {
+        let write = |rel: &str, content: &str| {
+            let path = base.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, content).unwrap();
+            path
+        };
+
+        // @types/node: triple-slash-split layout declaring both the bare and
+        // `node:`-prefixed module forms, exactly as @types/node ships them.
+        write(
+            "node_modules/@types/node/index.d.ts",
+            "/// <reference path=\"fs.d.ts\" />\n/// <reference path=\"stream.d.ts\" />\n",
+        );
+        write(
+            "node_modules/@types/node/fs.d.ts",
+            "declare module \"fs\" { export function readFileSync(p: string): string; }\n\
+             declare module \"node:fs\" { export * from \"fs\"; }\n",
+        );
+        write(
+            "node_modules/@types/node/stream.d.ts",
+            "declare module \"stream/promises\" { export function pipeline(): void; }\n\
+             declare module \"node:stream/promises\" { export * from \"stream/promises\"; }\n",
+        );
+        write(
+            "node_modules/@types/node/package.json",
+            "{\"name\":\"@types/node\",\"version\":\"20.0.0\",\"types\":\"index.d.ts\"}",
+        );
+
+        // fp-ts: legacy `/lib/*` subpath, NO `exports` map.
+        write(
+            "node_modules/fp-ts/package.json",
+            "{\"name\":\"fp-ts\",\"version\":\"2.0.0\",\"main\":\"lib/index.js\",\"types\":\"lib/index.d.ts\"}",
+        );
+        write("node_modules/fp-ts/lib/index.d.ts", "export {};\n");
+        write(
+            "node_modules/fp-ts/lib/function.d.ts",
+            "export declare const identity: <A>(a: A) => A;\n",
+        );
+
+        // next: `exports` subpath map.
+        write(
+            "node_modules/next/package.json",
+            "{\"name\":\"next\",\"version\":\"14.0.0\",\"exports\":{\"./server\":{\"types\":\"./dist/server.d.ts\",\"default\":\"./dist/server.js\"}}}",
+        );
+        write(
+            "node_modules/next/dist/server.d.ts",
+            "export declare function NextResponse(): void;\n",
+        );
+
+        // @mswjs/interceptors: scoped package + wildcard `exports` pattern.
+        write(
+            "node_modules/@mswjs/interceptors/package.json",
+            "{\"name\":\"@mswjs/interceptors\",\"version\":\"1.0.0\",\"exports\":{\".\":{\"types\":\"./lib/index.d.ts\",\"default\":\"./lib/index.js\"},\"./*\":{\"types\":\"./lib/*.d.ts\",\"default\":\"./lib/*.js\"}}}",
+        );
+        write("node_modules/@mswjs/interceptors/lib/index.d.ts", "export {};\n");
+        write(
+            "node_modules/@mswjs/interceptors/lib/fetch.d.ts",
+            "export declare const FetchInterceptor: number;\n",
+        );
+
+        write(
+            "entry.ts",
+            "import { readFileSync } from \"node:fs\";\n\
+             import { pipeline } from \"node:stream/promises\";\n\
+             import { identity } from \"fp-ts/lib/function\";\n\
+             import { NextResponse } from \"next/server\";\n\
+             import { FetchInterceptor } from \"@mswjs/interceptors/fetch\";\n\
+             export const a = readFileSync(\"x\");\n\
+             export const b = pipeline;\n\
+             export const c = identity(1);\n\
+             export const d = NextResponse;\n\
+             export const e = FetchInterceptor;\n",
+        )
+    }
+
+    fn ts2307_specifiers(diags: &[Diagnostic]) -> Vec<String> {
+        diags
+            .iter()
+            .filter(|d| d.code == 2307)
+            .map(|d| d.message_text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn module_resolution_real_world_npm_import_shapes_match_tsc() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let base = dir.path();
+        let entry = write_real_world_shape_fixture(base);
+        let files = [entry];
+
+        // node16 / nodenext / bundler: every shape resolves (no TS2307), and
+        // the named imports bind (no TS2305 / TS2614 "no exported member").
+        for (module, mr) in [
+            ("node16", "node16"),
+            ("nodenext", "nodenext"),
+            ("esnext", "bundler"),
+        ] {
+            let diags = resolve_shapes_diagnostics(&files, base, module, mr);
+            let unresolved = ts2307_specifiers(&diags);
+            assert!(
+                unresolved.is_empty(),
+                "[{mr}] expected all real-world import shapes to resolve, got TS2307: {unresolved:?}"
+            );
+            let missing_members: Vec<_> = diags
+                .iter()
+                .filter(|d| d.code == 2305 || d.code == 2614)
+                .map(|d| d.message_text.clone())
+                .collect();
+            assert!(
+                missing_members.is_empty(),
+                "[{mr}] resolved modules must expose their named exports, got: {missing_members:?}"
+            );
+        }
+
+        // node10: `exports`-only packages are unresolved (node10 ignores
+        // `package.json` `exports`), but the `node:` ambient builtins and the
+        // physical `/lib/*` subpath still resolve.
+        let node10 = resolve_shapes_diagnostics(&files, base, "commonjs", "node10");
+        let unresolved = ts2307_specifiers(&node10);
+        assert!(
+            unresolved.iter().any(|m| m.contains("next/server")),
+            "[node10] next/server is exports-only and must be unresolved: {unresolved:?}"
+        );
+        assert!(
+            unresolved
+                .iter()
+                .any(|m| m.contains("@mswjs/interceptors/fetch")),
+            "[node10] @mswjs/interceptors/fetch is exports-only and must be unresolved: {unresolved:?}"
+        );
+        for resolved_specifier in ["node:fs", "node:stream/promises", "fp-ts/lib/function"] {
+            assert!(
+                !unresolved.iter().any(|m| m.contains(resolved_specifier)),
+                "[node10] {resolved_specifier} must still resolve: {unresolved:?}"
+            );
+        }
+    }
+

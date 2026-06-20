@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> tsz_solver::operations::CallWithCheckerResult {
-        self.ensure_relation_input_ready(func_type);
+        self.ensure_callee_relation_inputs_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
         arg_source_is_type_annotation: &[bool],
         arg_source_is_readonly_annotation: &[bool],
     ) -> tsz_solver::operations::CallWithCheckerResult {
-        self.ensure_relation_input_ready(func_type);
+        self.ensure_callee_relation_inputs_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
@@ -224,7 +224,7 @@ impl<'a> CheckerState<'a> {
         arg_source_is_type_annotation: &[bool],
         arg_source_is_readonly_annotation: &[bool],
     ) -> tsz_solver::operations::CallWithCheckerResult {
-        self.ensure_relation_input_ready(func_type);
+        self.ensure_callee_relation_inputs_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
