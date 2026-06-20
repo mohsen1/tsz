@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
                 });
         if let Some(members) = intersection_members {
             let mut found = Vec::new();
-            for &member in members.iter() {
+            for &member in members {
                 if member == object_type {
                     continue;
                 }
@@ -711,8 +711,8 @@ impl<'a> CheckerState<'a> {
                     .collect()
             } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
                 let mut specs = Vec::new();
-                for binder in all_binders.iter() {
-                    for (key, augs) in binder.module_augmentations.iter() {
+                for binder in all_binders {
+                    for (key, augs) in &binder.module_augmentations {
                         if augs.iter().any(|aug| aug.name == type_name) && !specs.contains(key) {
                             specs.push(key.clone());
                         }
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
                 specs
             } else {
                 let mut specs = Vec::new();
-                for (key, augs) in self.ctx.binder.module_augmentations.iter() {
+                for (key, augs) in &self.ctx.binder.module_augmentations {
                     if augs.iter().any(|aug| aug.name == type_name) {
                         specs.push(key.clone());
                     }
