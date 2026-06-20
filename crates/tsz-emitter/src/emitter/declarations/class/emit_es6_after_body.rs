@@ -90,6 +90,44 @@ impl<'a> Printer<'a> {
             auto_accessor_static_inits,
         } = after;
 
+        // A public auto-accessor's instance storage WeakMap is initialized in the
+        // class-declaration body's trailing statements (it lowers to the WeakMap
+        // pattern for targets < ES2022). `tsc` does not emit it as its own
+        // trailing statement; it places it relative to the private-name helpers /
+        // static elements. This base condition is the relocatable case: a
+        // declaration (not a comma-expression class expression) with instance
+        // storage to emit after the class body.
+        let relocatable_auto_accessor_instance_inits = !needs_private_comma_expr
+            && lower_auto_accessors_to_weakmap
+            && emit_auto_accessor_instance_inits_after_class
+            && !auto_accessor_instance_inits.is_empty();
+        // With private-name lowering, fold the instance-storage inits into the
+        // single combined private-name init statement (right after the
+        // private-method WeakSet / before the private method+accessor defs).
+        let fold_auto_accessor_instance_inits =
+            relocatable_auto_accessor_instance_inits && has_any_private_lowering;
+        // With no private-name lowering to fold into but static field/block
+        // initializers present, emit the instance storage as its own statement
+        // *before* those static initializers (the storage must exist before a
+        // static initializer could instantiate the class).
+        let emit_auto_accessor_instance_inits_pre_static = relocatable_auto_accessor_instance_inits
+            && !has_any_private_lowering
+            && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
+        // In either case the separate trailing auto-accessor block must not also
+        // emit the instance storage.
+        let suppress_trailing_auto_accessor_instance_inits =
+            fold_auto_accessor_instance_inits || emit_auto_accessor_instance_inits_pre_static;
+        let auto_accessor_instance_weakmap_inits: Vec<String> =
+            if suppress_trailing_auto_accessor_instance_inits {
+                auto_accessor_instance_inits
+                    .iter()
+                    .map(|(storage_name, _)| format!("{storage_name} = new WeakMap()"))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let mut emitted_folded_auto_accessor_instance_inits = false;
+
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
             if class_expr_temp.is_some() {
@@ -259,6 +297,16 @@ impl<'a> Printer<'a> {
                     self.write(init);
                     first = false;
                 }
+                if fold_auto_accessor_instance_inits {
+                    for init in &auto_accessor_instance_weakmap_inits {
+                        if !first {
+                            self.write(", ");
+                        }
+                        self.write(init);
+                        first = false;
+                        emitted_folded_auto_accessor_instance_inits = true;
+                    }
+                }
                 for def in &method_defs {
                     if !first {
                         self.write(", ");
@@ -319,6 +367,19 @@ impl<'a> Printer<'a> {
                     self.emit_static_private_init(init, &class_name, true);
                 }
             }
+        }
+        // No private lowering but static elements present: emit the auto-accessor
+        // instance storage WeakMaps as their own statement before the static
+        // field/block work, matching tsc.
+        if emit_auto_accessor_instance_inits_pre_static {
+            self.write_line();
+            for (i, init) in auto_accessor_instance_weakmap_inits.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(init);
+            }
+            self.write(";");
         }
         // Private helper/state initialization can be part of a class-expression
         // comma list. Gather it before static element scheduling so lowered
@@ -773,7 +834,8 @@ impl<'a> Printer<'a> {
         // ...
         // _Class_prop_accessor_storage = new WeakMap();
         if lower_auto_accessors_to_weakmap
-            && ((emit_auto_accessor_instance_inits_after_class
+            && ((!suppress_trailing_auto_accessor_instance_inits
+                && emit_auto_accessor_instance_inits_after_class
                 && !auto_accessor_instance_inits.is_empty())
                 || !auto_accessor_static_inits.is_empty()
                 || auto_accessor_class_alias.is_some())
@@ -791,7 +853,8 @@ impl<'a> Printer<'a> {
                 wrote_alias_line = true;
             }
 
-            if emit_auto_accessor_instance_inits_after_class
+            if !suppress_trailing_auto_accessor_instance_inits
+                && emit_auto_accessor_instance_inits_after_class
                 && !auto_accessor_instance_inits.is_empty()
             {
                 if wrote_alias_line {
@@ -936,6 +999,16 @@ impl<'a> Printer<'a> {
                 }
                 self.write(init);
                 first = false;
+            }
+
+            if fold_auto_accessor_instance_inits && !emitted_folded_auto_accessor_instance_inits {
+                for init in &auto_accessor_instance_weakmap_inits {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(init);
+                    first = false;
+                }
             }
 
             // Private method function definitions:

@@ -439,13 +439,15 @@ impl<'a> Printer<'a> {
         }
 
         if !auto_accessor_members.is_empty() && lower_auto_accessors_to_weakmap {
-            // Hoist auto-accessor storage vars to the top of the scope,
-            // matching tsc behavior (emits all class-related vars before the first class).
+            // Hoist the static-accessor class alias to the top of the scope,
+            // matching tsc behavior (emits all class-related vars before the
+            // first class). The auto-accessor *storage* vars are hoisted *after*
+            // the private-name vars so the combined `var` declaration matches
+            // tsc's order (instances/alias, then private members in source order,
+            // then auto-accessor storages last); see the `var_names` collection
+            // below and the no-private-lowering fallback after the block.
             if let Some(alias) = auto_accessor_class_alias.as_ref() {
                 self.hoisted_assignment_temps.push(alias.clone());
-            }
-            for (_, storage_name, _, _) in &auto_accessor_members {
-                self.hoisted_assignment_temps.push(storage_name.clone());
             }
             self.emit_comments_before_pos(node.pos);
         }
@@ -834,6 +836,16 @@ impl<'a> Printer<'a> {
                 var_names.push(accessor.storage_name.clone());
             }
 
+            // Public auto-accessor storage WeakMaps come last in tsc's class var
+            // list, after every private-name var (in source order). When this
+            // class has no private-name lowering the storages are hoisted in the
+            // no-private fallback after this block instead.
+            if lower_auto_accessors_to_weakmap {
+                for (_, storage_name, _, _) in &auto_accessor_members {
+                    var_names.push(storage_name.clone());
+                }
+            }
+
             if !var_names.is_empty() {
                 if node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && (self.ctx.options.target as u32) < (ScriptTarget::ES2015 as u32)
@@ -1143,6 +1155,15 @@ impl<'a> Printer<'a> {
             }
             for accessor in &private_auto_accessors {
                 self.private_members_to_skip.insert(accessor.member_idx);
+            }
+        }
+
+        // When the class has no private-name lowering, the `var_names` walk above
+        // did not run, so hoist the public auto-accessor storage vars here (they
+        // are the only class-related vars besides the static-accessor alias).
+        if !has_any_private_lowering && lower_auto_accessors_to_weakmap {
+            for (_, storage_name, _, _) in &auto_accessor_members {
+                self.hoisted_assignment_temps.push(storage_name.clone());
             }
         }
 

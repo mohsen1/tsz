@@ -431,3 +431,193 @@ class A {
         "instance-brand storage is still emitted for conflicting private methods.\nOutput:\n{output}"
     );
 }
+
+// A public auto-accessor's instance storage WeakMap is part of the single
+// combined private-name initialization statement that `tsc` emits at the end of
+// a lowered class declaration (private-field WeakMaps, then the private-method
+// WeakSet, then the auto-accessor storages, then private method/accessor
+// function defs) — not a separate trailing statement. These tests lock that
+// folding and var-declaration ordering. Binder names are varied across tests so
+// the assertions track structure, not a particular spelling.
+//
+// `tsc --target es2015` (and every target < ES2022, since auto-accessors lower
+// to the WeakMap pattern there) for `class C { #x = 1; accessor y = 3; ... }`:
+//   var _C_x, _C_y_accessor_storage;
+//   ...
+//   _C_x = new WeakMap(), _C_y_accessor_storage = new WeakMap();
+
+#[test]
+fn auto_accessor_storage_folds_into_private_field_init_statement() {
+    let source = r#"
+class Wrapper {
+    #value = 1;
+    accessor label = "x";
+    get peek() { return this.#value; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    // Single combined init statement, private field first then accessor storage.
+    assert!(
+        output.contains(
+            "_Wrapper_value = new WeakMap(), _Wrapper_label_accessor_storage = new WeakMap();"
+        ),
+        "auto-accessor storage must fold into the private-field init statement, after the field.\nOutput:\n{output}"
+    );
+    // The accessor storage must not start its own statement (the pre-fix bug
+    // emitted `\n_Wrapper_label_accessor_storage = new WeakMap()` on its own line).
+    assert!(
+        !output.contains("\n_Wrapper_label_accessor_storage = new WeakMap()"),
+        "auto-accessor storage must not be emitted as its own statement.\nOutput:\n{output}"
+    );
+    // var-declaration order: field name before accessor-storage name.
+    let field_decl = output
+        .find("var _Wrapper_value, _Wrapper_label_accessor_storage;")
+        .or_else(|| output.find("_Wrapper_value, _Wrapper_label_accessor_storage"));
+    assert!(
+        field_decl.is_some(),
+        "var declaration must list the private field before the accessor storage.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_storage_folds_after_private_method_weakset() {
+    // Private method (→ instances WeakSet) plus a public auto-accessor: tsc emits
+    // `_K_instances = new WeakSet(), _K_a_accessor_storage = new WeakMap(), _K_run = function ...`
+    let source = r#"
+class Kit {
+    accessor a = 1;
+    #run() { return 2; }
+    call() { return this.#run(); }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "_Kit_instances = new WeakSet(), _Kit_a_accessor_storage = new WeakMap(), _Kit_run = function"
+        ),
+        "accessor storage must sit between the instance WeakSet and the private-method def, in one statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_Kit_a_accessor_storage = new WeakMap();"),
+        "accessor storage must not be emitted as its own statement when private lowering is present.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn multiple_auto_accessors_fold_in_source_order_after_private_fields() {
+    let source = r#"
+class Grid {
+    #m = 1;
+    accessor p = 2;
+    #n = 3;
+    accessor q = 4;
+    get sum() { return this.#m + this.#n; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    // Private fields first (source order), then accessor storages (source order),
+    // all in one statement.
+    assert!(
+        output.contains(
+            "_Grid_m = new WeakMap(), _Grid_n = new WeakMap(), _Grid_p_accessor_storage = new WeakMap(), _Grid_q_accessor_storage = new WeakMap();"
+        ),
+        "fields then accessor storages, source order, single statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains("var _Grid_m, _Grid_n, _Grid_p_accessor_storage, _Grid_q_accessor_storage;"),
+        "var declaration order must match: fields then accessor storages.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn pure_auto_accessors_keep_their_standalone_init_statement() {
+    // With no private-name lowering there is nothing to fold into; the
+    // standalone auto-accessor init statement is preserved (tsc parity).
+    let source = r#"
+class Plain {
+    accessor a = 1;
+    accessor b = 2;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "_Plain_a_accessor_storage = new WeakMap(), _Plain_b_accessor_storage = new WeakMap();"
+        ),
+        "pure auto-accessor classes still emit their combined storage init.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _Plain_a_accessor_storage, _Plain_b_accessor_storage;"),
+        "pure auto-accessor var declaration is unchanged.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_storage_folds_when_static_field_forces_pre_static_inits() {
+    // A static field routes the private inits through the pre-static emission
+    // path (private-name storage must exist before a static initializer could
+    // instantiate the class). The auto-accessor storage must still fold into
+    // that single combined statement.
+    let source = r#"
+class Reg {
+    #x = 1;
+    accessor y = 2;
+    static count = 0;
+    get g() { return this.#x; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_Reg_x = new WeakMap(), _Reg_y_accessor_storage = new WeakMap();"),
+        "auto-accessor storage folds into the pre-static private-init statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n_Reg_y_accessor_storage = new WeakMap()"),
+        "auto-accessor storage must not be emitted as its own statement.\nOutput:\n{output}"
+    );
+    // The static field assignment follows the private inits.
+    let inits = output
+        .find("_Reg_x = new WeakMap()")
+        .expect("private inits present");
+    let static_assign = output.find("Reg.count = 0").expect("static field present");
+    assert!(
+        inits < static_assign,
+        "private/auto-accessor storage initializes before the static field.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_storage_precedes_static_field_without_private_lowering() {
+    // No private-name lowering to fold into, but a static field is present: tsc
+    // still emits the auto-accessor instance storage WeakMap *before* the static
+    // field initializer (the storage must exist before a static initializer could
+    // instantiate the class).
+    let source = r#"
+class Conf {
+    accessor opt = 2;
+    static total = 0;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let storage = output
+        .find("_Conf_opt_accessor_storage = new WeakMap();")
+        .expect("auto-accessor storage init present");
+    let static_assign = output.find("Conf.total = 0").expect("static field present");
+    assert!(
+        storage < static_assign,
+        "auto-accessor storage must initialize before the static field, even with no private lowering.\nOutput:\n{output}"
+    );
+    // It is its own statement (no private statement to fold into) and not left
+    // trailing after the static field with a blank line (the pre-fix bug).
+    assert!(
+        !output.contains("Conf.total = 0;\n\n_Conf_opt_accessor_storage = new WeakMap()"),
+        "auto-accessor storage must not trail after the static field.\nOutput:\n{output}"
+    );
+}
