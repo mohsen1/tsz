@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::checker::context::CheckerOptions;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
@@ -35,6 +35,13 @@ pub struct ResolvedCompilerOptions {
     pub type_roots: Option<Vec<PathBuf>>,
     pub base_url: Option<PathBuf>,
     pub paths: Option<Vec<PathMapping>>,
+    /// Base directory for `paths` substitutions when `baseUrl` is not set
+    /// (tsc's `pathsBasePath`). Since TypeScript 4.1 `paths` may be configured
+    /// without `baseUrl`; relative substitutions then resolve against the
+    /// directory of the tsconfig that declared them. tsc's
+    /// `getPathsBasePath` returns `baseUrl ?? pathsBasePath`, so the resolver
+    /// prefers `base_url` and falls back to this when `baseUrl` is absent.
+    pub paths_base_path: Option<PathBuf>,
     pub root_dir: Option<PathBuf>,
     pub root_dirs: Vec<PathBuf>,
     pub out_dir: Option<PathBuf>,
@@ -296,6 +303,16 @@ impl ResolvedCompilerOptions {
         }
 
         default_module_resolution_for_module(self.printer.module)
+    }
+
+    /// Base directory for `paths` substitutions — tsc's `getPathsBasePath`,
+    /// which returns `baseUrl ?? pathsBasePath`. Since TypeScript 4.1 `paths`
+    /// may be configured without `baseUrl`, in which case relative
+    /// substitutions resolve against the tsconfig directory carried in
+    /// [`Self::paths_base_path`]. The bare `baseUrl` join fallback is NOT
+    /// derived from this — it stays anchored on `base_url` alone.
+    pub fn paths_base(&self) -> Option<&Path> {
+        self.base_url.as_deref().or(self.paths_base_path.as_deref())
     }
 }
 

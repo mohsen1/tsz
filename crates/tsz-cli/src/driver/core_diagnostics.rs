@@ -324,6 +324,11 @@ pub(super) fn compile_inner(
     resolved.out_dir = out_dir.clone();
     resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
+    // tsc's `pathsBasePath`: the tsconfig directory anchors `paths`
+    // substitutions when `baseUrl` is unset (TypeScript 4.1+). The resolver
+    // prefers `base_url` and only falls back to this, so setting it
+    // unconditionally is a no-op when `baseUrl` is present.
+    resolved.paths_base_path = Some(base_dir.clone());
     resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
 

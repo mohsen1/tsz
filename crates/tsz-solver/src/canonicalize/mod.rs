@@ -184,6 +184,25 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     }
                 }
 
+                // `infer R` declarations carry the same `TypeParamInfo` as a
+                // type parameter, so their identity follows the same rule as the
+                // free `TypeParameter` branch above: the parameter is identified
+                // by itself — its name and the *shape* of its constraint — never
+                // by the optional `default` nor by the *resolution state* its
+                // constraint snapshot was captured in. Leaving `Infer` in the
+                // catch-all passthrough let two structurally-identical
+                // conditionals whose `infer` parameter captured a resolved
+                // constraint on one path and a still-`Lazy` cross-file alias on
+                // the other (or merely differed in a captured default) fragment
+                // into distinct identities, losing the relation's reflexive
+                // short-circuit (#13609 — the `Infer` analogue of the free
+                // `TypeParameter` fix). Reuse `canonical_type_param` so an
+                // `infer` parameter and a declared parameter reduce identically.
+                TypeData::Infer(info) => {
+                    let normalized = self.canonical_type_param(info);
+                    self.interner.infer(normalized)
+                }
+
                 // Recurse into composite types
                 TypeData::Array(elem) => {
                     let c_elem = self.canonicalize(elem);

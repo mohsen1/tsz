@@ -137,6 +137,15 @@ pub struct ModuleResolver {
     resolution_kind: ModuleResolutionKind,
     /// Base URL for path resolution
     base_url: Option<PathBuf>,
+    /// Base directory for `paths` substitutions (tsc's `pathsBasePath`).
+    ///
+    /// Equal to `base_url` when `baseUrl` is set, otherwise the directory of
+    /// the tsconfig that declared `paths` (TypeScript 4.1+ allows `paths`
+    /// without `baseUrl`). `paths` resolution is anchored here; the bare
+    /// `baseUrl` join fallback stays anchored on `base_url` alone, so a project
+    /// that configures `paths` without `baseUrl` does not gain baseUrl-style
+    /// resolution for unmapped specifiers.
+    paths_base: Option<PathBuf>,
     /// Path mappings from tsconfig
     path_mappings: Vec<PathMapping>,
     /// Virtual root directories from tsconfig rootDirs
@@ -232,6 +241,7 @@ impl ModuleResolver {
         Self {
             resolution_kind,
             base_url: options.base_url.clone(),
+            paths_base: options.paths_base().map(Path::to_path_buf),
             path_mappings: options.paths.clone().unwrap_or_default(),
             root_dirs: options.root_dirs.clone(),
             type_roots: options.type_roots.clone().unwrap_or_default(),
@@ -273,6 +283,7 @@ impl ModuleResolver {
         Self {
             resolution_kind: ModuleResolutionKind::Node,
             base_url: None,
+            paths_base: None,
             path_mappings: Vec::new(),
             root_dirs: Vec::new(),
             type_roots: Vec::new(),
@@ -395,7 +406,7 @@ impl ModuleResolver {
         if !self.allow_importing_ts_extensions
             && !self.allow_arbitrary_extensions
             && !self.rewrite_relative_import_extensions
-            && (self.base_url.is_some() || self.path_mappings.is_empty())
+            && (self.paths_base.is_some() || self.path_mappings.is_empty())
             && let Some(extension) = explicit_ts_extension(specifier)
             && !path_mapping_attempted
             && matches!(result, Err(ResolutionFailure::NotFound { .. }))
@@ -586,10 +597,10 @@ impl ModuleResolver {
         // projects without `paths` never scan the specifier.
         let mut path_mapping_attempted = false;
         if !self.path_mappings.is_empty()
-            && let Some(base_url) = self.base_url.as_deref()
+            && let Some(paths_base) = self.paths_base.as_deref()
             && !is_external_module_name_relative(specifier)
         {
-            let attempt = self.try_path_mappings(specifier, base_url, importer_package_type);
+            let attempt = self.try_path_mappings(specifier, paths_base, importer_package_type);
             if let Some(resolved) = attempt.resolved {
                 return (Ok(resolved), path_mapping_attempted);
             }

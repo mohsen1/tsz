@@ -164,10 +164,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For object-like types, use refined overlap detection with PropertyCollector
         // This handles: objects, objects with index signatures, and intersections
         // This replaces the simplified check that only handled direct object-to-object
-        let is_a_obj = self.is_object_like(a_resolved);
-        let is_b_obj = self.is_object_like(b_resolved);
+        let left_is_object_like = self.is_object_like(a_resolved);
+        let right_is_object_like = self.is_object_like(b_resolved);
 
-        if is_a_obj && is_b_obj {
+        if left_is_object_like && right_is_object_like {
             return self.do_refined_object_overlap_check(a_resolved, b_resolved);
         }
 

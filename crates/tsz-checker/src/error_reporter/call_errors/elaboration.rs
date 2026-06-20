@@ -585,6 +585,22 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // A plain `expr as T` / `<T>expr` assertion (not `as const`, not
+        // `satisfies`) yields the asserted, *non-fresh* type `T`. Per-property /
+        // excess elaboration applies only to fresh object/array literals, so
+        // descending into the assertion operand below (`skip_parenthesized_and_assertions`
+        // strips the assertion and re-derives a fresh inner-literal type) would
+        // manufacture diagnostics `tsc` never reports: TS2353 instead of the
+        // weak-type TS2559, or a per-property TS2322 instead of the argument-level
+        // TS2345 with its structural chain. Returning `false` defers to the
+        // caller's argument/assignment-level report. `satisfies` and `as const`
+        // preserve freshness (excluded by the predicate) and still elaborate.
+        // Matches `tsc`'s `getRegularTypeOfObjectLiteral` / `elaborateError`
+        // boundary (the latter descends through parens but not assertions).
+        if self.expression_is_plain_type_assertion(source_idx) {
+            return false;
+        }
+
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
         if let Some(node) = self.ctx.arena.get(expr_idx)
             && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
