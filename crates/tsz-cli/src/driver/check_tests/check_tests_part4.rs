@@ -885,6 +885,106 @@ export default class Helper {
     }
 
     // ------------------------------------------------------------------
+    // Deeply-nested homomorphic mapped-type reducer relation
+    // (`deeplyNestedMappedTypes.ts` parity floor; #8432 mapped/keyof family).
+    //
+    // Structural rule: a TypeBox-style reducer — `Materialize<S> =
+    // (S & { opts: [] })['out']` whose `out` resolves to a homomorphic mapped
+    // fold `{ [F in keyof M]: Materialize<M[F]> }` — re-introduces the same
+    // generic definition through its own structural expansion at every nesting
+    // level. Past the one-sided application-expansion recursion cap
+    // (`ONE_SIDED_APP_EXPANSION_MAX_DEPTH`, tsz's `isDeeplyNestedType` analog),
+    // `tsc` still reduces both operands and relates them structurally; tsz must
+    // likewise report a genuine deep mismatch and must not bail the relation to
+    // `Maybe`/related. That bail was the false negative behind the upstream
+    // `deeplyNestedMappedTypes.ts` row, where `problematicFunction3`'s mismatch
+    // went unreported. (The residual on that real-lib row is the elaboration
+    // *display* of the reduced reducer, which is independent of — and downstream
+    // from — the relation outcome guarded here.)
+    //
+    // Two negatives at nesting depth 6 (beyond the depth-5 cap) — a missing deep
+    // property (`u`) and an incompatible deep leaf (`string` vs `number`) — must
+    // each surface as exactly one `TS2322`. Two positive controls (a reflexive
+    // reducer assignment, and the same through an array) must stay fully clean so
+    // the guard cannot pass by always erroring. Every binder name is arbitrary
+    // (no `Static`/`Input`/`TObject` text), so the outcome tracks the reducer
+    // shape, not a spelling.
+    // ------------------------------------------------------------------
+    #[test]
+    fn deeply_nested_mapped_reducer_relates_past_recursion_cap() {
+        let options = project_mode_es2015_strict_options();
+        let base = std::path::Path::new("/");
+
+        // Positive controls: a reflexive reducer assignment, and the same
+        // through an array, must produce no diagnostics at all.
+        let clean = collect_test_diagnostics_with_options(
+            &[(
+                "/p/clean.ts",
+                r#"
+declare const Brand: unique symbol;
+interface Spec { [Brand]: string; opts: unknown[]; out: unknown; }
+interface TextSpec extends Spec { [Brand]: 'Text'; out: string; }
+interface SpecMap { [field: string]: Spec; }
+type Fold<M extends SpecMap> = { [F in keyof M]: Materialize<M[F]> };
+interface Branch<M extends SpecMap = SpecMap> extends Spec {
+  [Brand]: 'Branch'; out: Fold<M>; children: M;
+}
+type Materialize<S extends Spec> = (S & { opts: [] })['out'];
+type WideTree = Materialize<Branch<{ p: Branch<{ q: Branch<{ r: Branch<{ s: Branch<{ t: TextSpec }> }> }> }> }>>;
+declare const wide: WideTree;
+const sameShape: WideTree = wide;
+const asArray: WideTree[] = [wide];
+"#,
+            )],
+            &options,
+            base,
+        );
+        assert!(
+            clean.is_empty(),
+            "a deeply-nested reducer assigned to its own (identical) reduced form \
+             must check clean: {clean:#?}"
+        );
+
+        // Negatives: at nesting depth 6 (beyond the one-sided expansion cap) a
+        // missing deep property and an incompatible deep leaf must each surface
+        // as exactly one TS2322 — the relation must not bail to `Maybe`/related
+        // on the recursive reducer.
+        let mismatches = collect_test_diagnostics_with_options(
+            &[(
+                "/p/mismatch.ts",
+                r#"
+declare const Brand: unique symbol;
+interface Spec { [Brand]: string; opts: unknown[]; out: unknown; }
+interface TextSpec extends Spec { [Brand]: 'Text'; out: string; }
+interface CountSpec extends Spec { [Brand]: 'Count'; out: number; }
+interface SpecMap { [field: string]: Spec; }
+type Fold<M extends SpecMap> = { [F in keyof M]: Materialize<M[F]> };
+interface Branch<M extends SpecMap = SpecMap> extends Spec {
+  [Brand]: 'Branch'; out: Fold<M>; children: M;
+}
+type Materialize<S extends Spec> = (S & { opts: [] })['out'];
+type WideTree  = Materialize<Branch<{ p: Branch<{ q: Branch<{ r: Branch<{ s: Branch<{ t: TextSpec }> }> }> }> }>>;
+type ExtraTree = Materialize<Branch<{ p: Branch<{ q: Branch<{ r: Branch<{ s: Branch<{ t: TextSpec; u: TextSpec }> }> }> }> }>>;
+type CountTree = Materialize<Branch<{ p: Branch<{ q: Branch<{ r: Branch<{ s: Branch<{ t: CountSpec }> }> }> }> }>>;
+declare const wide: WideTree;
+const missingProp: ExtraTree = wide;
+const wrongLeaf: CountTree = wide;
+"#,
+            )],
+            &options,
+            base,
+        );
+        let ts2322: Vec<_> = mismatches.iter().filter(|d| d.code == 2322).collect();
+        assert_eq!(
+            ts2322.len(),
+            2,
+            "deep reducer mismatches (a missing property and an incompatible leaf) \
+             past the recursion cap must each report TS2322, not bail to related: \
+             got {ts2322:#?}; all: {mismatches:#?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // tsc-parity guard: real-world npm import shapes (witnesses from #13826)
     // must keep resolving the way tsc resolves them, across every module
     // resolution mode. The resolver entry points are being actively
@@ -1095,4 +1195,3 @@ export default class Helper {
             );
         }
     }
-
