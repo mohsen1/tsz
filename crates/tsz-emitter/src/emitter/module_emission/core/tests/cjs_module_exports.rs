@@ -1473,6 +1473,42 @@ fn commonjs_exported_destructuring_rest_forms_match_tsc() {
     );
 }
 
+/// Leading comments attached to a binding element in an exported pattern are
+/// printable output trivia and must move with the generated `exports.*`
+/// assignment.
+#[test]
+fn commonjs_exported_destructuring_preserves_binding_element_leading_comments() {
+    let output = emit_commonjs_es2015(
+        "export let {\n    /**\n     * retained leaf\n     */\n    pickedMethod\n} = source;\n",
+    );
+    let comment_pos = output
+        .find("retained leaf")
+        .unwrap_or_else(|| panic!("Binding-element comment must be emitted.\nOutput:\n{output}"));
+    let export_pos = output
+        .find("exports.pickedMethod = source.pickedMethod;")
+        .unwrap_or_else(|| panic!("Export assignment must be emitted.\nOutput:\n{output}"));
+    assert!(
+        comment_pos < export_pos,
+        "Binding-element leading comment must precede its export assignment.\nOutput:\n{output}"
+    );
+
+    let renamed = emit_commonjs_es2015(
+        "export let { sourceName:\n    /**\n     * renamed retained\n     */\n    renamedMethod\n} = bag;\n",
+    );
+    let renamed_comment_pos = renamed
+        .find("renamed retained")
+        .unwrap_or_else(|| panic!("Renamed binding comment must be emitted.\nOutput:\n{renamed}"));
+    let renamed_export_pos = renamed
+        .find("exports.renamedMethod = bag.sourceName;")
+        .unwrap_or_else(|| {
+            panic!("Renamed export assignment must be emitted.\nOutput:\n{renamed}")
+        });
+    assert!(
+        renamed_comment_pos < renamed_export_pos,
+        "Renamed binding-element comment must precede its export assignment.\nOutput:\n{renamed}"
+    );
+}
+
 /// Non-identifier property keys read through bracket access (string/number).
 #[test]
 fn commonjs_exported_destructuring_uses_bracket_access_for_non_identifier_keys() {

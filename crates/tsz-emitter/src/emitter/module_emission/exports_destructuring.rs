@@ -115,7 +115,7 @@ impl Printer<'_> {
         let element_indices: Vec<NodeIndex> = pattern.elements.nodes.clone();
 
         let mut excluded_props: Vec<String> = Vec::new();
-        let mut rest: Option<(String, usize)> = None;
+        let mut rest: Option<(String, usize, u32)> = None;
 
         for (element_index, &elem_idx) in element_indices.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
@@ -129,7 +129,11 @@ impl Printer<'_> {
             };
 
             if elem.dot_dot_dot_token {
-                rest = Some((self.get_identifier_text(elem.name), element_index));
+                rest = Some((
+                    self.get_identifier_text(elem.name),
+                    element_index,
+                    elem_node.pos,
+                ));
                 continue;
             }
 
@@ -155,6 +159,13 @@ impl Printer<'_> {
                 Self::destructuring_export_property_suffix(&prop_text, prop_kind)
             };
             let access_base = base.with_access(&access_suffix);
+            let leading_comment_pos = if elem.property_name.is_some() {
+                self.arena
+                    .get(elem.name)
+                    .map_or(elem_node.pos, |name_node| name_node.pos)
+            } else {
+                elem_node.pos
+            };
 
             let target_is_pattern = self.arena.get(elem.name).is_some_and(|name_node| {
                 name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -184,7 +195,11 @@ impl Printer<'_> {
                     );
                 } else {
                     let export_name = self.get_identifier_text(elem.name);
-                    self.write_export_assignment_start(first, &export_name);
+                    self.write_export_assignment_start_with_comments(
+                        first,
+                        &export_name,
+                        leading_comment_pos,
+                    );
                     self.write_destructuring_export_default(&access_temp, elem.initializer);
                 }
             } else if target_is_pattern {
@@ -206,13 +221,17 @@ impl Printer<'_> {
                 }
             } else {
                 let export_name = self.get_identifier_text(elem.name);
-                self.write_export_assignment_start(first, &export_name);
+                self.write_export_assignment_start_with_comments(
+                    first,
+                    &export_name,
+                    leading_comment_pos,
+                );
                 self.write_destructuring_export_base(&access_base);
             }
         }
 
-        if let Some((rest_name, rest_index)) = rest {
-            self.write_export_assignment_start(first, &rest_name);
+        if let Some((rest_name, rest_index, rest_comment_pos)) = rest {
+            self.write_export_assignment_start_with_comments(first, &rest_name, rest_comment_pos);
             if pattern_is_array {
                 // Array rest: `source.slice(<index>)`.
                 self.write_destructuring_export_base(base);
@@ -279,9 +298,16 @@ impl Printer<'_> {
         }
     }
 
-    /// Emit a `, exports.<name> = ` assignment head (with the leading separator).
-    fn write_export_assignment_start(&mut self, first: &mut bool, name: &str) {
+    /// Emit a CJS export assignment head while preserving comments attached to
+    /// the corresponding binding element.
+    fn write_export_assignment_start_with_comments(
+        &mut self,
+        first: &mut bool,
+        name: &str,
+        leading_comment_pos: u32,
+    ) {
         self.emit_assignment_separator(first);
+        self.emit_comments_before_pos(leading_comment_pos);
         self.write("exports.");
         self.write(name);
         self.write(" = ");
