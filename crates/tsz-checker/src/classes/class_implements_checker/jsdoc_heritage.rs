@@ -1566,6 +1566,163 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    // ============================================================================
+    // JSDoc @extends/@augments name mismatch checking (TS8023)
+    // ============================================================================
+
+    /// Check that JSDoc `@extends`/`@augments` tag argument matches the actual `extends` clause.
+    ///
+    /// In JS files, if a class has both `@extends {Foo}` and `extends Bar`,
+    /// TSC emits TS8023: "JSDoc '@extends Foo' does not match the 'extends Bar' clause."
+    pub(crate) fn check_jsdoc_extends_name_mismatch(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if !self.ctx.is_js_file() {
+            return;
+        }
+
+        self.check_jsdoc_extends_tag_type_arguments(class_idx);
+        self.check_jsdoc_extends_tag_type_argument_constraints(class_idx);
+        self.check_missing_jsdoc_extends_type_arguments(class_idx, class_data);
+
+        // Get the actual extends clause base class name
+        let actual_extends_name = self.get_extends_clause_name(class_data);
+        let Some(actual_name) = actual_extends_name else {
+            return; // No extends clause, nothing to check
+        };
+
+        // Get the JSDoc comment range and search the raw source text
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return;
+        };
+
+        // Find the leading JSDoc comment range
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let Some(comment) = leading.last() else {
+            return;
+        };
+        if !is_jsdoc_comment(comment, source_text) {
+            return;
+        }
+
+        let comment_text = comment.get_text(source_text);
+
+        // Search for @extends or @augments in the raw comment text
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    continue;
+                }
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                let rest = comment_text[after..].trim_start();
+                if rest.is_empty() {
+                    continue;
+                }
+
+                // Extract type name from {TypeName<...>} or TypeName
+                let (jsdoc_type_name, type_name_in_rest) = if rest.starts_with('{') {
+                    if let Some(close) = rest.find('}') {
+                        let name = rest[1..close].trim();
+                        (name, &rest[1..close])
+                    } else {
+                        continue;
+                    }
+                } else {
+                    let end = rest
+                        .find(|c: char| c.is_whitespace() || c == '*')
+                        .unwrap_or(rest.len());
+                    let name = rest[..end].trim();
+                    (name, &rest[..end])
+                };
+
+                if jsdoc_type_name.is_empty() {
+                    // Empty @extends/@augments tag (e.g. `/** @augments */`):
+                    // emit TS1003 + TS8023 at the position right after the tag keyword.
+                    let error_pos = comment.pos + after as u32;
+
+                    self.ctx.error(
+                        error_pos,
+                        1,
+                        diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                        diagnostic_codes::IDENTIFIER_EXPECTED,
+                    );
+
+                    let message = format_message(
+                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                        &[tag, "", &actual_name],
+                    );
+                    self.ctx.error(
+                        error_pos,
+                        1,
+                        message,
+                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                    );
+                    return;
+                }
+
+                // Strip type arguments: "Foo<Bar>" -> "Foo"
+                let jsdoc_base_name = jsdoc_type_name
+                    .find('<')
+                    .map_or(jsdoc_type_name, |i| &jsdoc_type_name[..i]);
+
+                // Check if the JSDoc @extends type name actually exists. If not,
+                // emit TS2304 "Cannot find name" (tsc emits this alongside TS8023,
+                // not instead of it).
+                if !self.ctx.binder.file_locals.has(jsdoc_base_name) {
+                    let type_name_offset =
+                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
+                    let error_pos = comment.pos + type_name_offset as u32;
+                    let error_len = jsdoc_base_name.len() as u32;
+                    let message =
+                        format_message(diagnostic_messages::CANNOT_FIND_NAME, &[jsdoc_base_name]);
+                    self.ctx.error(
+                        error_pos,
+                        error_len,
+                        message,
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+
+                if jsdoc_base_name != actual_name {
+                    let message = format_message(
+                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                        &[tag, jsdoc_type_name, &actual_name],
+                    );
+                    // Anchor at the type name argument in the JSDoc (matches TSC behavior)
+                    let type_name_offset =
+                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
+                    let error_pos = comment.pos + type_name_offset as u32;
+                    let error_len = jsdoc_type_name.len() as u32;
+                    self.ctx.error(
+                        error_pos,
+                        error_len,
+                        message,
+                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                    );
+                }
+                return; // Only check first @extends/@augments tag
+            }
+        }
+    }
+
     // NOTE: check_abstract_members_from_type, find_abstract_members_in_type,
     // collect_class_names_from_instance_type, and is_property_abstract_via_parent
     // are in class_abstract_checker.rs
