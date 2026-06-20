@@ -105,6 +105,7 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.declaration_dir = Some(declaration_dir.clone());
     }
     if let Some(types) = args.types.as_ref() {
+        options.checker.types_has_wildcard = types.iter().any(|entry| entry == "*");
         options.types = Some(types.clone());
         options.checker.types_explicitly_set = true;
     }

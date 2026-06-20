@@ -283,11 +283,18 @@ impl<'a> CheckerState<'a> {
         //
         // This takes priority over any resolution error from the driver.
         if is_known_node_module(module_name) {
+            // tsc emits the install-only TS2580 hint only when `compilerOptions.types`
+            // includes the literal wildcard `"*"`; otherwise it emits the
+            // add-to-types-field TS2591 variant. So a plain import site defaults to
+            // TS2591 (its conformance baselines use TS2591 exclusively), and the
+            // require-like / import-type / JS / no-types-and-symbols sites stay on
+            // TS2591 as before.
             let use_types_field_hint = matches!(
                 site,
                 ModuleNotFoundSite::RequireLike | ModuleNotFoundSite::ImportType
             ) || self.ctx.compiler_options.no_types_and_symbols
-                || self.ctx.is_js_file();
+                || self.ctx.is_js_file()
+                || !self.ctx.compiler_options.types_has_wildcard;
             let (message_template, code) = if use_types_field_hint {
                 (
                     diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,

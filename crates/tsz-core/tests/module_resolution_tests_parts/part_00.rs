@@ -149,7 +149,12 @@ fn test_es_named_import_unresolved_module() {
 }
 
 #[test]
-fn test_ts_import_of_node_builtin_uses_ts2580() {
+fn test_ts_import_of_node_builtin_uses_ts2591() {
+    // tsc's module-specifier path (getCannotResolveModuleNameErrorForSpecificModule)
+    // emits the add-to-`types`-field hint TS2591 by default for a missing Node
+    // builtin import; it only switches to the install-only TS2580 when
+    // `compilerOptions.types` contains the literal wildcard "*". See the wildcard
+    // sibling below.
     let diags = check_with_module_not_found_errors(
         r#"import { parse } from "url";
 export const thing = () => parse();
@@ -163,12 +168,39 @@ export const thing = () => parse();
         },
     );
     assert!(
+        has_error_code(&diags, TS2591),
+        "TypeScript import of unresolved Node builtin should emit TS2591, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2580),
+        "default (no types wildcard) Node builtin import should not emit install-only TS2580, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts_import_of_node_builtin_with_types_wildcard_uses_ts2580() {
+    // With `compilerOptions.types: ["*"]` (usesWildcardTypes), tsc switches the
+    // same missing Node builtin import to the install-only hint TS2580.
+    let diags = check_with_module_not_found_errors(
+        r#"import { parse } from "url";
+export const thing = () => parse();
+"#,
+        "usage.ts",
+        vec![],
+        vec!["url"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::CommonJS,
+            types_has_wildcard: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
         has_error_code(&diags, TS2580),
-        "TypeScript import of unresolved Node builtin should emit TS2580, got: {diags:?}"
+        "types wildcard makes the Node builtin import install-only TS2580, got: {diags:?}"
     );
     assert!(
         no_error_code(&diags, TS2591),
-        "TypeScript import of unresolved Node builtin should not emit TS2591, got: {diags:?}"
+        "types wildcard should not emit the add-to-types-field TS2591, got: {diags:?}"
     );
 }
 
@@ -344,7 +376,7 @@ export const thing = parse();
 // previously suppressed it silently, while every other module kind (and `tsc`)
 // reports TS2580/TS2591.
 #[test]
-fn test_node_module_kind_static_import_of_node_builtin_emits_ts2580() {
+fn test_node_module_kind_static_import_of_node_builtin_emits_ts2591() {
     for module in [
         crate::common::ModuleKind::Node16,
         crate::common::ModuleKind::Node18,
@@ -364,12 +396,12 @@ export const thing = () => parse();
             },
         );
         assert!(
-            has_error_code(&diags, TS2580),
-            "{module:?} static import of unresolved Node builtin should emit TS2580 (not be silently suppressed), got: {diags:?}"
+            has_error_code(&diags, TS2591),
+            "{module:?} static import of unresolved Node builtin should emit TS2591 (not be silently suppressed), got: {diags:?}"
         );
         assert!(
             no_error_code(&diags, TS2307),
-            "{module:?} Node builtin should use the TS2580 install hint, not TS2307, got: {diags:?}"
+            "{module:?} Node builtin should use the TS2591 install hint, not TS2307, got: {diags:?}"
         );
     }
 }
@@ -392,8 +424,8 @@ export const run = () => pipeline;
         },
     );
     assert!(
-        has_error_code(&diags, TS2580),
-        "NodeNext static import of unresolved node:stream/promises should emit the @types/node install hint, got: {diags:?}"
+        has_error_code(&diags, TS2591),
+        "NodeNext static import of unresolved node:stream/promises should emit the add-to-types-field install hint TS2591, got: {diags:?}"
     );
 }
 

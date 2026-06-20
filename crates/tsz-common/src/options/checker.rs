@@ -35,6 +35,11 @@ pub struct CheckerOptions {
     /// This distinguishes install-only diagnostics from types-field diagnostics in
     /// module-resolution paths that consult ambient package loading.
     pub types_explicitly_set: bool,
+    /// Whether `compilerOptions.types` contains the literal wildcard `"*"`.
+    /// tsc reports a missing Node built-in's "cannot find name" hint as TS2580
+    /// (install-only) only in this mode; otherwise it uses TS2591 (install +
+    /// add to the `types` field).
+    pub types_has_wildcard: bool,
     /// Target ECMAScript version (ES3, ES5, ES2015, ES2016, etc.)
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
     /// Defaults to ES3 for maximum compatibility
@@ -225,6 +230,7 @@ impl Default for CheckerOptions {
             no_lib: false,
             no_types_and_symbols: false,
             types_explicitly_set: false,
+            types_has_wildcard: false,
             target: ScriptTarget::default(),
             module: ModuleKind::default(),
             es_module_interop: false,
