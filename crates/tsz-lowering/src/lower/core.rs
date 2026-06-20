@@ -1299,8 +1299,13 @@ impl<'a> TypeLowering<'a> {
                 None
             };
 
+            let type_id = if data.dot_dot_dot_token {
+                self.lower_rest_position_type(data.type_node)
+            } else {
+                self.lower_type(data.type_node)
+            };
             return TupleElement {
-                type_id: self.lower_type(data.type_node),
+                type_id,
                 name,
                 optional: data.question_token,
                 rest: data.dot_dot_dot_token,
@@ -1317,12 +1322,17 @@ impl<'a> TypeLowering<'a> {
                     .map(|data| data.type_node)
             };
 
+            let is_rest = node.kind == syntax_kind_ext::REST_TYPE;
+            let type_id = match wrapped {
+                None => self.lower_type(node_idx),
+                Some(inner) if is_rest => self.lower_rest_position_type(inner),
+                Some(inner) => self.lower_type(inner),
+            };
             return TupleElement {
-                type_id: wrapped
-                    .map_or_else(|| self.lower_type(node_idx), |inner| self.lower_type(inner)),
+                type_id,
                 name: None,
                 optional: node.kind == syntax_kind_ext::OPTIONAL_TYPE,
-                rest: node.kind == syntax_kind_ext::REST_TYPE,
+                rest: is_rest,
             };
         }
 

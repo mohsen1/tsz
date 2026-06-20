@@ -955,6 +955,32 @@ impl<'a> TypeLowering<'a> {
         (return_type, Some(predicate))
     }
 
+    /// Lower the inner type of a tuple rest element (`...X`).
+    ///
+    /// Mirrors tsc's `getInferredTypeParameterConstraint`: a bare `infer X`
+    /// declared directly in a rest position (`[...infer X]`,
+    /// `[...name: infer X]`) is inferred to capture the tail elements, so its
+    /// constraint is `unknown[]` when no explicit `extends` clause is present.
+    /// Baking the constraint at lowering keeps it on the interned `Infer` so it
+    /// survives wherever the captured parameter later flows — notably when it is
+    /// re-extracted through an indexed access into the conditional that bound it
+    /// (`(T extends [...infer X] ? { rest: X } : …)["rest"]`), where the array
+    /// constraint decides `["length"]`, numeric indexing, and rest-spread
+    /// array-likeness. An explicit `...infer X extends C`, or any non-bare-infer
+    /// rest inner (`...F<infer X>`, `...X[]`), keeps its own lowering.
+    pub(super) fn lower_rest_position_type(&self, inner_idx: NodeIndex) -> TypeId {
+        if let Some(node) = self.arena.get(inner_idx)
+            && node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(data) = self.arena.get_infer_type(node)
+            && let Some(mut info) = self.lower_type_parameter(data.type_parameter)
+            && info.constraint.is_none()
+        {
+            info.constraint = Some(self.interner.array(TypeId::UNKNOWN));
+            return self.interner.infer(info);
+        }
+        self.lower_type(inner_idx)
+    }
+
     /// Lower an infer type (infer R)
     pub(super) fn lower_infer_type(&self, node_idx: NodeIndex) -> TypeId {
         let data = lower_node_data!(self, node_idx, get_infer_type, TypeId::ERROR);
