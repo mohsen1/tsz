@@ -31,7 +31,7 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-impl<'a> AsyncES5Transformer<'a> {
+impl AsyncES5Transformer<'_> {
     /// Whether a variable statement declares at least one binding pattern, so it
     /// must route through the destructuring lowering rather than the plain
     /// identifier path.
@@ -334,7 +334,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.bind_target(elem.name, rhs, elem.initializer, assigns, hoist);
                 continue;
             }
-            let key_idx = self.binding_element_key(elem.property_name, elem.name);
+            let key_idx = Self::binding_element_key(elem.property_name, elem.name);
             let (access, exclude_key) =
                 self.object_member_access(src.clone(), key_idx, assigns, hoist);
             excluded_keys.push(exclude_key);
@@ -549,7 +549,7 @@ impl<'a> AsyncES5Transformer<'a> {
         (src, IRNode::StringLiteral("".into()))
     }
 
-    const fn binding_element_key(&self, property_name: NodeIndex, name: NodeIndex) -> NodeIndex {
+    const fn binding_element_key(property_name: NodeIndex, name: NodeIndex) -> NodeIndex {
         if property_name.is_some() {
             property_name
         } else {
@@ -593,7 +593,7 @@ impl<'a> AsyncES5Transformer<'a> {
         if elem.dot_dot_dot_token {
             return false;
         }
-        let key_idx = self.binding_element_key(elem.property_name, elem.name);
+        let key_idx = Self::binding_element_key(elem.property_name, elem.name);
         self.arena
             .get(key_idx)
             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
