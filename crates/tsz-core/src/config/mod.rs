@@ -1590,7 +1590,13 @@ fn split_path_pattern(pattern: &str) -> (String, String) {
 }
 
 /// Convert emitter `ScriptTarget` to checker `ScriptTarget`.
-/// The emitter has more variants (`ES2021`, `ES2022`) which map to `ESNext` in the checker.
+///
+/// Both sides are the same `tsz_common` `ScriptTarget`, so this is an identity
+/// mapping. The checker relies on the precise target to gate diagnostics the
+/// way `tsc` does (`useDefineForClassFields` at `ES2022`, the `ES2024` and
+/// `ES2025` feature gates, the `using`/`await using` disposable-global checks),
+/// so `ES2021` through `ES2025` must be preserved rather than collapsed to
+/// `ESNext`.
 pub const fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
     match target {
         ScriptTarget::ES3 => CheckerScriptTarget::ES3,
@@ -1601,12 +1607,12 @@ pub const fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptT
         ScriptTarget::ES2018 => CheckerScriptTarget::ES2018,
         ScriptTarget::ES2019 => CheckerScriptTarget::ES2019,
         ScriptTarget::ES2020 => CheckerScriptTarget::ES2020,
-        ScriptTarget::ES2021
-        | ScriptTarget::ES2022
-        | ScriptTarget::ES2023
-        | ScriptTarget::ES2024
-        | ScriptTarget::ES2025
-        | ScriptTarget::ESNext => CheckerScriptTarget::ESNext,
+        ScriptTarget::ES2021 => CheckerScriptTarget::ES2021,
+        ScriptTarget::ES2022 => CheckerScriptTarget::ES2022,
+        ScriptTarget::ES2023 => CheckerScriptTarget::ES2023,
+        ScriptTarget::ES2024 => CheckerScriptTarget::ES2024,
+        ScriptTarget::ES2025 => CheckerScriptTarget::ES2025,
+        ScriptTarget::ESNext => CheckerScriptTarget::ESNext,
     }
 }
 

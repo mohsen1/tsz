@@ -924,6 +924,104 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
 }
 
 #[test]
+fn overloaded_tslib_private_static_get_accepts_later_compatible_overload() {
+    let program = merged_program(&[
+        (
+            "main.ts",
+            r#"
+export class Renamed {
+    static #read() { return 1; }
+    value() { return Renamed.#read(); }
+}
+"#,
+        ),
+        (
+            "node_modules/tslib/index.d.ts",
+            r#"
+export declare function __classPrivateFieldGet<T extends object, V>(
+    receiver: T,
+    state: { has(o: T): boolean, get(o: T): V | undefined },
+    kind?: "f"
+): V;
+export declare function __classPrivateFieldGet<T extends new (...args: any[]) => unknown, V>(
+    receiver: T,
+    state: T,
+    kind: "f",
+    f: { value: V }
+): V;
+"#,
+        ),
+    ]);
+    let mut options = ResolvedCompilerOptions {
+        import_helpers: true,
+        ..Default::default()
+    };
+    options.checker.target = tsz_common::ScriptTarget::ES2021;
+
+    let diagnostics = detect_missing_tslib_helper_diagnostics(
+        &program,
+        &options,
+        Path::new("/"),
+        &rustc_hash::FxHashMap::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2807),
+        "Did not expect TS2807 when a later overload has the required arity. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn filesystem_tslib_private_static_get_accepts_later_compatible_overload() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let tslib_dir = temp_dir.path().join("node_modules").join("tslib");
+    std::fs::create_dir_all(&tslib_dir).unwrap();
+    std::fs::write(
+        tslib_dir.join("index.d.ts"),
+        r#"
+export declare function __classPrivateFieldGet<T extends object, V>(
+    receiver: T,
+    state: { has(o: T): boolean, get(o: T): V | undefined },
+    kind?: "f"
+): V;
+export declare function __classPrivateFieldGet<T extends new (...args: any[]) => unknown, V>(
+    receiver: T,
+    state: T,
+    kind: "f",
+    f: { value: V }
+): V;
+"#,
+    )
+    .unwrap();
+    let program = merged_program(&[(
+        "main.ts",
+        r#"
+export class OtherName {
+    static #hidden() { return 1; }
+    value() { return OtherName.#hidden(); }
+}
+"#,
+    )]);
+    let mut options = ResolvedCompilerOptions {
+        import_helpers: true,
+        ..Default::default()
+    };
+    options.checker.target = tsz_common::ScriptTarget::ES2021;
+
+    let diagnostics = detect_missing_tslib_helper_diagnostics(
+        &program,
+        &options,
+        temp_dir.path(),
+        &rustc_hash::FxHashMap::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2807),
+        "Did not expect TS2807 when filesystem tslib has a compatible overload. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn decorated_class_emits_es_decorate_and_run_initializers() {
     let helpers = helper_names("declare var dec: any;\n@dec class C { method() {} }");
     assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");

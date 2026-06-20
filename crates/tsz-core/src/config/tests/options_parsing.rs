@@ -7,6 +7,58 @@
 
 use super::super::*;
 
+/// The checker target must be the exact emitter target — both are the same
+/// `tsz_common` `ScriptTarget`. A historical collapse mapped `ES2021`..`ES2025`
+/// to `ESNext`, which made the checker treat those targets as `ESNext` and
+/// silently skip every target-gated diagnostic in that range (e.g. the
+/// `useDefineForClassFields` default at `ES2022`, the `ES2024` regex-`v`-flag
+/// gate, and the `using`/`await using` disposable-global checks).
+#[test]
+fn checker_target_from_emitter_preserves_every_target() {
+    const TARGETS: &[ScriptTarget] = &[
+        ScriptTarget::ES3,
+        ScriptTarget::ES5,
+        ScriptTarget::ES2015,
+        ScriptTarget::ES2016,
+        ScriptTarget::ES2017,
+        ScriptTarget::ES2018,
+        ScriptTarget::ES2019,
+        ScriptTarget::ES2020,
+        ScriptTarget::ES2021,
+        ScriptTarget::ES2022,
+        ScriptTarget::ES2023,
+        ScriptTarget::ES2024,
+        ScriptTarget::ES2025,
+        ScriptTarget::ESNext,
+    ];
+    for &target in TARGETS {
+        assert_eq!(
+            checker_target_from_emitter(target),
+            target,
+            "checker target must equal the emitter target for {target:?}"
+        );
+    }
+}
+
+/// Targets in the `ES2021`..`ES2024` window must not be conflated with later
+/// targets: each must report only the capabilities it actually has. This is the
+/// behavior the collapse erased.
+#[test]
+fn checker_target_distinguishes_es2021_through_es2024() {
+    // `ES2021` is below the `useDefineForClassFields` (ES2022) boundary.
+    assert!(!checker_target_from_emitter(ScriptTarget::ES2021).supports_es2022());
+    assert!(checker_target_from_emitter(ScriptTarget::ES2022).supports_es2022());
+
+    // `ES2022`/`ES2023` are below the regex-`v`-flag (ES2024) boundary.
+    assert!(!checker_target_from_emitter(ScriptTarget::ES2023).supports_es2024());
+    assert!(checker_target_from_emitter(ScriptTarget::ES2024).supports_es2024());
+
+    // `ES2024` is below the native-`using` (ES2025) boundary, so the disposable
+    // global types are still required there.
+    assert!(!checker_target_from_emitter(ScriptTarget::ES2024).supports_es2025());
+    assert!(checker_target_from_emitter(ScriptTarget::ES2025).supports_es2025());
+}
+
 #[test]
 fn test_parse_boolean_true() {
     let json = r#"{"strict": true}"#;

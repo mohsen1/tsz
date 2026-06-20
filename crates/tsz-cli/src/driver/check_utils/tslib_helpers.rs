@@ -256,23 +256,30 @@ fn emit_tslib_helper_diagnostics(
 
 fn helper_parameter_count_for_symbol(program: &MergedProgram, sym_id: SymbolId) -> Option<usize> {
     let symbol = program.symbols.get(sym_id)?;
+    let mut max_parameter_count: Option<usize> = None;
     for &decl_idx in &symbol.declarations {
         if let Some(arenas) = program.declaration_arenas.get(&(sym_id, decl_idx)) {
             for arena in arenas {
                 let node = arena.get(decl_idx)?;
                 if let Some(func) = arena.get_function(node) {
-                    return Some(func.parameters.nodes.len());
+                    let parameter_count = func.parameters.nodes.len();
+                    max_parameter_count = Some(
+                        max_parameter_count.map_or(parameter_count, |max| max.max(parameter_count)),
+                    );
                 }
             }
         }
         if let Some(arena) = program.symbol_arenas.get(&sym_id) {
             let node = arena.get(decl_idx)?;
             if let Some(func) = arena.get_function(node) {
-                return Some(func.parameters.nodes.len());
+                let parameter_count = func.parameters.nodes.len();
+                max_parameter_count = Some(
+                    max_parameter_count.map_or(parameter_count, |max| max.max(parameter_count)),
+                );
             }
         }
     }
-    None
+    max_parameter_count
 }
 
 fn emit_tslib_helper_diagnostics_from_counts(
@@ -410,9 +417,23 @@ fn source_tslib_helper_parameter_counts(
 
 fn extract_declared_function_parameter_count(source: &str, helper_name: &str) -> Option<usize> {
     let marker = format!("function {helper_name}");
-    let marker_idx = find_source_marker_outside_trivia(source, &marker)?;
-    let mut idx = marker_idx + marker.len();
+    let mut search_start = 0usize;
+    let mut max_parameter_count: Option<usize> = None;
+    while let Some(marker_idx) =
+        find_source_marker_outside_trivia_from(source, &marker, search_start)
+    {
+        search_start = marker_idx + marker.len();
+        if let Some(parameter_count) =
+            extract_declared_function_parameter_count_at(source, search_start)
+        {
+            max_parameter_count =
+                Some(max_parameter_count.map_or(parameter_count, |max| max.max(parameter_count)));
+        }
+    }
+    max_parameter_count
+}
 
+fn extract_declared_function_parameter_count_at(source: &str, mut idx: usize) -> Option<usize> {
     while let Some(ch) = source[idx..].chars().next() {
         if ch.is_whitespace() {
             idx += ch.len_utf8();
@@ -427,6 +448,13 @@ fn extract_declared_function_parameter_count(source: &str, helper_name: &str) ->
             match ch {
                 '<' => depth += 1,
                 '>' => {
+                    if idx
+                        .checked_add(rel_idx)
+                        .and_then(|byte_idx| source.as_bytes().get(byte_idx.saturating_sub(1)))
+                        == Some(&b'=')
+                    {
+                        continue;
+                    }
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
                         idx += rel_idx + ch.len_utf8();
@@ -498,8 +526,11 @@ fn extract_declared_function_parameter_count(source: &str, helper_name: &str) ->
     None
 }
 
-fn find_source_marker_outside_trivia(source: &str, marker: &str) -> Option<usize> {
-    let mut search_start = 0usize;
+fn find_source_marker_outside_trivia_from(
+    source: &str,
+    marker: &str,
+    mut search_start: usize,
+) -> Option<usize> {
     loop {
         let rel_idx = source[search_start..].find(marker)?;
         let marker_idx = search_start + rel_idx;
