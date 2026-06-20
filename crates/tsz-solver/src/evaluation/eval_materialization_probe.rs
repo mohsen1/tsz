@@ -91,6 +91,41 @@ pub(crate) fn record_def_reentry(prior_depth: u32) {
     DEF_REENTRY_MAX_DEPTH.fetch_max(prior_depth as u64, Ordering::Relaxed);
 }
 
+/// #14101 SCC-DISCRIMINATING counters: of all observed re-entries, how many are
+/// MULTI-MEMBER (>=1 distinct other `DefId` on the eval stack between the two
+/// entries of the same `DefId` = a genuine A->B->A SCC) vs single-def self-
+/// recursion, plus the max distinct-member count. Settles whether the SCC
+/// materialize-once fixpoint has any valid target (the open xstate/arktype branch).
+static DEF_REENTRY_OBSERVED: AtomicU64 = AtomicU64::new(0);
+static DEF_REENTRY_MULTIMEMBER: AtomicU64 = AtomicU64::new(0);
+static DEF_REENTRY_MAX_DISTINCT: AtomicU64 = AtomicU64::new(0);
+
+/// Record one re-entry, classified by the count of distinct OTHER `DefId`s on
+/// `stack` between its top and the previous entry of `def_id`. 0 distinct =
+/// single-def self-recursion; >=1 = a multi-member SCC. No-op unless gated on,
+/// so the (bounded) scan never runs in a production build.
+#[inline]
+pub(crate) fn record_def_reentry_distinct(stack: &[crate::def::DefId], def_id: crate::def::DefId) {
+    if !gate_enabled() {
+        return;
+    }
+    let mut others: Vec<crate::def::DefId> = Vec::new();
+    for &d in stack.iter().rev() {
+        if d == def_id {
+            break;
+        }
+        if !others.contains(&d) {
+            others.push(d);
+        }
+    }
+    let n = others.len() as u64;
+    DEF_REENTRY_OBSERVED.fetch_add(1, Ordering::Relaxed);
+    if n > 0 {
+        DEF_REENTRY_MULTIMEMBER.fetch_add(1, Ordering::Relaxed);
+    }
+    DEF_REENTRY_MAX_DISTINCT.fetch_max(n, Ordering::Relaxed);
+}
+
 /// Eval-engine kinds the lever targets. Index into [`ProbeState`] arrays.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(usize)]
@@ -645,6 +680,14 @@ pub fn dump_report() -> String {
             "[scc] def re-entries (recursive-heritage back-edges) {reentries}, \
              max prior depth {}  (#14101 step-2 materialize-once headroom)",
             DEF_REENTRY_MAX_DEPTH.load(Ordering::Relaxed)
+        );
+        let observed = DEF_REENTRY_OBSERVED.load(Ordering::Relaxed);
+        let multimember = DEF_REENTRY_MULTIMEMBER.load(Ordering::Relaxed);
+        let _ = writeln!(
+            out,
+            "[scc] multi-member re-entries {multimember}/{observed} (max distinct members {}) \
+             — 0 multi-member means single-def recursion, SCC fixpoint has no target",
+            DEF_REENTRY_MAX_DISTINCT.load(Ordering::Relaxed)
         );
     }
     out
