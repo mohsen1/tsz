@@ -263,6 +263,44 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
+        // An intersection (e.g. the lib's `window: Window & typeof globalThis`)
+        // carries no single `DefId` or display name, so the per-type lookup below
+        // would miss a `declare global { interface Window { ... } }` member.
+        // Resolve each named constituent and union the hits, matching tsc, which
+        // finds the augmented member on the `Window` arm. The lib intersection is
+        // eagerly merged into a single object, so recover its recorded origin when
+        // the type is no longer a structural intersection.
+        let intersection_members =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+                .or_else(|| {
+                    self.ctx
+                        .types
+                        .get_merged_intersection_origin(object_type)
+                        .and_then(|origin| {
+                            crate::query_boundaries::common::intersection_members(
+                                self.ctx.types,
+                                origin,
+                            )
+                        })
+                });
+        if let Some(members) = intersection_members {
+            let mut found = Vec::new();
+            for &member in members.iter() {
+                if member == object_type {
+                    continue;
+                }
+                if let Some(result) =
+                    self.resolve_object_type_global_augmentation(member, property_name)
+                {
+                    found.push(result);
+                }
+            }
+            if found.is_empty() {
+                return None;
+            }
+            return Some(tsz_solver::utils::union_or_single(self.ctx.types, found));
+        }
+
         // For object types that come from lib declarations (ErrorConstructor, RegExp, etc.),
         // check if the type's symbol name matches any global augmentation.
         let Some(def_id) =
@@ -311,7 +349,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve a property from global augmentation declarations for a specific interface name.
-    pub(super) fn resolve_augmentation_property_by_name(
+    pub(crate) fn resolve_augmentation_property_by_name(
         &mut self,
         interface_name: &str,
         property_name: &str,
@@ -351,6 +389,14 @@ impl<'a> CheckerState<'a> {
             None
         };
 
+        // Separate same-file augmentations (`arena == None`, resolvable against
+        // the current arena with full type evaluation) from cross-file ones (each
+        // carrying its own arena). Keeping the current-file group on
+        // `self.ctx.arena` itself — rather than an `Arc::new(self.ctx.arena.clone())`
+        // copy — preserves pointer identity, so `precompute_computed_property_names`
+        // can fold computed keys like `[GLOBAL_TSR]` (a `const` string) through
+        // `get_type_of_node`, matching the regular interface-lowering path.
+        let mut current_file_decls: Vec<tsz_parser::parser::NodeIndex> = Vec::new();
         let mut cross_file_groups: FxHashMap<
             usize,
             (Arc<NodeArena>, Vec<tsz_parser::parser::NodeIndex>),
@@ -364,24 +410,55 @@ impl<'a> CheckerState<'a> {
                     .1
                     .push(aug.node);
             } else {
-                let key = self.ctx.arena as *const NodeArena as usize;
-                cross_file_groups
-                    .entry(key)
-                    .or_insert_with(|| (Arc::new(self.ctx.arena.clone()), Vec::new()))
-                    .1
-                    .push(aug.node);
+                current_file_decls.push(aug.node);
             }
+        }
+        // The `augmentation_decls` borrow of `self.ctx.binder` ends here, freeing
+        // `&mut self` for the computed-name precompute below.
+        let cross_groups: Vec<(Arc<NodeArena>, Vec<tsz_parser::parser::NodeIndex>)> =
+            cross_file_groups.into_values().collect();
+
+        // Pre-compute computed property names the AST-only lowering can't resolve
+        // (e.g. `[k]` where `k` is a `const` string/number/unique-symbol binding),
+        // keyed by `(expression node, arena pointer)` exactly as the symbol-type
+        // interface path does. Without this the augmentation lowering drops such
+        // members and reports a false TS2339 on `declare global { interface Window
+        // { [GLOBAL_TSR]?: T } }`.
+        let mut computed_name_map: FxHashMap<
+            (tsz_parser::parser::NodeIndex, usize),
+            tsz_common::Atom,
+        > = FxHashMap::default();
+        if !current_file_decls.is_empty() {
+            computed_name_map.extend(self.precompute_computed_property_names(&current_file_decls));
+        }
+        for (arena, decls) in &cross_groups {
+            let decls_with_arenas: Vec<(tsz_parser::parser::NodeIndex, &NodeArena)> =
+                decls.iter().map(|&d| (d, arena.as_ref())).collect();
+            computed_name_map
+                .extend(self.precompute_computed_property_names_in_arenas(&decls_with_arenas));
+        }
+
+        // Lower each arena group (current file first, then cross-file) and look up
+        // the property on the resulting augmentation type. `self.ctx.arena` is a
+        // `&'a NodeArena` reference field, so the current-file group does not tie a
+        // borrow to `self` and the `&mut self` property-access call below is fine.
+        let mut groups: Vec<(&NodeArena, &[tsz_parser::parser::NodeIndex])> = Vec::new();
+        if !current_file_decls.is_empty() {
+            groups.push((self.ctx.arena, current_file_decls.as_slice()));
+        }
+        for (arena, decls) in &cross_groups {
+            groups.push((arena.as_ref(), decls.as_slice()));
         }
 
         let mut found_types = Vec::new();
-        for (_, (arena, decls)) in cross_file_groups {
-            let decl_binder = binder_for_arena(arena.as_ref()).unwrap_or(self.ctx.binder);
+        for (arena, decls) in groups {
+            let decl_binder = binder_for_arena(arena).unwrap_or(self.ctx.binder);
             let global_idx = file_locals_idx.as_deref();
             let all_binders_slice = all_binders.as_ref().map(|v| v.as_slice());
             let resolver = |node_idx: tsz_parser::parser::NodeIndex| -> Option<u32> {
                 resolve_augmentation_node(
                     decl_binder,
-                    arena.as_ref(),
+                    arena,
                     node_idx,
                     global_idx,
                     all_binders_slice,
@@ -394,7 +471,7 @@ impl<'a> CheckerState<'a> {
                     augmentation_def_id_from_node(
                         &self.ctx,
                         decl_binder,
-                        arena.as_ref(),
+                        arena,
                         node_idx,
                         global_idx,
                         all_binders_slice,
@@ -402,21 +479,24 @@ impl<'a> CheckerState<'a> {
                     )
                 };
 
-            let decls_with_arenas: Vec<(tsz_parser::parser::NodeIndex, &NodeArena)> = decls
-                .iter()
-                .map(|&decl_idx| (decl_idx, arena.as_ref()))
-                .collect();
+            let decls_with_arenas: Vec<(tsz_parser::parser::NodeIndex, &NodeArena)> =
+                decls.iter().map(|&decl_idx| (decl_idx, arena)).collect();
             let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
                 self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
             };
+            let arena_key = arena as *const NodeArena as usize;
+            let computed_name_resolver = |expr_idx: tsz_parser::parser::NodeIndex| {
+                computed_name_map.get(&(expr_idx, arena_key)).copied()
+            };
             let lowering = TypeLowering::with_hybrid_resolver(
-                arena.as_ref(),
+                arena,
                 self.ctx.types,
                 &resolver,
                 &def_id_resolver,
                 &no_value_resolver,
             )
-            .with_name_def_id_resolver(&name_resolver);
+            .with_name_def_id_resolver(&name_resolver)
+            .with_computed_name_resolver(&computed_name_resolver);
             let (aug_type, _params) =
                 lowering.lower_merged_interface_declarations(&decls_with_arenas);
             if aug_type == TypeId::ERROR {
