@@ -1160,6 +1160,29 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         };
 
+        let decl_name_and_init = self
+            .arena
+            .get_variable_declaration(node)
+            .map(|decl| (decl.name, decl.initializer));
+
+        // Destructuring declarations are lowered through the shared ES5
+        // destructuring flattener (hoisted names + comma-sequence assignments),
+        // matching tsc's generator/async output. The simple-identifier path
+        // below is left untouched.
+        if let Some((decl_name, decl_init)) = decl_name_and_init
+            && self.is_binding_pattern_node(decl_name)
+        {
+            self.process_destructuring_declaration_in_async(
+                decl_name,
+                decl_init,
+                cases,
+                current_statements,
+                current_label,
+                trailing_comment,
+            );
+            return;
+        }
+
         if let Some(decl) = self.arena.get_variable_declaration(node) {
             let name =
                 crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name);

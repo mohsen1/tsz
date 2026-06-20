@@ -872,6 +872,8 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write(")");
             }
+            // Flat, single-line, no surrounding parentheses: `a = obj.a, b = obj.b`.
+            IRNode::CommaSequence(exprs) => self.emit_comma_separated(exprs),
             IRNode::ArrayLiteral(elements) => {
                 self.write("[");
                 self.emit_comma_separated(elements);

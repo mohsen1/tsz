@@ -137,6 +137,14 @@ pub enum IRNode {
     /// multiline comma expression.
     CommaExprMultilineFlat(Vec<Self>),
 
+    /// Single-line comma sequence rendered WITHOUT surrounding parentheses,
+    /// e.g. `a = obj.a, b = obj.b`. Used at statement position for ES5
+    /// destructuring-assignment lowering inside async/generator bodies, where
+    /// `tsc` emits the flattened assignments as a bare comma expression
+    /// statement (`a = obj.a, b = obj.b;`). Constructed only as the direct child
+    /// of an `ExpressionStatement`.
+    CommaSequence(Vec<Self>),
+
     /// Array literal: `[a, b, c]`
     ArrayLiteral(Vec<Self>),
 
@@ -991,6 +999,7 @@ impl IRNode {
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
             | Self::CommaExprMultilineFlat(nodes)
+            | Self::CommaSequence(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)
@@ -1320,6 +1329,7 @@ impl IRNode {
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
             | Self::CommaExprMultilineFlat(nodes)
+            | Self::CommaSequence(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)

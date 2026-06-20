@@ -117,6 +117,27 @@ impl<'a> AsyncES5Transformer<'a> {
                         )));
                         self.catch_binding_renames
                             .push((catch_var_name, catch_temp));
+                    } else if let Some(pattern_idx) =
+                        self.catch_binding_pattern(catch_data.variable_declaration)
+                    {
+                        // Destructuring catch binding: bind the caught value to a
+                        // hoisted temp (`_a = _b.sent();`) and flatten the pattern
+                        // from it (`message = _a.message;`), mirroring tsc.
+                        let catch_temp = self.generate_hoisted_temp();
+                        current_statements.push(IRNode::VarDecl {
+                            name: catch_temp.clone().into(),
+                            initializer: None,
+                        });
+                        current_statements.push(IRNode::ExpressionStatement(Box::new(
+                            IRNode::assign(IRNode::id(catch_temp.clone()), IRNode::GeneratorSent),
+                        )));
+                        self.emit_destructuring_extraction(
+                            pattern_idx,
+                            IRNode::id(catch_temp),
+                            true,
+                            false,
+                            current_statements,
+                        );
                     }
                 }
                 self.process_block_or_statement_in_async(
