@@ -14,14 +14,12 @@ use crate::types::{
     ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::utils;
 use crate::visitor::{
     TypeVisitor, intersection_list_id, keyof_inner_type, literal_number, type_param_info,
     union_list_id,
 };
 
 use super::super::evaluate::TypeEvaluator;
-use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::literal_value_intrinsic_kind;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
@@ -1837,7 +1835,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// placeholder. Object shapes store well-known symbol members under the
     /// canonical text, so without this the lookup misses the member and the
     /// access wrongly evaluates to `undefined`.
-    fn literal_property_lookup_atom(&self, index_type: TypeId) -> Option<tsz_common::Atom> {
+    pub(super) fn literal_property_lookup_atom(
+        &self,
+        index_type: TypeId,
+    ) -> Option<tsz_common::Atom> {
         if let Some(TypeData::UniqueSymbol(sym)) = self.interner().lookup(index_type) {
             return Some(self.symbol_named_atom_from_unique_symbol_ref(sym));
         }
@@ -1906,114 +1907,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         shape: &ObjectShape,
         index_type: TypeId,
     ) -> TypeId {
-        let string_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL);
-        let symbol_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL);
-
-        // If index is a union, evaluate each member
-        if let Some(members) = union_list_id(self.interner(), index_type) {
-            let members = self.interner().type_list(members);
-            let mut results = Vec::new();
-            for &member in members.iter() {
-                let result = self.evaluate_object_with_index(shape, member);
-                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
-                    results.push(result);
-                }
-            }
-            if results.is_empty() {
-                return TypeId::UNDEFINED;
-            }
-            return self.interner().union(results);
-        }
-
-        // If index is a literal string or unique symbol, look up the property first,
-        // then fallback to string index.
-        if let Some(name) = self.literal_property_lookup_atom(index_type) {
-            let is_symbol_key = self.index_type_is_symbol_key(index_type);
-            for prop in &shape.properties {
-                if prop.name == name {
-                    return self.optional_property_type(prop);
-                }
-            }
-            if utils::is_numeric_property_name(self.interner(), name)
-                && let Some(number_index) = shape.number_index.as_ref()
-            {
-                return self.add_undefined_if_unchecked(number_index.value_type);
-            }
-            if is_symbol_key && let Some(symbol_index) = symbol_index {
-                return self.add_undefined_if_unchecked(symbol_index.value_type);
-            }
-            // Symbol-keyed properties must not fall through to string index signatures.
-            if !is_symbol_key
-                && let Some(string_index) = string_index
-                && string_index_signature_applies(self, string_index, index_type)
-            {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
-            return TypeId::UNDEFINED;
-        }
-
-        // If index is a literal number, prefer number index, then string index.
-        if literal_number(self.interner(), index_type).is_some() {
-            if let Some(number_index) = shape.number_index.as_ref() {
-                return self.add_undefined_if_unchecked(number_index.value_type);
-            }
-            if let Some(string_index) = string_index
-                && string_index_signature_applies(self, string_index, index_type)
-            {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
-            return TypeId::UNDEFINED;
-        }
-
-        // Bare `string`/`number`/`symbol` indices that match no applicable index
-        // signature are a TS2536/TS2537 failure: tsc resolves the access to the error
-        // type rather than the union of all member value types, so downstream checks
-        // are suppressed. A numeric index still falls back to a string index signature
-        // (numeric keys are string keys).
-        if index_type == TypeId::STRING {
-            if let Some(string_index) = string_index
-                && string_index_signature_applies(self, string_index, index_type)
-            {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
-            return TypeId::ERROR;
-        }
-
-        if index_type == TypeId::NUMBER {
-            if let Some(number_index) = shape.number_index.as_ref() {
-                return self.add_undefined_if_unchecked(number_index.value_type);
-            }
-            if let Some(string_index) = string_index {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
-            return TypeId::ERROR;
-        }
-
-        if index_type == TypeId::SYMBOL {
-            if let Some(symbol_index) = symbol_index {
-                return self.add_undefined_if_unchecked(symbol_index.value_type);
-            }
-            return TypeId::ERROR;
-        }
-
-        // Template literal types (e.g., `foo${string}`), string intrinsic types
-        // (e.g., Lowercase<T>), and intersections containing string (e.g., string & { brand: any })
-        // are all subtypes of string. When the object has a string index signature,
-        // these index types should resolve to the string index signature's value type,
-        // just like TypeId::STRING does.
-        if let Some(string_index) = string_index
-            && string_index_signature_applies(self, string_index, index_type)
-        {
-            return self.add_undefined_if_unchecked(string_index.value_type);
-        }
-
-        TypeId::UNDEFINED
+        super::index_access_object_with_index::evaluate_object_with_index(self, shape, index_type)
     }
 
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {

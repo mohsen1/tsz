@@ -18,6 +18,7 @@ pub mod conditional;
 pub mod index_access;
 mod index_access_callable;
 mod index_access_keys;
+mod index_access_object_with_index;
 mod index_access_tuple_literal;
 pub mod infer_pattern;
 mod infer_pattern_helpers;
