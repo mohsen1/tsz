@@ -7,7 +7,7 @@
 //! - Mapped types ({ [K in keyof T]: T[K] })
 //! - Type expansion and instantiation
 
-use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::super::{SubtypeChecker, SubtypeResult, TypeResolver, are_types_structurally_identical};
 pub(crate) use super::mapped_chain::flatten_mapped_chain;
 use crate::def::DefId;
 use crate::instantiation::instantiate::fill_application_defaults;
@@ -662,18 +662,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let t_eval = self.evaluate_type(target_type);
                 if s_eval != source_type || t_eval != target_type {
                     self.check_subtype(s_eval, t_eval)
-                } else if same_application_family {
-                    // When both applications share the same base but cannot be structurally
-                    // expanded or evaluated, we cannot safely assume covariant assignability.
-                    // The variance-aware check above already attempted to determine the
-                    // correct variance; if that failed (e.g., variance unavailable or needs
-                    // structural fallback but evaluation didn't change types), we must
-                    // reject the assignability rather than using an unsound covariant fallback.
-                    // This fixes cases like `Promise<Bar>` being incorrectly assignable to
-                    // `Promise<Foo>` when T is contravariant (appears in function parameter
-                    // position in the Promise interface).
-                    SubtypeResult::False
+                } else if same_application_family
+                    && are_types_structurally_identical(
+                        self.interner,
+                        self.resolver,
+                        source_type,
+                        target_type,
+                    )
+                {
+                    // Same base, opaque/unresolvable body (neither expansion nor
+                    // evaluation made progress), but the two applications are
+                    // structurally identical — they denote the same type. This is
+                    // the reflexive identity that type-parameter `default` /
+                    // constraint-resolution-snapshot fragmentation (#13609) splits
+                    // into distinct `TypeId`s: `App(Base, [R = "json"])` vs
+                    // `App(Base, [R])`. The query-db canonical fast path in
+                    // `check_subtype` recovers it when a `QueryDatabase` is present,
+                    // but relation paths constructed without one (instanceof,
+                    // element-access, contextual, property lookup, `CompatChecker`
+                    // before `set_query_db`) never reached it, so two identical
+                    // applications were falsely reported non-assignable. Recover the
+                    // identity directly here; this runs only in this rare opaque-base
+                    // arm, so it adds no hot-path cost. Structural identity implies
+                    // mutual assignability under any variance, so this only proves
+                    // the relation, never weakens a genuine rejection.
+                    SubtypeResult::True
                 } else {
+                    // Same base but not structurally identical (or a different
+                    // family): the body is opaque and evaluation stalled, so we
+                    // cannot assume covariant assignability — the variance-aware
+                    // check above already tried, and an unsound covariant fallback
+                    // would e.g. make `Promise<Bar>` assignable to `Promise<Foo>`
+                    // when `T` is contravariant (a function-parameter position).
+                    // Reject.
                     SubtypeResult::False
                 }
             }
