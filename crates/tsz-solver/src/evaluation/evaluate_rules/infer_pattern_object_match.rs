@@ -78,6 +78,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Unwrap a deferred `Application` source one structural step and re-match
+    /// it through the guarded [`Self::match_infer_pattern`] entry.
+    ///
+    /// The object / object-with-index pattern matchers reach this when the
+    /// source is still an `Application`. Recursing back into the per-shape
+    /// matcher directly would bypass `match_infer_pattern`'s `(source, pattern)`
+    /// cycle guard, so a pair of mutually-recursive deferred conditionals that
+    /// evaluate into each other (`eval(A) = B`, `eval(B) = A`) without ever
+    /// reducing to a concrete object would unwind `A -> B -> A -> ...` forever
+    /// and overflow the stack (issue #14123). Routing through the guarded entry
+    /// records each unwrapped source in `visited` and short-circuits the cycle,
+    /// and reuses the canonical `never`/union/intersection source handling.
+    fn match_infer_unwrapped_application(
+        &self,
+        source: TypeId,
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut InferPatternVisited,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let evaluated = self.evaluate_for_infer_match(source);
+        if evaluated == source {
+            return false;
+        }
+        self.match_infer_pattern(evaluated, pattern, bindings, visited, checker)
+    }
+
     /// Match each pattern property against the corresponding source property,
     /// extracting infer bindings with variance-aware merging.
     ///
@@ -189,18 +216,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             Some(TypeData::Application(_)) => {
-                let evaluated = self.evaluate_for_infer_match(source);
-                if evaluated == source {
-                    return false;
-                }
-                self.match_infer_object_pattern(
-                    evaluated,
-                    pattern_shape_id,
-                    pattern,
-                    bindings,
-                    visited,
-                    checker,
-                )
+                self.match_infer_unwrapped_application(source, pattern, bindings, visited, checker)
             }
             Some(TypeData::Callable(callable_shape_id)) => {
                 // Callable types (class constructors) have properties (static members)
@@ -573,18 +589,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             Some(TypeData::Application(_)) => {
-                let evaluated = self.evaluate_for_infer_match(source);
-                if evaluated == source {
-                    return false;
-                }
-                self.match_infer_object_with_index_pattern(
-                    evaluated,
-                    pattern_shape_id,
-                    pattern,
-                    bindings,
-                    visited,
-                    checker,
-                )
+                self.match_infer_unwrapped_application(source, pattern, bindings, visited, checker)
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
