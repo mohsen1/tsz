@@ -996,6 +996,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .is_some_and(|is_class_symbol| is_class_symbol(symbol_ref))
     }
 
+    /// Whether a target string index whose value type is `any` waives the
+    /// missing string-index requirement for a source that declares none. This is
+    /// `tsc`'s `indexSignaturesRelatedTo` short-circuit: a TS legacy
+    /// `any`-propagation quirk, disabled alongside method bivariance in Sound
+    /// Mode. A concrete value type such as `unknown` is never waived. Shared by
+    /// the object-source path below and the named array/tuple-source path in
+    /// `core_dispatch`.
+    pub(crate) fn target_string_index_any_waives_missing_index(&self, value_type: TypeId) -> bool {
+        !self.disable_method_bivariance && value_type.is_any()
+    }
+
     /// Check string index signature compatibility between source and target.
     ///
     /// Validates that string index signatures are compatible, handling:
@@ -1028,7 +1039,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   This is the rule that allows `{ [n: number]: any }` -> `{ [s: string]: any }`
         //   even when the source is a named class/interface. We mirror it here for
         //   the assignability path (non-strict subtype).
-        if !self.disable_method_bivariance && t_string_idx.value_type.is_any() {
+        if self.target_string_index_any_waives_missing_index(t_string_idx.value_type) {
             return SubtypeResult::True;
         }
 
