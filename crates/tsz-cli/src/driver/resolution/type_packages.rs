@@ -433,6 +433,14 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
 }
 
 pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
+    // Mirror tsc's `getDefaultTypeRoots`: walk *every* ancestor directory from
+    // `base_dir` up to the filesystem root, collecting each existing
+    // `node_modules/@types` directory (nearest first). tsc's
+    // `forEachAncestorDirectory` has no project/tsconfig boundary — a monorepo
+    // app at `apps/web/tsconfig.json` must still discover `@types/*` packages
+    // hoisted to the workspace-root `node_modules/@types`. Roots are
+    // canonicalized and deduplicated so the same physical directory reached via
+    // different paths (e.g. symlinked workspaces) is visited only once.
     let mut roots = Vec::new();
     let mut seen = FxHashSet::default();
     let mut current = Some(base_dir.to_path_buf());
@@ -444,15 +452,6 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
             if seen.insert(canonical.clone()) {
                 roots.push(canonical);
             }
-        }
-        // tsc scopes implicit typeRoots to the project's tsconfig boundary —
-        // once we hit a directory that hosts a `tsconfig.json`, further
-        // ancestors are outside the project and their `@types` packages must
-        // not be silently discovered. Without this, tests that declare
-        // `declare module "xyz"` in a higher-level `node_modules/@types`
-        // resolve the module when tsc correctly reports TS2307.
-        if count_is_file(&dir.join("tsconfig.json")) {
-            break;
         }
         current = dir.parent().map(Path::to_path_buf);
     }

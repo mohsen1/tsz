@@ -1185,6 +1185,65 @@ fn test_default_type_roots_walks_parent_directories() {
     );
 }
 
+#[test]
+fn test_default_type_roots_walks_past_ancestor_tsconfig() {
+    use std::fs;
+
+    // Monorepo layout: the project's tsconfig lives at `apps/web/tsconfig.json`
+    // while `@types/*` is hoisted to the workspace root `node_modules/@types`.
+    // tsc's `getDefaultTypeRoots` has no tsconfig boundary, so the workspace
+    // root must still be discovered even though an ancestor hosts a tsconfig.
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let repo_root = dir.path();
+    let app_dir = repo_root.join("apps").join("web");
+    let root_types = repo_root.join("node_modules").join("@types");
+
+    fs::create_dir_all(&app_dir).unwrap();
+    fs::create_dir_all(&root_types).unwrap();
+    // tsconfig at every level between the app and the workspace root.
+    fs::write(app_dir.join("tsconfig.json"), "{}").unwrap();
+    fs::write(repo_root.join("apps").join("tsconfig.json"), "{}").unwrap();
+    fs::write(repo_root.join("tsconfig.json"), "{}").unwrap();
+
+    let roots = default_type_roots(&app_dir);
+    let root_canonical = canonicalize_or_owned(&root_types);
+    assert!(
+        roots.contains(&root_canonical),
+        "workspace-root @types must be discovered across ancestor tsconfig.json files, got: {roots:?}"
+    );
+}
+
+#[test]
+fn test_default_type_roots_collects_nested_and_hoisted() {
+    use std::fs;
+
+    // Both a nested app-local `@types` and a hoisted workspace-root `@types`
+    // exist; tsc collects every ancestor root, nearest first.
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let repo_root = dir.path();
+    let app_dir = repo_root.join("apps").join("web");
+    let app_types = app_dir.join("node_modules").join("@types");
+    let root_types = repo_root.join("node_modules").join("@types");
+
+    fs::create_dir_all(&app_types).unwrap();
+    fs::create_dir_all(&root_types).unwrap();
+    fs::write(app_dir.join("tsconfig.json"), "{}").unwrap();
+
+    let roots = default_type_roots(&app_dir);
+    let app_canonical = canonicalize_or_owned(&app_types);
+    let root_canonical = canonicalize_or_owned(&root_types);
+
+    assert_eq!(
+        roots.first(),
+        Some(&app_canonical),
+        "nearest @types root should come first, got: {roots:?}"
+    );
+    assert!(
+        roots.contains(&root_canonical),
+        "hoisted workspace-root @types should still be included, got: {roots:?}"
+    );
+}
+
 #[path = "resolution_tests_jsdoc.rs"]
 mod jsdoc_import_type_specifier_collection_tests;
 

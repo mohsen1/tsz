@@ -5,7 +5,7 @@
 use crate::compiler_options::directives_to_tsconfig;
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod path_helpers;
 use path_helpers::is_windows_absolute_path;
@@ -548,7 +548,7 @@ pub fn prepare_test_dir_with_lib_dir(
             }
         }
     } else {
-        copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
+        copy_tsconfig_to_project_if_needed(dir_path, &project_dir, filenames, options)?;
         // Inject skipLibCheck into custom tsconfigs when lib files are present
         if has_lib_files && !explicit_skip_lib_check {
             if let Ok(raw) = std::fs::read_to_string(&tsconfig_path) {
@@ -1229,12 +1229,13 @@ fn convert_options_to_tsconfig(
     directives_to_tsconfig(options)
 }
 
-fn copy_tsconfig_to_root_if_needed(
+fn copy_tsconfig_to_project_if_needed(
     dir_path: &Path,
+    project_dir: &Path,
     filenames: &[(String, String)],
     options: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
-    let root_tsconfig = dir_path.join("tsconfig.json");
+    let target_tsconfig = project_dir.join("tsconfig.json");
     let tsconfig_source = filenames
         .iter()
         .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
@@ -1246,7 +1247,15 @@ fn copy_tsconfig_to_root_if_needed(
         .replace("..", "_")
         .trim_start_matches('/')
         .to_string();
-    let is_root_tsconfig = sanitized_source == "tsconfig.json";
+    let project_tsconfig = project_dir
+        .strip_prefix(dir_path)
+        .ok()
+        .map(|relative| relative.join("tsconfig.json"))
+        .unwrap_or_else(|| PathBuf::from("tsconfig.json"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let is_project_tsconfig =
+        sanitized_source == "tsconfig.json" || sanitized_source == project_tsconfig;
     let directive_opts = convert_options_to_tsconfig(options, &[]);
     let no_types_and_symbols = no_types_and_symbols_enabled(options);
     let has_directive_opts = if let serde_json::Value::Object(ref opts) = directive_opts {
@@ -1255,18 +1264,18 @@ fn copy_tsconfig_to_root_if_needed(
         no_types_and_symbols
     };
 
-    // Keep authored root tsconfig as-is when no directive overrides are needed.
-    if is_root_tsconfig && !has_directive_opts {
-        if !root_tsconfig.is_file() {
-            std::fs::write(&root_tsconfig, base_content)?;
+    // Keep the authored project tsconfig as-is when no directive overrides are needed.
+    if is_project_tsconfig && !has_directive_opts {
+        if !target_tsconfig.is_file() {
+            std::fs::write(&target_tsconfig, base_content)?;
         }
         return Ok(());
     }
 
-    if !is_root_tsconfig {
-        // Non-root tsconfig directives should not be promoted to the project root.
-        // The conformance suite uses these virtual paths for cases that should
-        // behave like missing project config and emit TS5057.
+    if !is_project_tsconfig {
+        // Non-project tsconfig directives should not be promoted to the active
+        // project. The conformance suite uses these virtual paths for cases
+        // that should behave like missing project config and emit TS5057.
         return Ok(());
     }
 
@@ -1292,12 +1301,12 @@ fn copy_tsconfig_to_root_if_needed(
                 }
             }
         }
-        std::fs::write(&root_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
+        std::fs::write(&target_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
         return Ok(());
     }
 
-    if !root_tsconfig.is_file() {
-        std::fs::write(&root_tsconfig, base_content)?;
+    if !target_tsconfig.is_file() {
+        std::fs::write(&target_tsconfig, base_content)?;
     }
     Ok(())
 }

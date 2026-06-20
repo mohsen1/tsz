@@ -569,6 +569,55 @@ fn ts2688_unresolved_types_in_tsconfig() {
 }
 
 #[test]
+fn types_resolve_from_hoisted_monorepo_root_across_tsconfig_boundary() {
+    // Regression for the documenso monorepo TS2688 false positive: the app's
+    // tsconfig lives at `apps/web/tsconfig.json` while `@types/node` is hoisted
+    // to the workspace-root `node_modules/@types`. tsc walks every ancestor for
+    // default typeRoots (no tsconfig boundary), so `types: ["node"]` must
+    // resolve without TS2688.
+    let tmp = TempDir::new().unwrap();
+    let repo_root = &tmp.path;
+    let app_dir = repo_root.join("apps").join("web");
+
+    // Intermediate ancestor tsconfig files that previously stopped the walk.
+    write_file(&repo_root.join("tsconfig.json"), "{}");
+    write_file(&repo_root.join("apps").join("tsconfig.json"), "{}");
+
+    // Hoisted @types/node at the workspace root only.
+    write_file(
+        &repo_root.join("node_modules/@types/node/package.json"),
+        r#"{ "name": "@types/node", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &repo_root.join("node_modules/@types/node/index.d.ts"),
+        "declare var process: { env: Record<string, string | undefined> };\n",
+    );
+
+    write_file(
+        &app_dir.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "types": ["node"] }, "files": ["index.ts"] }"#,
+    );
+    write_file(
+        &app_dir.join("index.ts"),
+        "const env = process.env;\nexport { env };\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, &app_dir).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        ts2688_diags.is_empty(),
+        "hoisted @types/node should resolve across ancestor tsconfig.json files; got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn cli_types_reports_unresolved_type_package() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
