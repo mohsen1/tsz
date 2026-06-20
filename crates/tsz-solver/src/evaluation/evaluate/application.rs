@@ -24,6 +24,25 @@ struct ApplicationFinalizeContext<'a> {
     no_unchecked_indexed_access: bool,
 }
 
+/// Debug kill-switch for unifying the early application-eval cache probe onto
+/// the same `expand_type_args(args)` key the insert path uses (#14101, step 1a).
+///
+/// The insert path keys entries on the *expanded* args (the body path runs
+/// `prepare_expanded_args_for_body`, which falls through to `expand_type_args`
+/// for non-conditional bodies), but the early Phase-4 probe historically keyed
+/// on the *raw* `app.args` and so missed those entries whenever an arg needed
+/// expansion. Unifying is a pure cache-hit dedupe — it never changes an insert
+/// key, a stored value, a relation verdict, or any interned `TypeId`.
+///
+/// Set `TSZ_DISABLE_APP_EVAL_KEY_UNIFY=1` to restore the legacy raw-args probe
+/// so a regression can be bisected and the two arms proved byte-identical;
+/// defaults to enabled.
+fn app_eval_key_unify_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_APP_EVAL_KEY_UNIFY").is_err())
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a generic type application: Base<Args>
     ///
@@ -95,7 +114,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // skip the fallback behavior that preserves recursive/inference parity.
         if let Some(db) = self.query_db {
             let no_unchecked = self.no_unchecked_indexed_access;
-            let cached = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked);
+            // #14101 (1a): align this early probe's key with the expanded-args
+            // form the insert path writes (`prepare_expanded_args_for_body` ->
+            // `expand_type_args` for non-conditional bodies). Without this the
+            // probe misses every entry whose args needed expansion (Lazy alias
+            // chains / meta-types — the common recursive-heritage shape) and
+            // re-walks to the deeper expanded probe in `evaluate_application_body`.
+            // Lookup-only; `TSZ_DISABLE_APP_EVAL_KEY_UNIFY=1` restores raw args.
+            let cached = if app_eval_key_unify_enabled() {
+                let expanded = self.expand_type_args(&app.args);
+                db.lookup_application_eval_cache(def_id, &expanded, no_unchecked)
+            } else {
+                db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
+            };
             crate::evaluation::eval_materialization_probe::record_application_cache_lookup(
                 crate::evaluation::eval_materialization_probe::ApplicationLookupSite::RawArgs,
                 cached.is_some(),
