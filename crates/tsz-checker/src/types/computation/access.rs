@@ -1941,6 +1941,17 @@ impl<'a> CheckerState<'a> {
                 if skip_flow_narrowing {
                     return TypeId::ERROR;
                 }
+                // tsc resolves an unindexable element access to the implicit-`any`
+                // element type (the TS7053 just emitted — "implicitly has an 'any'
+                // type"); it never resolves to `undefined`. Only the *leaked*
+                // `undefined` default is wrong — convert it to `any` so it does not
+                // cascade into spurious TS2322/TS2352/TS2532 (witness: mobx
+                // `obj[uniqueSym]`). A genuine fallback element type (e.g. the array
+                // element `{}` in `arr[stringKey]`, which carries TS7015) is kept so
+                // a nested `arr[i][j]` still reports its own error.
+                if result_type == TypeId::UNDEFINED {
+                    result_type = TypeId::ANY;
+                }
             }
         }
 
