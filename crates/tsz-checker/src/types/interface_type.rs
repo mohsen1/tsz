@@ -715,6 +715,27 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn merge_interface_heritage_types(
         &mut self,
         declarations: &[NodeIndex],
+        derived_type: TypeId,
+    ) -> TypeId {
+        // Cross-context OS-stack breaker (#14111). The heritage-merge cycle
+        // `merge → get_type_of_symbol(base) → compute_type_of_symbol → merge`
+        // hops fresh / cross-arena child `CheckerContext`s that reset the
+        // per-context `heritage_merge_depth` `Cell` (and `enter_recursion`
+        // counter) to zero, so neither logical guard can bound the real OS
+        // call stack across those boundaries — a declaration-merged /
+        // augmented-module interface graph (NestJS-style backends such as
+        // directus/api) recurses until the thread stack aborts. The
+        // thread-local breaker survives context boundaries and is the only
+        // mechanism that does. Bail to the partially-merged `derived_type`,
+        // matching the logical `heritage_merge_depth` bail below.
+        crate::checkers_domain::with_stack_guard(derived_type, || {
+            self.merge_interface_heritage_types_inner(declarations, derived_type)
+        })
+    }
+
+    fn merge_interface_heritage_types_inner(
+        &mut self,
+        declarations: &[NodeIndex],
         mut derived_type: TypeId,
     ) -> TypeId {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
@@ -1079,7 +1100,13 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.enter_recursion() {
             return derived;
         }
-        let result = self.merge_interface_types_impl(derived, base, mode);
+        // Cross-context OS-stack breaker (#14111): `enter_recursion` is a
+        // per-context `Cell` that resets across the fresh / cross-arena child
+        // contexts this structural merge can hop while resolving members, so
+        // it cannot bound the real call stack on its own. Bail to `derived`.
+        let result = crate::checkers_domain::with_stack_guard(derived, || {
+            self.merge_interface_types_impl(derived, base, mode)
+        });
         self.ctx.leave_recursion();
         result
     }

@@ -57,21 +57,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        // Hard stack guard: bail when remaining stack is critically low.
-        if crate::checkers_domain::stack_overflow_tripped() {
-            return TypeId::ERROR;
-        }
-        // Periodically probe remaining stack and trip the breaker if low.
-        // This prevents unbounded stack growth from stacker::maybe_grow
-        // which would eventually hit the OS stack limit and crash.
-        if crate::checkers_domain::should_probe_stack()
-            && crate::checkers_domain::headroom_below(1024 * 1024)
-        {
-            crate::checkers_domain::trip_stack_overflow();
-            return TypeId::ERROR;
-        }
-        // Dynamically grow the stack when depth becomes significant.
-        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+        // Shared cross-context stack-overflow breaker: probe → trip → grow.
+        // Bails with `TypeId::ERROR` when the breaker has tripped or remaining
+        // stack is critically low, otherwise grows the stack as depth rises.
+        crate::checkers_domain::with_stack_guard(TypeId::ERROR, || {
             self.dispatch_type_computation_inner(idx, request)
         })
     }
