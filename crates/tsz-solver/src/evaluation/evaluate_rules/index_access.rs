@@ -749,9 +749,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         name: tsz_common::Atom,
     ) -> Option<TypeId> {
         let resolved = self.evaluator.evaluate(member);
-        let shape_id = match self.evaluator.interner().lookup(resolved) {
-            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
-            _ => return None,
+        let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.evaluator.interner().lookup(resolved)
+        else {
+            return None;
         };
         let shape = self.evaluator.interner().object_shape(shape_id);
         shape
