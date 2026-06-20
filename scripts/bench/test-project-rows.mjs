@@ -325,12 +325,14 @@ const compileCanaryGatedBenchmarkRows = sortedUnique(
     .filter((match) => match[1].includes("should_run_compile_canary_project"))
     .flatMap((match) => extractAll(match[1], /run_project_benchmark\s+"([^"]+)"/g)),
 );
-// Application rows are compile-guard canaries only; they crash/time out under a
-// real type-checker, so they are not perf-benchmarked in bench-vs-tsgo.
-const applicationRowNames = new Set(
-  PROJECT_ROW_DEFINITIONS.filter((row) => row.category === "application").map((row) => row.name),
+// Application rows are optional perf benchmarks only when opted in with
+// perf_timed. Untimed applications remain compile-guard canaries only.
+const untimedApplicationRowNames = new Set(
+  PROJECT_ROW_DEFINITIONS
+    .filter((row) => row.category === "application" && row.perf_timed !== true)
+    .map((row) => row.name),
 );
-const benchExcludedRows = new Set([...BENCH_RUNNER_EXCLUDED_ROWS, ...applicationRowNames]);
+const benchExcludedRows = new Set([...BENCH_RUNNER_EXCLUDED_ROWS, ...untimedApplicationRowNames]);
 assert.deepEqual(
   benchRows,
   sortedUnique(without(allTrackedRows, benchExcludedRows)),

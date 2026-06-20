@@ -1126,6 +1126,13 @@ jobs:
           - label: bench-canaries
             timeout: 135
             filter: 'valibot-project|msw-project|effect-project|drizzle-orm-project|ts-rest-project|ofetch-project|ts-pattern-project|trpc-project|tanstack-query-project|tanstack-router-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|ts-morph-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|class-transformer-project|type-graphql-project|neverthrow-project|xstate-project|mobx-project'
+          # Application rows need their real dependency graph to produce a
+          # meaningful tsz-vs-tsgo timing pair. Keep them in an optional shard:
+          # clean rows get chart data when timing completes, but app install
+          # flakiness never blocks required benchmark publishing.
+          - label: bench-applications
+            timeout: 135
+            filter: 'umami-project|dub-project|formbricks-project|lobe-chat-project|supabase-studio-project|infisical-project|payload-project|trigger-dev-project|directus-project|n8n-project|documenso-project|immich-server-project'
           - label: large-ts-repo
             timeout: 135
             filter: '^large-ts-repo$'
@@ -1564,12 +1571,12 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
-          # The bench-canaries shard (passing-canary perf rows) is OPTIONAL: it
-          # is merged when present but must NOT count toward — or break — the
-          # required-shard completeness gate. A failed/slow canary shard then
-          # never blocks publishing the required benchmark timings.
+          # Optional perf shards are merged when present but must NOT count
+          # toward — or break — the required-shard completeness gate. A
+          # failed/slow canary or application shard then never blocks publishing
+          # the required benchmark timings.
           mapfile -t required_files < <(
-            printf '%s\n' "${json_files[@]}" | grep -v '/bench-results-bench-canaries\.json$' || true
+            printf '%s\n' "${json_files[@]}" | grep -Ev '/bench-results-bench-(canaries|applications)\.json$' || true
           )
           expected_shards=9
           echo "json_count=${#required_files[@]}" >> "$GITHUB_OUTPUT"

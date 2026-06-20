@@ -59,8 +59,13 @@ function extractShellFunctionBody(scriptText, functionName) {
 }
 
 export function extractBenchRunnerRows(scriptText) {
-  const rows = [...scriptText.matchAll(/run_project_benchmark\s+"([^"]+)"/g)]
-    .map((m) => m[1]);
+  const rows = [
+    ...[...scriptText.matchAll(/run_project_benchmark\s+"([^"]+)"/g)]
+      .map((m) => m[1])
+      .filter((name) => !name.startsWith("$")),
+    ...[...scriptText.matchAll(/run_application_project_benchmarks\s+"([^"]+)"/g)]
+      .map((m) => m[1]),
+  ];
   return [...new Set(rows)].sort();
 }
 
@@ -142,7 +147,8 @@ export function computeCoverage(surfaces) {
     const isRequired = requiredSet.has(name);
     const requiresFixtureSource = rowRequiresFixtureSource(def);
 
-    if (isTracked && !BENCH_RUNNER_EXCLUDED_ROWS.has(name) && def.category !== "application" && !benchRunnerSet.has(name)) {
+    const requiresBenchRunner = def.category !== "application" || def.perf_timed === true;
+    if (isTracked && !BENCH_RUNNER_EXCLUDED_ROWS.has(name) && requiresBenchRunner && !benchRunnerSet.has(name)) {
       drift.push(`${name}: present in project-rows.mjs but missing from scripts/bench/bench-vs-tsgo.sh`);
     }
     if (isTracked && !COMPILE_GUARD_EXCLUDED_ROWS.has(name) && !compileGuardSet.has(name)) {
