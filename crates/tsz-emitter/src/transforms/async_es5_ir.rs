@@ -69,6 +69,8 @@ mod cases;
 mod condition_await;
 #[path = "async_es5_ir_control.rs"]
 mod control;
+#[path = "async_es5_ir_destructuring.rs"]
+mod destructuring;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
 #[path = "async_es5_ir_disposables.rs"]

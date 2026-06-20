@@ -21,3 +21,4 @@ fn transform_and_print(source: &str) -> String {
 
 include!("async_es5_ir_parts/part_00.rs");
 include!("async_es5_ir_parts/part_01.rs");
+include!("async_es5_ir_parts/part_02.rs");
