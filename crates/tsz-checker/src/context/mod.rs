@@ -49,6 +49,7 @@ mod unresolved_import;
 pub use deferred_flow_env_write::DeferredFlowEnvWrite;
 mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
+mod import_alias_resolution;
 mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;

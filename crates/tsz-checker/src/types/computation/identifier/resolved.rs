@@ -800,7 +800,8 @@ impl<'a> CheckerState<'a> {
         let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize)> =
             ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
                 .then(|| {
-                    let mut target_sym_id = self.ctx.resolve_import_alias_and_register(sym_id)?;
+                    let mut target_sym_id =
+                        self.ctx.resolve_import_alias_chain_and_register(sym_id)?;
                     // Default imports resolve through `target_binder.file_locals`'s
                     // synthesized "default" alias. That alias has `ALIAS`
                     // flag but no `import_module`/`import_name`, so a

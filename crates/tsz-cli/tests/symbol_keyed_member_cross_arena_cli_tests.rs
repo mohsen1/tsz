@@ -159,6 +159,151 @@ export const v2: number = (null as any as V);
     ]);
 }
 
+/// #14129 (ts-pattern witness): the merged value+type-alias symbol is consumed
+/// through a **re-export barrel** (`import { matcher }; export { matcher }`),
+/// and the interface keyed by `[matcher]` imports it from the barrel — a
+/// two-hop alias chain. The chain must still reach the value-side `symbol`, so
+/// `[matcher]` is a valid computed key (no false TS2464).
+#[test]
+fn cross_file_symbol_name_merged_through_named_reexport_barrel() {
+    assert_clean_both_orders(&[
+        (
+            "symbols.ts",
+            r#"
+export const matcher = Symbol.for('@demo/matcher');
+export type matcher = typeof matcher;
+"#,
+        ),
+        (
+            "barrel.ts",
+            r#"
+import { matcher } from './symbols';
+export { matcher };
+"#,
+        ),
+        (
+            "pattern.ts",
+            r#"
+import { matcher } from './barrel';
+export interface Matcher { [matcher](): number; }
+const lit = { [matcher]: () => 1 };
+export const m: Matcher = lit;
+export declare const b: Matcher;
+export const n: number = b[matcher]();
+"#,
+        ),
+    ]);
+}
+
+/// `export { X } from "./m"` re-export-specifier barrel form (renamed binder),
+/// plus a third hop, to exercise multi-hop chain following.
+#[test]
+fn cross_file_symbol_name_merged_through_reexport_from_chain() {
+    assert_clean_both_orders(&[
+        (
+            "syms.ts",
+            r#"
+export const wireTag = Symbol.for('@demo/wire');
+export type wireTag = typeof wireTag;
+"#,
+        ),
+        (
+            "mid.ts",
+            r#"
+export { wireTag } from './syms';
+"#,
+        ),
+        (
+            "barrel.ts",
+            r#"
+export { wireTag } from './mid';
+"#,
+        ),
+        (
+            "use.ts",
+            r#"
+import { wireTag } from './barrel';
+export interface Wire { [wireTag](): string; }
+const obj = { [wireTag]: () => "x" };
+export const w: Wire = obj;
+"#,
+        ),
+    ]);
+}
+
+/// `export * from "./m"` wildcard barrel: the single-hop named lookup misses
+/// the star, so the chain falls back to the binder's full re-export resolver
+/// and must still reach the value side.
+#[test]
+fn cross_file_symbol_name_merged_through_star_reexport_barrel() {
+    assert_clean_both_orders(&[
+        (
+            "k.ts",
+            r#"
+export const brandKey = Symbol.for('@demo/brand');
+export type brandKey = typeof brandKey;
+"#,
+        ),
+        (
+            "barrel.ts",
+            r#"
+export * from './k';
+"#,
+        ),
+        (
+            "m.ts",
+            r#"
+import { brandKey } from './barrel';
+export interface Branded { [brandKey]: number; }
+const b: Branded = { [brandKey]: 1 };
+export const v: number = b[brandKey];
+"#,
+        ),
+    ]);
+}
+
+/// Negative control across a re-export barrel: the key resolves, but a wrong
+/// value against the declared member type must still be rejected.
+#[test]
+fn cross_file_symbol_name_merged_through_barrel_wrong_value_still_errors() {
+    let files = &[
+        (
+            "s.ts",
+            r#"
+export const m = Symbol.for('@demo/m');
+export type m = typeof m;
+"#,
+        ),
+        (
+            "barrel.ts",
+            r#"
+import { m } from './s';
+export { m };
+"#,
+        ),
+        (
+            "p.ts",
+            r#"
+import { m } from './barrel';
+export interface I { [m](): number; }
+export const bad: I = { [m]: 123 };
+"#,
+        ),
+    ];
+    let names: Vec<&str> = files.iter().map(|(name, _)| *name).collect();
+    let diags = compile_in_order(files, &names);
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d.code, 2322 | 2345 | 2418 | 2353)),
+        "expected an assignability error for the wrong computed-property value through a barrel, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Negative control: a genuinely wrong computed-property value must still be
 /// rejected, proving the fix preserves real diagnostics rather than silencing
 /// the member key. (`123` is not assignable to the method type.)
