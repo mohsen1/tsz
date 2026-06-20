@@ -657,9 +657,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 
         // Collect property names present in ALL members
         // Start with first member's property names, intersect with rest
-        let first = match &member_props[0] {
-            PropertyCollectionResult::Properties { properties, .. } => properties,
-            _ => return, // First member has no properties
+        let PropertyCollectionResult::Properties {
+            properties: first, ..
+        } = &member_props[0]
+        else {
+            // First member has no properties.
+            return;
         };
 
         // For each property in the first member, check if it's in all others
@@ -678,23 +681,18 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             let mut visibility = prop.visibility;
 
             for member_result in member_props.iter().skip(1) {
-                match member_result {
-                    PropertyCollectionResult::Properties { properties, .. } => {
-                        if let Some(other_prop) = PropertyInfo::find_in_slice(properties, prop.name)
-                        {
-                            type_ids.push(other_prop.type_id);
-                            any_optional = any_optional || other_prop.optional;
-                            any_readonly = any_readonly || other_prop.readonly;
-                            visibility = merge_visibility(visibility, other_prop.visibility);
-                        } else {
-                            present_in_all = false;
-                            break;
-                        }
-                    }
-                    _ => {
-                        present_in_all = false;
-                        break;
-                    }
+                let PropertyCollectionResult::Properties { properties, .. } = member_result else {
+                    present_in_all = false;
+                    break;
+                };
+                if let Some(other_prop) = PropertyInfo::find_in_slice(properties, prop.name) {
+                    type_ids.push(other_prop.type_id);
+                    any_optional = any_optional || other_prop.optional;
+                    any_readonly = any_readonly || other_prop.readonly;
+                    visibility = merge_visibility(visibility, other_prop.visibility);
+                } else {
+                    present_in_all = false;
+                    break;
                 }
             }
 
