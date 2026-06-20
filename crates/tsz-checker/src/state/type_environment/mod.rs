@@ -1,6 +1,7 @@
 //! Type environment building, application type evaluation, property access
 //! type resolution, and type node resolution.
 
+mod app_canon_arg_identity;
 mod application;
 mod core;
 mod formatting;
@@ -11,3 +12,5 @@ mod property_access_visited;
 mod source_location;
 mod type_node_resolution;
 mod type_params;
+
+use app_canon_arg_identity::app_canon_arg_identity_enabled;
