@@ -156,7 +156,7 @@ impl AsyncES5Transformer<'_> {
     pub(in crate::transforms) fn is_binding_pattern_name(&self, name_idx: NodeIndex) -> bool {
         self.arena
             .get(name_idx)
-            .is_some_and(|node| node.is_binding_pattern())
+            .is_some_and(tsz_parser::parser::node::Node::is_binding_pattern)
     }
 
     /// `tsc`'s `flattenObjectBindingOrAssignmentPattern` /
@@ -274,7 +274,7 @@ impl AsyncES5Transformer<'_> {
             } else {
                 Some(num_elements)
             };
-            let read_value = self.array_read_helper(value, read_count);
+            let read_value = Self::array_read_helper(value, read_count);
             self.ensure_identifier(read_value, false, out)
         } else if num_elements != 1 || all_omitted {
             self.ensure_identifier(value, num_elements != 0, out)
@@ -472,7 +472,7 @@ impl AsyncES5Transformer<'_> {
     }
 
     /// `tsc`'s array `createReadHelper`: `__read(value, count)`.
-    fn array_read_helper(&self, value: IRNode, count: Option<usize>) -> IRNode {
+    fn array_read_helper(value: IRNode, count: Option<usize>) -> IRNode {
         let mut args = vec![value];
         if let Some(count) = count {
             args.push(IRNode::number(count.to_string()));
