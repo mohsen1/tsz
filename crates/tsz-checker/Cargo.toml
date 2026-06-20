@@ -935,6 +935,9 @@ path = "tests/inline_mapped_array_return_tests.rs"
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"
 [[test]]
+name = "overload_spread_into_rest_ts2556_tests"
+path = "tests/overload_spread_into_rest_ts2556_tests.rs"
+[[test]]
 name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 [[test]]

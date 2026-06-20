@@ -7,7 +7,7 @@ use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
     RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
-    TupleElementExtractor, collect_from_intersection, collect_single_or_union,
+    TupleElementExtractor, UnionSpreadMode, collect_from_intersection, collect_single_or_union,
     collect_single_or_union_no_reduce, collect_single_or_union_preserve,
     extract_param_type_at_for_call,
 };
@@ -700,7 +700,27 @@ impl<'a> ContextualTypeContext<'a> {
 
     /// Check if a non-tuple spread is allowed because it lands on a rest
     /// parameter or only covers optional trailing parameters.
-    pub fn allows_non_tuple_spread_position(&self, index: usize, arg_count: usize) -> bool {
+    ///
+    /// A union expected type is treated *conjunctively*: every member must admit
+    /// the spread, because calling a union-typed value must satisfy all members.
+    pub fn allows_non_tuple_spread_position(&self, index: usize) -> bool {
+        self.allows_non_tuple_spread_position_impl(index, UnionSpreadMode::Conjunctive)
+    }
+
+    /// As [`ContextualTypeContext::allows_non_tuple_spread_position`], but treats
+    /// a union expected type *existentially*: the spread is admitted when *any*
+    /// member accepts it. Used for the synthetic `sigA | sigB | ...` union built
+    /// during overload resolution, where a call type-checks if some overload
+    /// admits it (mirroring tsc's `chooseOverload`).
+    pub fn allows_non_tuple_spread_position_existential_union(&self, index: usize) -> bool {
+        self.allows_non_tuple_spread_position_impl(index, UnionSpreadMode::Existential)
+    }
+
+    fn allows_non_tuple_spread_position_impl(
+        &self,
+        index: usize,
+        union_mode: UnionSpreadMode,
+    ) -> bool {
         let Some(expected) = self.expected else {
             return false;
         };
@@ -716,14 +736,14 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-            return ctx.allows_non_tuple_spread_position(index, arg_count);
+            return ctx.allows_non_tuple_spread_position_impl(index, union_mode);
         }
 
         if let Some(constraint) =
             crate::type_queries::get_type_parameter_constraint(self.interner, expected)
         {
             let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-            return ctx.allows_non_tuple_spread_position(index, arg_count);
+            return ctx.allows_non_tuple_spread_position_impl(index, union_mode);
         }
 
         // PERF: Single lookup for guard + IndexAccess check
@@ -739,15 +759,18 @@ impl<'a> ContextualTypeContext<'a> {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                return ctx.allows_non_tuple_spread_position(index, arg_count);
+                return ctx.allows_non_tuple_spread_position_impl(index, union_mode);
             }
             if matches!(expected_key, TypeData::IndexAccess(_, _)) {
                 return true;
             }
         }
 
-        let mut extractor =
-            RestOrOptionalTailPositionExtractor::new(self.interner, index, arg_count);
+        let mut extractor = RestOrOptionalTailPositionExtractor::new_with_union_mode(
+            self.interner,
+            index,
+            union_mode,
+        );
         extractor.extract(expected)
     }
 

@@ -184,7 +184,18 @@ impl<'a> CheckerState<'a> {
         for &arg_idx in &contextual_refresh_args {
             self.invalidate_expression_for_contextual_retry(arg_idx);
         }
-        let union_callable_ctx = CallableContext::new(union_contextual);
+        // With multiple overloads the contextual type is a synthetic union of
+        // every signature. That union is an existential alternative set, so the
+        // speculative non-tuple-spread arity check (which demands *every* union
+        // member admit the spread) must not fire TS2556 here — a sibling
+        // overload without a rest parameter would otherwise poison a valid
+        // spread into another overload's rest (e.g. `splice`). The authoritative
+        // TS2556 is reported per selected/failed signature below.
+        let union_callable_ctx = if signatures.len() > 1 {
+            CallableContext::new_overload_union(union_contextual)
+        } else {
+            CallableContext::new(union_contextual)
+        };
         // Preserve literal types during overload argument collection so that
         // string/number literal arguments keep their literal types (e.g., "canvas"
         // stays as literal "canvas" instead of widening to string).  This is
