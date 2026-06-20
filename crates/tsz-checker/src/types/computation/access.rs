@@ -5,67 +5,18 @@ use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[path = "access/global_this_keyed.rs"]
+mod global_this_keyed;
+#[path = "access/optional_chain.rs"]
+mod optional_chain;
 #[path = "access/symbol_constructor_index.rs"]
 mod symbol_constructor_index;
 
-pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
-    let Some(node) = arena.get(idx) else {
-        return false;
-    };
-
-    match node.kind {
-        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-        {
-            if let Some(access) = arena.get_access_expr(node) {
-                // Parentheses break the chain (fall through to `_ => false`),
-                // so `(o?.a).b` is not a continuation.
-                access.question_dot_token || is_optional_chain(arena, access.expression)
-            } else {
-                false
-            }
-        }
-        k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            if node.is_optional_chain() {
-                return true;
-            }
-            if let Some(call) = arena.get_call_expr(node) {
-                is_optional_chain(arena, call.expression)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeIndex {
-    let Some(node) = arena.get(idx) else {
-        return idx;
-    };
-    match node.kind {
-        k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            if let Some(call) = arena.get_call_expr(node) {
-                return optional_chain_root(arena, call.expression);
-            }
-            idx
-        }
-        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-        {
-            if let Some(access) = arena.get_access_expr(node) {
-                return optional_chain_root(arena, access.expression);
-            }
-            idx
-        }
-        _ => idx,
-    }
-}
+pub(crate) use optional_chain::{is_optional_chain, optional_chain_root};
 
 impl<'a> CheckerState<'a> {
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
@@ -478,76 +429,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // `globalThis[k]` / global `this[k]` where the key is a typed identifier
-        // (not a string-literal node) rather than a statically known global
-        // member. `typeof globalThis` has no index signature, so tsc reports
-        // TS7053 under `noImplicitAny`. The string-literal-node form is handled
-        // by the literal-key branch above; this covers a variable key whose
-        // *type* is a string literal (`const k = "x"; globalThis[k]`), a union
-        // of string literals, or a general `string`. A key that does resolve to
-        // a real global value still yields that value's type.
-        if literal_string.is_none()
-            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            && (self.is_global_this_expression(access.expression) || is_this_global)
-            && self.ctx.no_implicit_any()
-            && !self.is_js_file()
-        {
-            let string_literal_keys = self
-                .get_literal_key_union_from_type(index_type)
-                .filter(|(string_keys, number_keys)| {
-                    number_keys.is_empty() && !string_keys.is_empty()
-                })
-                .map(|(string_keys, _)| string_keys);
-            let index_is_string_like = string_literal_keys.is_some()
-                || crate::query_boundaries::common::is_string_type(self.ctx.types, index_type);
-            if index_is_string_like {
-                if let Some(keys) = string_literal_keys {
-                    let mut resolved_types: Vec<TypeId> = Vec::with_capacity(keys.len());
-                    let mut all_resolved = true;
-                    for key_atom in &keys {
-                        let name = self.ctx.types.resolve_atom(*key_atom);
-                        let resolved = self.resolve_global_this_property_type(
-                            &name,
-                            idx,
-                            true,
-                            GlobalReceiver::GlobalThis,
-                        );
-                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                            resolved_types.push(resolved);
-                        } else {
-                            all_resolved = false;
-                            break;
-                        }
-                    }
-                    if all_resolved && !resolved_types.is_empty() {
-                        // Read context: the result is one of the keyed properties
-                        // (union). Write context: the value must satisfy every
-                        // possible key (intersection) — mirroring the `window[k]`
-                        // branch above.
-                        return if skip_flow_narrowing {
-                            tsz_solver::utils::intersection_or_single(
-                                self.ctx.types,
-                                resolved_types,
-                            )
-                        } else {
-                            let combined =
-                                tsz_solver::utils::union_or_single(self.ctx.types, resolved_types);
-                            self.apply_flow_narrowing(idx, combined)
-                        };
-                    }
-                }
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let index_str = self.format_type_diagnostic(index_type);
-                self.error_at_node(
-                    idx,
-                    &format_message(
-                        diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
-                        &[&index_str, "typeof globalThis"],
-                    ),
-                    diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
-                );
-                return TypeId::ANY;
-            }
+        if let Some(result) = self.try_global_this_string_like_element_access(
+            idx,
+            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
+            access.expression,
+            literal_string.is_none(),
+            index_type,
+            is_this_global,
+            skip_flow_narrowing,
+        ) {
+            return result;
         }
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {

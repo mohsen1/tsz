@@ -11,6 +11,7 @@ pub(crate) mod import_type;
 pub(crate) mod judge;
 pub(crate) mod mixin_constraints;
 pub(crate) mod module;
+mod primitive_keyword;
 pub(crate) mod reference_helpers;
 pub(crate) mod reference_type_params;
 pub(crate) mod shadowed_lib_heritage;
