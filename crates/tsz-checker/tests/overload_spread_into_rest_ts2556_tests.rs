@@ -46,8 +46,7 @@ fn mutable_and_readonly_array_spread_into_splice_shaped_overload_is_clean() {
     assert_eq!(
         diagnostic_count(&diags, 2556),
         0,
-        "spread into a rest-bearing overload (declared after a no-rest sibling) must be clean: {:?}",
-        diags
+        "spread into a rest-bearing overload (declared after a no-rest sibling) must be clean: {diags:?}"
     );
 }
 
@@ -67,8 +66,7 @@ fn rest_bearing_overload_declared_first_is_clean() {
     assert_eq!(
         diagnostic_count(&diags, 2556),
         0,
-        "rest-bearing overload declared first must be clean: {:?}",
-        diags
+        "rest-bearing overload declared first must be clean: {diags:?}"
     );
 }
 
@@ -101,8 +99,7 @@ fn spread_with_zero_one_and_many_leading_fixed_args_is_clean() {
     assert_eq!(
         diagnostic_count(&diags, 2556),
         0,
-        "leading-fixed-arg variations spreading into a rest overload must be clean: {:?}",
-        diags
+        "leading-fixed-arg variations spreading into a rest overload must be clean: {diags:?}"
     );
 }
 
@@ -127,8 +124,7 @@ fn overload_set_without_any_rest_still_emits_ts2556() {
     assert_eq!(
         diagnostic_count(&diags, 2556),
         1,
-        "overload set with no rest parameter must still emit TS2556: {:?}",
-        diags
+        "overload set with no rest parameter must still emit TS2556: {diags:?}"
     );
 }
 
@@ -145,7 +141,6 @@ fn plain_function_without_rest_still_emits_ts2556() {
     assert_eq!(
         diagnostic_count(&diags, 2556),
         1,
-        "plain no-rest function must still emit TS2556: {:?}",
-        diags
+        "plain no-rest function must still emit TS2556: {diags:?}"
     );
 }
