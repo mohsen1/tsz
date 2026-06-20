@@ -162,7 +162,10 @@ impl<'a> CheckerState<'a> {
             let (type_display, display_type_id) = if param.type_annotation.is_some() {
                 let annotated_type = self.get_type_from_type_node(param.type_annotation);
                 let rendered_annotated = self.format_type_for_assignability_message(annotated_type);
-                let display = if rendered_annotated == "error" {
+                let display = if crate::query_boundaries::common::is_genuine_error_type(
+                    self.ctx.types,
+                    annotated_type,
+                ) {
                     self.sanitized_type_node_display(param.type_annotation)
                         .unwrap_or(rendered_annotated)
                 } else {
@@ -245,7 +248,10 @@ impl<'a> CheckerState<'a> {
                 shape.return_type,
             );
             let rendered_return = self.format_type_for_assignability_message(return_display_type);
-            if rendered_return == "error" {
+            if crate::query_boundaries::common::is_genuine_error_type(
+                self.ctx.types,
+                return_display_type,
+            ) {
                 self.explicit_callback_return_display_from_parameter(func)
                     .unwrap_or(rendered_return)
             } else {

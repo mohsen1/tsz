@@ -494,7 +494,7 @@ impl<'a> CheckerState<'a> {
                 .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
                 .unwrap_or_else(|| format!("arg{index}"));
             let mut type_display = self.format_type_for_assignability_message(param.type_id);
-            if type_display == "error"
+            if crate::query_boundaries::common::is_genuine_error_type(self.ctx.types, param.type_id)
                 && let Some(&actual_param_idx) = func.parameters.nodes.get(index)
                 && let Some(actual_param_node) = self.ctx.arena.get(actual_param_idx)
                 && let Some(actual_param) = self.ctx.arena.get_parameter(actual_param_node)
@@ -517,7 +517,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut return_display = self.format_type_for_assignability_message(shape.return_type);
-        if return_display == "error" {
+        if crate::query_boundaries::common::is_genuine_error_type(self.ctx.types, shape.return_type)
+        {
             return_display = self
                 .explicit_callback_return_display_from_parameter(func)
                 .unwrap_or(return_display);
