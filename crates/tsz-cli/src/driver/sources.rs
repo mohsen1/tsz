@@ -549,8 +549,24 @@ pub(super) fn collect_type_root_files(
         }
     }
 
+    // Auto-include every `@types/*` package found across the (nearest-first)
+    // type roots. tsc's `getAutomaticTypeDirectiveNames` keys discovered
+    // packages by name and resolves each once, so a package present in both a
+    // nested and a hoisted `node_modules/@types` (common in monorepos now that
+    // ancestor roots are walked) is loaded a single time from the nearest root.
+    // Without this the same global-augmenting package (e.g. `@types/node`)
+    // would be inserted twice and produce spurious duplicate-declaration
+    // diagnostics.
+    let mut seen_names = FxHashSet::default();
     for root in roots {
         for package_root in collect_type_packages_from_root(&root) {
+            let package_name = package_root
+                .strip_prefix(&root)
+                .unwrap_or(&package_root)
+                .to_path_buf();
+            if !seen_names.insert(package_name) {
+                continue;
+            }
             if let Some(entry) = crate::driver::resolution::resolve_type_package_entry_with_cache(
                 &package_root,
                 options,
