@@ -7,6 +7,7 @@ import {
   REQUIRED_COMPATIBILITY_FIELDS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
+import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import { isGreen } from "./row-utils.mjs";
 
 const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
@@ -18,6 +19,16 @@ const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
 // the required-row guard skips them and the site renders them gray forever.
 const APPLICATION_ROW_SET = new Set(
   PROJECT_ROW_DEFINITIONS.filter((row) => row.category === "application").map((row) => row.name),
+);
+// Rows that are benchmark_set:"required" but explicitly excluded from timing
+// (BENCH_RUNNER_EXCLUDED_ROWS) are never measured by the vs-tsgo runner, so the
+// project-compile-guard JSONL is their ONLY source of a `compatibility` object.
+// Mirror the application-row treatment: let the canary-compat merge attach compat
+// for these rows even though they appear in REQUIRED_PROJECT_ROW_SET.
+// Example: type-challenges-solutions-project (guard_set:"required",
+// benchmark_set:"required", excluded from timing by #13549).
+const BENCH_EXCLUDED_REQUIRED_ROW_SET = new Set(
+  REQUIRED_PROJECT_ROWS.filter((name) => BENCH_RUNNER_EXCLUDED_ROWS.has(name)),
 );
 const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
@@ -76,10 +87,12 @@ function readJsonl(file) {
 function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
   if (compatibilityJsonlFiles.length === 0) return results;
 
-  // Attach compat for compile-canary rows AND application rows. Application
-  // rows are never timed, so this JSONL is their only compatibility source —
-  // including the ones promoted to benchmark_set:"required" (infisical-project).
-  const compatNames = new Set([...COMPILE_CANARY_PROJECT_ROWS, ...APPLICATION_ROW_SET]);
+  // Attach compat for compile-canary rows, application rows, AND rows that are
+  // benchmark_set:"required" but excluded from timing (BENCH_EXCLUDED_REQUIRED_ROW_SET).
+  // Application rows and bench-excluded required rows are never timed, so this
+  // JSONL is their only compatibility source — including the ones promoted to
+  // benchmark_set:"required" (infisical-project, type-challenges-solutions-project).
+  const compatNames = new Set([...COMPILE_CANARY_PROJECT_ROWS, ...APPLICATION_ROW_SET, ...BENCH_EXCLUDED_REQUIRED_ROW_SET]);
   const byName = new Map();
   const merged = results.map((row) => {
     if (row?.name) byName.set(row.name, row);
@@ -92,10 +105,15 @@ function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
       if (!compatNames.has(name)) continue;
       const existing = byName.get(name);
       if (existing) {
-        // Required NON-application rows get their compatibility from the timing
-        // run; don't let the canary JSONL clobber it. Application rows are not
-        // timed, so they DO need the canary compat attached even when required.
-        if (REQUIRED_PROJECT_ROW_SET.has(name) && !APPLICATION_ROW_SET.has(name)) {
+        // Required NON-application, NON-bench-excluded rows get their compatibility
+        // from the timing run; don't let the canary JSONL clobber it. Application
+        // rows and bench-excluded required rows are not timed, so they DO need the
+        // canary compat attached even when required.
+        if (
+          REQUIRED_PROJECT_ROW_SET.has(name) &&
+          !APPLICATION_ROW_SET.has(name) &&
+          !BENCH_EXCLUDED_REQUIRED_ROW_SET.has(name)
+        ) {
           continue;
         }
         existing.compatibility = compatibility;
