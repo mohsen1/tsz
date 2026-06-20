@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
             // denotes — which is correct for both meanings and breaks the cycle.
             if flags & symbol_flags::VALUE != 0
                 && let Some(unique) =
-                    self.merged_self_typeof_unique_symbol_type(declarations, &escaped_name)
+                    self.merged_self_typeof_unique_symbol_type(declarations, escaped_name)
             {
                 return (unique, Vec::new());
             }
