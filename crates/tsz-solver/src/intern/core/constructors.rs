@@ -208,7 +208,7 @@ impl TypeInterner {
         // expanded nested unions) catches a sentinel nested inside a member union.
         let mut has_any = false;
         let mut has_unknown = false;
-        for &id in flat.iter() {
+        for &id in &flat {
             if id == TypeId::ERROR {
                 return TypeId::ERROR; // error trumps everything
             }
