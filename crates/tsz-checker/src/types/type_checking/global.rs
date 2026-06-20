@@ -582,17 +582,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Disposable/AsyncDisposable: tsc only emits TS2318 when the target
-            // requires downleveling of `using`/`await using` (target < ES2025).
-            // When native support is available (target >= ES2025/ESNext), the types
-            // are only needed if they happen to be in the lib; their absence is not
-            // an error.
-            if matches!(type_name, "Disposable" | "AsyncDisposable")
-                && self.ctx.compiler_options.target.supports_es2025()
-            {
-                continue;
-            }
-
             // Use the capability boundary to map the type to its feature gate
             let Some(gate) = EnvironmentCapabilities::gate_for_required_type(type_name) else {
                 continue;
@@ -630,7 +619,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.experimental_decorators
                     && features.has(FileFeatures::DECORATORS)
             }
-            FeatureGate::UsingDeclaration => features.has(FileFeatures::USING),
+            // A `using` declaration requires the global `Disposable` type. An
+            // `await using` declaration is also a using declaration: `tsc`
+            // resolves both `Disposable` and `AsyncDisposable` for it, so the
+            // `Disposable` gate must fire for `await using` too.
+            FeatureGate::UsingDeclaration => {
+                features.has(FileFeatures::USING) || features.has(FileFeatures::AWAIT_USING)
+            }
             FeatureGate::AwaitUsingDeclaration => features.has(FileFeatures::AWAIT_USING),
             // Awaited maps to AsyncFunction gate — check async_depth
             FeatureGate::AsyncFunction => self.ctx.async_depth > 0,
