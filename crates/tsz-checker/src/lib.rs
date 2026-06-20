@@ -1402,6 +1402,9 @@ mod typeof_class_name_structural_lookup_arch_tests;
 #[path = "tests/typeof_const_spread_index_access_tests.rs"]
 mod typeof_const_spread_index_access_tests;
 #[cfg(test)]
+#[path = "tests/under_applied_generic_constructor_fill_tests.rs"]
+mod under_applied_generic_constructor_fill_tests;
+#[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
 #[cfg(test)]

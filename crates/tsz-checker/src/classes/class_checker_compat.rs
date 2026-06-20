@@ -7,6 +7,7 @@ use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_property_type_mismatch,
 };
 use crate::state::CheckerState;
+use crate::state_domain::type_resolution::constructors::missing_base_type_arg_fill;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -532,10 +533,11 @@ impl<'a> CheckerState<'a> {
                 let mut substitution_args = level_type_args.unwrap_or_default();
                 if substitution_args.len() < level_type_params.len() {
                     for param in level_type_params.iter().skip(substitution_args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
+                        let fallback = missing_base_type_arg_fill(
+                            self.ctx.types,
+                            param.default,
+                            param.constraint,
+                        );
                         substitution_args.push(fallback);
                     }
                 }
@@ -1081,10 +1083,11 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_default();
                     if class_subst_args.len() < class_type_params.len() {
                         for param in class_type_params.iter().skip(class_subst_args.len()) {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
+                            let fallback = missing_base_type_arg_fill(
+                                self.ctx.types,
+                                param.default,
+                                param.constraint,
+                            );
                             class_subst_args.push(fallback);
                         }
                     }
@@ -1518,10 +1521,8 @@ impl<'a> CheckerState<'a> {
 
             if type_args.len() < base_type_params.len() {
                 for param in base_type_params.iter().skip(type_args.len()) {
-                    let fallback = param
-                        .default
-                        .or(param.constraint)
-                        .unwrap_or(TypeId::UNKNOWN);
+                    let fallback =
+                        missing_base_type_arg_fill(self.ctx.types, param.default, param.constraint);
                     type_args.push(fallback);
                 }
             }
