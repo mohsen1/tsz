@@ -1073,6 +1073,20 @@ impl<'a> CheckerState<'a> {
 
                     let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
+                    // Declaration self-merge: a class and a same-named interface merge
+                    // into one symbol, and the class legally `implements` that name
+                    // (`class Foo implements Foo`). The implements target then resolves
+                    // to the merged symbol whose declarations include this very class
+                    // node. tsc treats the class as trivially implementing its own
+                    // (reflexive) type, so the nominal class-vs-class diagnostics that
+                    // assume a *distinct* target — TS2720 for a class target with
+                    // private/protected members, and the private/protected brand
+                    // mismatch forms of TS2420 — must not fire. Public-member value
+                    // assignability still runs below, so a generic non-identity
+                    // self-reference (e.g. `class Box<T> implements Box<string>`) is
+                    // still checked.
+                    let is_self_merge = symbol_declarations.contains(&class_idx);
+
                     let mut interface_type_params = None;
                     let mut has_private_members = false;
 
@@ -1132,7 +1146,7 @@ impl<'a> CheckerState<'a> {
                     let report_inaccessible_privates =
                         any_inaccessible_privates && !any_accessible_privates;
 
-                    if has_private_members {
+                    if has_private_members && !is_self_merge {
                         let message = format!(
                             "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
                         );
@@ -1373,35 +1387,42 @@ impl<'a> CheckerState<'a> {
                             let is_class_member_protected =
                                 (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
                             let interface_visibility = prop.visibility;
-                            if is_class_member_private {
-                                // When BOTH class member and interface member are private,
-                                // they're nominally separate declarations (different brands).
-                                // tsc behavior:
-                                //   - Types compatible: emit TS2420 with
-                                //     "Types have separate declarations of a private property 'x'."
-                                //   - Types incompatible: emit TS2416 (per-property type mismatch),
-                                //     suppress the visibility-form TS2420 entirely.
-                                if interface_visibility == tsz_solver::Visibility::Private {
-                                    let types_incompatible = interface_member_type
-                                        != tsz_solver::TypeId::ANY
-                                        && class_member_type != tsz_solver::TypeId::ANY
-                                        && interface_member_type != tsz_solver::TypeId::ERROR
-                                        && class_member_type != tsz_solver::TypeId::ERROR
-                                        && should_report_own_member_type_mismatch(
-                                            self,
-                                            class_member_type,
-                                            interface_member_type,
-                                            class_member_idx,
-                                        );
-                                    if types_incompatible {
-                                        incompatible_members.push((
-                                            class_member_idx,
-                                            member_name.clone(),
-                                            interface_member_type,
-                                            class_member_type,
-                                        ));
-                                    } else {
-                                        self.error_at_node(
+                            // In a declaration self-merge the class member and the
+                            // merged-interface member are the *same* declaration, so they
+                            // share a private/protected brand. The nominal "separate
+                            // declarations" / visibility-mismatch diagnostics below assume
+                            // two distinct declarations; skip them all and let the
+                            // value-type assignability check (further down) own this member.
+                            if !is_self_merge {
+                                if is_class_member_private {
+                                    // When BOTH class member and interface member are private,
+                                    // they're nominally separate declarations (different brands).
+                                    // tsc behavior:
+                                    //   - Types compatible: emit TS2420 with
+                                    //     "Types have separate declarations of a private property 'x'."
+                                    //   - Types incompatible: emit TS2416 (per-property type mismatch),
+                                    //     suppress the visibility-form TS2420 entirely.
+                                    if interface_visibility == tsz_solver::Visibility::Private {
+                                        let types_incompatible = interface_member_type
+                                            != tsz_solver::TypeId::ANY
+                                            && class_member_type != tsz_solver::TypeId::ANY
+                                            && interface_member_type != tsz_solver::TypeId::ERROR
+                                            && class_member_type != tsz_solver::TypeId::ERROR
+                                            && should_report_own_member_type_mismatch(
+                                                self,
+                                                class_member_type,
+                                                interface_member_type,
+                                                class_member_idx,
+                                            );
+                                        if types_incompatible {
+                                            incompatible_members.push((
+                                                class_member_idx,
+                                                member_name.clone(),
+                                                interface_member_type,
+                                                class_member_type,
+                                            ));
+                                        } else {
+                                            self.error_at_node(
                                                 class_error_idx,
                                                 &format!(
                                                     "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  {}",
@@ -1412,74 +1433,75 @@ impl<'a> CheckerState<'a> {
                                                 ),
                                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                             );
+                                        }
+                                        continue;
                                     }
-                                    continue;
-                                }
-                                self.error_at_node(
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_display_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            if is_class_member_protected {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                if is_class_member_protected {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_display_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            // Interface-side private/protected: an interface may inherit a
-                            // private/protected member from a base class (e.g., `interface I
-                            // extends Foo`). A class implementing that interface with a
-                            // non-private same-named property breaks nominal compatibility.
-                            //
-                            // For *protected*, if the class also extends the same base (so it
-                            // has the inherited protected brand), tsc allows the widened
-                            // public redeclaration. Skip the error in that case.
-                            //
-                            // For *private*, no such leniency — redeclaring a private member
-                            // is always a nominal mismatch even when the class extends the
-                            // declaring base.
-                            if interface_visibility == tsz_solver::Visibility::Private {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                // Interface-side private/protected: an interface may inherit a
+                                // private/protected member from a base class (e.g., `interface I
+                                // extends Foo`). A class implementing that interface with a
+                                // non-private same-named property breaks nominal compatibility.
+                                //
+                                // For *protected*, if the class also extends the same base (so it
+                                // has the inherited protected brand), tsc allows the widened
+                                // public redeclaration. Skip the error in that case.
+                                //
+                                // For *private*, no such leniency — redeclaring a private member
+                                // is always a nominal mismatch even when the class extends the
+                                // declaring base.
+                                if interface_visibility == tsz_solver::Visibility::Private {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            if interface_visibility == tsz_solver::Visibility::Protected
-                                && !inherited_non_public_members.contains_key(&member_name)
-                            {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                if interface_visibility == tsz_solver::Visibility::Protected
+                                    && !inherited_non_public_members.contains_key(&member_name)
+                                {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{interface_display_name}' but not in type '{class_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
+                                    continue;
+                                }
 
-                            // Visibility widening (TS2420): interface member is
-                            // PRIVATE (because the interface extends a class with
-                            // a private member) but the class declares the same
-                            // name as public. Private members are nominal in tsc,
-                            // so a public member cannot satisfy a private slot
-                            // even when the class extends the same base class.
-                            // Protected widening to public is NOT an error here:
-                            // tsc allows a subclass to override a protected member
-                            // with public visibility, and the implementing-class
-                            // check delegates to that rule.
-                            if prop.visibility == Visibility::Private {
-                                self.error_at_node(
-                                    class_error_idx,
-                                    &format!(
-                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."
-                                    ),
-                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                );
-                                continue;
+                                // Visibility widening (TS2420): interface member is
+                                // PRIVATE (because the interface extends a class with
+                                // a private member) but the class declares the same
+                                // name as public. Private members are nominal in tsc,
+                                // so a public member cannot satisfy a private slot
+                                // even when the class extends the same base class.
+                                // Protected widening to public is NOT an error here:
+                                // tsc allows a subclass to override a protected member
+                                // with public visibility, and the implementing-class
+                                // check delegates to that rule.
+                                if prop.visibility == Visibility::Private {
+                                    self.error_at_node(
+                                        class_error_idx,
+                                        &format!(
+                                            "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."
+                                        ),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                    continue;
+                                }
                             }
 
                             // Check type compatibility using regular assignability.
@@ -1835,163 +1857,6 @@ impl<'a> CheckerState<'a> {
                     // Pop interface type parameters from scope
                     self.pop_type_parameters(interface_type_param_updates);
                 }
-            }
-        }
-    }
-
-    // ============================================================================
-    // JSDoc @extends/@augments name mismatch checking (TS8023)
-    // ============================================================================
-
-    /// Check that JSDoc `@extends`/`@augments` tag argument matches the actual `extends` clause.
-    ///
-    /// In JS files, if a class has both `@extends {Foo}` and `extends Bar`,
-    /// TSC emits TS8023: "JSDoc '@extends Foo' does not match the 'extends Bar' clause."
-    pub(crate) fn check_jsdoc_extends_name_mismatch(
-        &mut self,
-        class_idx: NodeIndex,
-        class_data: &tsz_parser::parser::node::ClassData,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        if !self.ctx.is_js_file() {
-            return;
-        }
-
-        self.check_jsdoc_extends_tag_type_arguments(class_idx);
-        self.check_jsdoc_extends_tag_type_argument_constraints(class_idx);
-        self.check_missing_jsdoc_extends_type_arguments(class_idx, class_data);
-
-        // Get the actual extends clause base class name
-        let actual_extends_name = self.get_extends_clause_name(class_data);
-        let Some(actual_name) = actual_extends_name else {
-            return; // No extends clause, nothing to check
-        };
-
-        // Get the JSDoc comment range and search the raw source text
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-        let Some(node) = self.ctx.arena.get(class_idx) else {
-            return;
-        };
-
-        // Find the leading JSDoc comment range
-        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
-        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
-        let Some(comment) = leading.last() else {
-            return;
-        };
-        if !is_jsdoc_comment(comment, source_text) {
-            return;
-        }
-
-        let comment_text = comment.get_text(source_text);
-
-        // Search for @extends or @augments in the raw comment text
-        for tag in ["augments", "extends"] {
-            let needle = format!("@{tag}");
-            for (match_pos, _) in comment_text.match_indices(&needle) {
-                let after = match_pos + needle.len();
-                if after >= comment_text.len() {
-                    continue;
-                }
-                let next_ch = comment_text[after..]
-                    .chars()
-                    .next()
-                    .expect("after < len checked above");
-                if next_ch.is_ascii_alphanumeric() {
-                    continue;
-                }
-                let rest = comment_text[after..].trim_start();
-                if rest.is_empty() {
-                    continue;
-                }
-
-                // Extract type name from {TypeName<...>} or TypeName
-                let (jsdoc_type_name, type_name_in_rest) = if rest.starts_with('{') {
-                    if let Some(close) = rest.find('}') {
-                        let name = rest[1..close].trim();
-                        (name, &rest[1..close])
-                    } else {
-                        continue;
-                    }
-                } else {
-                    let end = rest
-                        .find(|c: char| c.is_whitespace() || c == '*')
-                        .unwrap_or(rest.len());
-                    let name = rest[..end].trim();
-                    (name, &rest[..end])
-                };
-
-                if jsdoc_type_name.is_empty() {
-                    // Empty @extends/@augments tag (e.g. `/** @augments */`):
-                    // emit TS1003 + TS8023 at the position right after the tag keyword.
-                    let error_pos = comment.pos + after as u32;
-
-                    self.ctx.error(
-                        error_pos,
-                        1,
-                        diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
-                        diagnostic_codes::IDENTIFIER_EXPECTED,
-                    );
-
-                    let message = format_message(
-                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
-                        &[tag, "", &actual_name],
-                    );
-                    self.ctx.error(
-                        error_pos,
-                        1,
-                        message,
-                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
-                    );
-                    return;
-                }
-
-                // Strip type arguments: "Foo<Bar>" → "Foo"
-                let jsdoc_base_name = jsdoc_type_name
-                    .find('<')
-                    .map_or(jsdoc_type_name, |i| &jsdoc_type_name[..i]);
-
-                // Check if the JSDoc @extends type name actually exists. If not,
-                // emit TS2304 "Cannot find name" (tsc emits this alongside TS8023,
-                // not instead of it).
-                if !self.ctx.binder.file_locals.has(jsdoc_base_name) {
-                    let type_name_offset =
-                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                    let error_pos = comment.pos + type_name_offset as u32;
-                    let error_len = jsdoc_base_name.len() as u32;
-                    let message =
-                        format_message(diagnostic_messages::CANNOT_FIND_NAME, &[jsdoc_base_name]);
-                    self.ctx.error(
-                        error_pos,
-                        error_len,
-                        message,
-                        diagnostic_codes::CANNOT_FIND_NAME,
-                    );
-                }
-
-                if jsdoc_base_name != actual_name {
-                    let message = format_message(
-                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
-                        &[tag, jsdoc_type_name, &actual_name],
-                    );
-                    // Anchor at the type name argument in the JSDoc (matches TSC behavior)
-                    let type_name_offset =
-                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                    let error_pos = comment.pos + type_name_offset as u32;
-                    let error_len = jsdoc_type_name.len() as u32;
-                    self.ctx.error(
-                        error_pos,
-                        error_len,
-                        message,
-                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
-                    );
-                }
-                return; // Only check first @extends/@augments tag
             }
         }
     }
