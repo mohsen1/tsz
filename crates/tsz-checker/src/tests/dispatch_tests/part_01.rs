@@ -1663,6 +1663,13 @@ fn satisfies_array_literal_elaborates_per_element() {
     // the offending `"20"` element with `Type 'string' is not assignable to
     // type 'number'.`, matching its `elaborateElementwise` behavior.
     //
+    // tsc's `elaborateError` descends through *parenthesized* operands but NOT
+    // through `as` / `<T>` type assertions (its switch handles only
+    // ParenthesizedExpression / ObjectLiteral / ArrayLiteral / ArrowFunction).
+    // So a parenthesized array source still elaborates per-element, but an
+    // `as`-asserted source yields the asserted (non-fresh) type and reports the
+    // top-level TS1360 with the relation's own structural chain instead.
+    //
     // Iteration variable / property names are deliberately varied across
     // assertions to avoid fingerprinting a specific spelling — the rule is
     // structural over array literal sources, not over specific identifiers.
@@ -1678,22 +1685,29 @@ take(10, ...(([1, "asserted"] as (number | string)[]) satisfies number[]));
 
     // First satisfies has one bad element: "20" (string).
     // Second satisfies has one bad element: "x" (string).
-    // The wrapped cases prove source unwrapping reaches the same array-literal
-    // element path for parenthesized and asserted array sources.
-    // Each source should emit TS2322 at the bad element, NOT TS1360 on the whole satisfies.
+    // Third (parenthesized) source also reaches the array-literal element path.
+    // The fourth source is an `as`-assertion: tsc reports a top-level TS1360
+    // (not per-element), because `elaborateError` does not descend through `as`.
     let ts2322 = diagnostics_with_code(&diags, 2322);
     let ts1360 = diagnostics_with_code(&diags, 1360);
 
     assert_eq!(
         ts1360.len(),
-        0,
-        "Expected NO TS1360 generic-satisfies error; expected per-element TS2322 instead, got TS1360s: {:?}",
+        1,
+        "Expected exactly one TS1360 (the `as`-asserted source reports top-level), got: {:?}",
         diagnostic_messages(&ts1360)
+    );
+    assert!(
+        ts1360[0]
+            .message_text
+            .contains("does not satisfy the expected type 'number[]'"),
+        "Expected TS1360 to name the satisfies target, got: {}",
+        ts1360[0].message_text
     );
     assert_eq!(
         ts2322.len(),
-        4,
-        "Expected exactly 4 TS2322 elaborations (one per bad element), got: {:?}",
+        3,
+        "Expected exactly 3 per-element TS2322 elaborations (the non-asserted sources), got: {:?}",
         diagnostic_messages(&ts2322)
     );
     for diag in &ts2322 {
