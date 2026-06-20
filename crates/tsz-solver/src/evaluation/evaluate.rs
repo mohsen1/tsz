@@ -79,6 +79,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
     def_depth: FxHashMap<DefId, u32>,
+    /// #14101 SCC-discriminating probe: ordered stack of in-flight `DefId`
+    /// application entries (pushed on a successful `increment_def_depth`, popped
+    /// in `decrement_def_depth`). Lets the re-entry probe count the distinct
+    /// OTHER `DefId`s between two entries of the same `DefId` — 0 = single-def
+    /// self-recursion, >=1 = a multi-member A->B->A SCC. Observe-only.
+    def_eval_stack: Vec<DefId>,
     /// Number of currently active `DefId` expansions at or above the threshold
     /// that turns a structural recursion bailout into a real TS2589 failure.
     real_instantiation_depth_count: u32,
@@ -285,6 +291,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            def_eval_stack: Vec::new(),
             real_instantiation_depth_count: 0,
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
@@ -373,6 +380,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Pure instrumentation (probe-gated); quantifies SCC materialize-once headroom.
         if *depth >= 1 {
             crate::evaluation::eval_materialization_probe::record_def_reentry(*depth);
+            // #14101 discriminating probe: distinct OTHER DefIds between this and
+            // the prior same-DefId entry (0 = single-def recursion, >=1 = a
+            // multi-member A->B->A SCC). Disjoint-field read of def_eval_stack
+            // while `depth` borrows def_depth; gated internally on the probe.
+            crate::evaluation::eval_materialization_probe::record_def_reentry_distinct(
+                &self.def_eval_stack,
+                def_id,
+            );
         }
         if *depth >= Self::MAX_DEF_DEPTH {
             // Depth-bounded run (see `deep_recursion_seen`).
@@ -386,10 +401,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.real_instantiation_depth_count += 1;
             self.mark_deep_recursion_seen();
         }
+        // #14101 probe: push on success — balanced with the pop in
+        // `decrement_def_depth` (the MAX_DEF_DEPTH early-return above does not push,
+        // and its caller does not decrement, so the stack stays balanced). Gated on
+        // the probe flag (stable per run) so a non-profiling build pays nothing.
+        if tsz_common::perf_counters::enabled_fast() {
+            self.def_eval_stack.push(def_id);
+        }
         true
     }
 
     fn decrement_def_depth(&mut self, def_id: DefId) {
+        // #14101 probe: pop — balanced with the gated push on a successful increment.
+        if tsz_common::perf_counters::enabled_fast() {
+            self.def_eval_stack.pop();
+        }
         if let Some(depth) = self.def_depth.get_mut(&def_id) {
             let was_real_instantiation_depth = *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
             *depth = depth.saturating_sub(1);
@@ -545,6 +571,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.contains_type_by_id_cache.clear();
         self.guard.reset();
         self.def_depth.clear();
+        self.def_eval_stack.clear();
         self.real_instantiation_depth_count = 0;
     }
 
