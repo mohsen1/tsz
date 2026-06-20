@@ -39,13 +39,15 @@ import { measurementProfileStatus } from "./measurement-profile.mjs";
 
 // The bench artifact readiness gate must not demand rows that the bench runner
 // never measures, or it fails every publish on a permanently-missing row. The
-// runner skips a row when it is in BENCH_RUNNER_EXCLUDED_ROWS OR its category is
-// "application" (see project-row-summary.mjs drift logic) — application rows are
-// compatibility/compile-guard canaries, never timed. Examples that broke
-// publishing: type-challenges-solutions-project (excluded-set, #13549) and
+// never measures as a required row, or it fails every publish on a permanently
+// missing/optional row. Rows in BENCH_RUNNER_EXCLUDED_ROWS are never measured;
+// application rows may be timed by an optional shard but must not be required,
+// because their package-manager installs are intentionally outside the public
+// publish completeness gate. Examples that broke publishing:
+// type-challenges-solutions-project (excluded-set, #13549) and
 // infisical/payload/medusa (category:application, promoted to benchmark_set
-// "required" by #13775). Mirror the runner's exclusion exactly: only rows that
-// are required AND actually measured belong in the readiness required-set.
+// "required" by #13775). Only rows that are required AND part of the required
+// timing shards belong in the readiness required-set.
 const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
   (name) =>
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
