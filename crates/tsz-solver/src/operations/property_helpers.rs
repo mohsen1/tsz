@@ -907,11 +907,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let Some(body_type) = body_type else {
-            // Resolution failed - fall back to structural evaluation
+            // Resolution failed - fall back to structural evaluation.
             let evaluated = self
                 .db
                 .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
-            return self.resolve_property_access_inner(evaluated, prop_atom);
+            if evaluated != app_type {
+                return self.resolve_property_access_inner(evaluated, prop_atom);
+            }
+            // Structural evaluation made no progress: the `Lazy(DefId)` base could
+            // not be resolved by this evaluator's resolver (e.g. the boundary's
+            // noop resolver cannot crack a cross-file built-in interface ref), and
+            // re-entering with the unchanged `Application` would only hit the
+            // recursion guard and degrade to a false `PropertyNotFound`. Mirror the
+            // bare-`Lazy` branch (which yields the deferred `any` fallback when its
+            // ref cannot be resolved) so an unresolvable generic built-in
+            // constituent of an intersection/union does not suppress the property:
+            // the env-aware checker re-queries with a full resolver to recover the
+            // concrete member type.
+            return self
+                .resolve_object_member(prop_atom)
+                .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY));
         };
 
         let Some(type_params) = type_params else {
