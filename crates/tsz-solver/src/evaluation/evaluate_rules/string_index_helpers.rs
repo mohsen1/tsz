@@ -65,15 +65,14 @@ pub(super) fn number_index_signature_applies<R: TypeResolver>(
     // literal, or a `number & { brand }` intersection.
     match evaluator.interner().lookup(index_type) {
         Some(TypeData::Literal(LiteralValue::Number(_))) => return true,
-        Some(TypeData::Intersection(list_id)) => {
+        Some(TypeData::Intersection(list_id))
             if evaluator
                 .interner()
                 .type_list(list_id)
                 .iter()
-                .any(|&member| is_number_like_intersection_member(evaluator, member))
-            {
-                return true;
-            }
+                .any(|&member| is_number_like_intersection_member(evaluator, member)) =>
+        {
+            return true;
         }
         _ => {}
     }
