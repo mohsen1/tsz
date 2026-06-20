@@ -18,10 +18,14 @@
 //! same-constrained function params stay distinct (`S[K_outer]` vs `S[K_inner]`
 //! keeps erroring). All witnesses are tsc-5.5-verified.
 //!
-//! The remaining ignored test pins a separate residue: a deferred
-//! conditional instantiated with concrete type arguments must relate to its
-//! generic origin (tsc's same-conditional-root rule), which id convergence
-//! alone does not provide.
+//! The previously-ignored bivariant case is a separate concern handled in the
+//! solver, not by type-parameter id convergence: two instantiations of the same
+//! generic interface relate by per-parameter variance, and a parameter that
+//! appears solely in a conditional `extends` position is bivariant, so the
+//! instantiations relate regardless of that argument (the member's differing
+//! deferred conditional is never reached). See
+//! `relations::variance::visit_conditional` and the all-bivariant acceptance in
+//! `try_variance_fast_path`.
 //!
 //! Owner layer: checker type-parameter identity
 //! (`state/type_analysis/core.rs::intern_type_param_for_decl` and the shared
@@ -180,9 +184,11 @@ class B7Impl<DB, TB extends keyof DB> implements B7<DB, TB> {
 
 /// Method-bivariance control: a concretely instantiated impl parameter is
 /// accepted bivariantly by tsc (method declarations relate bivariantly);
-/// verified against `tsc 5.5` (clean).
+/// verified against `tsc 6.0` (clean). The two `any` members differ only in a
+/// conditional whose `extends` mentions `TB`, a parameter that appears solely
+/// in that bivariant extends position; tsc relates the two `FM` instantiations
+/// by all-bivariant variance, not by a structural member walk.
 #[test]
-#[ignore = "pinned: relating a deferred conditional instantiated with concrete args against its generic origin still requires conditional-root identity (tsc relates same-root conditional instantiations); the generation-identity convergence fixed the generic-vs-generic family but not this concrete bivariant form"]
 fn implements_member_concrete_param_bivariant_accepted() {
     let source = r#"
 interface FM<DB, TB extends keyof DB> {
