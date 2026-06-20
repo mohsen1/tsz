@@ -1278,14 +1278,31 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
 
-                            // Emit TS2312 for interface extending a type parameter
+                            // Interface extending one of its own type parameters.
+                            // tsc's `isValidBaseType` accepts a type parameter whose
+                            // base constraint is a valid object base — members are
+                            // inherited from the constraint's statically-known shape
+                            // (`interface I<T extends { k: string }> extends T {}`).
+                            // Emit TS2312 only when the constraint is not such a base
+                            // (unconstrained, or constrained to a non-object). The
+                            // type-parameter scope is active here (heritage is checked
+                            // after the params are pushed), so the node resolves to the
+                            // constrained `TypeParameter` type.
                             if !is_class_declaration && class_type_param_names.contains(&name) {
-                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                self.error_at_node(
-                                    expr_idx,
-                                    diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
-                                    diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
-                                );
+                                let base_type = self.get_type_from_type_node(type_idx);
+                                if !crate::query_boundaries::class::is_valid_interface_base_type(
+                                    self.ctx.types,
+                                    base_type,
+                                ) {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages,
+                                    };
+                                    self.error_at_node(
+                                        expr_idx,
+                                        diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                        diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                    );
+                                }
                                 continue;
                             }
                             // Route through boundary for TS2304/TS2552 with suggestion collection

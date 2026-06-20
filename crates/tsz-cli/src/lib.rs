@@ -50,6 +50,9 @@ mod fs_tests;
 #[path = "../tests/generic_interface_bivariant_param_relation_tests.rs"]
 mod generic_interface_bivariant_param_relation_tests;
 #[cfg(test)]
+#[path = "../tests/interface_extends_cross_module_class_cli_tests.rs"]
+mod interface_extends_cross_module_class_cli_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_generic_alias_cli_tests.rs"]
 mod interface_extends_generic_alias_cli_tests;
 #[cfg(test)]

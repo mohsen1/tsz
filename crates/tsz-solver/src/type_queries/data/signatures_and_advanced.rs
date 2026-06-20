@@ -1936,6 +1936,15 @@ pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> b
                     .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
+        // tsc `isValidBaseType`: a type parameter is a valid interface base iff
+        // its base constraint is a valid base type. Members are inherited from
+        // the constraint's statically-known object shape (e.g.
+        // `interface I<T extends { k: string }> extends T {}` inherits `k`). An
+        // unconstrained parameter resolves to itself and is rejected (TS2312).
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => {
+            let constraint = crate::type_queries::get_base_constraint_or_type(db, type_id);
+            constraint != type_id && is_valid_interface_base_type(db, constraint)
+        }
         _ => false,
     }
 }
