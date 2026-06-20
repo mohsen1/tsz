@@ -167,6 +167,15 @@ impl<'a> TypeVisitor for InstanceofLeftOperandVisitor<'a> {
     fn visit_application(&mut self, _app_id: u32) -> bool {
         true
     }
+    fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> bool {
+        // A deferred indexed access `T[K]` (e.g. `shape[k]` where `T extends
+        // { [k: string]: Base }`) is generic-valued: its apparent type is the
+        // object-like constraint, so like a bare type parameter it is a valid
+        // `instanceof` left operand. tsc looks through to the apparent type; a
+        // concrete indexed access would already be evaluated to its element type
+        // before reaching this visitor.
+        true
+    }
     fn visit_lazy(&mut self, _def_id: u32) -> bool {
         // Lazy types represent interfaces/classes which are object types —
         // valid left operands for instanceof.
