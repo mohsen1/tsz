@@ -1240,14 +1240,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // collect remaining middle elements into the rest tuple.
             let prefix_len = rest_index;
             let suffix_len = pattern_len - rest_index - 1;
-            let fixed_count = prefix_len + suffix_len;
 
-            // Source must have at least enough elements for the fixed parts
-            if source_len < fixed_count {
+            // An *optional* prefix element (`[(infer H)?, ...rest]`) can match
+            // ZERO source elements, so the leading prefix slots that count
+            // toward the minimum source arity are only the non-optional ones.
+            // tsc treats `[] extends [(infer H)?, ...infer T]` as a match (true
+            // branch) because the optional `H` absorbs the missing element;
+            // counting every prefix slot as required would wrongly reject the
+            // empty source and take the false branch.
+            let required_prefix_len = pattern_elems[..prefix_len]
+                .iter()
+                .filter(|elem| !elem.optional)
+                .count();
+            let min_source_len = required_prefix_len + suffix_len;
+
+            // Source must have at least enough elements for the required fixed
+            // parts (required prefix slots + suffix).
+            if source_len < min_source_len {
                 return false;
             }
 
             let rest_source_end = source_len - suffix_len;
+            // The prefix can only consume source elements up to the suffix
+            // boundary; when the source is shorter than the full prefix, the
+            // trailing prefix slots have no source position and must be
+            // optional (verified below). They are filled with their `unknown`
+            // default after the matched slots, exactly as tsc leaves an
+            // unmatched optional `infer` slot at `unknown`.
+            let matched_prefix_len = std::cmp::min(prefix_len, rest_source_end);
 
             // Collect the fixed prefix and suffix `(source, pattern)` pairs.
             // These are all co-located *covariant* tuple positions: when the
@@ -1261,8 +1281,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // branch. The fixed-slot validity checks (no nested rest, optional
             // source cannot fill a required slot) stay eager so an invalid
             // shape rejects before any inference work.
-            let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_count);
-            for i in 0..prefix_len {
+            let mut fixed_pairs: Vec<(TypeId, TypeId)> =
+                Vec::with_capacity(matched_prefix_len + suffix_len);
+            for i in 0..matched_prefix_len {
                 if !self.push_fixed_tuple_pair(
                     &source_elems[i],
                     &pattern_elems[i],
@@ -1270,6 +1291,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) {
                     return false;
                 }
+            }
+            // Any prefix slot beyond the matched range has no source position.
+            // It must be optional (a required prefix slot with no source
+            // element cannot match), and its `infer` variables default to
+            // `unknown` — the value tsc gives an unmatched optional slot.
+            for pattern_elem in &pattern_elems[matched_prefix_len..prefix_len] {
+                if !pattern_elem.optional {
+                    return false;
+                }
+                self.fill_unbound_infer_defaults(pattern_elem.type_id, TypeId::UNKNOWN, bindings);
             }
             for i in 0..suffix_len {
                 if !self.push_fixed_tuple_pair(
@@ -1308,7 +1339,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // each source element's `rest`/`optional` flags and structurally
             // simplify a single-rest-non-optional residual (`[...X[]]` -> `X[]`)
             // so that `infer R` binds to the array form tsc treats as identical.
-            let residual = &source_elems[prefix_len..rest_source_end];
+            let residual = &source_elems[matched_prefix_len..rest_source_end];
             let pattern_rest_type = pattern_elems[rest_index].type_id;
             return self.match_residual_against_pattern_rest(
                 residual,

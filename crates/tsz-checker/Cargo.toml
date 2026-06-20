@@ -1930,3 +1930,7 @@ path = "tests/construct_signature_boundary_matrix_tests.rs"
 [[test]]
 name = "nullable_union_missing_property_tests"
 path = "tests/nullable_union_missing_property_tests.rs"
+
+[[test]]
+name = "empty_tuple_optional_infer_tests"
+path = "tests/empty_tuple_optional_infer_tests.rs"
