@@ -313,6 +313,24 @@ impl<'a> CheckerState<'a> {
                 break;
             }
         }
+
+        // Fallback for a still-deferred operand: a generic-alias application or
+        // conditional (e.g. `Awaitable<number>` for
+        // `type Awaitable<T> = T | Promise<T>`) is neither a `Union`/`Intersection`
+        // node nor directly Promise-shaped, so none of the steps above unwrap it
+        // — yet tsc's `getAwaitedType` operates on the *resolved* type, which
+        // here is `number | Promise<number>`. Evaluate the residual to its
+        // structural shape and retry once when that changes it (so the union
+        // distribution and Promise-unwrap then apply, regardless of the
+        // alias/type-parameter names the user picked). This is a pure fallback:
+        // direct unions/intersections and (alias-to-)`Promise` forms are already
+        // handled above, so the common await hot path only performs the cheap
+        // `is_generic_type` check inside `evaluate_application_type` here.
+        let resolved = self.resolve_lazy_type(current_type);
+        let resolved = self.evaluate_application_type(resolved);
+        if resolved != current_type {
+            return self.compute_awaited_type(resolved, depth + 1);
+        }
         current_type
     }
 

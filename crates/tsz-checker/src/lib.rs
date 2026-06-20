@@ -136,6 +136,9 @@ mod assignment_ops_relation_routing_arch_tests;
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
+#[path = "tests/await_alias_union_distribution_tests.rs"]
+mod await_alias_union_distribution_tests;
+#[cfg(test)]
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
