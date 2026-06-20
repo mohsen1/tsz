@@ -1176,6 +1176,142 @@ fn canonicalize_keyof_passthrough() {
 }
 
 // ===================================================================
+// NoInfer<T> wrapper canonicalization
+//
+// `NoInfer` is a single-nested structural wrapper (grouped with
+// `Array`/`ReadonlyType` by `child_policy`); the canonicalizer must reduce
+// its inner like the sibling wrappers, or two structurally-identical
+// `NoInfer<…>` types fragment into distinct canonical identities (#13609
+// family, NoInfer axis).
+// ===================================================================
+
+/// Build `<name>(x: name) => name` — a generic identity function whose only
+/// declared type parameter is named `name`. Two such functions differing only
+/// in the parameter name are alpha-equivalent.
+fn make_generic_identity_fn(interner: &TypeInterner, name: &str) -> TypeId {
+    use crate::types::{FunctionShape, ParamInfo};
+    let info = TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let pref = interner.type_param(info);
+    interner.function(FunctionShape {
+        type_params: vec![info],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: pref,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: pref,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
+
+#[test]
+fn canonicalize_no_infer_inner_canonicalized_alpha_equivalent() {
+    // `NoInfer<<T>(x: T) => T>` and `NoInfer<<U>(x: U) => U>` wrap two
+    // alpha-equivalent generic functions. Their inners canonicalize to one
+    // identity, so the wrapped types must too. Before the NoInfer arm was
+    // added, the wrapper passed through the catch-all and the two distinct
+    // inner TypeIds kept the wrapped types distinct.
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let inner_t = make_generic_identity_fn(&interner, "T");
+    let inner_u = make_generic_identity_fn(&interner, "U");
+    // The two inner functions are interned distinctly (names differ).
+    assert_ne!(inner_t, inner_u);
+
+    let no_infer_t = interner.no_infer(inner_t);
+    let no_infer_u = interner.no_infer(inner_u);
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let r1 = c1.canonicalize(no_infer_t);
+    let r2 = c2.canonicalize(no_infer_u);
+
+    assert_eq!(
+        r1, r2,
+        "NoInfer wrapping alpha-equivalent generic functions must share one \
+         canonical identity (inner is canonicalized like Array/ReadonlyType)"
+    );
+}
+
+#[test]
+fn canonicalize_no_infer_recurses_inner_like_array() {
+    // The canonical NoInfer inner is exactly the canonicalized inner: the
+    // wrapper is transparent to canonicalization (mirrors the Array/ReadonlyType
+    // structural-children policy), only normalizing what it wraps.
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let inner = make_generic_identity_fn(&interner, "T");
+    let canon_inner = {
+        let mut c = Canonicalizer::new(&interner, &env);
+        c.canonicalize(inner)
+    };
+    let expected = interner.no_infer(canon_inner);
+
+    let mut canon = Canonicalizer::new(&interner, &env);
+    let result = canon.canonicalize(interner.no_infer(inner));
+
+    assert_eq!(
+        result, expected,
+        "canonicalize(NoInfer<T>) must equal NoInfer<canonicalize(T)>"
+    );
+}
+
+#[test]
+fn canonicalize_no_infer_preserves_wrapper() {
+    // NoInfer keeps a distinct identity from its inner in `tsc`; canonicalization
+    // must NOT strip the wrapper (it is not an identity-irrelevant modifier — it
+    // is a structural type constructor). `NoInfer<number>` stays a NoInfer.
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+    let mut canon = Canonicalizer::new(&interner, &env);
+
+    let no_infer_number = interner.no_infer(TypeId::NUMBER);
+    let result = canon.canonicalize(no_infer_number);
+
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::NoInfer(inner)) if inner == TypeId::NUMBER),
+        "NoInfer<number> must canonicalize to NoInfer<number>, not be stripped to number; got {:?}",
+        interner.lookup(result)
+    );
+    // The inner is a primitive, so the wrapper is unchanged overall.
+    assert_eq!(result, no_infer_number);
+}
+
+#[test]
+fn canonicalize_no_infer_distinct_inner_stays_distinct() {
+    // Negative control: canonicalizing the inner must not over-collapse.
+    // `NoInfer<string>` and `NoInfer<number>` wrap different inners and must
+    // keep distinct canonical identities.
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let no_infer_string = interner.no_infer(TypeId::STRING);
+    let no_infer_number = interner.no_infer(TypeId::NUMBER);
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let r1 = c1.canonicalize(no_infer_string);
+    let r2 = c2.canonicalize(no_infer_number);
+
+    assert_ne!(
+        r1, r2,
+        "NoInfer over distinct inner types must stay distinct"
+    );
+}
+
+// ===================================================================
 // Object with index signatures
 // ===================================================================
 

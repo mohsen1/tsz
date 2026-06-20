@@ -437,6 +437,19 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     self.interner.readonly_type(c_inner)
                 }
 
+                // `NoInfer<T>` - single-nested structural wrapper: canonicalize the
+                // inner like its `child_policy` siblings `Array`/`ReadonlyType`, then
+                // re-wrap to preserve the wrapper's distinct identity from `T`.
+                // Omitting it left `NoInfer<…>` in the catch-all `_ => type_id` arm,
+                // fragmenting the canonical identity of any type containing it when
+                // the inner was structurally identical but differently interned
+                // (alpha-equivalent generics; pre-resolution `Lazy` vs expanded body)
+                // — the #13609 identity-fragmentation family on the `NoInfer` axis.
+                TypeData::NoInfer(inner) => {
+                    let c_inner = self.canonicalize(inner);
+                    self.interner.no_infer(c_inner)
+                }
+
                 // Conditional type (T extends U ? X : Y)
                 TypeData::Conditional(cond_id) => {
                     let cond = self.interner.conditional_type(cond_id);
