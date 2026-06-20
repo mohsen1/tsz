@@ -776,6 +776,9 @@ path = "tests/ts2677_intersection_predicate_tests.rs"
 name = "ts2673_anonymous_class_private_ctor_tests"
 path = "tests/ts2673_anonymous_class_private_ctor_tests.rs"
 [[test]]
+name = "ts2352_object_constrained_param_assertion_tests"
+path = "tests/ts2352_object_constrained_param_assertion_tests.rs"
+[[test]]
 name = "ts2352_merged_type_alias_const_tests"
 path = "tests/ts2352_merged_type_alias_const_tests.rs"
 [[test]]

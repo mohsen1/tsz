@@ -219,6 +219,24 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // A type parameter whose base constraint is the `object` primitive (e.g.
+    // `T extends object`) is comparable to any object-like value for assertion
+    // purposes. tsc's `isTypeComparableTo` resolves the type parameter to its
+    // base constraint; since `object` is the structureless non-primitive
+    // supertype, every object-like source overlaps it without the "could be a
+    // different subtype" objection that named/structural constraints raise.
+    // This is strictly narrower than unwrapping arbitrary constraints: only the
+    // bare `object` primitive triggers it, so `B as T extends A`
+    // (genericTypeAssertions4.ts) and `{ x } as T extends {}` keep firing
+    // TS2352 because their constraints are not the `object` primitive.
+    if (is_object_like_for_assertion(db, source)
+        && type_param_base_constraint_is_object(db, target, depth))
+        || (is_object_like_for_assertion(db, target)
+            && type_param_base_constraint_is_object(db, source, depth))
+    {
+        return true;
+    }
+
     // The empty object type `{}` is comparable to any type parameter whose
     // constraint contains an object-like or `object`-primitive member. tsc's
     // `isTypeComparableTo` walks the type parameter's constraint when the
@@ -326,6 +344,39 @@ fn deferred_conditional_assertion_constraint(
         }
     }
     None
+}
+
+/// Returns true when `type_id` is a type parameter (`TypeData::TypeParameter`)
+/// whose base constraint resolves to the `object` primitive (`TypeId::OBJECT`).
+///
+/// Walks a chain of type-parameter constraints (`T extends U`, `U extends
+/// object`) up to a small depth bound so that transitively `object`-constrained
+/// parameters are recognized. Only the bare `object` primitive qualifies;
+/// structural constraints like `{}` or named interfaces are intentionally
+/// excluded so that source-specific overlap (and tsc's "different subtype"
+/// objection) is preserved for those constraints.
+fn type_param_base_constraint_is_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 5 {
+        return false;
+    }
+    let Some(TypeData::TypeParameter(info)) = db.lookup(type_id) else {
+        return false;
+    };
+    let Some(constraint) = info
+        .constraint
+        .filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN)
+    else {
+        return false;
+    };
+    if constraint == TypeId::OBJECT {
+        return true;
+    }
+    // Follow a constraint that is itself an `object`-constrained type parameter.
+    type_param_base_constraint_is_object(db, constraint, depth + 1)
 }
 
 fn type_param_primitive_comparable_with_constraint(
