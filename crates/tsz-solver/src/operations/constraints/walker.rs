@@ -1038,7 +1038,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_elems = self.interner.tuple_list(s_elems);
                 for s_elem in s_elems.iter() {
                     if s_elem.rest {
-                        let rest_elem_type = self.rest_element_type(s_elem.type_id);
+                        // A spread `...X` contributes X's element type. Keep X
+                        // verbatim when it is itself an inference variable (a
+                        // `[...T]` rest we are solving, e.g. via a contravariant
+                        // callback) so the bound flows to the variable directly;
+                        // otherwise unwrap array-like spreads (including a type
+                        // parameter constrained to an array) to their element.
+                        let rest_elem_type = if var_map.contains_key(&s_elem.type_id) {
+                            s_elem.type_id
+                        } else {
+                            self.source_spread_element_type(s_elem.type_id)
+                        };
                         self.constrain_types(ctx, var_map, rest_elem_type, t_elem, priority);
                     } else {
                         self.constrain_types(ctx, var_map, s_elem.type_id, t_elem, priority);
@@ -1071,8 +1081,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let elem_types: Vec<TypeId> = s_elems
                     .iter()
                     .map(|e| {
-                        if e.rest {
-                            self.rest_element_type(e.type_id)
+                        if e.rest && !var_map.contains_key(&e.type_id) {
+                            self.source_spread_element_type(e.type_id)
                         } else {
                             e.type_id
                         }

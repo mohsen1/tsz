@@ -1211,6 +1211,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Element type of a *source-side* spread `...X` (a rest element of a
+    /// concrete argument tuple).
+    ///
+    /// A spread contributes the element type of `X`, not `X` itself. Unlike
+    /// [`Self::rest_element_type`] — which only unwraps a bare `Array` and is
+    /// kept shallow for target-tuple rests that may hold inference variables —
+    /// this resolves any array-like form, including a type parameter constrained
+    /// to an array (`End extends string[]`), a `readonly` array, or an array
+    /// alias/application, via [`get_array_element_type`]. This lets a variadic
+    /// tuple argument `[...End]` matched against a parameter `T[]` infer
+    /// `T = string` (the element of `End`'s constraint) instead of `T = End`,
+    /// whose constraint `string[]` would otherwise leak into the result.
+    ///
+    /// Safe to apply only on the source side: the argument type never carries
+    /// the callee's inference placeholders, so unwrapping a type parameter to
+    /// its constraint element cannot dissolve a variable we are inferring.
+    pub(crate) fn source_spread_element_type(&self, type_id: TypeId) -> TypeId {
+        crate::type_queries::get_array_element_type(self.interner, type_id).unwrap_or(type_id)
+    }
+
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
     const MAX_UNWRAP_ITERATIONS: usize = 1000;
 
