@@ -700,7 +700,7 @@ function g(items: Lhs[]): Rhs[] { return items; }
 }
 
 // ============================================================================
-// Same-base recursive-conditional false-negative witnesses (#8432)
+// Same-base recursive-conditional deep-nesting parity guards (#8432)
 //
 // `deeplyNestedMappedTypes.ts` includes a `NestedRecord` family:
 //
@@ -709,32 +709,29 @@ function g(items: Lhs[]): Rhs[] { return items; }
 //             ? { [P in K0]: NestedRecord<KR, V> }
 //             : Record<K, V>;
 //
-// `tsc` reports the `const bar2: Bar2 = bar1` assignment (a number-valued nested
-// record assigned to a string-valued one) as `TS2322`. tsz reproduces the error
-// only while the dotted key path is shallow; once the path reaches four
-// segments AND both operands are applications of the *same* recursive
-// conditional alias (differing only in the non-recursion-driving payload type
-// argument `V`), tsz silently accepts the assignment.
+// The conformance file marks `const bar2: Bar2 = bar1` (a `number`-valued nested
+// record assigned to a `string`-valued one, with a 6-segment path) `// Error
+// expected`, but `tsc`'s authoritative baseline emits NO error there. The file's
+// own source comment explains why: "object types produced by `NestedRecord` all
+// have the same symbol and thus are considered deeply nested after three levels
+// of nesting. Ideally we'd detect that recursion in this type always terminates,
+// but we're unaware of a general algorithm that accomplishes this." This is
+// `tsc`'s `isDeeplyNestedType` bailout (`getRecursionIdentity`, `maxDepth == 3`):
+// once three stack entries share the recursive alias's recursion identity, the
+// relation assumes `Ternary.Maybe` (related) and the genuine leaf mismatch is
+// never reached — a deliberate, documented `tsc` limitation, not a `tsz` bug to
+// patch away from (parity overrides convenience).
 //
-// Root cause (traced, deterministic): both operands evaluate correctly to
-// distinct structural nested objects, but the assignment relation between them
-// resolves a `Lazy(DefId)` whose body is unregistered in the relation-internal
-// resolver (`resolver_generation() == 0`; `resolve_lazy_type` ->
-// `note_lazy_resolve_failure`). The `False` derived from the genuine leaf
-// mismatch (`number` vs `string`) is then treated as undetermined and the
-// `TS2322` is suppressed. This is the resolver-availability-under-relation
-// family (#13232) and the latent-soundness hazard documented in #13980 — the
-// same root behind the #13609 `ApplyDefaultOptions`/`RequiredKeysOf`
-// false-positive family. The fix belongs in the solver/checker relation layer
-// (thread the def-resolving resolver into the relation-internal evaluator), not
-// in the recursive alias itself; these witnesses pin the minimal, deterministic,
-// name-agnostic shape so the eventual fix can be verified.
+// tsz matches that bailout structurally via
+// `recursive_conditional_path_alias_mismatch_is_tsc_bailout`: two same-base
+// conditional-alias applications that share a string-literal key argument whose
+// path is deep enough (>= 3 dots == >= 4 segments == the third recursive level,
+// matching `tsc`'s `maxDepth == 3`) suppress the diagnostic. Shallower paths and
+// distinct alias bases reach the leaf and must still report `TS2322`.
 //
 // An inline `Leaf<K, V> = { [P in K]: V }` stands in for the conformance test's
-// `Record<K, V>` base case so the witnesses stay lib-free. The two positive
-// guards reproduce the correct `TS2322` today and protect against the fix being
-// scoped too narrowly (e.g. a witness-shaped patch keyed on a single depth or
-// alias name).
+// `Record<K, V>` base case so the witnesses stay lib-free. Binder names are
+// varied so the result is structural, not keyed on any identifier.
 // ============================================================================
 
 /// Positive guard: at a shallow (3-segment) dotted key path the same-base
@@ -781,14 +778,18 @@ const dst: Trail<"x.y.z.w", string> = src;
     );
 }
 
-/// Witness (#8432, resolver-availability family #13232/#13980): at a deep
-/// (4-segment) path with both operands sharing the *same* recursive-conditional
-/// alias base, tsz silently accepts a `number`-valued nested record assigned to
-/// a `string`-valued one. `tsc` reports `TS2322`. Ignored until the
-/// relation-internal resolver-availability fix lands; remove `#[ignore]` then.
+/// Parity guard (#8432): at a deep (4-segment, third recursive level) path with
+/// both operands sharing the *same* recursive-conditional alias base, `tsc`'s
+/// `isDeeplyNestedType` bailout (`maxDepth == 3`) assumes the relation related
+/// and emits NO diagnostic — exactly the documented `NestedRecord`/`bar2`
+/// limitation whose `tsc` baseline carries no error despite the file's
+/// `// Error expected` comment. tsz must match that bailout (no spurious
+/// `TS2322`), which it does via
+/// `recursive_conditional_path_alias_mismatch_is_tsc_bailout`. Reporting an
+/// error here would diverge from `tsc` (parity overrides convenience); this
+/// guard pins the no-error behavior so a future change cannot regress it.
 #[test]
-#[ignore = "#8432: same-base deep recursive-conditional assignment relation suppresses the genuine TS2322 (resolver-availability-under-relation, #13232/#13980)"]
-fn nested_record_deep_same_base_recursive_conditional_false_negative() {
+fn nested_record_deep_same_base_recursive_conditional_matches_tsc_bailout() {
     let source = r#"
 type Leaf<K extends string, V> = { [P in K]: V };
 type Tree<K extends string, V> = K extends `${infer Head}.${infer Tail}`
@@ -799,7 +800,27 @@ const sink: Tree<"x.y.z.w", string> = leaf;
 "#;
     let codes = check(source);
     assert!(
-        codes.contains(&2322),
-        "deep same-base recursive-conditional number->string nested record must error (tsc: TS2322): {codes:?}"
+        !codes.contains(&2322),
+        "deep same-base recursive-conditional must hit tsc's isDeeplyNestedType bailout (no TS2322, matching tsc): {codes:?}"
+    );
+}
+
+/// Anti-hardcoding companion: the bailout keys on the structural recursion
+/// depth, not on the alias/key spelling. A renamed alias and a different (but
+/// equally deep, >= 3-dot) key path must take the same no-error bailout.
+#[test]
+fn nested_record_deep_same_base_recursive_conditional_bailout_is_name_agnostic() {
+    let source = r#"
+type Cell<S extends string, W> = { [Q in S]: W };
+type Branch<S extends string, W> = S extends `${infer First}.${infer Rest}`
+    ? { [Q in First]: Branch<Rest, W> }
+    : Cell<S, W>;
+declare const node: Branch<"alpha.beta.gamma.delta", number>;
+const slot: Branch<"alpha.beta.gamma.delta", string> = node;
+"#;
+    let codes = check(source);
+    assert!(
+        !codes.contains(&2322),
+        "renamed deep same-base recursive-conditional must take the same tsc bailout (no TS2322): {codes:?}"
     );
 }
