@@ -1063,33 +1063,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            let has_local_non_import_declaration = declarations.iter().copied().any(|decl_idx| {
-                if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&sym_id) {
-                    return false;
-                }
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
-                    return false;
-                };
-                if matches!(
-                    node.kind,
-                    syntax_kind_ext::IMPORT_SPECIFIER
-                        | syntax_kind_ext::EXPORT_SPECIFIER
-                        | syntax_kind_ext::IMPORT_CLAUSE
-                        | syntax_kind_ext::NAMESPACE_IMPORT
-                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                ) {
-                    return false;
-                }
-                if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                    return true;
-                }
-                self.ctx
-                    .arena
-                    .get_export_decl(node)
-                    .is_some_and(|export_decl| {
-                        export_decl.module_specifier.is_none() || export_decl.is_default_export
-                    })
-            });
+            let has_local_non_import_declaration =
+                self.alias_has_local_non_import_declaration(sym_id, declarations);
 
             if import_module.is_some() && has_local_non_import_declaration && value_decl.is_some() {
                 return (
@@ -1958,16 +1933,9 @@ impl<'a> CheckerState<'a> {
                             // ALIAS symbols don't carry `value_declaration`, so the
                             // pre-existing `value_decl == *_SPECIFIER` guard
                             // never fires for them. Inspect `declarations` instead.
-                            let specifier_alias_decl = declarations.iter().copied().find(|&decl| {
-                                self.ctx.arena.get(decl).is_some_and(|node| {
-                                    matches!(
-                                        node.kind,
-                                        tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
-                                            | tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
-                                    )
-                                })
-                            });
-                            if specifier_alias_decl.is_some() {
+                            if self
+                                .alias_declarations_include_import_or_export_specifier(declarations)
+                            {
                                 return (TypeId::ERROR, Vec::new());
                             }
                             self.emit_no_exported_member_error(
