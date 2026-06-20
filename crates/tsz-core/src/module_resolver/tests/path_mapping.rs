@@ -16,14 +16,27 @@ use crate::config::PathMapping;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn make_options(dir: &std::path::Path, mappings: Vec<PathMapping>) -> ResolvedCompilerOptions {
+/// Bundler-mode options with the given `paths` and explicit `baseUrl` /
+/// `pathsBasePath` anchors. The `paths`-without-`baseUrl` cases vary the
+/// anchors; every other field is shared here so the tests differ only in what
+/// they exercise.
+fn make_options_with_anchors(
+    base_url: Option<&std::path::Path>,
+    paths_base_path: Option<&std::path::Path>,
+    mappings: Vec<PathMapping>,
+) -> ResolvedCompilerOptions {
     ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Bundler),
-        base_url: Some(dir.to_path_buf()),
+        base_url: base_url.map(std::path::Path::to_path_buf),
+        paths_base_path: paths_base_path.map(std::path::Path::to_path_buf),
         paths: Some(mappings),
         module_suffixes: vec![String::new()],
         ..Default::default()
     }
+}
+
+fn make_options(dir: &std::path::Path, mappings: Vec<PathMapping>) -> ResolvedCompilerOptions {
+    make_options_with_anchors(Some(dir), None, mappings)
 }
 
 /// Convenience constructor for a single `PathMapping` with no suffix.
@@ -652,6 +665,147 @@ fn test_path_mapping_matched_pattern_miss_skips_base_url_fallback() {
         .resolve("loose/thing", &fx.join("index.ts"), Span::new(0, 1))
         .expect("a specifier matching no pattern must still resolve via baseUrl");
     assert_eq!(unmatched.resolved_path, fx.join("loose/thing.ts"));
+}
+
+// ── `paths` without `baseUrl` (TypeScript 4.1+) ───────────────────────────────
+//
+// Since TS 4.1, `paths` may be configured without `baseUrl`. Relative
+// substitutions then resolve against the directory of the tsconfig that
+// declared them — tsc's `pathsBasePath` (`getPathsBasePath` returns
+// `baseUrl ?? pathsBasePath`). Non-relative substitutions stay rejected at the
+// config layer, and the bare `baseUrl` join fallback must NOT activate, so an
+// unmapped specifier still fails rather than resolving against the config dir.
+
+/// Options with `paths` but no `baseUrl`; `paths_base_path` carries the config
+/// directory (what the CLI driver supplies as tsc's `pathsBasePath`).
+fn make_options_paths_only(
+    config_dir: &std::path::Path,
+    mappings: Vec<PathMapping>,
+) -> ResolvedCompilerOptions {
+    make_options_with_anchors(None, Some(config_dir), mappings)
+}
+
+#[test]
+fn test_path_mapping_without_base_url_resolves_against_config_dir() {
+    // A wildcard alias with a relative substitution resolves against the
+    // config directory even though `baseUrl` is unset. Binder names vary across
+    // rows so the rule stays structural, not keyed on any alias spelling.
+    struct Row {
+        pattern: &'static str,
+        prefix: &'static str,
+        target: &'static str,
+        on_disk: &'static str,
+        specifier: &'static str,
+    }
+    let rows = [
+        Row {
+            pattern: "@app/*",
+            prefix: "@app/",
+            target: "./src/*",
+            on_disk: "src/widget.ts",
+            specifier: "@app/widget",
+        },
+        Row {
+            pattern: "~/*",
+            prefix: "~/",
+            target: "./lib/*",
+            on_disk: "lib/nested/thing.ts",
+            specifier: "~/nested/thing",
+        },
+        Row {
+            pattern: "internal",
+            prefix: "internal",
+            target: "./types/internal.d.ts",
+            on_disk: "types/internal.d.ts",
+            specifier: "internal",
+        },
+    ];
+    for row in rows {
+        let fx = TempFixture::new();
+        fx.write(row.on_disk, "export const value = 1;");
+        fx.write("index.ts", "");
+
+        let options =
+            make_options_paths_only(fx.path(), vec![pm(row.pattern, row.prefix, &[row.target])]);
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve(row.specifier, &fx.join("index.ts"), Span::new(0, 1))
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}: paths without baseUrl must resolve against the config dir, got {e:?}",
+                    row.specifier,
+                )
+            });
+        assert_eq!(
+            resolved.resolved_path,
+            fx.join(row.on_disk),
+            "{}",
+            row.specifier
+        );
+    }
+}
+
+#[test]
+fn test_path_mapping_without_base_url_unmapped_specifier_does_not_fall_back() {
+    // The bare `baseUrl` join fallback must stay anchored on `baseUrl`. With
+    // `paths` but no `baseUrl`, a specifier that matches no pattern must NOT
+    // resolve against the config dir — `shared/widget.ts` exists on disk, so
+    // the only way it could resolve is the (incorrect) baseUrl-style fallback.
+    let fx = TempFixture::new();
+    fx.write("shared/widget.ts", "export const w = 1;");
+    fx.write("index.ts", "");
+
+    let options = make_options_paths_only(fx.path(), vec![pm("@app/*", "@app/", &["./src/*"])]);
+    let mut resolver = ModuleResolver::new(&options);
+
+    let unmapped = resolver.resolve("shared/widget", &fx.join("index.ts"), Span::new(0, 1));
+    assert!(
+        unmapped.is_err(),
+        "without baseUrl, an unmapped specifier must not resolve via a baseUrl-style \
+         fallback against the config dir, got {unmapped:?}",
+    );
+}
+
+#[test]
+fn test_path_mapping_without_base_url_or_paths_base_is_skipped() {
+    // Defensive: with neither `baseUrl` nor `paths_base_path`, path mapping has
+    // no anchor and is skipped entirely (resolution fails) rather than panicking
+    // or resolving against an arbitrary directory.
+    let fx = TempFixture::new();
+    fx.write("src/widget.ts", "export const w = 1;");
+    fx.write("index.ts", "");
+
+    let options = make_options_with_anchors(None, None, vec![pm("@app/*", "@app/", &["./src/*"])]);
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("@app/widget", &fx.join("index.ts"), Span::new(0, 1));
+    assert!(
+        result.is_err(),
+        "path mapping with no baseUrl and no paths base must be skipped, got {result:?}",
+    );
+}
+
+#[test]
+fn test_path_mapping_base_url_takes_precedence_over_paths_base() {
+    // When both are present, `baseUrl` wins (tsc's `baseUrl ?? pathsBasePath`).
+    // The alias target resolves against `baseUrl`'s directory, not the config
+    // dir, proving the precedence.
+    let base = TempFixture::new();
+    base.write("src/widget.ts", "export const fromBaseUrl = 1;");
+    base.write("index.ts", "");
+
+    let other = TempFixture::new();
+    other.write("src/widget.ts", "export const fromConfigDir = 1;");
+
+    let options = make_options_with_anchors(
+        Some(base.path()),
+        Some(other.path()),
+        vec![pm("@app/*", "@app/", &["./src/*"])],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("@app/widget", &base.join("index.ts"), Span::new(0, 1))
+        .expect("alias must resolve via baseUrl when both anchors are set");
+    assert_eq!(resolved.resolved_path, base.join("src/widget.ts"));
 }
 
 #[test]
