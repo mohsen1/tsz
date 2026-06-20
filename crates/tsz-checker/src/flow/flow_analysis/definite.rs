@@ -272,9 +272,7 @@ impl<'a> CheckerState<'a> {
                 declared_type,
                 true,
             );
-            if stripped != declared_type {
-                stripped
-            } else {
+            if stripped == declared_type {
                 let resolved =
                     crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
                         self.ctx.types,
@@ -286,11 +284,13 @@ impl<'a> CheckerState<'a> {
                     resolved,
                     true,
                 );
-                if stripped_resolved != resolved {
-                    stripped_resolved
-                } else {
+                if stripped_resolved == resolved {
                     declared_type
+                } else {
+                    stripped_resolved
                 }
+            } else {
+                stripped
             }
         } else {
             declared_type
