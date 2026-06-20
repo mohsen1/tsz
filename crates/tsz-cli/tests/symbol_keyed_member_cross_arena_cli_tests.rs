@@ -159,6 +159,40 @@ export const v2: number = (null as any as V);
     ]);
 }
 
+/// Re-export chain (#14129): the merged value+type symbol reaches the consumer
+/// through an intermediate `export { X } from "./symbols"` module. Value-position
+/// resolution must follow the re-export to the const's VALUE side; otherwise the
+/// re-export collapses to the unevaluated `typeof X` type-alias body and the
+/// computed key spuriously reports TS2464.
+#[test]
+fn cross_file_reexported_name_merged_object_literal_satisfies_interface() {
+    assert_clean_both_orders(&[
+        (
+            "symbols.ts",
+            r#"
+export const matcher = Symbol.for('@demo/matcher');
+export type matcher = typeof matcher;
+"#,
+        ),
+        (
+            "reexport.ts",
+            r#"
+export { matcher } from './symbols';
+"#,
+        ),
+        (
+            "pattern.ts",
+            r#"
+import { matcher } from './reexport';
+export interface Matcher { [matcher](): number; }
+export const make = (): Matcher => ({ [matcher]: () => 1 });
+const lit = { [matcher]: () => 1 };
+export const m: Matcher = lit;
+"#,
+        ),
+    ]);
+}
+
 /// #14129 (ts-pattern witness): the merged value+type-alias symbol is consumed
 /// through a **re-export barrel** (`import { matcher }; export { matcher }`),
 /// and the interface keyed by `[matcher]` imports it from the barrel — a

@@ -106,6 +106,54 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(super) fn alias_has_local_non_import_declaration(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        declarations: &[NodeIndex],
+    ) -> bool {
+        declarations.iter().copied().any(|decl_idx| {
+            if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&sym_id) {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if matches!(
+                node.kind,
+                syntax_kind_ext::IMPORT_SPECIFIER
+                    | syntax_kind_ext::EXPORT_SPECIFIER
+                    | syntax_kind_ext::IMPORT_CLAUSE
+                    | syntax_kind_ext::NAMESPACE_IMPORT
+                    | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            ) {
+                return false;
+            }
+            if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                return true;
+            }
+            self.ctx
+                .arena
+                .get_export_decl(node)
+                .is_some_and(|export_decl| {
+                    export_decl.module_specifier.is_none() || export_decl.is_default_export
+                })
+        })
+    }
+
+    pub(super) fn alias_declarations_include_import_or_export_specifier(
+        &self,
+        declarations: &[NodeIndex],
+    ) -> bool {
+        declarations.iter().copied().any(|decl| {
+            self.ctx.arena.get(decl).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::IMPORT_SPECIFIER | syntax_kind_ext::EXPORT_SPECIFIER
+                )
+            })
+        })
+    }
+
     pub(super) fn resolve_default_import_namespace_fallback(
         &mut self,
         module_name: &str,
