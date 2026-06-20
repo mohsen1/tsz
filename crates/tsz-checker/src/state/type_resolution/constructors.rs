@@ -18,8 +18,10 @@ pub(super) const fn should_cache_base_expr_result(
     type_argument_count == 0 && !has_active_type_parameter_scope
 }
 
-/// Choose the type that fills a *missing* type argument of a generic base class,
-/// matching `tsc`'s `default -> constraint -> unknown` order.
+/// Choose the type that fills a *missing* type argument of a generic base class
+/// or constructor reference, matching `tsc`'s `default -> constraint -> unknown`
+/// order. Shared by every under-applied fill site (the base instance type and
+/// the construct-signature paths) so they enforce the same boundary invariant.
 ///
 /// `TypeId::ERROR` (and `TypeData::Error`) is tsz's internal cycle/fuel
 /// sentinel, never a type `tsc` produces. When a base parameter's default or
@@ -173,10 +175,7 @@ impl<'a> CheckerState<'a> {
                     let fallback = if missing_type_args_become_any {
                         TypeId::ANY
                     } else {
-                        param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN)
+                        missing_base_type_arg_fill(self.ctx.types, param.default, param.constraint)
                     };
                     let substitution = TypeSubstitution::from_args(
                         self.ctx.types,
@@ -253,10 +252,11 @@ impl<'a> CheckerState<'a> {
                         let fallback = if missing_type_args_become_any {
                             TypeId::ANY
                         } else {
-                            param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN)
+                            missing_base_type_arg_fill(
+                                self.ctx.types,
+                                param.default,
+                                param.constraint,
+                            )
                         };
                         // Substitute earlier type params in the default
                         // (e.g., `U = T` → `U = number` when T = number)
