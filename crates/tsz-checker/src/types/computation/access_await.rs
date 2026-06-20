@@ -313,6 +313,29 @@ impl<'a> CheckerState<'a> {
                 break;
             }
         }
+
+        // Fallback for a still-deferred awaitable operand: a generic-alias
+        // application or conditional (e.g. `Awaitable<number>` for
+        // `type Awaitable<T> = T | Promise<T>`) is neither a
+        // `Union`/`Intersection` node nor directly Promise-shaped, so none of the
+        // steps above unwrap it — yet tsc's `getAwaitedType` operates on the
+        // *resolved* type, which here is `number | Promise<number>`.
+        //
+        // Only retry when evaluating the residual reveals an await-relevant
+        // shape. Ordinary awaited values can also be generic applications
+        // (`Array<T>`, tuples through `Promise.all`, class instances, ...), and
+        // eagerly replacing those with their structural object form changes
+        // contextual async-return checking. If evaluation does not expose a
+        // union, intersection, or thenable layer, the already-unwrapped residual
+        // is the awaited value.
+        let resolved = self.resolve_lazy_type(current_type);
+        let resolved = self.evaluate_application_type(resolved);
+        let exposes_await_shape = query::union_members(self.ctx.types, resolved).is_some()
+            || query::intersection_members(self.ctx.types, resolved).is_some()
+            || self.promise_like_return_type_argument(resolved).is_some();
+        if resolved != current_type && exposes_await_shape {
+            return self.compute_awaited_type(resolved, depth + 1);
+        }
         current_type
     }
 
