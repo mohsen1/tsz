@@ -1683,6 +1683,14 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(export_sym_id) = export_sym_id {
+                    // A re-exported binding (`export { X } from "./other"`) whose
+                    // ultimate target is a name-merged value+type symbol must, in
+                    // value position, resolve to the const's VALUE side rather than
+                    // collapse to the `typeof X` type-alias body (#13855/#14129).
+                    if let Some(val_type) = self.reexported_merged_alias_value_type(export_sym_id) {
+                        return (val_type, Vec::new());
+                    }
+
                     // Detect cross-file SymbolIds: the driver copies target file's
                     // module_exports into the local binder, so SymbolIds may be from
                     // another binder. Check if the SymbolId maps to the expected name

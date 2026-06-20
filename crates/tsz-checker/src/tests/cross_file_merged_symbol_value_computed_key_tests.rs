@@ -188,3 +188,10 @@ const bad: Need = { [tag]: "hello" };
     );
     assert_has_code(&diags, 2418);
 }
+
+// Note: the re-exported (multi-hop) form of this merge —
+// `export { X } from "./symbols"` consumed by a third module — cannot be hosted
+// by this in-crate harness because per-file binders mint colliding raw
+// `SymbolId`s, so the multi-hop alias resolution the fix relies on does not
+// reproduce here. That case (#14129) is covered end-to-end in
+// `crates/tsz-cli/tests/symbol_keyed_member_cross_arena_cli_tests.rs`.

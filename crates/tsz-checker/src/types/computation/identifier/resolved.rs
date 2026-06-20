@@ -1179,6 +1179,17 @@ impl<'a> CheckerState<'a> {
             }
             if value_type_found != TypeId::UNKNOWN {
                 value_type_found
+            } else if let Some(cross_file_value) =
+                self.cross_file_merged_alias_value_type(sym_id, value_decl)
+            {
+                // The merged value+type symbol is declared in another file (e.g.
+                // imported, possibly through a re-export), so its value
+                // declaration is not in the current arena. Resolve the VALUE side
+                // through the declaring file's arena instead of falling back to
+                // `get_type_of_symbol`, which returns the TYPE_ALIAS body and makes
+                // a value-position read (e.g. a computed key) collapse to the
+                // unevaluated `typeof X` — a spurious TS2464 (#14129).
+                cross_file_value
             } else {
                 self.get_type_of_symbol(sym_id)
             }

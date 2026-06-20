@@ -159,6 +159,112 @@ export const v2: number = (null as any as V);
     ]);
 }
 
+/// Re-export chain (#14129): the merged value+type symbol reaches the consumer
+/// through an intermediate `export { X } from "./symbols"` module. Value-position
+/// resolution must follow the re-export to the const's VALUE side; otherwise the
+/// re-export collapses to the unevaluated `typeof X` type-alias body and the
+/// computed key spuriously reports TS2464.
+#[test]
+fn cross_file_reexported_name_merged_object_literal_satisfies_interface() {
+    assert_clean_both_orders(&[
+        (
+            "symbols.ts",
+            r#"
+export const matcher = Symbol.for('@demo/matcher');
+export type matcher = typeof matcher;
+"#,
+        ),
+        (
+            "reexport.ts",
+            r#"
+export { matcher } from './symbols';
+"#,
+        ),
+        (
+            "pattern.ts",
+            r#"
+import { matcher } from './reexport';
+export interface Matcher { [matcher](): number; }
+export const make = (): Matcher => ({ [matcher]: () => 1 });
+const lit = { [matcher]: () => 1 };
+export const m: Matcher = lit;
+"#,
+        ),
+    ]);
+}
+
+/// Re-export via the two-statement `import { X }; export { X };` form, renamed
+/// binder — the rule keys off the merge shape, not the `matcher` identifier text.
+#[test]
+fn cross_file_reexported_import_then_export_name_merged_element_access() {
+    assert_clean_both_orders(&[
+        (
+            "syms.ts",
+            r#"
+export const brandKey = Symbol.for('@demo/brand');
+export type brandKey = typeof brandKey;
+"#,
+        ),
+        (
+            "reexport.ts",
+            r#"
+import { brandKey } from './syms';
+export { brandKey };
+"#,
+        ),
+        (
+            "use.ts",
+            r#"
+import { brandKey } from './reexport';
+export interface Branded { [brandKey](): string; }
+declare const b: Branded;
+export const s: string = b[brandKey]();
+"#,
+        ),
+    ]);
+}
+
+/// Negative control on the re-export chain: following the re-export resolves the
+/// key, but a genuinely wrong computed-property value must still be rejected.
+#[test]
+fn cross_file_reexported_name_merged_wrong_value_still_errors() {
+    let files = &[
+        (
+            "s.ts",
+            r#"
+export const m = Symbol.for('@demo/m');
+export type m = typeof m;
+"#,
+        ),
+        (
+            "r.ts",
+            r#"
+export { m } from './s';
+"#,
+        ),
+        (
+            "p.ts",
+            r#"
+import { m } from './r';
+export interface I { [m](): number; }
+export const bad: I = { [m]: 123 };
+"#,
+        ),
+    ];
+    let names: Vec<&str> = files.iter().map(|(name, _)| *name).collect();
+    let diags = compile_in_order(files, &names);
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d.code, 2322 | 2345 | 2418 | 2353)),
+        "expected an assignability error for the wrong re-exported computed-property value, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Negative control: a genuinely wrong computed-property value must still be
 /// rejected, proving the fix preserves real diagnostics rather than silencing
 /// the member key. (`123` is not assignable to the method type.)
