@@ -419,6 +419,7 @@ impl<'a> Printer<'a> {
             es5_class_expression_extends_this_captured: false,
             async_arrow_generator_this_arg: None,
             tagged_template_var_map: FxHashMap::default(),
+            optional_chain_sync_tail_start: None,
         }
     }
 
