@@ -740,6 +740,9 @@ path = "tests/union_source_missing_property_elaboration_tests.rs"
 name = "union_target_missing_property_elaboration_tests"
 path = "tests/union_target_missing_property_elaboration_tests.rs"
 [[test]]
+name = "union_generic_class_shared_member_tests"
+path = "tests/union_generic_class_shared_member_tests.rs"
+[[test]]
 name = "union_source_structural_elaboration_tests"
 path = "tests/union_source_structural_elaboration_tests.rs"
 [[test]]

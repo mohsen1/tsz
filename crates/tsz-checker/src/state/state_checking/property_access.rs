@@ -437,6 +437,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Composite-receiver rescue: a union/intersection whose member lookup
+        // degraded to a false `PropertyNotFound` because the boundary's noop
+        // resolver could not resolve a *nested* built-in `Lazy(DefId)` /
+        // `Application(Lazy, args)` constituent. Example: `value instanceof Set`
+        // narrowing of `T | U` yields `(T & Set<any>) | (U & Set<any>)` where one
+        // `Set<any>` arm stays an unresolved `Application` — its `.size` lookup
+        // returns `PropertyNotFound`, collapsing the whole union to TS2339. The
+        // whole-receiver lazy rescue above never fires here because the receiver
+        // is not a bare `Lazy`. Re-query through the checker's full `TypeResolver`,
+        // which resolves the nested ref and surfaces the concrete member; adopt
+        // only a genuine `Success` so a real missing property still reports TS2339.
+        if result.is_not_found()
+            && !crate::query_boundaries::common::is_lazy_type(self.ctx.types, original_object_type)
+            && crate::query_boundaries::common::contains_application_in_structure(
+                self.ctx.types,
+                object_type,
+            )
+        {
+            let resolver_result = self.resolve_property_access_via_resolver(object_type, prop_name);
+            if resolver_result.is_success() {
+                result = resolver_result;
+            }
+        }
+
         self.resolve_property_access_with_env_post_query(object_type, prop_name, result)
     }
 
