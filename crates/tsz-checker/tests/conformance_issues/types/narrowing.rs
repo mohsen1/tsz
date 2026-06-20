@@ -1,5 +1,39 @@
 use super::super::core::*;
 
+// `"key" in x` must narrow a union even when the union is spelled as a generic
+// type alias (a generic application whose body is a union). The narrowing engine
+// resolves the alias to its union before filtering members by property presence,
+// so the branch keeps only the member declaring the key. Without this the
+// alias-union failed to narrow and the property access fell back to `unknown`
+// (false TS2322). Mirrors remeda `length.ts` over `ArrayLike<T> | Iterable<T>`.
+// (#14153). Binder names are varied to confirm the fix is structural, not
+// name-keyed.
+#[test]
+fn in_operator_narrows_generic_alias_union_no_ts2322() {
+    for (haskey, nokey, alias, key) in [
+        ("HasLen", "NoLen", "Enumerable", "length"),
+        ("WithSize", "WithoutSize", "Sized", "size"),
+        ("Tagged", "Untagged", "Maybe", "tag"),
+    ] {
+        let source = format!(
+            r#"
+interface {haskey}<T> {{ {key}: number; item: T; }}
+interface {nokey}<T> {{ other: T; }}
+type {alias}<T> = {haskey}<T> | {nokey}<T>;
+const read = <T>(items: {alias}<T>): number =>
+  "{key}" in items ? items.{key} : 0;
+export {{ read }};
+"#
+        );
+        let diagnostics = compile_and_get_diagnostics(&source);
+        assert!(
+            !has_error(&diagnostics, 2322),
+            "[{alias}] `\"{key}\" in items` must narrow the generic-alias union to `{haskey}<T>` \
+             so `items.{key}` is `number`; got TS2322. Diagnostics: {diagnostics:#?}"
+        );
+    }
+}
+
 #[test]
 fn test_type_alias_type_param_shadows_global_return_type_utility() {
     let diagnostics = compile_and_get_diagnostics(

@@ -158,8 +158,21 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // If source is a union, filter members based on property presence
-        if let Some(members_id) = union_list_id(self.db, source_type) {
+        // If source is a union, filter members by property presence. An alias /
+        // generic Application whose body is a union (`type Enumerable<T> =
+        // ArrayLike<T> | Iterable<T>`) is a `TypeData::Application`, so
+        // `union_list_id` does not see its members until it is resolved. Resolve
+        // it here — but ONLY when the source is not already a union, so existing
+        // union sources keep their original member identity (no display/identity
+        // change). Without this the alias-union skips the union branch, falls to
+        // the non-union fallback, and fails to narrow `"length" in items`, leaving
+        // `items.length` as `unknown` (false TS2322). (#14153)
+        let union_view = if union_list_id(self.db, source_type).is_some() {
+            source_type
+        } else {
+            self.resolve_type(source_type)
+        };
+        if let Some(members_id) = union_list_id(self.db, union_view) {
             let members = self.db.type_list(members_id);
             trace!(
                 "Checking property {} in union with {} members",
