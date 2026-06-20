@@ -57,6 +57,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// O(1) nominal heritage subtype test over two `Lazy(DefId)` references.
+    ///
+    /// Returns `true` when a registered `InheritanceGraph` edge makes `s_def`
+    /// nominally derive from `t_def` AND that edge authoritatively implies a
+    /// *structural* subtype — i.e. the verdict cannot depend on the source's (or
+    /// an intermediate base's) type arguments threading into the target's member
+    /// types. That holds in two cases:
+    ///   * both ends are classes — tsc treats class assignability nominally, so a
+    ///     registered subclass edge is authoritative regardless of generics; or
+    ///   * the target is non-generic — its member set is fixed, and heritage
+    ///     (interface `extends`, enforced compatible by TS2430) guarantees a
+    ///     derived type carries those members compatibly. This covers the deep,
+    ///     non-generic DOM/lib interface heritage (`Worker <: EventTarget`,
+    ///     `MessageEvent <: Event`) without lowering the base's members — the
+    ///     #13935 consumer-side lever.
+    ///
+    /// A generic target reached through an interface edge returns `false` here so
+    /// the caller falls through to the structural check, which honors variance.
+    pub(crate) fn nominal_heritage_subtype(&self, s_def: DefId, t_def: DefId) -> bool {
+        let Some(graph) = self.inheritance_graph else {
+            return false;
+        };
+        let (Some(s_sym), Some(t_sym)) = (
+            self.resolver.def_to_symbol_id(s_def),
+            self.resolver.def_to_symbol_id(t_def),
+        ) else {
+            return false;
+        };
+        // Check the heritage edge first: it rejects the common no-edge case with
+        // an O(1) hashmap miss (no closure built, no allocation), so the
+        // authoritativeness gate — which may clone the target's type-parameter
+        // list — only runs once a real derived edge exists.
+        if !graph.is_derived_from(s_sym, t_sym) {
+            return false;
+        }
+        let both_classes = self
+            .is_class_symbol
+            .is_some_and(|is_class| is_class(SymbolRef(s_sym.0)) && is_class(SymbolRef(t_sym.0)));
+        let target_non_generic = self
+            .resolver
+            .get_lazy_type_params(t_def)
+            .is_none_or(|params| params.is_empty());
+        both_classes || target_non_generic
+    }
+
     /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
     ///
     /// For class-to-class checks, uses `InheritanceGraph` for O(1) nominal subtyping
@@ -121,34 +166,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =======================================================================
-        // O(1) NOMINAL CLASS SUBTYPE CHECKING (InheritanceGraph Bridge)
+        // O(1) NOMINAL HERITAGE SUBTYPE CHECKING (InheritanceGraph Bridge)
         // =======================================================================
-        // This short-circuits expensive structural checks for class inheritance.
-        // We use the def_to_symbol bridge to map DefIds back to SymbolIds, then
-        // use the existing InheritanceGraph for O(1) nominal subtype checking.
-        // =======================================================================
-        if let Some(graph) = self.inheritance_graph
-            && let (Some(s_sym), Some(t_sym)) = (
-                self.resolver.def_to_symbol_id(s_def),
-                self.resolver.def_to_symbol_id(t_def),
-            )
-            && let Some(is_class) = self.is_class_symbol
-        {
-            // Check if both symbols are classes (not interfaces or type aliases)
-            let s_is_class = is_class(SymbolRef(s_sym.0));
-            let t_is_class = is_class(SymbolRef(t_sym.0));
-
-            if s_is_class && t_is_class {
-                // Both are classes - use nominal inheritance check
-                if graph.is_derived_from(s_sym, t_sym) {
-                    // O(1) bitset check: source is a subclass of target
-                    if !already_visiting {
-                        self.def_guard.leave(def_pair);
-                    }
-                    return SubtypeResult::True;
-                }
-                // Not a subclass - fall through to structural check below
+        // Short-circuit expensive structural member materialization when a
+        // registered heritage edge authoritatively settles the relation. The
+        // shortcut also runs as a pre-evaluation fast path in `check_subtype`
+        // (so the base's members are never materialized); this is the in-dispatch
+        // fallback for the bypass-evaluation / both-unresolvable paths that reach
+        // here with two bare `Lazy(DefId)` references. See
+        // `nominal_heritage_subtype` for the soundness gate.
+        if self.nominal_heritage_subtype(s_def, t_def) {
+            if !already_visiting {
+                self.def_guard.leave(def_pair);
             }
+            return SubtypeResult::True;
         }
 
         // Resolve DefIds to their structural forms. A `None` here means the

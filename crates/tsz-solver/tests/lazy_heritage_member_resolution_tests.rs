@@ -30,13 +30,15 @@
 //! property/type-parameter names so no result depends on a particular interned
 //! name (per the anti-hardcoding contract).
 
+use crate::classes::inheritance::InheritanceGraph;
 use crate::construction::TypeInterner;
 use crate::def::resolver::TypeEnvironment;
 use crate::def::{DefId, DefKind};
 use crate::objects::collect::{PropertyCollectionResult, collect_properties};
 use crate::operations::property::PropertyAccessEvaluator;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{PropertyInfo, TypeData, TypeId, TypeParamInfo};
+use crate::types::{PropertyInfo, SymbolRef, TypeData, TypeId, TypeParamInfo};
+use tsz_binder::SymbolId;
 
 /// Build an object type from `(name, type)` fields.
 fn object(interner: &TypeInterner, fields: &[(&str, TypeId)]) -> TypeId {
@@ -442,5 +444,320 @@ fn subtype_substitutes_generic_base_through_chain() {
     assert!(
         !checker.check_subtype(derived, target_bad).is_true(),
         "mismatch through a generic heritage chain (negative)",
+    );
+}
+
+// ----------------------------------------------------------------------------
+// Nominal heritage subtype short-circuit
+// ----------------------------------------------------------------------------
+//
+// When the heritage representation keeps the bases as bare `Lazy(DefId)`
+// references registered in the `InheritanceGraph`, a `Lazy(Derived) <:
+// Lazy(Base)` relation is settled by an O(1) nominal reachability bit *before*
+// evaluation materializes the base's members. The shortcut is authoritative
+// only for an edge whose verdict cannot depend on type arguments threading into
+// the target's members: both ends are classes, or the target is non-generic.
+// A generic target falls through to the structural check, which honors variance.
+// These cases vary the synthetic `DefId`/`SymbolId` numbers and member names so
+// no result depends on a particular interned name.
+
+/// Register a `def -> sym` bridge so a `Lazy(def)` maps onto a graph node.
+fn bridge(env: &mut TypeEnvironment, def: DefId, sym: SymbolId) {
+    env.register_def_symbol_mapping(def, sym);
+}
+
+/// A non-generic derived interface resolves `<:` its base purely through the
+/// nominal heritage edge — even when the base body is *unresolvable* (never
+/// materialized). Without the graph the same relation falls back to a structural
+/// check that cannot resolve the base and therefore fails, proving the verdict
+/// came from on-demand nominal descent rather than from materialized members.
+#[test]
+fn subtype_nominal_heritage_resolves_without_materializing_base() {
+    let interner = TypeInterner::new();
+    let base_def = DefId(33_001);
+    let derived_def = DefId(33_002);
+    let base_sym = SymbolId(34_001);
+    let derived_sym = SymbolId(34_002);
+
+    let mut env = TypeEnvironment::new();
+    // Derived has a body; the base deliberately has none (unresolvable), so a
+    // structural attempt to descend into the base must fail.
+    declare_interface(
+        &mut env,
+        derived_def,
+        object(&interner, &[("p", TypeId::NUMBER)]),
+    );
+    bridge(&mut env, base_def, base_sym);
+    bridge(&mut env, derived_def, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let source = interner.lazy(derived_def);
+    let target = interner.lazy(base_def);
+
+    let mut with_graph =
+        SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        with_graph.check_subtype(source, target).is_true(),
+        "a non-generic derived interface must be a subtype of its base via the \
+         nominal heritage edge, without materializing the (unresolvable) base",
+    );
+
+    let mut without_graph = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        !without_graph.check_subtype(source, target).is_true(),
+        "without the inheritance graph there is no on-demand heritage descent, \
+         and the unresolvable base makes the structural check fail — confirming \
+         the positive verdict above came from the nominal short-circuit",
+    );
+}
+
+/// The nominal heritage relation is directional: a derived interface is a
+/// subtype of its base, but the base is not a subtype of the derived (it lacks
+/// the derived's extra members).
+#[test]
+fn subtype_nominal_heritage_is_directional() {
+    let interner = TypeInterner::new();
+    let base_def = DefId(33_011);
+    let derived_def = DefId(33_012);
+    let base_sym = SymbolId(34_011);
+    let derived_sym = SymbolId(34_012);
+
+    let mut env = TypeEnvironment::new();
+    declare_interface(
+        &mut env,
+        base_def,
+        object(&interner, &[("a", TypeId::NUMBER)]),
+    );
+    declare_interface(
+        &mut env,
+        derived_def,
+        object(&interner, &[("a", TypeId::NUMBER), ("b", TypeId::STRING)]),
+    );
+    bridge(&mut env, base_def, base_sym);
+    bridge(&mut env, derived_def, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let derived = interner.lazy(derived_def);
+    let base = interner.lazy(base_def);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        checker.check_subtype(derived, base).is_true(),
+        "derived <: base holds (nominal edge)",
+    );
+
+    let mut reverse = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        !reverse.check_subtype(base, derived).is_true(),
+        "base is not a subtype of derived: no heritage edge that direction and \
+         the base is missing the derived's extra member",
+    );
+}
+
+/// For a **non-generic** target the nominal edge is authoritative: a registered
+/// heritage edge yields `<: true` without consulting members. This mirrors the
+/// pre-existing class-nominal behavior (a configuration where the derived drops
+/// a base member is impossible in practice — TS2430 — so trusting the edge is
+/// sound). Pairs with `subtype_generic_target_does_not_take_nominal_shortcut`.
+#[test]
+fn subtype_nominal_shortcut_trusts_non_generic_heritage_edge() {
+    let interner = TypeInterner::new();
+    let base_def = DefId(33_021);
+    let derived_def = DefId(33_022);
+    let base_sym = SymbolId(34_021);
+    let derived_sym = SymbolId(34_022);
+
+    let mut env = TypeEnvironment::new();
+    declare_interface(
+        &mut env,
+        base_def,
+        object(
+            &interner,
+            &[("a", TypeId::NUMBER), ("extra", TypeId::STRING)],
+        ),
+    );
+    declare_interface(
+        &mut env,
+        derived_def,
+        object(&interner, &[("a", TypeId::NUMBER)]),
+    );
+    bridge(&mut env, base_def, base_sym);
+    bridge(&mut env, derived_def, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        checker
+            .check_subtype(interner.lazy(derived_def), interner.lazy(base_def))
+            .is_true(),
+        "a non-generic heritage edge is authoritative — the nominal short-circuit \
+         answers true without materializing/comparing the base's members",
+    );
+}
+
+/// For a **generic** target the nominal edge is *not* authoritative — the
+/// verdict could depend on type arguments threading into the base's members — so
+/// the relation must fall through to the structural check, which honors the
+/// member shapes. Identical heritage to the previous test except the base is
+/// generic; the structurally-incompatible members now yield `false`.
+#[test]
+fn subtype_generic_target_does_not_take_nominal_shortcut() {
+    let interner = TypeInterner::new();
+    let base_def = DefId(33_031);
+    let derived_def = DefId(33_032);
+    let base_sym = SymbolId(34_031);
+    let derived_sym = SymbolId(34_032);
+
+    let (t_param, _t_ty) = type_param(&interner, "T");
+
+    let mut env = TypeEnvironment::new();
+    // Same shapes as the non-generic case, but the base now carries a type
+    // parameter, so the nominal short-circuit must be disabled.
+    declare_generic_interface(
+        &mut env,
+        base_def,
+        object(
+            &interner,
+            &[("a", TypeId::NUMBER), ("extra", TypeId::STRING)],
+        ),
+        vec![t_param],
+    );
+    declare_interface(
+        &mut env,
+        derived_def,
+        object(&interner, &[("a", TypeId::NUMBER)]),
+    );
+    bridge(&mut env, base_def, base_sym);
+    bridge(&mut env, derived_def, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        !checker
+            .check_subtype(interner.lazy(derived_def), interner.lazy(base_def))
+            .is_true(),
+        "a generic target must fall through to the structural check; the derived \
+         body is missing the base's `extra` member, so the relation is false",
+    );
+}
+
+/// The pre-existing class-nominal path is preserved: with a class-check closure
+/// in scope, a subclass resolves `<:` its superclass via the graph even when the
+/// base body is unresolvable.
+#[test]
+fn subtype_nominal_class_heritage_still_resolves() {
+    let interner = TypeInterner::new();
+    let base_def = DefId(33_041);
+    let derived_def = DefId(33_042);
+    let base_sym = SymbolId(34_041);
+    let derived_sym = SymbolId(34_042);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(derived_def, object(&interner, &[("p", TypeId::NUMBER)]));
+    bridge(&mut env, base_def, base_sym);
+    bridge(&mut env, derived_def, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let is_class = |sym: SymbolRef| sym == SymbolRef(base_sym.0) || sym == SymbolRef(derived_sym.0);
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env)
+        .with_inheritance_graph(&graph)
+        .with_class_check(&is_class);
+    assert!(
+        checker
+            .check_subtype(interner.lazy(derived_def), interner.lazy(base_def))
+            .is_true(),
+        "class nominal subtyping via the inheritance graph is unchanged",
+    );
+}
+
+/// On-demand heritage descent follows the full transitive closure: an interface
+/// that derives from a base through an intermediate interface resolves `<:` the
+/// root base nominally, with neither the intermediate nor the root materialized.
+#[test]
+fn subtype_transitive_nominal_heritage_resolves() {
+    let interner = TypeInterner::new();
+    let root_def = DefId(33_051);
+    let mid_def = DefId(33_052);
+    let leaf_def = DefId(33_053);
+    let root_sym = SymbolId(34_051);
+    let mid_sym = SymbolId(34_052);
+    let leaf_sym = SymbolId(34_053);
+
+    let mut env = TypeEnvironment::new();
+    // Only the leaf has a body; mid and root are unresolvable.
+    declare_interface(
+        &mut env,
+        leaf_def,
+        object(&interner, &[("p", TypeId::NUMBER)]),
+    );
+    bridge(&mut env, root_def, root_sym);
+    bridge(&mut env, mid_def, mid_sym);
+    bridge(&mut env, leaf_def, leaf_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(leaf_sym, &[mid_sym]);
+    graph.add_inheritance(mid_sym, &[root_sym]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        checker
+            .check_subtype(interner.lazy(leaf_def), interner.lazy(root_def))
+            .is_true(),
+        "leaf <: root via the transitive heritage closure, without materializing \
+         the intermediate or root interfaces",
+    );
+}
+
+/// Without a heritage edge the relation still uses the ordinary structural
+/// member check — the nominal broadening must not swallow structurally unrelated
+/// references. Two unrelated non-generic interfaces compare by their members.
+#[test]
+fn subtype_unrelated_interfaces_fall_through_to_structural() {
+    let interner = TypeInterner::new();
+    let a_def = DefId(33_061);
+    let b_def = DefId(33_062);
+    let a_sym = SymbolId(34_061);
+    let b_sym = SymbolId(34_062);
+
+    let mut env = TypeEnvironment::new();
+    // `b` is a structural subtype of `a` (b has all of a's members), but they
+    // share no heritage edge.
+    declare_interface(&mut env, a_def, object(&interner, &[("a", TypeId::NUMBER)]));
+    declare_interface(
+        &mut env,
+        b_def,
+        object(&interner, &[("a", TypeId::NUMBER), ("b", TypeId::STRING)]),
+    );
+    bridge(&mut env, a_def, a_sym);
+    bridge(&mut env, b_def, b_sym);
+
+    // Empty graph: no registered edges.
+    let graph = InheritanceGraph::new();
+
+    let mut to_super =
+        SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        to_super
+            .check_subtype(interner.lazy(b_def), interner.lazy(a_def))
+            .is_true(),
+        "structural fall-through: b has all of a's members, so b <: a",
+    );
+
+    let mut to_sub = SubtypeChecker::with_resolver(&interner, &env).with_inheritance_graph(&graph);
+    assert!(
+        !to_sub
+            .check_subtype(interner.lazy(a_def), interner.lazy(b_def))
+            .is_true(),
+        "structural fall-through: a is missing b's `b` member, so a is not <: b",
     );
 }
