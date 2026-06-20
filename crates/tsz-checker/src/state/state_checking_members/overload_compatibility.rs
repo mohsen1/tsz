@@ -890,6 +890,44 @@ impl<'a> CheckerState<'a> {
         overload_type: tsz_solver::TypeId,
         bivariant_params: bool,
     ) -> bool {
+        // Snapshot the unresolved-`Lazy` sentinel before the comparison. tsc
+        // resolves the implementation and overload signature types fully before
+        // relating them (`getSignatureFromDeclaration` -> resolved return
+        // type), so it never derives TS2394 from a not-yet-registered
+        // reference. tsz computes these types from declarations that may still
+        // hold `Lazy(DefId)` bodies whose definitions are registered later in
+        // the same checking pass: when an overload/implementation return is a
+        // generic wrapper (`Wrapper<…>`) whose definition — or one of its type
+        // arguments — has not yet been resolved at the moment this check runs,
+        // the structural relation degrades to a transient `false`
+        // (`note_lazy_resolve_failure`). That negative is order/cache-dependent,
+        // not a proven mismatch, so treating it as an incompatibility produces a
+        // false-positive TS2394 that disappears once the body resolves. This is
+        // the same discipline the assignability/constraint proof paths apply to
+        // unresolved-`Lazy` negatives (`publish_shared_constraint_proof`,
+        // `failure_memo_store`).
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
+        // Compatible outright, or — when the structural decision was a negative
+        // that observed an unresolved `Lazy(DefId)` body during the comparison —
+        // undetermined, which we treat as compatible to prefer parity (no false
+        // TS2394) over a verdict derived from a not-yet-resolvable reference.
+        // The counter read must follow `compute_*`, which is what advances it.
+        self.compute_implementation_compatible_with_overload(
+            impl_type,
+            overload_type,
+            bivariant_params,
+        ) || crate::query_boundaries::common::lazy_resolve_failure_count() != lazy_failures_at_entry
+    }
+
+    /// Structural overload/implementation compatibility decision, without the
+    /// unresolved-`Lazy` undetermined-negative guard applied by
+    /// [`Self::is_implementation_compatible_with_overload_inner`].
+    pub(crate) fn compute_implementation_compatible_with_overload(
+        &mut self,
+        impl_type: tsz_solver::TypeId,
+        overload_type: tsz_solver::TypeId,
+        bivariant_params: bool,
+    ) -> bool {
         let constructors_only =
             crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, impl_type)
                 && crate::query_boundaries::common::is_constructor_like_type(
