@@ -1390,7 +1390,7 @@ impl<'a> Printer<'a> {
                 access_node.kind,
                 access.expression,
                 access.name_or_argument,
-                args,
+                args.as_ref(),
             );
         } else {
             // Lower the receiver first so a receiver that is itself an optional
@@ -1472,7 +1472,7 @@ impl<'a> Printer<'a> {
         access_kind: u16,
         access_expression: NodeIndex,
         access_name_or_argument: NodeIndex,
-        args: &Option<tsz_parser::parser::NodeList>,
+        args: Option<&tsz_parser::parser::NodeList>,
     ) {
         self.optional_chain_sync_tail_start = None;
         let before = self.writer.len();
@@ -1520,7 +1520,7 @@ impl<'a> Printer<'a> {
         self.write(&func_temp);
         self.write(".call(");
         self.write(&this_temp);
-        self.emit_optional_call_tail_arguments(args.as_ref());
+        self.emit_optional_call_tail_arguments(args);
     }
 
     fn emit_optional_call_tail_arguments(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
