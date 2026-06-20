@@ -1027,6 +1027,15 @@ pub struct Printer<'a> {
     pub(crate) async_arrow_generator_this_arg: Option<String>,
 
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
+
+    /// Writer offset at which the *synchronous tail* of the most recently
+    /// emitted downlevel optional chain begins (the position right after the
+    /// final `=== void 0 ? void 0 : ` guard). Leaf optional-chain emitters set
+    /// this so a consumer that must capture the chain's `this` receiver — e.g.
+    /// `obj?.a.b?.(args)`, where the call needs `this = obj.a` — can splice the
+    /// capture `(_t = <tail>)` *inside* the guard instead of wrapping the whole
+    /// ternary (which would dereference `void 0` when the chain short-circuits).
+    pub(crate) optional_chain_sync_tail_start: Option<usize>,
 }
 
 impl<'a> Printer<'a> {

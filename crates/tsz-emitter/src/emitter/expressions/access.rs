@@ -1063,6 +1063,7 @@ impl<'a> Printer<'a> {
                 self.emit_optional_chain_inline_gap_comments_untracked(expr_node.end, *dot_pos);
             }
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.emit(access.expression);
             if let Some((expr_node, name_node, dot_pos)) = suffix_parts.as_ref() {
                 self.emit_optional_property_access_downlevel_suffix(
@@ -1088,6 +1089,7 @@ impl<'a> Printer<'a> {
             self.write(" === null || ");
             self.write(&base_temp);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.write(&base_temp);
             self.write(".");
             self.emit_property_name_without_import_substitution(access.name_or_argument);
@@ -1111,6 +1113,7 @@ impl<'a> Printer<'a> {
             self.write(" === null || ");
             self.emit(access.expression);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.emit(access.expression);
             self.write("[");
             self.emit(access.name_or_argument);
@@ -1131,6 +1134,7 @@ impl<'a> Printer<'a> {
             self.write(" === null || ");
             self.write(&base_temp);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.write(&base_temp);
             self.write("[");
             self.emit(access.name_or_argument);

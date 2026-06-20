@@ -1218,18 +1218,29 @@ impl<'a> Printer<'a> {
             self.write(" === null || ");
             self.emit(callee);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.emit(callee);
             self.emit_call_arguments(node, args.as_ref());
         } else {
+            // Lower the callee first so a callee that is itself an optional
+            // chain (e.g. `a?.b.c?.(1)?.(2)`) allocates its temps before this
+            // call's capture temp, matching tsc's allocation order.
+            let before = self.writer.len();
+            self.emit(callee);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let callee_text = full[before..after].to_string();
+            self.writer.truncate(before);
             let temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&temp);
             self.write(" = ");
-            self.emit(callee);
+            self.write(&callee_text);
             self.write(")");
             self.write(" === null || ");
             self.write(&temp);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.write(&temp);
             self.emit_call_arguments(node, args.as_ref());
         }
@@ -1265,6 +1276,7 @@ impl<'a> Printer<'a> {
                     self.write(" === null || ");
                     self.emit(access.expression);
                     self.write(" === void 0 ? void 0 : ");
+                    self.optional_chain_sync_tail_start = Some(self.writer.len());
                 }
                 self.emit(access.expression);
             } else {
@@ -1278,6 +1290,7 @@ impl<'a> Printer<'a> {
                     self.write(" === null || ");
                     self.write(&this_temp);
                     self.write(" === void 0 ? void 0 : ");
+                    self.optional_chain_sync_tail_start = Some(self.writer.len());
                 }
                 if access.question_dot_token {
                     self.write(&this_temp);
@@ -1361,11 +1374,34 @@ impl<'a> Printer<'a> {
             self.write(") === null || ");
             self.write(&func_temp);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.write(&func_temp);
             self.write(".call(");
             self.emit(access.expression);
             self.emit_optional_call_tail_arguments(args.as_ref());
+        } else if !access.question_dot_token
+            && self.receiver_continues_optional_chain(access.expression)
+        {
+            // The final access (`obj.name`) is non-optional, but `obj` is itself
+            // an optional chain. The call's `this` receiver must be captured
+            // *inside* the chain's nullish guard, not by wrapping the whole
+            // lowered receiver (which would dereference `void 0` on short-circuit).
+            self.emit_optional_call_chain_receiver_capture(
+                access_node.kind,
+                access.expression,
+                access.name_or_argument,
+                args.as_ref(),
+            );
         } else {
+            // Lower the receiver first so a receiver that is itself an optional
+            // chain (e.g. `a?.b.c?.(1)?.[2]?.(3)`) allocates its temps before
+            // this call's `this`/function temps, matching tsc's allocation order.
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let expr_text = full[before..after].to_string();
+            self.writer.truncate(before);
             let this_temp = self.make_unique_name_hoisted();
             let func_temp = self.make_unique_name_hoisted();
             self.write("(");
@@ -1374,7 +1410,7 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(&this_temp);
             self.write(" = ");
-            self.emit(access.expression);
+            self.write(&expr_text);
             self.write(")");
             if access.question_dot_token {
                 self.write(" === null || ");
@@ -1398,6 +1434,7 @@ impl<'a> Printer<'a> {
             self.write(") === null || ");
             self.write(&func_temp);
             self.write(" === void 0 ? void 0 : ");
+            self.optional_chain_sync_tail_start = Some(self.writer.len());
             self.write(&func_temp);
             self.write(".call(");
             self.write(&this_temp);
@@ -1408,6 +1445,84 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Lower `obj.name?.(args)` for the ES5 target when the final access
+    /// `obj.name` is **non-optional** but its receiver `obj` is itself a
+    /// downlevel optional chain (e.g. `a?.b.c?.(1)`, `a?.b?.c.d?.(1)`,
+    /// `a?.b().c?.(1)`).
+    ///
+    /// The call's `this` receiver is `obj` evaluated synchronously. It must be
+    /// captured **inside** the chain's nullish guard — mirroring tsc's
+    /// `flattenOptionalChain` — so that short-circuiting yields `void 0` instead
+    /// of dereferencing it:
+    ///
+    /// ```text
+    /// (_f = <guards> ? void 0 : (_t = <sync>).name)
+    ///     === null || _f === void 0 ? void 0 : _f.call(_t, args)
+    /// ```
+    ///
+    /// The receiver chain is lowered first so its own temps take the lower
+    /// ordinals (matching tsc's allocation order), then the `this`/function
+    /// temps are allocated and the synchronous tail is rewrapped in place. The
+    /// tail boundary is the writer offset recorded by the leaf optional-chain
+    /// emitters in `optional_chain_sync_tail_start` (the position right after
+    /// the final `=== void 0 ? void 0 : ` guard), never a textual scan of the
+    /// rendered output.
+    fn emit_optional_call_chain_receiver_capture(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        self.optional_chain_sync_tail_start = None;
+        let before = self.writer.len();
+        self.emit(access_expression);
+        let after = self.writer.len();
+        let sync_start = self.optional_chain_sync_tail_start.take();
+
+        let full = self.writer.get_output().to_string();
+        let (guards, sync) = match sync_start {
+            Some(start) if start >= before && start <= after => (
+                full[before..start].to_string(),
+                full[start..after].to_string(),
+            ),
+            // Defensive: no synchronous-tail marker was recorded by a leaf
+            // optional-chain emitter. Fall back to wrapping the whole lowered
+            // receiver — no worse than the legacy behaviour for this shape.
+            _ => (String::new(), full[before..after].to_string()),
+        };
+        self.writer.truncate(before);
+
+        let this_temp = self.make_unique_name_hoisted();
+        let func_temp = self.make_unique_name_hoisted();
+
+        self.write("(");
+        self.write(&func_temp);
+        self.write(" = ");
+        self.write(&guards);
+        self.write("(");
+        self.write(&this_temp);
+        self.write(" = ");
+        self.write(&sync);
+        self.write(")");
+        if access_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit(access_name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(access_name_or_argument);
+            self.write("]");
+        }
+        self.write(") === null || ");
+        self.write(&func_temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.optional_chain_sync_tail_start = Some(self.writer.len());
+        self.write(&func_temp);
+        self.write(".call(");
+        self.write(&this_temp);
+        self.emit_optional_call_tail_arguments(args);
+    }
+
     fn emit_optional_call_tail_arguments(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
         if let Some(args) = args
             && !args.nodes.is_empty()
@@ -1416,6 +1531,28 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&args.nodes);
         }
         self.write(")");
+    }
+
+    /// Whether `expression` (the receiver of a non-optional access) syntactically
+    /// *continues* an optional chain. Unlike
+    /// `expression_is_optional_chain_continuation`, a **parenthesized** or
+    /// type-asserted receiver terminates the chain (per the language spec:
+    /// `(a?.b).c` is a fresh, non-optional access that throws when `a?.b` is
+    /// nullish), so it is not treated as a continuation here.
+    fn receiver_continues_optional_chain(&self, expression: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                false
+            }
+            _ => self.expression_is_optional_chain_continuation(expression),
+        }
     }
 
     fn expression_is_optional_chain_continuation(&self, expression: NodeIndex) -> bool {
