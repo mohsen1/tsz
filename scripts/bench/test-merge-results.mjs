@@ -1094,3 +1094,29 @@ withTempDir((dir) => {
   assert.equal(merged.totals.green_tsz_wins, 0, "artifact_missing row must not count as a green win");
   assert.equal(merged.totals.green_tsgo_wins, 1);
 });
+
+// A perf-timed canary (the bench-canaries shard already measured it) must keep
+// its real tsz_ms/tsgo_ms and must NOT be stamped the "not timed" placeholder
+// status when its compile-guard compat is attached — otherwise isGreen() becomes
+// false and the (green) canary silently drops off the perf chart. Regression for
+// the bench-canaries perf-chart fix.
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const timedRow = { name: canaryRow, winner: "tsgo", tsz_ms: 2549, tsgo_ms: 206, ratio: 12.36 };
+  const input = writeInput(dir, "input.json", [timedRow]);
+  const compatibilityJsonl = path.join(dir, "project-compatibility.jsonl");
+  fs.writeFileSync(
+    compatibilityJsonl,
+    `${JSON.stringify({ ...SAMPLE_COMPATIBILITY, name: canaryRow, files_reached: 50 })}\n`,
+    "utf8",
+  );
+  const result = runMergeInputs(dir, ["--compat-jsonl", compatibilityJsonl, input]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  const row = merged.results.find((candidate) => candidate.name === canaryRow);
+  assert.ok(row, "expected the perf-timed canary row to survive merge");
+  assert.equal(row.tsz_ms, 2549, "perf-timed canary must keep its measured tsz_ms");
+  assert.equal(row.tsgo_ms, 206, "perf-timed canary must keep its measured tsgo_ms");
+  assert.ok(!row.status, "a perf-timed canary must not be stamped 'not timed' (would drop it off the chart)");
+  assert.equal(row.compatibility.state, "green");
+});
