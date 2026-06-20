@@ -341,3 +341,122 @@ fn awaited_unwraps_user_thenable_nested_in_promise() {
         4,
     );
 }
+
+// ===========================================================================
+// Issue #14123 — recursive conditional `infer` over a generic-alias array
+// element must not stack-overflow and must resolve like `tsc`.
+// ===========================================================================
+//
+// `type D<T> = T extends Promise<infer U> ? D<U> : T extends { payload: infer P }
+//  ? D<P> : T extends (infer E)[] ? D<E> : T` applied through a *generic type
+// alias* whose array element is an object type parameter
+// (`type Box<T> = Promise<{ payload: T[] }>`; `D<Box<{ id: 0 }>>`) used to abort
+// the process with a stack overflow (SIGABRT). The object-pattern `infer`
+// matcher unwrapped each deferred `Application` source by recursing into itself
+// directly, bypassing the `visited` cycle guard at the `match_infer_pattern`
+// entry; with the modern `esnext.iterator` lib active a pair of
+// mutually-recursive deferred conditionals evaluated into each other and the
+// unwrap loop never converged. `tsc`/`tsgo` resolve the alias to `{ id: 0 }` in
+// a few steps. These run the real binary (full pipeline + embedded libs, which
+// is required — the in-crate checker harness leaves the recursive alias
+// deferred and cannot reproduce it) and assert termination plus the correct
+// resolved shape, with binder names varied so the fix is structural.
+
+/// Assert the binary did not abort with a stack overflow on `source`.
+fn assert_no_stack_overflow(name: &str, out: &str) {
+    assert!(
+        !out.contains("overflowed its stack") && !out.contains("stack overflow"),
+        "`{name}` stack-overflowed instead of terminating:\n{out}"
+    );
+}
+
+#[test]
+fn recursive_conditional_infer_generic_alias_array_element_resolves() {
+    let out = run_check(
+        "cond_infer_alias_14123",
+        "type D<T> =\n\
+         \x20   T extends Promise<infer U> ? D<U> :\n\
+         \x20   T extends { payload: infer P } ? D<P> :\n\
+         \x20   T extends (infer E)[] ? D<E> :\n\
+         \x20   T;\n\
+         type Box<T> = Promise<{ payload: T[] }>;\n\
+         type R = D<Box<{ id: 0 }>>;\n\
+         declare const r: R;\n\
+         const good: { id: number } = r;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return; // binary not found; run_check already logged the skip.
+    }
+    assert_no_stack_overflow("cond_infer_alias_14123", &out);
+    // R resolves to `{ id: 0 }`: the `{ id: number }` target (line 9) type-checks,
+    // the `string` target (line 10) is a genuine mismatch and must error.
+    assert!(
+        out.contains("repro.ts(10,"),
+        "resolved `{{ id: 0 }}` must not be assignable to `string` (line 10).\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains("repro.ts(9,"),
+        "resolved `{{ id: 0 }}` must be assignable to `{{ id: number }}` (line 9).\noutput:\n{out}"
+    );
+}
+
+#[test]
+fn recursive_conditional_infer_generic_alias_renamed_binders_resolve() {
+    // Same structure, every binder renamed: the fix is structural, not by name.
+    let out = run_check(
+        "cond_infer_alias_renamed_14123",
+        "type Unwrap<Source> =\n\
+         \x20   Source extends Promise<infer Inner> ? Unwrap<Inner> :\n\
+         \x20   Source extends { payload: infer Field } ? Unwrap<Field> :\n\
+         \x20   Source extends (infer Element)[] ? Unwrap<Element> :\n\
+         \x20   Source;\n\
+         type Wrapper<Value> = Promise<{ payload: Value[] }>;\n\
+         type Result = Unwrap<Wrapper<{ tag: 7 }>>;\n\
+         declare const r: Result;\n\
+         const good: { tag: number } = r;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert_no_stack_overflow("cond_infer_alias_renamed_14123", &out);
+    assert!(
+        out.contains("repro.ts(10,"),
+        "renamed alias must resolve to `{{ tag: 7 }}` (line 10 mismatch).\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains("repro.ts(9,"),
+        "renamed alias must accept a `{{ tag: number }}` target (line 9).\noutput:\n{out}"
+    );
+}
+
+#[test]
+fn recursive_conditional_infer_inlined_form_resolves() {
+    // The inlined equivalent (no generic alias) was always clean; guard the
+    // non-aliased path so the fix does not perturb it.
+    let out = run_check(
+        "cond_infer_inlined_14123",
+        "type D<T> =\n\
+         \x20   T extends Promise<infer U> ? D<U> :\n\
+         \x20   T extends { payload: infer P } ? D<P> :\n\
+         \x20   T extends (infer E)[] ? D<E> :\n\
+         \x20   T;\n\
+         type R = D<Promise<{ payload: { id: 0 }[] }>>;\n\
+         declare const r: R;\n\
+         const good: { id: number } = r;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert_no_stack_overflow("cond_infer_inlined_14123", &out);
+    assert!(
+        out.contains("repro.ts(9,"),
+        "inlined form must resolve to `{{ id: 0 }}` (line 9 mismatch).\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains("repro.ts(8,"),
+        "inlined form must accept a `{{ id: number }}` target (line 8).\noutput:\n{out}"
+    );
+}
