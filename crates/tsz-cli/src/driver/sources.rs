@@ -578,7 +578,7 @@ pub(super) fn collect_type_root_files(
     for root in auto_roots {
         for package_root in collect_type_packages_from_root(root) {
             let package_name = package_root
-                .strip_prefix(&root)
+                .strip_prefix(root)
                 .unwrap_or(&package_root)
                 .to_path_buf();
             if !seen_names.insert(package_name) {
