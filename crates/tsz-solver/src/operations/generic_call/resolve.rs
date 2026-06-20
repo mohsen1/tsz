@@ -617,6 +617,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut return_type_bare_var: Option<(crate::inference::infer::InferenceVar, TypeId)> =
             None;
         let mut round1_direct_seed_vars = FxHashSet::default();
+        let mut pair_visited = FxHashSet::default();
 
         for (i, &arg_type) in arg_types.iter().enumerate() {
             let Some(target_type) =
@@ -631,12 +632,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .contextual_round1_arg_types(arg_type, target_type)
                 .is_some()
             {
-                round1_direct_seed_vars.extend(self.collect_placeholder_vars_in_type(
-                    target_type,
-                    &var_map,
-                    &mut placeholder_probe_map,
-                    &mut placeholder_visited,
-                ));
+                if self.is_contextually_sensitive(arg_type) {
+                    // Context-sensitive arguments resolve in Round 2; keep the
+                    // structural estimate of which return-type vars they cover.
+                    round1_direct_seed_vars.extend(self.collect_placeholder_vars_in_type(
+                        target_type,
+                        &var_map,
+                        &mut placeholder_probe_map,
+                        &mut placeholder_visited,
+                    ));
+                } else {
+                    // A non-sensitive argument only constrains placeholders its
+                    // own structure reaches. Counting every placeholder in the
+                    // parameter type falsely marked vars behind omitted optional
+                    // members as covered, skipping contextual-return seeding and
+                    // leaving those type parameters at `unknown` (#14171).
+                    pair_visited.clear();
+                    self.collect_round1_reachable_placeholder_vars(
+                        arg_type,
+                        target_type,
+                        &var_map,
+                        &mut pair_visited,
+                        &mut round1_direct_seed_vars,
+                    );
+                }
             }
         }
 

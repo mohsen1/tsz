@@ -185,3 +185,120 @@ const b: { a: number }[] | { b: string }[] = [{ b: "x" }];
         "union-of-object-arrays element should match the right arm, got: {diagnostics:?}"
     );
 }
+
+// Regression tests for #14171: when a generic class is constructed in a
+// contextual-return position, the contextual class type must seed the
+// construct-signature's type-parameter inference. The construct argument here
+// only constrains `S` (via the present `schema` property); `T` is reachable
+// only through the *omitted* optional `refiner` member, so round-1 argument
+// inference must not falsely mark `T` as covered and skip contextual-return
+// seeding — otherwise `T` falls back to `unknown` (spurious TS2322).
+fn strict() -> CheckerOptions {
+    CheckerOptions {
+        strict: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn generic_new_seeds_type_param_from_contextual_return() {
+    let source = r#"
+class Box<T, S> {
+  value!: T;
+  schema: S;
+  set: (v: T) => void;
+  constructor(props: { schema: S; refiner?: (value: T) => boolean }) {
+    this.schema = props.schema;
+    this.set = () => {};
+  }
+}
+function define(): Box<string, null> {
+  return new Box({ schema: null });
+}
+"#;
+    let diagnostics = check_with_options(source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "contextual return type Box<string, null> should infer T = string, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_new_contextual_return_renamed_binders() {
+    // Structural, not identifier-keyed: rename every type parameter and property.
+    let source = r#"
+class Container<Elem, Sch> {
+  val!: Elem;
+  cfg: Sch;
+  apply: (v: Elem) => void;
+  constructor(opts: { cfg: Sch; refine?: (value: Elem) => boolean }) {
+    this.cfg = opts.cfg;
+    this.apply = () => {};
+  }
+}
+function make(): Container<number, boolean> {
+  return new Container({ cfg: true });
+}
+"#;
+    let diagnostics = check_with_options(source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "renamed-binder construct should infer Elem = number from contextual return, got: {diagnostics:?}"
+    );
+}
+
+// Minimal generic class whose constructor argument only constrains `S`; `T` is
+// reachable solely through the omitted optional `refiner` member. Shared by the
+// alias / arrow-body / negative-control variants below.
+const BOX_CLASS: &str = r#"
+class Box<T, S> {
+  value!: T;
+  schema: S;
+  constructor(props: { schema: S; refiner?: (value: T) => boolean }) {
+    this.schema = props.schema;
+  }
+}
+"#;
+
+#[test]
+fn generic_new_contextual_return_through_alias() {
+    // The contextual return type is an alias of the generic application.
+    let source = format!(
+        "{BOX_CLASS}\ntype Aliased = Box<string, null>;\n\
+         function define(): Aliased {{ return new Box({{ schema: null }}); }}"
+    );
+    let diagnostics = check_with_options(&source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "aliased contextual return type should seed T = string, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_new_contextual_return_arrow_body() {
+    // Arrow expression body is also a contextual-return position.
+    let source = format!(
+        "{BOX_CLASS}\nconst define = (): Box<number, null> => new Box({{ schema: null }});"
+    );
+    let diagnostics = check_with_options(&source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "arrow-body contextual return should seed T = number, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_new_argument_inference_still_overrides_contextual_return() {
+    // Negative control: when the argument *does* constrain T (via the provided
+    // `refiner`), argument inference must win over the contextual return type,
+    // so the genuine mismatch is still reported (T = number vs declared string).
+    let source = format!(
+        "{BOX_CLASS}\nfunction define(): Box<string, null> {{\n  \
+         return new Box({{ schema: null, refiner: (value: number) => true }});\n}}"
+    );
+    let diagnostics = check_with_options(&source, strict());
+    assert!(
+        !ts2322(&diagnostics).is_empty(),
+        "argument-supplied T = number must override contextual return and still report TS2322, got: {diagnostics:?}"
+    );
+}
