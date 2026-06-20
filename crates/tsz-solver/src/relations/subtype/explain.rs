@@ -943,6 +943,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 });
             }
 
+            // Nullable-object target (`T | null`, `T | undefined`,
+            // `T | null | undefined`): every member other than a single
+            // object-like member is nullish. A non-nullish source (an object
+            // literal here) can never satisfy the nullish members, so tsc
+            // elaborates the failure against `T` exactly as if the target were
+            // `T` alone — a missing required property surfaces as the top-level
+            // `MissingProperty`/`MissingProperties` reason (rendered TS2741 /
+            // TS2739 in an assignment/return position, TS2345 in an argument
+            // position), not as a `UnionTargetMismatch` whose missing-property
+            // line is demoted to a child of a generic TS2322 union mismatch.
+            // Promote that reason here so the single-real-member shape matches
+            // tsc; a genuine multi-member union (`A | B`, `T | number`) keeps
+            // the union-mismatch elaboration below.
+            {
+                let mut non_nullish = members.iter().copied().filter(|m| !m.is_nullish());
+                if let (Some(sole_member), None) = (non_nullish.next(), non_nullish.next()) {
+                    for &source_member in &source_members {
+                        if self.check_subtype(source_member, sole_member).is_true() {
+                            continue;
+                        }
+                        if let Some(
+                            reason @ (SubtypeFailureReason::MissingProperty { .. }
+                            | SubtypeFailureReason::MissingProperties { .. }),
+                        ) = self.explain_failure_guarded(source_member, sole_member)
+                        {
+                            return Some(reason);
+                        }
+                    }
+                }
+            }
+
             // Structural union target: select the best-matching member the way
             // tsc's `getBestMatchingType` -> `findMostOverlappyType` does — the
             // member sharing the most property-name keys with the source, ties

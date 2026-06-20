@@ -244,6 +244,73 @@ declare global {
     );
 }
 
+// Module-vs-script discrimination for the `is_external_module` branch of
+// `Symbol::is_cross_file_global` (issue #12372). A module file's top-level
+// declarations stay file-scoped — reachable from a sibling file only through an
+// explicit `import` — while a script file's top-level ambient declarations seed
+// the cross-file global scope. This is the layer that owns the predicate;
+// `cross_file_local_is_visible` is the gate both `program.globals` seeding and
+// the checker's `global_file_locals_index` consult. Binder names are arbitrary
+// to prove nothing keys on an identifier string. The end-to-end LSP matrix for
+// the same contract lives in tsz-cli `handlers_code_fixes_nested_pkg_tests`.
+
+#[test]
+fn module_export_declare_function_is_not_cross_file_global() {
+    // `export declare function` makes the file an external module, so the value
+    // is reachable only through an explicit import — never as an ambient global.
+    let (binder, _parser) = parse_and_bind("export declare function widgetInit(): void;\n");
+    assert!(
+        binder.is_external_module,
+        "a file with a top-level `export` is an external module"
+    );
+    let sym_id = binder
+        .file_locals
+        .get("widgetInit")
+        .expect("exported function is a file local");
+    assert!(
+        !binder.cross_file_local_is_visible(0, "widgetInit", sym_id),
+        "a module export must not leak into the cross-file global scope"
+    );
+}
+
+#[test]
+fn module_via_export_marker_keeps_ambient_declare_file_scoped() {
+    // A bare `export {}` marker makes the file a module even though the ambient
+    // `declare function` is not itself exported; it is therefore file-scoped.
+    let (binder, _parser) = parse_and_bind("declare function moduleOnlyFn(): void;\nexport {};\n");
+    assert!(
+        binder.is_external_module,
+        "`export {{}}` marks the file as a module"
+    );
+    let sym_id = binder
+        .file_locals
+        .get("moduleOnlyFn")
+        .expect("ambient function is a file local");
+    assert!(
+        !binder.cross_file_local_is_visible(0, "moduleOnlyFn", sym_id),
+        "an ambient declare in a module file must stay file-scoped"
+    );
+}
+
+#[test]
+fn script_ambient_declare_is_cross_file_global() {
+    // No top-level import/export: the file is a script, so its top-level ambient
+    // declaration seeds the global scope and resolves cross-file with no import.
+    let (binder, _parser) = parse_and_bind("declare function scriptGlobalFn(): void;\n");
+    assert!(
+        !binder.is_external_module,
+        "a file with no top-level import/export is a script"
+    );
+    let sym_id = binder
+        .file_locals
+        .get("scriptGlobalFn")
+        .expect("ambient function is a file local");
+    assert!(
+        binder.cross_file_local_is_visible(0, "scriptGlobalFn", sym_id),
+        "a script file's ambient declaration is a cross-file global"
+    );
+}
+
 // Regression for #6164: a `declare module "<self>"` augmentation must bind its
 // interface declaration to a separate `SymbolId` from the file-scope interface
 // of the same name. Merging the augmentation's declaration node into the

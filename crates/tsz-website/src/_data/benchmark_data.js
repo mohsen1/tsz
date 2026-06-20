@@ -871,7 +871,7 @@ function loadBenchmarks() {
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...benchmarkArtifactFiles(),
     snapshotPath,
-  ], { minimumProjectTimingPairs: 1 });
+  ], { minimumProjectTimingPairs: 1, requireApplicationCompat: true });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }
@@ -883,9 +883,9 @@ function categoryFor(name, lines) {
   if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
   const projectRow = PROJECT_ROWS_BY_NAME[name];
   if (projectRow) {
-    return projectRow.category === "generated"
-      ? "Projects: generated apps"
-      : "Projects: external libraries";
+    if (projectRow.category === "generated") return "Projects: generated apps";
+    if (projectRow.category === "application") return "Projects: applications";
+    return "Projects: external libraries";
   }
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
@@ -938,6 +938,10 @@ function categoryMeta(category) {
     "Projects: generated apps": {
       title: "Generated apps",
       description: "Programmatically created app projects with framework defaults and common TypeScript dependencies.",
+    },
+    "Projects: applications": {
+      title: "Applications",
+      description: "Pinned real-world applications checked with their own project configuration.",
     },
     "Projects: external libraries": {
       title: "External libraries",
@@ -1441,6 +1445,7 @@ function buildGroupedBenchmarks(data) {
 
   const order = [
     "Projects: external libraries",
+    "Projects: applications",
     "Projects: generated apps",
     "Projects: large repositories",
     "Single file: utility-types",
@@ -1574,7 +1579,7 @@ function generateCharts(data, mode = "projects") {
       }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const desc = category === "Projects: generated apps" || !isProject
+    const desc = category === "Projects: generated apps" || category === "Projects: applications" || !isProject
       ? categoryDescription(category)
       : "";
     const repoLink = meta.repo

@@ -817,7 +817,7 @@ impl<'a> CheckerState<'a> {
         // the call result handler would see an empty this_type_stack and fall back to
         // the wrong contextual type, causing false TS2339 errors.
         // We pop it at the end of this function.
-        self.ensure_relation_input_ready(callee_type_for_resolution);
+        self.ensure_callee_relation_inputs_ready(callee_type_for_resolution);
 
         // Resolve applications/lazy refs to callable forms before solver dispatch.
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
@@ -846,7 +846,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        self.ensure_relation_input_ready(callee_type_for_call);
+        self.ensure_callee_relation_inputs_ready(callee_type_for_call);
 
         // `super()` uses construct signatures, not call signatures.
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {

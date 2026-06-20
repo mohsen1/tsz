@@ -57,15 +57,38 @@ fn make_server() -> Server {
     }
 }
 
+/// Register `app` plus one sibling `.d.ts` in a real-libs server and return the
+/// semantic diagnostic codes reported for `app`. Returns `None` when the
+/// TypeScript lib directory is not discoverable (caller should skip).
+fn dts_sibling_codes(app: &str, app_src: &str, dts: &str, dts_src: &str) -> Option<Vec<u32>> {
+    let mut server = make_server_with_real_libs()?;
+    server
+        .open_files
+        .insert(app.to_string(), app_src.to_string());
+    server
+        .open_files
+        .insert(dts.to_string(), dts_src.to_string());
+    Some(
+        server
+            .get_semantic_diagnostics_full(app, app_src)
+            .iter()
+            .map(|d| d.code)
+            .collect(),
+    )
+}
+
 /// Verify tsz generates TS2304 for `useMemo` even when its declaration file
 /// is in `open_files`. The `.d.ts` is a module (has top-level exports), so
 /// `useMemo` is NOT in global scope — `app.tsx` still needs an import.
 ///
-/// Currently ignored: tsz's binder promotes module-scoped exports from `.d.ts`
-/// files into global scope, so `useMemo` is incorrectly found without an import.
-/// Fix tracked separately (module-vs-script file determination for d.ts in `open_files`).
+/// A module's top-level exports stay file-scoped: they are reachable from a
+/// sibling file only through an explicit `import`. The shared
+/// `Symbol::is_cross_file_global` predicate (issue #12372) governs both the
+/// merged `program.globals` seeding and the checker's cross-file
+/// `global_file_locals_index`, so an installed-but-unimported package export
+/// never leaks as a global. See the `module_dts_*` / `script_dts_*` matrix
+/// below for the full module-vs-script contract.
 #[test]
-#[ignore = "known limitation: module exports from .d.ts in open_files leak into global scope"]
 fn semantic_diagnostics_ts2304_for_usememo_with_dts_in_open_files() {
     let Some(mut server) = make_server_with_real_libs() else {
         return; // skip when TypeScript lib files are not discoverable
@@ -91,6 +114,73 @@ fn semantic_diagnostics_ts2304_for_usememo_with_dts_in_open_files() {
     assert!(
         codes.contains(&2304),
         "expected TS2304 for 'useMemo', got diagnostic codes: {codes:?}"
+    );
+}
+
+/// Module `.d.ts` contract (name-agnostic): a sibling declaration file that is
+/// an external module — here because it carries a top-level `export declare` —
+/// keeps its exports file-scoped. An unqualified reference from another file is
+/// `TS2304`; the export is reachable only through an explicit `import`.
+/// Mirrors `tsc`: `export declare function widgetInit()` in a module `.d.ts`
+/// does not seed the global scope.
+#[test]
+fn module_dts_export_declare_does_not_leak_into_global_scope() {
+    // Sibling module `.d.ts` (module by virtue of the top-level `export`).
+    let Some(codes) = dts_sibling_codes(
+        "/project/consumer.ts",
+        "widgetInit();",
+        "/project/widget.d.ts",
+        "export declare function widgetInit(): void;\n",
+    ) else {
+        return; // skip when TypeScript lib files are not discoverable
+    };
+    assert!(
+        codes.contains(&2304),
+        "module `.d.ts` export must stay file-scoped (expected TS2304), got: {codes:?}"
+    );
+}
+
+/// Module determination drives global-scope contribution for *every* top-level
+/// declaration, not just the exported one: a bare `export {}` marker turns the
+/// file into a module, so even a non-exported ambient `declare function` in it
+/// is file-scoped and unreachable as a global. Matches `tsc` (`TS2304`).
+#[test]
+fn module_dts_via_export_marker_keeps_ambient_declare_file_scoped() {
+    // `export {}` makes this `.d.ts` a module even though `moduleOnlyFn` itself
+    // is not exported — so it must not land in the ambient global scope.
+    let Some(codes) = dts_sibling_codes(
+        "/project/site.ts",
+        "moduleOnlyFn();",
+        "/project/ambient.d.ts",
+        "declare function moduleOnlyFn(): void;\nexport {};\n",
+    ) else {
+        return; // skip when TypeScript lib files are not discoverable
+    };
+    assert!(
+        codes.contains(&2304),
+        "ambient declare in a module `.d.ts` must stay file-scoped (expected TS2304), got: {codes:?}"
+    );
+}
+
+/// Positive control (do not over-correct): a *script* `.d.ts` — no top-level
+/// `import`/`export`, so not an external module — contributes its top-level
+/// ambient declarations to the global scope. A sibling reference resolves with
+/// no import and no `TS2304`, exactly as `tsc` accepts it.
+#[test]
+fn script_dts_ambient_declare_is_globally_visible() {
+    // No top-level import/export: this `.d.ts` is a script, so its ambient
+    // declarations seed the global scope.
+    let Some(codes) = dts_sibling_codes(
+        "/project/page.ts",
+        "scriptGlobalFn();",
+        "/project/globals.d.ts",
+        "declare function scriptGlobalFn(): void;\n",
+    ) else {
+        return; // skip when TypeScript lib files are not discoverable
+    };
+    assert!(
+        !codes.contains(&2304),
+        "script `.d.ts` ambient declarations must be globally visible (expected no TS2304), got: {codes:?}"
     );
 }
 
