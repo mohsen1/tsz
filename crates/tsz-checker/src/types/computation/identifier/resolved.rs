@@ -1303,7 +1303,21 @@ impl CheckerState<'_> {
                 }
             }
         } else {
-            self.get_type_of_symbol(sym_id)
+            let base = self.get_type_of_symbol(sym_id);
+            if (flags & symbol_flags::ALIAS) != 0 {
+                // An import/re-export alias that (transitively) resolves to an
+                // enum yields the enum's *instance* type from
+                // `get_type_of_symbol`. In a value position the reference
+                // denotes the enum object (`typeof E`), so convert it to the
+                // enum-namespace type — the same mapping the direct-enum branch
+                // above applies. This matters across re-export hops
+                // (`export { E } from "..."`), where the local symbol is an
+                // alias rather than the enum itself. No-op for aliases that
+                // resolve to non-enum targets.
+                self.get_enum_namespace_type_for_value(base)
+            } else {
+                base
+            }
         };
         let mut declared_type = if self.ctx.is_js_file()
             && self.ctx.should_resolve_jsdoc()
