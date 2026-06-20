@@ -2,6 +2,7 @@
 //! representations, plus expando property augmentation and globalThis resolution.
 
 use crate::state::CheckerState;
+use crate::types_domain::queries::core::GlobalReceiver;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -822,7 +823,7 @@ impl<'a> CheckerState<'a> {
                 &name,
                 error_node,
                 true,
-                "typeof globalThis",
+                GlobalReceiver::GlobalThis,
             );
             if type_id == TypeId::ERROR {
                 continue;
@@ -1038,22 +1039,22 @@ impl<'a> CheckerState<'a> {
         name: &str,
         error_node: NodeIndex,
         allow_unknown_property_fallback: bool,
-        base_display: &str,
+        receiver: GlobalReceiver,
     ) -> TypeId {
         // For "Window & typeof globalThis", first try to resolve the property
         // from the Window interface (the more specific type member).
         // This ensures properties like `name` on Window are found before
         // falling back to globalThis resolution.
-        if base_display == "Window & typeof globalThis" {
-            if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
-                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
-                    self.ctx.types,
-                    window_type,
-                    self.ctx.types.intern_string(name),
-                );
-                if let Some(type_id) = prop_result.success_type() {
-                    return type_id;
-                }
+        if receiver == GlobalReceiver::WindowAndGlobalThis
+            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        {
+            let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                self.ctx.types,
+                window_type,
+                self.ctx.types.intern_string(name),
+            );
+            if let Some(type_id) = prop_result.success_type() {
+                return type_id;
             }
             // The lib `Window` type does not carry `declare global { interface
             // Window { ... } }` augmentation members (e.g. a computed/string key
@@ -1111,7 +1112,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(vt) = self.resolve_lib_global_var_value_type(name) {
                         return vt;
                     }
-                    self.error_property_not_exist_on_global_this(name, error_node, base_display);
+                    self.error_property_not_exist_on_global_this(name, error_node, receiver);
                     return TypeId::ERROR;
                 }
             }
@@ -1162,7 +1163,7 @@ impl<'a> CheckerState<'a> {
             // (bracket access) when noImplicitAny is enabled.
             TypeId::ANY
         } else {
-            self.error_property_not_exist_on_global_this(name, error_node, base_display);
+            self.error_property_not_exist_on_global_this(name, error_node, receiver);
             TypeId::ERROR
         }
     }

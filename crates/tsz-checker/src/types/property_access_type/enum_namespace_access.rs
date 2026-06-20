@@ -1,6 +1,7 @@
 //! Enum, namespace, and global-this property access fast paths.
 
 use crate::state::CheckerState;
+use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
@@ -266,18 +267,15 @@ impl<'a> CheckerState<'a> {
         if !(is_global_this_like || is_this_global || is_declared_window_global_this) {
             return None;
         }
-        let base_display = if is_global_this || is_this_global {
-            "typeof globalThis"
-        } else {
-            "Window & typeof globalThis"
-        };
+        let targets_global_this = is_global_this || is_this_global;
+        let receiver = GlobalReceiver::from_targets_global_this(targets_global_this);
         let allow_unknown_property_fallback =
-            (is_global_this || is_this_global) && !is_declared_window_global_this;
+            targets_global_this && !is_declared_window_global_this;
         let property_type = self.resolve_global_this_property_type(
             property_name,
             name_or_argument,
             allow_unknown_property_fallback,
-            base_display,
+            receiver,
         );
         if property_type == TypeId::ERROR {
             return Some(TypeId::ERROR);

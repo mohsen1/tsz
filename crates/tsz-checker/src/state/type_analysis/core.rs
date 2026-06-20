@@ -8,6 +8,7 @@ use crate::query_boundaries::common::lazy_def_id;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::types_domain::queries::core::GlobalReceiver;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -467,18 +468,14 @@ impl CheckerState<'_> {
             return None;
         }
 
-        let base_display = if self.is_global_this_expression(left_idx) || is_this_global {
-            "typeof globalThis"
-        } else {
-            "Window & typeof globalThis"
-        };
-        let allow_unknown_property_fallback =
-            self.is_global_this_expression(left_idx) || is_this_global;
+        let targets_global_this = self.is_global_this_expression(left_idx) || is_this_global;
+        let receiver = GlobalReceiver::from_targets_global_this(targets_global_this);
+        let allow_unknown_property_fallback = targets_global_this;
         let property_type = self.resolve_global_this_property_type(
             member_name,
             member_node,
             allow_unknown_property_fallback,
-            base_display,
+            receiver,
         );
         if property_type == TypeId::ERROR {
             return Some(TypeId::ERROR);

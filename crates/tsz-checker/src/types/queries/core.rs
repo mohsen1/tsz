@@ -12,6 +12,47 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, keyword_to_text_static};
 use tsz_solver::TypeId;
 
+/// Which global-object receiver a property access resolves against.
+///
+/// `globalThis` member access and top-level `this` (when it resolves to the
+/// global object) target `typeof globalThis`; an identifier declared as
+/// `Window & typeof globalThis` (or a `window`/`self` global alias) targets the
+/// intersection. These are the only two receiver shapes the global-property
+/// resolution path distinguishes. The distinction is carried structurally so the
+/// resolution logic never has to reconstruct it by comparing the rendered
+/// receiver-display string (which doubles as the human-readable type in the
+/// emitted diagnostic).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GlobalReceiver {
+    /// `typeof globalThis`
+    GlobalThis,
+    /// `Window & typeof globalThis`
+    WindowAndGlobalThis,
+}
+
+impl GlobalReceiver {
+    /// Classify the receiver from whether the access targets `globalThis`
+    /// directly (a `globalThis` member access, or `this` resolving to the
+    /// global object) rather than the `Window & typeof globalThis` intersection.
+    pub(crate) const fn from_targets_global_this(targets_global_this: bool) -> Self {
+        if targets_global_this {
+            Self::GlobalThis
+        } else {
+            Self::WindowAndGlobalThis
+        }
+    }
+
+    /// Canonical type-display name for this receiver, used as the rendered
+    /// receiver type in `TS2339`/`TS7053` diagnostics. The resolution path
+    /// branches on the variant, never on this string.
+    pub(crate) const fn display_name(self) -> &'static str {
+        match self {
+            Self::GlobalThis => "typeof globalThis",
+            Self::WindowAndGlobalThis => "Window & typeof globalThis",
+        }
+    }
+}
+
 /// Extract a property name from a non-computed property name node.
 ///
 /// Handles identifiers, string literals, no-substitution template literals,

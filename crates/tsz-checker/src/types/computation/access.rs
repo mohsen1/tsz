@@ -2,6 +2,7 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
+use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -343,15 +344,11 @@ impl<'a> CheckerState<'a> {
                 || is_this_global
                 || is_declared_window_global_this)
         {
-            let base_display =
-                if self.is_global_this_expression(access.expression) || is_this_global {
-                    "typeof globalThis"
-                } else {
-                    "Window & typeof globalThis"
-                };
+            let targets_global_this =
+                self.is_global_this_expression(access.expression) || is_this_global;
+            let receiver = GlobalReceiver::from_targets_global_this(targets_global_this);
             let allow_unknown_property_fallback =
-                (self.is_global_this_expression(access.expression) || is_this_global)
-                    && !is_declared_window_global_this;
+                targets_global_this && !is_declared_window_global_this;
             if is_declared_window_global_this
                 && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
@@ -391,7 +388,7 @@ impl<'a> CheckerState<'a> {
                 name,
                 error_node,
                 allow_unknown_property_fallback,
-                base_display,
+                receiver,
             );
             if property_type == TypeId::ERROR {
                 return TypeId::ERROR;
