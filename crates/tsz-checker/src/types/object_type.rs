@@ -30,17 +30,15 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a property is optional.
     ///
-    /// Returns true if the property is marked as optional.
+    /// Returns true if the property is declared optional anywhere it is visible
+    /// on the receiver's apparent type — including base interfaces reached
+    /// through `extends` heritage and members surfaced only through a deferred
+    /// `Application` / intersection / union receiver. Delegates to the solver's
+    /// heritage-aware [`tsz_solver::objects::property_is_optional`] so a
+    /// base-only optional property is not misread as required (which would emit
+    /// a false TS2790 on `delete`).
     pub fn is_property_optional(&self, object_type: TypeId, property_name: &str) -> bool {
-        if let Some(shape) = object_shape_for_type(self.ctx.types, object_type) {
-            let name_atom = self.ctx.types.intern_string(property_name);
-            shape
-                .properties
-                .iter()
-                .find(|prop| prop.name == name_atom)
-                .is_some_and(|prop| prop.optional)
-        } else {
-            false
-        }
+        let name_atom = self.ctx.types.intern_string(property_name);
+        tsz_solver::objects::property_is_optional(object_type, name_atom, self.ctx.types, &self.ctx)
     }
 }
