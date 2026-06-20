@@ -75,7 +75,7 @@ impl<'a> DeclarationEmitter<'a> {
             && (self
                 .find_type_alias_type_node_in_arena(source_arena, &alias_name)
                 .is_some_and(|alias_type| {
-                    self.type_node_is_conditional_after_parens(source_arena, alias_type, depth + 1)
+                    Self::type_node_is_conditional_after_parens(source_arena, alias_type, depth + 1)
                 })
                 || self.type_reference_resolves_to_conditional_alias(
                     source_arena,
@@ -150,7 +150,11 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             let alias = alias_arena.get_type_alias(decl_node)?;
-            Some(self.type_node_is_conditional_after_parens(alias_arena, alias.type_node, 0))
+            Some(Self::type_node_is_conditional_after_parens(
+                alias_arena,
+                alias.type_node,
+                0,
+            ))
         })
         .unwrap_or(false)
     }
@@ -178,7 +182,6 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_node_is_conditional_after_parens(
-        &self,
         source_arena: &NodeArena,
         type_idx: NodeIndex,
         depth: u8,
@@ -195,7 +198,7 @@ impl<'a> DeclarationEmitter<'a> {
         if type_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(wrapped) = source_arena.get_wrapped_type(type_node)
         {
-            return self.type_node_is_conditional_after_parens(
+            return Self::type_node_is_conditional_after_parens(
                 source_arena,
                 wrapped.type_node,
                 depth + 1,
@@ -220,7 +223,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.with_symbol_declarations(sym_id, |alias_arena, decl_idx| {
             let decl_node = alias_arena.get(decl_idx)?;
             let alias = alias_arena.get_type_alias(decl_node)?;
-            Some(self.type_node_is_conditional_after_parens(
+            Some(Self::type_node_is_conditional_after_parens(
                 alias_arena,
                 alias.type_node,
                 depth + 1,

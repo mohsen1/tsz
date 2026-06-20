@@ -1276,10 +1276,10 @@ impl<'a> Printer<'a> {
             IRNode::ExpressionStatement(inner) => inner.as_ref(),
             other => other,
         };
-        self.collect_es5_computed_temp_decls_from_expr(expr, decls);
+        Self::collect_es5_computed_temp_decls_from_expr(expr, decls);
     }
 
-    fn collect_es5_computed_temp_decls_from_expr(&self, expr: &IRNode, decls: &mut Vec<String>) {
+    fn collect_es5_computed_temp_decls_from_expr(expr: &IRNode, decls: &mut Vec<String>) {
         let IRNode::BinaryExpr {
             left,
             operator,
@@ -1289,8 +1289,8 @@ impl<'a> Printer<'a> {
             return;
         };
         if operator.as_ref() == "," {
-            self.collect_es5_computed_temp_decls_from_expr(left, decls);
-            self.collect_es5_computed_temp_decls_from_expr(right, decls);
+            Self::collect_es5_computed_temp_decls_from_expr(left, decls);
+            Self::collect_es5_computed_temp_decls_from_expr(right, decls);
             return;
         }
         if operator.as_ref() == "="

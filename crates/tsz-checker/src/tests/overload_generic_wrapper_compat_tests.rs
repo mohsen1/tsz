@@ -157,10 +157,9 @@ use crate::context::{CheckerContext, CheckerOptions};
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeId;
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefId;
-use tsz_solver::types::FunctionShape;
+use tsz_solver::{FunctionShape, TypeId};
 
 /// Build a checker over a trivial module and run `probe` against its
 /// [`CheckerState`].

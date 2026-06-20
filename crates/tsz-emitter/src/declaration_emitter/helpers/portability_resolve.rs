@@ -1565,7 +1565,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let export_subpath = format!("./{subpath}");
-        self.exports_map_allows_subpath(exports, &export_subpath)
+        Self::exports_map_allows_subpath(exports, &export_subpath)
     }
 
     /// Find the filesystem path of a package root directory.
@@ -1591,7 +1591,6 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Check whether a package's exports map allows a given subpath.
     pub(in crate::declaration_emitter) fn exports_map_allows_subpath(
-        &self,
         exports: &serde_json::Value,
         subpath: &str,
     ) -> bool {
@@ -1601,14 +1600,14 @@ impl<'a> DeclarationEmitter<'a> {
             }
             serde_json::Value::Array(entries) => entries
                 .iter()
-                .any(|entry| self.exports_map_allows_subpath(entry, subpath)),
+                .any(|entry| Self::exports_map_allows_subpath(entry, subpath)),
             serde_json::Value::Object(map) => {
                 for (key, value) in map {
                     if key == "." || key.starts_with("./") {
-                        if self.export_entry_matches_subpath(key, value, subpath) {
+                        if Self::export_entry_matches_subpath(key, value, subpath) {
                             return true;
                         }
-                    } else if self.exports_map_allows_subpath(value, subpath) {
+                    } else if Self::exports_map_allows_subpath(value, subpath) {
                         return true;
                     }
                 }
@@ -1619,7 +1618,6 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn export_entry_matches_subpath(
-        &self,
         key: &str,
         value: &serde_json::Value,
         subpath: &str,
@@ -1638,7 +1636,7 @@ impl<'a> DeclarationEmitter<'a> {
                 for (k, v) in map {
                     if !k.starts_with("./") && k != "." {
                         // Condition key: recurse to check if any branch has a target
-                        if self.export_entry_matches_subpath(key, v, subpath) {
+                        if Self::export_entry_matches_subpath(key, v, subpath) {
                             return true;
                         }
                     }
@@ -1647,7 +1645,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             serde_json::Value::Array(entries) => entries
                 .iter()
-                .any(|entry| self.export_entry_matches_subpath(key, entry, subpath)),
+                .any(|entry| Self::export_entry_matches_subpath(key, entry, subpath)),
             _ => false,
         }
     }
