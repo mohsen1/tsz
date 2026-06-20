@@ -294,6 +294,15 @@ pub trait TypeDisplayProvenance {
         None
     }
 
+    /// Record that a merged-intersection object originated from `intersection`.
+    /// See [`crate::intern::TypeInterner::store_merged_intersection_origin`].
+    fn store_merged_intersection_origin(&self, _merged: TypeId, _intersection: TypeId) {}
+
+    /// Look up the original `Intersection` a merged object was synthesized from.
+    fn get_merged_intersection_origin(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
     /// Record semantic provenance from an evaluated structural result back
     /// to the nominal `Application` it was produced from (relation-layer
     /// accept-only variance recovery; never read by the printer).
@@ -939,6 +948,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         Self::get_display_alias(self, type_id)
+    }
+
+    fn store_merged_intersection_origin(&self, merged: TypeId, intersection: TypeId) {
+        Self::store_merged_intersection_origin(self, merged, intersection);
+    }
+
+    fn get_merged_intersection_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_merged_intersection_origin(self, type_id)
     }
 
     fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {

@@ -1242,6 +1242,20 @@ bitflags::bitflags! {
         /// (`{ [K in keyof T]: V }`) are NOT flagged: their `keyof` is `keyof T`
         /// and must keep the source's full key space.
         const MAPPED_CONSTRAINT_KEYS = 1 << 8;
+
+        /// The object was synthesized by merging the object members of an
+        /// object-only intersection (`{ a } & { b }` -> `{ a; b }`) during
+        /// intersection normalization. tsc never merges `A & B` into one
+        /// object; tsz does so for O(1) member lookup, recording a display alias
+        /// back to the original `Intersection` so the `&` form can still be
+        /// printed. Because a merged object interns to the *same* shape as a
+        /// plain object literal of that shape, the display alias alone cannot
+        /// tell the two apart. This flag makes the merged object a distinct
+        /// `TypeId`, so diagnostics can reliably recover that a target really is
+        /// an intersection (`TS2322` elaboration) without misfiring on a plain
+        /// object of the same shape. It is identity-only: structural subtyping
+        /// ignores it (a merged `A & B` and a plain `{ a; b }` still relate).
+        const INTERSECTION_MERGED = 1 << 9;
     }
 }
 

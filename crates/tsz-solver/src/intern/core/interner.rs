@@ -332,6 +332,16 @@ pub struct TypeInterner {
     /// instantiations whose tsz forms were eagerly evaluated). It is never
     /// read by the printer, so it carries no display-repaint heuristics.
     pub(super) application_eval_origin: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Structural provenance: an object synthesized by merging the object
+    /// members of an object-only intersection (`{ a } & { b }` -> `{ a; b }`,
+    /// carrying [`ObjectFlags::INTERSECTION_MERGED`]) mapped back to the original
+    /// `Intersection` TypeId. Unlike `display_alias` — which records the
+    /// last-written nominal display surface and is overwritten by a later
+    /// `Application` evaluation (`Wrap<X>`) — this map is written once at merge
+    /// time and never repainted, so diagnostics can always recover the
+    /// intersection members for a merged target regardless of any alias the type
+    /// later flows through. First write wins.
+    pub(super) merged_intersection_origin: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Application bases whose type-alias body is a conditional type.
     ///
     /// Conditional aliases often evaluate to a branch with its own display
@@ -538,6 +548,7 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            merged_intersection_origin: DashMap::with_hasher(FxBuildHasher),
             application_eval_origin: DashMap::with_hasher(FxBuildHasher),
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),

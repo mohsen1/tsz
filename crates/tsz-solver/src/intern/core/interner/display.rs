@@ -218,6 +218,30 @@ impl TypeInterner {
         self.application_eval_origin.get(&type_id).map(|r| *r)
     }
 
+    /// Record that `merged` (an object synthesized by merging the object
+    /// members of `intersection`, carrying `ObjectFlags::INTERSECTION_MERGED`)
+    /// originated from `intersection`. Written once at merge time and never
+    /// repainted, so it survives any later alias/application the merged object
+    /// flows through. Consumed only by diagnostics to elaborate an intersection
+    /// target member-by-member. First write wins.
+    pub fn store_merged_intersection_origin(&self, merged: TypeId, intersection: TypeId) {
+        if merged == intersection || merged.is_intrinsic() {
+            return;
+        }
+        if !matches!(self.lookup(intersection), Some(TypeData::Intersection(_))) {
+            return;
+        }
+        self.merged_intersection_origin
+            .entry(merged)
+            .or_insert(intersection);
+    }
+
+    /// Look up the original `Intersection` TypeId a merged object was
+    /// synthesized from. Returns `None` when the type is not a recorded merge.
+    pub fn get_merged_intersection_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        self.merged_intersection_origin.get(&type_id).map(|r| *r)
+    }
+
     /// Record that an application base belongs to a type alias whose body is a
     /// conditional type. This is diagnostic-only provenance.
     pub fn mark_conditional_alias_base(&self, base: TypeId) {

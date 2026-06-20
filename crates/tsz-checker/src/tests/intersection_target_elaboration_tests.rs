@@ -275,3 +275,174 @@ a = b;
         "Non-intersection target must not gain a constituent frame. Got: {text:?}"
     );
 }
+
+// ===========================================================================
+// Object intersections that reach the relation as a *merged* object.
+//
+// tsz eagerly merges an anonymous object-only intersection (`{ a } & { b }`)
+// into a single object for O(1) member lookup. When that intersection is
+// produced through a generic instantiation, type alias, conditional, or `infer`
+// capture — rather than written inline — the merged object reaches the
+// diagnostic with no structural `Intersection` to key on, and tsz previously
+// collapsed the missing-property failure to a flat single-object `TS2741`. tsc
+// keeps `A & B` an intersection in every spelling and reports the top-level
+// `TS2322` with a member-by-member elaboration. The `INTERSECTION_MERGED` shape
+// flag plus the `merged_intersection_origin` provenance let the renderer
+// recover the intersection regardless of how it was constructed. Binder names
+// are varied so the outcome tracks the structural shape, not any spelling.
+// (Verified against `tsc` 6.0.2, `--noEmit --strict`.)
+// ===========================================================================
+
+/// Returns the sorted set of diagnostic codes emitted for `source`.
+fn diagnostic_codes(source: &str) -> Vec<u32> {
+    let mut codes: Vec<u32> = check_source_diagnostics(source)
+        .iter()
+        .map(|d| d.code)
+        .collect();
+    codes.sort_unstable();
+    codes
+}
+
+/// A single missing property against an intersection produced by *instantiating*
+/// a generic alias (`Combine<S> = S & { tag }`) is the top-level `TS2322` with
+/// the failing-member elaboration, exactly as for a written `S & { tag }`.
+#[test]
+fn instantiated_generic_object_intersection_target_reports_ts2322() {
+    let text = elaboration(
+        r#"
+type Combine<Slot> = Slot & { secondField: number };
+type Combined = Combine<{ firstField: string }>;
+const value: Combined = { firstField: "x" };
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("is not assignable to type"),
+        "Expected the top-level TS2322 headline. Got: {text:?}"
+    );
+    assert!(
+        text.contains(
+            "Property 'secondField' is missing in type '{ firstField: string; }' but required in type '{ secondField: number; }'."
+        ),
+        "Expected the failing-member elaboration naming the second constituent. Got: {text:?}"
+    );
+}
+
+/// The same intersection routed through an *identity alias* (`Identity<T> = T`)
+/// — so the only structural form tsz ever holds is the merged object — still
+/// recovers the intersection target. The constituent member order is preserved.
+#[test]
+fn identity_aliased_object_intersection_target_reports_ts2322() {
+    let codes = diagnostic_codes(
+        r#"
+type Echo<Payload> = Payload;
+type Pair = Echo<{ alpha: 1 } & { beta: 2 }>;
+const value: Pair = { alpha: 1 };
+"#,
+    );
+    assert_eq!(codes, vec![2322], "Expected only TS2322. Got: {codes:?}");
+}
+
+/// A conditional type whose branch is the intersection (`Wrap<T> = T extends
+/// object ? T & { brand } : never`) is covered too — the conditional evaluates
+/// to the merged object before the relation runs.
+#[test]
+fn conditional_object_intersection_target_reports_ts2322() {
+    let codes = diagnostic_codes(
+        r#"
+type Decorate<Input> = Input extends object ? Input & { decorated: true } : never;
+type Decorated = Decorate<{ base: number }>;
+const value: Decorated = { base: 1 };
+"#,
+    );
+    assert_eq!(codes, vec![2322], "Expected only TS2322. Got: {codes:?}");
+}
+
+/// An `infer` capture of an intersection from a contravariant position
+/// (the `UnionToIntersection` idiom) reaches the relation as the merged object
+/// and must still report `TS2322`, not `TS2741`.
+#[test]
+fn infer_captured_object_intersection_target_reports_ts2322() {
+    let codes = diagnostic_codes(
+        r#"
+type Merge<Variants> =
+    (Variants extends unknown ? (arg: Variants) => void : never) extends
+        (arg: infer Merged) => void ? Merged : never;
+type Combined = Merge<{ left: 1 } | { right: 2 }>;
+const value: Combined = { left: 1 };
+"#,
+    );
+    assert_eq!(codes, vec![2322], "Expected only TS2322. Got: {codes:?}");
+}
+
+/// Multiple missing properties against an instantiated intersection produce the
+/// plural `TS2739` form embedded under the top-level `TS2322`, listing the
+/// constituent that requires them.
+#[test]
+fn instantiated_intersection_multiple_missing_reports_ts2322_plural() {
+    let text = elaboration(
+        r#"
+type Extend<Seed> = Seed & { needB: number; needC: string };
+type Extended = Extend<{ haveA: boolean }>;
+const value: Extended = { haveA: true };
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("is missing the following properties from type '{ needB: number; needC: string; }': needB, needC"),
+        "Expected the plural missing-properties elaboration. Got: {text:?}"
+    );
+}
+
+/// The same instantiated intersection in *argument* position keeps `TS2345`
+/// (tsc never downgrades an argument intersection mismatch to `TS2322`), proving
+/// the recovery is position-aware rather than a blanket rewrite.
+#[test]
+fn instantiated_intersection_argument_position_stays_ts2345() {
+    let codes = diagnostic_codes(
+        r#"
+type Combine<Slot> = Slot & { extra: number };
+declare function take(value: Combine<{ given: string }>): void;
+take({ given: "x" });
+"#,
+    );
+    assert_eq!(codes, vec![2345], "Expected only TS2345. Got: {codes:?}");
+}
+
+/// Control: a generic alias that instantiates to a *plain* object (no
+/// intersection) must keep the single-object `TS2741`. A plain object literal
+/// interns to the same shape as a merged intersection of that shape, so this
+/// guards that the `INTERSECTION_MERGED` flag — not the shape alone — drives the
+/// recovery.
+#[test]
+fn instantiated_plain_object_target_keeps_ts2741() {
+    let codes = diagnostic_codes(
+        r#"
+type Shape<Value> = { present: Value; alsoNeeded: number };
+type Concrete = Shape<string>;
+const value: Concrete = { present: "x" };
+"#,
+    );
+    assert_eq!(codes, vec![2741], "Expected only TS2741. Got: {codes:?}");
+}
+
+/// Control: a nominal class-instance intersection (`Derived & Base`) is not
+/// stamped `INTERSECTION_MERGED` — its members carry binder symbols, so the
+/// merge follows nominal subtyping. tsc elaborates the failing member by its
+/// nominal name (`required in type 'Dog'`), and tsz matches byte-for-byte.
+#[test]
+fn nominal_class_instance_intersection_elaborates_by_nominal_name() {
+    let text = elaboration(
+        r#"
+class Animal { species = "a"; }
+class Dog extends Animal { breed = "b"; }
+type Both = Dog & Animal;
+const value: Both = new Animal();
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Property 'breed' is missing in type 'Animal' but required in type 'Dog'."),
+        "Nominal class intersection must elaborate against the nominal member name 'Dog'. Got: {text:?}"
+    );
+}

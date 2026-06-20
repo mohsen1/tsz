@@ -782,6 +782,15 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.get_display_alias(type_id)
     }
 
+    fn store_merged_intersection_origin(&self, merged: TypeId, intersection: TypeId) {
+        self.interner
+            .store_merged_intersection_origin(merged, intersection);
+    }
+
+    fn get_merged_intersection_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.get_merged_intersection_origin(type_id)
+    }
+
     fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {
         self.interner
             .record_application_eval_origin(evaluated, application);
