@@ -297,6 +297,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "dfbe3ca4ef8a22fc023fca5a5ef530e525f5e523",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -313,6 +314,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "c92ca435c7e1827e0fd55c539080ef1bfd6fe3f0",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -377,6 +379,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "566b5bf448f4354eb8e35c6243ea3772bdb3be96",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -393,6 +396,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "ddd36007f99903a2258ee47bcd4490ad4589602e",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -409,6 +413,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "c0a6472121c67a2b083e62fcff13e7d022e39d8f",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -425,6 +430,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "864a3a2f03c5d7b974afeb1da0faf46c21758779",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -441,6 +447,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "bf2d15439259887f98f2737cf7ebde4234d5adea",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -457,6 +464,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "53d22a60dcd1f854a6d7d7498715ba6f4f56473f",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -489,6 +497,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "d075962caee162bb28e241723863e8f11cb58390",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -505,6 +514,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "e414c8afd3b69f6bc0173b8ee25f71d8e5694f01",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -521,6 +531,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "16d83ca56a54569e4a2375a965567b31191c0035",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -537,6 +548,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "0bc205286bd5eea0b89fa903c411df9aca95923c",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -553,6 +565,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "22c9be6d4d26ef1feb797ffcf4f31b2c863e936b",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -601,6 +614,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "5ef3a018bda74fb960e44b68fc3672635ee8037d",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -1033,6 +1047,18 @@ export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
   .map((row) => row.name);
 
 export const COMPILE_GUARD_CANARY_PROJECT_ROWS = COMPILE_CANARY_PROJECT_ROWS;
+
+// Canary rows opted into the vs-tsgo timing chart via `perf_timed: true`. These
+// are bounded, lighter external libraries: they get real tsz_ms/tsgo_ms timings
+// from the dedicated `bench-canaries` shard so the performance comparison page
+// can show passing canaries next to the required rows. They stay
+// benchmark_set:"canary", so they are NOT part of REQUIRED_PROJECT_ROWS and
+// never affect the artifact-readiness/publish gate; the website only promotes a
+// perf-timed canary onto the chart once it actually checks green (see the
+// green-compat filter in crates/tsz-website/src/_data/benchmark_data.js).
+export const PERF_TIMED_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.perf_timed === true)
+  .map((row) => row.name);
 
 export const PROJECT_ROWS_BY_NAME = Object.fromEntries(
   PROJECT_ROW_DEFINITIONS.map((row) => [row.name, row])

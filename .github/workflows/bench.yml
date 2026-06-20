@@ -1117,6 +1117,14 @@ jobs:
           - label: projects
             timeout: 135
             filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|comlink-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
+          # Passing-canary perf rows. Isolated from the required `projects` shard
+          # so timing the opt-in canary corpus (PERF_TIMED_CANARY_PROJECT_ROWS in
+          # scripts/bench/project-rows.mjs) never spends the required shard's
+          # budget or stalls the publish gate. Bounded to lighter external
+          # libraries; the website only charts the ones that check green.
+          - label: bench-canaries
+            timeout: 135
+            filter: 'ofetch-project|ts-pattern-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|neverthrow-project'
           - label: large-ts-repo
             timeout: 135
             filter: '^large-ts-repo$'
@@ -1555,16 +1563,23 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
+          # The bench-canaries shard (passing-canary perf rows) is OPTIONAL: it
+          # is merged when present but must NOT count toward — or break — the
+          # required-shard completeness gate. A failed/slow canary shard then
+          # never blocks publishing the required benchmark timings.
+          mapfile -t required_files < <(
+            printf '%s\n' "${json_files[@]}" | grep -v '/bench-results-bench-canaries\.json$' || true
+          )
           expected_shards=9
-          echo "json_count=${#json_files[@]}" >> "$GITHUB_OUTPUT"
+          echo "json_count=${#required_files[@]}" >> "$GITHUB_OUTPUT"
           echo "expected_json_count=${expected_shards}" >> "$GITHUB_OUTPUT"
-          if [[ "${#json_files[@]}" -eq 0 ]]; then
-            echo "No benchmark result JSON files found."
+          if [[ "${#required_files[@]}" -eq 0 ]]; then
+            echo "No required benchmark result JSON files found."
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne "${expected_shards}" ]]; then
-            echo "::warning::Expected ${expected_shards} benchmark shard JSON files, found ${#json_files[@]}; merging partial artifact for diagnosis, but public publish will fail."
+          if [[ "${#required_files[@]}" -ne "${expected_shards}" ]]; then
+            echo "::warning::Expected ${expected_shards} required benchmark shard JSON files, found ${#required_files[@]}; merging partial artifact for diagnosis, but public publish will fail."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true

@@ -5,6 +5,7 @@ import { marked } from "marked";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PERF_TIMED_CANARY_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
@@ -231,6 +232,32 @@ function hasSuccessfulTimingPair(row) {
 
 function hasSuccessfulTiming(row) {
   return hasSuccessfulTimingPair(row);
+}
+
+const PERF_TIMED_CANARY_SET = new Set(PERF_TIMED_CANARY_PROJECT_ROWS);
+
+// A perf-timed canary may produce a tsz/tsgo timing pair while still diverging
+// from `tsc` (yellow) or failing tsz (red). Such rows must NOT join the perf
+// comparison chart: only promote a perf-timed canary once it checks green.
+// Required rows keep their existing behavior (timing pair is sufficient) so this
+// only gates the opt-in canary set, never the required corpus.
+function isChartEligible(row) {
+  if (!hasSuccessfulTiming(row)) return false;
+  if (PERF_TIMED_CANARY_SET.has(row?.name)) {
+    return hasGreenProjectCompatibility(row);
+  }
+  return true;
+}
+
+// A perf-timed canary that produced a timing pair but is not green is excluded
+// from the chart by isChartEligible. It still has a timing pair, so the normal
+// isFailedBenchmark() check would treat it as "successful" and drop it from the
+// failures list too. Surface it explicitly in the canaries/incomplete section so
+// a timed-but-diverging canary stays visible instead of vanishing.
+function isExcludedNonGreenCanary(row) {
+  return PERF_TIMED_CANARY_SET.has(row?.name)
+    && hasSuccessfulTiming(row)
+    && !hasGreenProjectCompatibility(row);
 }
 
 function isFailedBenchmark(row) {
@@ -1427,7 +1454,7 @@ function decorateRow(row, category, options = {}) {
 
 function buildGroupedBenchmarks(data) {
   const allResults = withExpectedProjectRows(data?.results);
-  const results = allResults.filter(hasSuccessfulTiming);
+  const results = allResults.filter(isChartEligible);
   const grouped = new Map();
 
   for (const row of results) {
@@ -1441,7 +1468,9 @@ function buildGroupedBenchmarks(data) {
     ...results.map((row) => row.name),
     ...[...grouped.values()].flat().map((row) => row.name),
   ]);
-  const failedResults = allResults.filter((row) => isFailedBenchmark(row) && !successfulNames.has(row.name));
+  const failedResults = allResults.filter((row) => (
+    (isFailedBenchmark(row) || isExcludedNonGreenCanary(row)) && !successfulNames.has(row.name)
+  ));
 
   const order = [
     "Projects: external libraries",
