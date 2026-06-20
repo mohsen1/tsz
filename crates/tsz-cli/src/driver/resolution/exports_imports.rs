@@ -343,7 +343,16 @@ pub(crate) fn match_imports_subpath(pattern: &str, subpath_key: &str) -> Option<
 
 pub(crate) fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
-        target.replacen('*', wildcard, 1)
+        // Node `PACKAGE_TARGET_RESOLVE` substitutes the captured subpath into
+        // EVERY `*` in the target (tsc's `resolvedTarget.replace(/\*/g, subpath)`),
+        // not just the first. A target with two or more `*` (e.g.
+        // `"./*": "./dist/*/*.js"`) must not strand a literal `*`, which would
+        // never resolve on disk and produce a spurious TS2307. This mirrors the
+        // tsz-core resolver's `apply_wildcard_substitution`; the two exports/
+        // imports substitution chokepoints must stay in agreement. (tsconfig
+        // `paths`/`typesVersions` substitution is a separate Node-spec concern
+        // that replaces only the first `*` and is handled elsewhere.)
+        target.replace('*', wildcard)
     } else if target.ends_with('/') {
         // Trailing-slash directory pattern: append the matched portion
         format!("{target}{wildcard}")
@@ -479,6 +488,42 @@ mod tests {
             resolve_exports_subpath(&exports_reversed, "./b/x", &["default"], TEST_VERSION)
                 .as_deref(),
             Some("./second.js"),
+        );
+    }
+
+    #[test]
+    fn apply_exports_subpath_replaces_every_star_in_target() {
+        // Node `PACKAGE_TARGET_RESOLVE` / tsc `replace(/\*/g, subpath)`: every
+        // `*` in the target is substituted with the captured subpath, matching
+        // the tsz-core resolver's `apply_wildcard_substitution`. The prior
+        // first-`*`-only substitution stranded a literal `*` (→ spurious TS2307).
+        assert_eq!(
+            apply_exports_subpath("./dist/*/*.js", "button"),
+            "./dist/button/button.js"
+        );
+        assert_eq!(apply_exports_subpath("./*/*/*.d.ts", "a"), "./a/a/a.d.ts");
+        // Single-star, no-star, and trailing-slash directory targets are
+        // unaffected by the fix.
+        assert_eq!(
+            apply_exports_subpath("./dist/*.js", "index"),
+            "./dist/index.js"
+        );
+        assert_eq!(
+            apply_exports_subpath("./dist/index.js", "x"),
+            "./dist/index.js"
+        );
+        assert_eq!(apply_exports_subpath("./lib/", "sub/mod"), "./lib/sub/mod");
+    }
+
+    #[test]
+    fn resolve_exports_subpath_substitutes_every_star_end_to_end() {
+        // The replace-all rule must hold through the driver's exports resolver,
+        // not just the leaf helper: a single-`*` KEY mapping to a multi-`*`
+        // TARGET resolves with no literal `*` left behind.
+        let exports = serde_json::json!({ "./*": "./dist/*/*.js" });
+        assert_eq!(
+            resolve_exports_subpath(&exports, "./button", &["default"], TEST_VERSION).as_deref(),
+            Some("./dist/button/button.js"),
         );
     }
 
