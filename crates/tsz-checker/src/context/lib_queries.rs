@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use tsz_binder::SymbolId;
 use tsz_parser::parser::node::NodeAccess;
+use tsz_solver::TypeId;
 
 use super::CheckerContext;
 
@@ -43,6 +44,120 @@ impl<'a> CheckerContext<'a> {
                 .iter()
                 .take(self.actual_lib_file_count)
                 .any(|lib_ctx| lib_ctx.binder.file_locals.has(name))
+    }
+
+    /// Resolve a name to the value-global symbol that contributes a property to
+    /// the synthetic `typeof globalThis` surface (a `var`/`function`/`class`
+    /// declaration in the current file or a lib). Block-scoped `let`/`const`
+    /// bindings are not properties of `globalThis`, so they are excluded.
+    fn global_this_surface_symbol(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(is_global_this_surface_value)
+        {
+            return Some(sym_id);
+        }
+
+        for lib_ctx in self.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && lib_ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(is_global_this_surface_value)
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    /// `typeof globalThis` resolves to the synthetic surface object, never `any`.
+    /// Returns it when `expr_name_idx` (resolved in `arena`) is the bare
+    /// `globalThis` identifier. Shared by the `Fn`-typed `typeof` lowering
+    /// overrides so the check lives in one place rather than at each call site.
+    pub(crate) fn global_this_typeof_override(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        expr_name_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<TypeId> {
+        (arena.get_identifier_text(expr_name_idx) == Some("globalThis"))
+            .then(|| self.global_this_surface_type())
+    }
+
+    /// Build (and memoize) the synthetic `typeof globalThis` object type for this
+    /// checker file. `typeof globalThis` is a concrete object whose properties are
+    /// the in-scope value globals (current-file `var`/`function`/`class` plus lib
+    /// globals); it is **not** `any`. Representing it as `any` made
+    /// `typeof globalThis extends X ? T : F` distribute to `T | F` and silenced
+    /// element-access diagnostics, so the lowering and member-access paths route
+    /// through this surface instead.
+    ///
+    /// The result is `&self`-buildable: it relies only on interior-mutable
+    /// interning and the file-local cache, so it can be consulted from the
+    /// `Fn`-typed `typeof` lowering overrides.
+    pub(crate) fn global_this_surface_type(&self) -> TypeId {
+        use tsz_solver::{ObjectShape, PropertyInfo, SymbolRef};
+
+        let cache = &self.type_reference_validation_caches.type_node_surface;
+        if let Some(cached) = cache.global_this_type.get() {
+            return cached;
+        }
+        // A nested `typeof globalThis` reached while the surface is being built
+        // (a self-edge through one of the property types) resolves to the
+        // `globalThis` self-property fallback rather than recursing forever.
+        if cache.global_this_type_in_progress.get() {
+            return TypeId::UNKNOWN;
+        }
+        cache.global_this_type_in_progress.set(true);
+
+        let mut names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        for (name, _) in self.binder.file_locals.iter() {
+            names.insert(name.clone());
+        }
+        for lib_ctx in self.lib_contexts.iter() {
+            for (name, _) in lib_ctx.binder.file_locals.iter() {
+                names.insert(name.clone());
+            }
+        }
+        names.insert("globalThis".to_string());
+
+        let mut properties = Vec::new();
+        for name in names {
+            // `globalThis.globalThis` is `typeof globalThis`; modeled as the
+            // self-property fallback to avoid an infinite surface expansion.
+            let (type_id, parent_id) = if name == "globalThis" {
+                (TypeId::UNKNOWN, None)
+            } else {
+                let Some(sym_id) = self.global_this_surface_symbol(&name) else {
+                    continue;
+                };
+                let type_id = self
+                    .symbol_types
+                    .get(&sym_id)
+                    .filter(|&type_id| type_id != TypeId::ERROR)
+                    .unwrap_or_else(|| self.types.factory().type_query(SymbolRef(sym_id.0)));
+                (type_id, Some(sym_id))
+            };
+
+            let prop_name = self.types.intern_string(&name);
+            let mut prop = PropertyInfo::new(prop_name, type_id);
+            prop.write_type = type_id;
+            prop.readonly = name == "globalThis";
+            prop.parent_id = parent_id;
+            prop.declaration_order = properties.len() as u32;
+            properties.push(prop);
+        }
+
+        let global_this_type = self.types.factory().object_with_index(ObjectShape {
+            properties,
+            ..ObjectShape::default()
+        });
+        cache.global_this_type.set(Some(global_this_type));
+        cache.global_this_type_in_progress.set(false);
+        global_this_type
     }
 
     fn actual_lib_symbol_id_for_bare_name(&self, name: &str) -> Option<SymbolId> {
@@ -487,4 +602,14 @@ impl<'a> CheckerContext<'a> {
                 .get_symbol(sym_id)
                 .is_some_and(|symbol| symbol.escaped_name.as_str() == name)
     }
+}
+
+/// A symbol contributes a property to the `typeof globalThis` surface when it
+/// has value meaning and is not a block-scoped `let`/`const` (those are not
+/// properties of `globalThis`; only `var`/`function`/`class` are).
+const fn is_global_this_surface_value(symbol: &tsz_binder::Symbol) -> bool {
+    use tsz_binder::symbol_flags;
+    symbol.has_any_flags(symbol_flags::VALUE)
+        && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+            || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
 }

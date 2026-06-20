@@ -1056,6 +1056,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // These were pre-computed by `precompute_type_query_flow_types` during
             // `check_type_alias_declaration` and stored in `node_types`.
             let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                if let Some(global_this) = self
+                    .ctx
+                    .global_this_typeof_override(decl_arena, expr_name_idx)
+                {
+                    return Some(global_this);
+                }
                 let const_asserted_array_tuple_in_decl_arena = || -> Option<TypeId> {
                     let expr_node = decl_arena.get(expr_name_idx)?;
                     let ident = decl_arena.get_identifier(expr_node)?;

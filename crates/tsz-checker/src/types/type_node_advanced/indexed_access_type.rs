@@ -246,11 +246,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            // Special case: `(typeof globalThis)['key']` — typeof globalThis
-            // resolves to ANY in lowering (no synthetic globalThis type), so the
-            // solver would not emit any error. But tsc treats typeof globalThis
-            // as a specific type whose properties are the globally-visible
-            // `var`/`function`/`namespace` bindings. Reject when the key is:
+            // Special case: `(typeof globalThis)['key']` — `typeof globalThis`
+            // lowers to the synthetic surface object, whose properties are the
+            // globally-visible `var`/`function`/`namespace` bindings. The generic
+            // indexed-access path would surface a structural code (e.g. TS2536)
+            // for a missing literal key, but tsc reports TS2339 here, so this
+            // path owns the missing-property diagnostic. Reject when the key is:
             //   - a block-scoped variable (let/const) — block-scoped bindings
             //     are NOT properties of typeof globalThis;
             //   - a name not bound in the file's global locals at all (e.g.

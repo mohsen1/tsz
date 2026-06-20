@@ -1815,6 +1815,12 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.ctx.get_def_type_params(def_id))
                 };
                 let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    if let Some(global_this) = self
+                        .ctx
+                        .global_this_typeof_override(self.ctx.arena, expr_name_idx)
+                    {
+                        return Some(global_this);
+                    }
                     self.const_array_to_enum_object_type_query(expr_name_idx)
                         .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
                         .or_else(|| {

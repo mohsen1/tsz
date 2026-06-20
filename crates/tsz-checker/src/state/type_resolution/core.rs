@@ -477,6 +477,12 @@ impl<'a> CheckerState<'a> {
                         })
                 };
                 let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    if let Some(global_this) = self
+                        .ctx
+                        .global_this_typeof_override(self.ctx.arena, expr_name_idx)
+                    {
+                        return Some(global_this);
+                    }
                     let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
                     let type_query_node = self.ctx.arena.get(type_query_idx)?;
                     if type_query_node.kind != syntax_kind_ext::TYPE_QUERY {
@@ -1365,6 +1371,12 @@ impl<'a> CheckerState<'a> {
                         })
                 };
                 let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    if let Some(global_this) = self
+                        .ctx
+                        .global_this_typeof_override(self.ctx.arena, expr_name_idx)
+                    {
+                        return Some(global_this);
+                    }
                     let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
                     let type_query_node = self.ctx.arena.get(type_query_idx)?;
                     if type_query_node.kind != syntax_kind_ext::TYPE_QUERY {
