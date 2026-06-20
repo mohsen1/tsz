@@ -1040,25 +1040,21 @@ impl CheckerState<'_> {
     /// type T = string;         // get_type_of_symbol(T) → string
     /// ```
     pub fn get_type_of_symbol(&mut self, sym_id: SymbolId) -> TypeId {
-        // Hard stack guard: bail with ERROR when the stack overflow breaker
-        // has been tripped by a previous deep recursion.
-        if crate::checkers_domain::stack_overflow_tripped() {
-            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
-            return TypeId::ERROR;
+        // Shared cross-context stack-overflow breaker: probe → trip → grow.
+        // Symbol type resolution is a node in the heritage-merge recursion
+        // cycle (`merge → get_type_of_symbol(base) → … → merge`), so it must
+        // carry the same breaker as the merge entry points (#14111). `None`
+        // signals a bail (already tripped, or this probe tripped it); cache
+        // `ERROR` for the symbol on that path, matching the prior behaviour.
+        match crate::checkers_domain::with_stack_guard(None, || {
+            Some(self.get_type_of_symbol_inner(sym_id))
+        }) {
+            Some(type_id) => type_id,
+            None => {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                TypeId::ERROR
+            }
         }
-        // Periodically probe remaining stack and trip the breaker if low.
-        if crate::checkers_domain::should_probe_stack()
-            && crate::checkers_domain::headroom_below(1024 * 1024)
-        {
-            crate::checkers_domain::trip_stack_overflow();
-            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
-            return TypeId::ERROR;
-        }
-        // Dynamically grow the stack for deeply recursive symbol resolution
-        // chains.
-        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-            self.get_type_of_symbol_inner(sym_id)
-        })
     }
 
     fn get_type_of_symbol_inner(&mut self, sym_id: SymbolId) -> TypeId {
