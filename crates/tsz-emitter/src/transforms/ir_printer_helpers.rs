@@ -441,6 +441,20 @@ impl<'a> IRPrinter<'a> {
         self.decrease_indent();
     }
 
+    /// Emit a comma expression that sits directly in statement position
+    /// (`a = obj.a, b = obj.b;`), without the wrapping parentheses a `CommaExpr`
+    /// gets in a sub-expression slot. Used by the async ES5 destructuring
+    /// lowering, which joins its extraction assignments with commas.
+    pub(super) fn emit_statement_comma_expr(&mut self, exprs: &[IRNode]) {
+        for (i, expr) in exprs.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit_node(expr);
+        }
+        self.write(";");
+    }
+
     pub(super) fn emit_for_initializer(&mut self, init: &IRNode) {
         match init {
             IRNode::VarDecl { name, initializer } => {

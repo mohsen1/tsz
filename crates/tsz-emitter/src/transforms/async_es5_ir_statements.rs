@@ -212,6 +212,16 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                // A destructuring `var`/`const` cannot be emitted as a native
+                // binding pattern at ES5; lower the whole statement into a hoist
+                // + comma-assignment chain. The await-in-initializer destructuring
+                // case is handled by the per-declaration path below.
+                if self.variable_statement_has_binding_pattern(node)
+                    && !self.contains_await_recursive(idx)
+                {
+                    current_statements.push(self.lower_destructuring_variable_statement(node));
+                    return;
+                }
                 // Structure: VARIABLE_STATEMENT -> VARIABLE_DECLARATION_LIST -> VARIABLE_DECLARATION
                 if let Some(var_stmt) = self.arena.get_variable(node) {
                     let mut trailing_comment = self.extract_trailing_line_comment_in_node(idx);
@@ -1159,6 +1169,44 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return;
         };
+
+        // A destructuring declaration cannot use the identifier-name path below
+        // (its name is a binding pattern, not an identifier). Lower it into a
+        // hoist + comma-assignment chain, reading the resumed `_x.sent()` value
+        // when the initializer is a direct `await`.
+        let pattern_decl = self
+            .arena
+            .get_variable_declaration(node)
+            .map(|decl| (decl.name, decl.initializer));
+        if let Some((decl_name, decl_init)) = pattern_decl
+            && self.is_binding_pattern_name(decl_name)
+            && decl_init.is_some()
+        {
+            if self.is_suspension_expression(decl_init) {
+                let trailing = trailing_comment.take();
+                let (hoist_decls, comma_stmt) =
+                    self.split_suspended_destructuring_declaration(decl_name);
+                current_statements.extend(hoist_decls);
+                self.process_await_expression_with_trailing_comment(
+                    decl_init,
+                    cases,
+                    current_statements,
+                    current_label,
+                    trailing.as_deref(),
+                );
+                if let Some(stmt) = comma_stmt {
+                    current_statements.push(stmt);
+                }
+                return;
+            }
+            if !self.contains_await_recursive(decl_init) {
+                let value = self.expression_to_ir(decl_init);
+                self.lower_destructuring_declaration_value(decl_name, value, current_statements);
+                return;
+            }
+            // A nested (non-direct) `await` inside a binding-pattern initializer
+            // is left to the existing per-declaration path.
+        }
 
         if let Some(decl) = self.arena.get_variable_declaration(node) {
             let name =

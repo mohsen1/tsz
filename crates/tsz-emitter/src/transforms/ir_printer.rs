@@ -1089,6 +1089,12 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
+                // A comma expression in statement position needs no wrapping
+                // parentheses, unlike a `CommaExpr` in a sub-expression slot.
+                if let IRNode::CommaExpr(exprs) = expr.as_ref() {
+                    self.emit_statement_comma_expr(exprs);
+                    return;
+                }
                 if let IRNode::CommaExprMultiline(exprs) = expr.as_ref() {
                     self.indent_level += 1;
                     for (i, expr) in exprs.iter().enumerate() {

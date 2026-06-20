@@ -303,6 +303,10 @@ name = "async_try_emit"
 path = "tests/async_try_emit.rs"
 
 [[test]]
+name = "async_es5_destructuring_tests"
+path = "tests/async_es5_destructuring_tests.rs"
+
+[[test]]
 name = "async_loop_emit"
 path = "tests/async_loop_emit.rs"
 

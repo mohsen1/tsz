@@ -89,7 +89,29 @@ impl<'a> AsyncES5Transformer<'a> {
                 && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
             {
                 let catch_rename_depth = self.catch_binding_renames.len();
-                if catch_data.variable_declaration.is_some() {
+                if let Some(catch_pattern) =
+                    self.catch_binding_pattern(catch_data.variable_declaration)
+                {
+                    // Destructuring catch binding (`catch ({ message }) { ... }`):
+                    // bind the caught value to a temp, then extract each name.
+                    let catch_temp = self.generate_hoisted_temp();
+                    self.blocked_temp_names
+                        .borrow_mut()
+                        .insert(catch_temp.clone());
+                    current_statements.push(IRNode::VarDecl {
+                        name: catch_temp.clone().into(),
+                        initializer: None,
+                    });
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                        IRNode::id(catch_temp.clone()),
+                        IRNode::GeneratorSent,
+                    ))));
+                    self.lower_catch_binding_destructuring(
+                        catch_pattern,
+                        &catch_temp,
+                        current_statements,
+                    );
+                } else if catch_data.variable_declaration.is_some() {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {

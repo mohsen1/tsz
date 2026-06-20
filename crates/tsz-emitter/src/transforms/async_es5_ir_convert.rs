@@ -1041,6 +1041,12 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                // A destructuring `var`/`const` cannot be emitted as a native
+                // binding pattern at ES5; lower it into a hoist + comma
+                // assignment chain (matching `tsc`'s generator emit).
+                if self.variable_statement_has_binding_pattern(node) {
+                    return self.lower_destructuring_variable_statement(node);
+                }
                 if let Some(var_data) = self.arena.get_variable(node) {
                     let mut decls = Vec::new();
                     for &decl_idx in &var_data.declarations.nodes {
