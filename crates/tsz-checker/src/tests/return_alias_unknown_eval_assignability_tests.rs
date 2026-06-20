@@ -163,6 +163,73 @@ function bad(): () => string {
     );
 }
 
+/// The free-type-parameter gap: a generic alias *application* `C<T>` (`T`
+/// still free) used directly as the declared return type, returning `unknown`.
+/// `C<T>` evaluates to a *deferred* conditional whose branches are both
+/// `unknown`; the compat fast path rejected an `unknown` source against any
+/// non-top target before the structural `subtype_of_conditional_target` rule
+/// (source must relate to *both* branches) could accept it. tsc accepts this
+/// because each branch is itself `unknown`. The concrete `C<number>` and
+/// `() => C<number>` positions already evaluated to a literal `unknown`, so
+/// only the still-deferred generic-application form regressed.
+#[test]
+fn generic_alias_application_unknown_return_with_free_type_parameter() {
+    assert_clean(
+        r#"
+type C<T> = T extends 1 ? unknown : unknown;
+function g<T>(v: unknown): C<T> {
+  return v;
+}
+"#,
+    );
+}
+
+/// `any` branches must behave identically to `unknown` branches: a deferred
+/// conditional whose every branch is a top type accepts an `unknown` source.
+#[test]
+fn generic_alias_application_any_branches_accept_unknown_source() {
+    assert_clean(
+        r#"
+type C<U> = U extends 1 ? any : any;
+function g<U>(v: unknown): C<U> {
+  return v;
+}
+"#,
+    );
+}
+
+/// A non-distributive identical-top-branch conditional (`[T] extends [1]`)
+/// also accepts an `unknown` source — the fix is not distribution-specific.
+#[test]
+fn non_distributive_top_branch_conditional_accepts_unknown_source() {
+    assert_clean(
+        r#"
+type Wrap<Elem> = [Elem] extends [1] ? unknown : unknown;
+function g<Elem>(v: unknown): Wrap<Elem> {
+  return v;
+}
+"#,
+    );
+}
+
+/// Negative control: a deferred conditional with a non-top branch must still
+/// reject an `unknown` source (it is not assignable to the `string` branch).
+#[test]
+fn deferred_conditional_with_non_top_branch_rejects_unknown_source() {
+    let diags = diags_strict(
+        r#"
+type Mixed<T> = T extends 1 ? unknown : string;
+function bad<T>(v: unknown): Mixed<T> {
+  return v;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for unknown source vs conditional with a string branch; got: {diags:?}"
+    );
+}
+
 /// Property position (already-passing control from the issue's adjacent
 /// matrix) stays clean alongside the signature-return fix.
 #[test]
