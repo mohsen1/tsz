@@ -15,7 +15,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Compute the type of an identifier that the binder resolved to `sym_id`.
     ///
     /// Drives the resolved-identifier phases in their original order: special

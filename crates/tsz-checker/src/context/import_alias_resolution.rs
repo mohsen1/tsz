@@ -25,7 +25,7 @@ fn binder_named_export_or_local(
         .or_else(|| binder.file_locals.get(import_name))
 }
 
-impl<'a> CheckerContext<'a> {
+impl CheckerContext<'_> {
     /// Follow an import alias to its actual target symbol across file boundaries.
     ///
     /// For ALIAS symbols (created by `import {A} from "./file"`), resolves
@@ -148,15 +148,12 @@ impl<'a> CheckerContext<'a> {
         // `export *` barrels and other chains the single-hop named lookup misses
         // are followed by the binder's full re-export resolver instead; pin the
         // terminal's declaring file so cross-arena delegation can locate it.
-        let mut current = match self.resolve_import_alias_and_register(sym_id) {
-            Some(hop) => hop,
-            None => {
-                let terminal = self.binder.resolve_import_symbol(sym_id)?;
-                if let Some(file_idx) = self.resolve_symbol_file_index(terminal) {
-                    self.register_symbol_file_target(terminal, file_idx);
-                }
-                return Some(terminal);
+        let Some(mut current) = self.resolve_import_alias_and_register(sym_id) else {
+            let terminal = self.binder.resolve_import_symbol(sym_id)?;
+            if let Some(file_idx) = self.resolve_symbol_file_index(terminal) {
+                self.register_symbol_file_target(terminal, file_idx);
             }
+            return Some(terminal);
         };
         const MAX_REEXPORT_DEPTH: usize = 64;
         for _ in 0..MAX_REEXPORT_DEPTH {

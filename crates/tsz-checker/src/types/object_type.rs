@@ -6,7 +6,7 @@ use crate::query_boundaries::class_type::object_shape_for_type;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Get the type of a property by name.
     ///
     /// Returns the property type if found, or None otherwise.
