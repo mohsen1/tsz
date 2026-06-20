@@ -207,7 +207,7 @@ assert.match(
 
 assert.match(
   workflow,
-  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\.[\s\S]+echo "active_run_id=\$\{active_run_id\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_sha=\$\{active_run_sha\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_url=\$\{active_run_url\}" >> "\$GITHUB_OUTPUT"/,
+  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+An older Bench run is already active; deferring to the oldest concurrent run and skipping this newer duplicate\.[\s\S]+echo "active_run_id=\$\{active_run_id\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_sha=\$\{active_run_sha\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_url=\$\{active_run_url\}" >> "\$GITHUB_OUTPUT"/,
   "bench gate should let active runs finish, skip duplicate automatic runs, and remember the blocker",
 );
 
