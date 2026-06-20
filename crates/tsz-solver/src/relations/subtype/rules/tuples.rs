@@ -513,6 +513,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let element_type =
             crate::type_queries::get_tuple_element_type_union(self.interner, source)?;
 
+        // Resolve `this` per side, mirroring `tsc`. The inherited `this`-returning
+        // Array members (`fill`/`sort`/`reverse`/`copyWithin`) resolve `this` to
+        // their receiver: the target interface's copies to `target`, the source
+        // array surface's to the `source` tuple (below). A `this`-return then
+        // reduces to `source <: target` — the relation already in progress,
+        // satisfied coinductively — instead of forcing `Array<T> <: Iface<Args>`
+        // (false). Without it the two sides disagree: `Iface<Args>` evaluation
+        // already rebound `this` to the concrete instance on the generic path,
+        // while the synthetic array surface kept `this` polymorphic.
+        let target = self.bind_polymorphic_this(target, target);
         let target_shape_id = object_with_index_shape_id(self.interner, target)?;
         let target_shape = self.interner.object_shape(target_shape_id);
         let target_props = target_shape.properties.clone();
@@ -528,6 +538,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             instantiate_type(self.interner, array_base, &subst)
         };
         let source_array_eval = self.evaluate_type(instantiated_array);
+        // Bind the synthetic array surface's polymorphic `this` to the real tuple
+        // `source` (see the per-side note above).
+        let source_array_eval = self.bind_polymorphic_this(source, source_array_eval);
         let source_shape_id = object_shape_id(self.interner, source_array_eval)
             .or_else(|| object_with_index_shape_id(self.interner, source_array_eval))?;
         let source_props = self
