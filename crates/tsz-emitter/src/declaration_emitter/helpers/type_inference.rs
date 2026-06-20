@@ -1510,7 +1510,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let excluded_names = [imported_name.to_string()];
+            let excluded_names = [(*imported_name).to_string()];
             return Some(self.qualify_public_package_names_in_text(
                 binder,
                 imported_module,

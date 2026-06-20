@@ -1132,7 +1132,7 @@ impl SubtypeFailureReason {
             )
             .with_related(PendingDiagnostic::error(
                 codes::MISSING_INDEX_SIGNATURE,
-                vec![index_kind.to_string().into(), source.into()],
+                vec![(*index_kind).into(), source.into()],
             )),
 
             Self::NoUnionMemberMatches {
