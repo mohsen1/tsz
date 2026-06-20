@@ -333,6 +333,69 @@ fn test_exports_pattern_key_is_not_treated_as_exact_match_for_literal_star_speci
 }
 
 #[test]
+fn test_exports_pattern_target_substitutes_every_star() {
+    // A single-`*` pattern KEY whose TARGET carries multiple `*` must substitute
+    // the captured subpath into ALL of them (Node `PACKAGE_TARGET_RESOLVE` /
+    // tsc `replace(/\*/g, subpath)`). The prior first-`*`-only substitution left
+    // a literal `*` in the resolved path, so the file was never found → a
+    // spurious TS2307 on a perfectly valid exports map. This exercises the core
+    // resolver's `exports`-map entry point.
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write(
+        "node_modules/pkg/package.json",
+        r#"{"name":"pkg","exports":{"./*":"./dist/*/*.d.ts"}}"#,
+    );
+    fixture.write(
+        "node_modules/pkg/dist/button/button.d.ts",
+        "export declare const value: number;",
+    );
+    fixture.write("src/index.ts", "import { value } from 'pkg/button';");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    });
+    let result = resolver
+        .resolve("pkg/button", &dir.join("src/index.ts"), Span::new(22, 32))
+        .expect("multi-star exports target should substitute every '*' with the subpath");
+    assert_eq!(
+        result.resolved_path,
+        dir.join("node_modules/pkg/dist/button/button.d.ts")
+    );
+}
+
+#[test]
+fn test_imports_pattern_target_substitutes_every_star() {
+    // Same Node `PACKAGE_TARGET_RESOLVE` rule on the `#imports` side. This
+    // exercises the core resolver's distinct `imports`-map entry point, which
+    // routes through the same `apply_wildcard_substitution` chokepoint.
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write(
+        "package.json",
+        r##"{"name":"app","private":true,"imports":{"#feat/*":"./src/*/*.js"}}"##,
+    );
+    fixture.write("src/btn/btn.d.ts", "export declare const value: number;");
+    fixture.write("src/index.ts", "import { value } from '#feat/btn';");
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    });
+    let result = resolver
+        .resolve("#feat/btn", &dir.join("src/index.ts"), Span::new(22, 32))
+        .expect("multi-star imports target should substitute every '*' with the subpath");
+    assert!(
+        result.resolved_path.ends_with("src/btn/btn.d.ts"),
+        "expected src/btn/btn.d.ts, got {}",
+        result.resolved_path.display()
+    );
+}
+
+#[test]
 fn test_package_exports_target_cannot_escape_package_root() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_exports_target_escape");
