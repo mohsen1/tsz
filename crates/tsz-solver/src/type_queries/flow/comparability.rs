@@ -219,19 +219,21 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
-    // The empty object type `{}` is comparable to any type parameter whose
-    // constraint contains an object-like or `object`-primitive member. tsc's
-    // `isTypeComparableTo` walks the type parameter's constraint when the
-    // source is a "wide" object type like `{}`. We narrow this to the empty-
-    // object case only — fully unwrapping for any source would over-permit
-    // assertions like `B as T extends A` (genericTypeAssertions4.ts).
-    if is_empty_object_type(db, source)
+    // A requirement-free object — the empty `{}`, an all-optional object, or a
+    // universal index-signature record like `Record<PropertyKey, unknown>` — is
+    // comparable to any type parameter whose constraint contains an object-like
+    // or `object`-primitive member. tsc's `isTypeComparableTo` walks the type
+    // parameter's constraint when the source is a "wide" object type. We narrow
+    // this to sources with NO required named member — fully unwrapping for any
+    // source would over-permit `B as T extends A` (genericTypeAssertions4.ts),
+    // where `B`'s required `bar` must still report TS2352.
+    if is_object_without_required_members(db, source)
         && let Some(TypeData::TypeParameter(info)) = db.lookup(target)
         && let Some(constraint) = info.constraint
     {
         return types_are_comparable_for_assertion_inner(db, source, constraint, depth + 1, nested);
     }
-    if is_empty_object_type(db, target)
+    if is_object_without_required_members(db, target)
         && let Some(TypeData::TypeParameter(info)) = db.lookup(source)
         && let Some(constraint) = info.constraint
     {
@@ -502,19 +504,27 @@ fn is_object_like_for_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     )
 }
 
-/// Returns true when `type_id` is the empty object type `{}` — an Object
-/// type with no required properties, no callable signatures, and no index
-/// signatures. Used to narrow the type-parameter constraint-unwrap rule:
-/// only the "top" object type widely overlaps with any constraint that
-/// contains an object-like member.
-fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let Some(TypeData::Object(shape_id)) = db.lookup(type_id) else {
-        return false;
+/// Returns true when `type_id` is an object type with **no required named
+/// members** — the empty object `{}`, an all-optional object (`{ a?: X }`),
+/// or a universal index-signature record (`{ [k: string]: V }`, the inline
+/// shape of `Record<PropertyKey, unknown>`). Such an object imposes no
+/// structural requirement, so it widely overlaps any type-parameter
+/// constraint that contains an object-like member, and the constraint-unwrap
+/// rule may walk the constraint for it.
+///
+/// Index signatures are permitted (a record is still requirement-free), unlike
+/// the original empty-`{}`-only predicate which excluded them and so reported a
+/// false TS2352 on `Record<PropertyKey, unknown> as T extends object` (#14152,
+/// remeda `clone.ts`). A required named member (e.g. `B`'s `bar` in
+/// `genericTypeAssertions4.ts`) still disqualifies the object, so
+/// `B as T extends A` continues to report TS2352.
+fn is_object_without_required_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let shape_id = match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+        _ => return false,
     };
     let shape = db.object_shape(shape_id);
     shape.properties.iter().all(|p| p.optional)
-        && shape.string_index.is_none()
-        && shape.number_index.is_none()
 }
 
 /// Returns true when `keyof_side` is `KeyOf(_)` and `prim_side` is one of
