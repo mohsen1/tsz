@@ -147,7 +147,7 @@ impl AsyncES5Transformer<'_> {
     pub(in crate::transforms) fn is_binding_pattern_node(&self, idx: NodeIndex) -> bool {
         self.arena
             .get(idx)
-            .is_some_and(|node| node.is_binding_pattern())
+            .is_some_and(tsz_parser::parser::node::Node::is_binding_pattern)
     }
 
     /// True when an expression can be repeated inline without first being
@@ -410,27 +410,27 @@ impl AsyncES5Transformer<'_> {
         // static: rebind to the inner literal and fall through to literal access.
         let key_node = if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(key_expr_idx) = self.dynamic_computed_key_expr(property_name_idx) {
-                let key_ir = self.expression_to_ir(key_expr_idx);
+                let key_expr = self.expression_to_ir(key_expr_idx);
                 let key_temp = self.generate_hoisted_temp();
                 hoist.push(key_temp.clone());
-                assigns.push(IRNode::assign(IRNode::id(key_temp.clone()), key_ir));
+                assigns.push(IRNode::assign(IRNode::id(key_temp.clone()), key_expr));
                 // A rest sibling excludes a dynamic key by its runtime form,
                 // coerced to a string unless it is a symbol (tsc's __rest key
                 // form): `typeof _b === "symbol" ? _b : _b + ""`.
-                let key_id = IRNode::id(key_temp);
+                let key_ref = IRNode::id(key_temp);
                 let rest_key = IRNode::ConditionalExpr {
                     condition: Box::new(IRNode::binary(
                         IRNode::PrefixUnaryExpr {
                             operator: "typeof ".into(),
-                            operand: Box::new(key_id.clone()),
+                            operand: Box::new(key_ref.clone()),
                         },
                         "===",
                         IRNode::string("symbol"),
                     )),
-                    when_true: Box::new(key_id.clone()),
-                    when_false: Box::new(IRNode::binary(key_id.clone(), "+", IRNode::string(""))),
+                    when_true: Box::new(key_ref.clone()),
+                    when_false: Box::new(IRNode::binary(key_ref.clone(), "+", IRNode::string(""))),
                 };
-                return (IRNode::elem(base.clone(), key_id), Some(rest_key));
+                return (IRNode::elem(base.clone(), key_ref), Some(rest_key));
             }
             // Static literal computed key: rebind to the inner literal node.
             match self
