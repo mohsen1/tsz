@@ -1,6 +1,5 @@
 use super::*;
 use tsz::diagnostics::Diagnostic;
-use tsz::span::Span;
 
 fn compile_test(
     content: &str,
@@ -108,7 +107,7 @@ fn compile_test(
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
     } else {
-        copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
+        copy_tsconfig_to_project_if_needed(dir_path, dir_path, filenames, options)?;
     }
 
     // Run tsz compiler using the tsz binary
@@ -193,7 +192,8 @@ fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
                     // Real implementation would parse the full diagnostic
                     diagnostics.push(Diagnostic::error(
                         "test.ts".to_string(),
-                        Span::new(0, 0),
+                        0,
+                        0,
                         line.to_string(),
                         code,
                     ));
@@ -342,6 +342,39 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
     assert!(
         tsconfig_json.get("include").is_none(),
         "noImplicitReferences root-file mode should not synthesize include globs, got {tsconfig_raw}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_merges_directives_into_current_directory_tsconfig() {
+    let content = "";
+    let filenames = vec![
+        (
+            "/node_modules/@types/foo/index.d.ts".to_string(),
+            "declare module \"xyz\" { export const x: number; }".to_string(),
+        ),
+        (
+            "/src/a.ts".to_string(),
+            "import { x } from \"xyz\"; x;".to_string(),
+        ),
+        ("/src/tsconfig.json".to_string(), "{}".to_string()),
+    ];
+    let options: HashMap<String, String> = HashMap::from([
+        ("currentdirectory".to_string(), "/src".to_string()),
+        ("noImplicitReferences".to_string(), "true".to_string()),
+        ("types".to_string(), "*".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.project_dir.join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+
+    assert_eq!(prepared.project_dir, prepared.temp_dir.path().join("src"));
+    assert_eq!(
+        tsconfig_json["compilerOptions"]["types"],
+        serde_json::json!(["*"]),
+        "currentDirectory project tsconfig should receive directive options, got {tsconfig_raw}"
     );
 }
 
@@ -1309,11 +1342,11 @@ fn test_parse_diagnostics_from_text_extracts_error_codes() {
     let diagnostics = parse_diagnostics_from_text(output);
     assert_eq!(extract_error_codes(&diagnostics), vec![2322, 2304]);
     assert_eq!(
-        diagnostics[0].message,
+        diagnostics[0].message_text,
         output.lines().next().unwrap().to_string()
     );
     assert_eq!(
-        diagnostics[1].message,
+        diagnostics[1].message_text,
         output.lines().nth(1).unwrap().to_string()
     );
 }

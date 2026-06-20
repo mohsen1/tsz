@@ -550,16 +550,33 @@ pub(super) fn collect_type_root_files(
     }
 
     // Auto-include every `@types/*` package found across the (nearest-first)
-    // type roots. tsc's `getAutomaticTypeDirectiveNames` keys discovered
-    // packages by name and resolves each once, so a package present in both a
-    // nested and a hoisted `node_modules/@types` (common in monorepos now that
-    // ancestor roots are walked) is loaded a single time from the nearest root.
+    // type roots. The `types: ["*"]` conformance harness wildcard keeps
+    // auto-discovery project-local when default roots are used; explicit
+    // package names above still use the full ancestor walk.
+    let canonical_base_dir = canonicalize_or_owned(base_dir);
+    let auto_roots: Vec<&PathBuf> = if options.type_roots.is_none()
+        && options
+            .types
+            .as_ref()
+            .is_some_and(|types| types.iter().any(|t| t == "*" || t.trim().is_empty()))
+    {
+        roots
+            .iter()
+            .filter(|root| root.starts_with(&canonical_base_dir))
+            .collect()
+    } else {
+        roots.iter().collect()
+    };
+    // tsc's `getAutomaticTypeDirectiveNames` keys discovered packages by name
+    // and resolves each once, so a package present in both a nested and a
+    // hoisted `node_modules/@types` (common in monorepos now that ancestor
+    // roots are walked) is loaded a single time from the nearest root.
     // Without this the same global-augmenting package (e.g. `@types/node`)
     // would be inserted twice and produce spurious duplicate-declaration
     // diagnostics.
     let mut seen_names = FxHashSet::default();
-    for root in roots {
-        for package_root in collect_type_packages_from_root(&root) {
+    for root in auto_roots {
+        for package_root in collect_type_packages_from_root(root) {
             let package_name = package_root
                 .strip_prefix(&root)
                 .unwrap_or(&package_root)
@@ -1206,6 +1223,48 @@ mod tests {
     fn has_source_file_extension_rejects_no_extension_or_empty() {
         assert!(!has_source_file_extension(Path::new("README")));
         assert!(!has_source_file_extension(Path::new("")));
+    }
+
+    #[test]
+    fn collect_type_root_files_wildcard_skips_parent_default_roots() {
+        let dir = tempdir().unwrap();
+        let app_dir = dir.path().join("src");
+        let package = dir.path().join("node_modules/@types/foo");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(package.join("index.d.ts"), "declare module \"xyz\" {}\n").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            types: Some(vec!["*".to_string()]),
+            ..Default::default()
+        };
+        let (files, unresolved) = collect_type_root_files(&app_dir, &options);
+
+        assert!(
+            files.is_empty(),
+            "wildcard should not load parent roots: {files:?}"
+        );
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn collect_type_root_files_explicit_types_use_parent_default_roots() {
+        let dir = tempdir().unwrap();
+        let app_dir = dir.path().join("src");
+        let package = dir.path().join("node_modules/@types/foo");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let entry = package.join("index.d.ts");
+        std::fs::write(&entry, "declare module \"xyz\" {}\n").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            types: Some(vec!["foo".to_string()]),
+            ..Default::default()
+        };
+        let (files, unresolved) = collect_type_root_files(&app_dir, &options);
+
+        assert_eq!(unresolved, Vec::<String>::new());
+        assert_eq!(files, vec![canonicalize_or_owned(&entry)]);
     }
 
     #[test]
