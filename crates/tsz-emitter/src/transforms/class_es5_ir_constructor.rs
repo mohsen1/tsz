@@ -20,6 +20,21 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
+/// One instance field initializer, tagged by kind. The constructor emits public
+/// field assignments (`this.x = …`), private-field `WeakMap` stores
+/// (`_C_x.set(this, …)`), and auto-accessor stores in a single
+/// source-declaration-ordered pass so the runtime initialization order matches
+/// `tsc` (whose `flattenDestructuringAssignment`/constructor lowering preserves
+/// the textual order of instance members regardless of accessibility).
+enum InstanceFieldInit {
+    /// Public/protected instance property (index is its declaration node).
+    Public(NodeIndex),
+    /// Private instance field (index into `self.private_fields`).
+    Private(usize),
+    /// Instance auto-accessor (index into `self.auto_accessors`).
+    Accessor(usize),
+}
+
 impl<'a> ES5ClassTransformer<'a> {
     pub(super) fn emit_constructor_ir(&self, class_idx: NodeIndex) -> Option<IRNode> {
         let class_node = self.arena.get(class_idx)?;
@@ -192,18 +207,15 @@ impl<'a> ES5ClassTransformer<'a> {
                         ctor_body.push(Self::class_constructor_new_target_capture_ir());
                     }
 
-                    // Private brand and field initializations
+                    // Private brand, then instance field initializers in source
+                    // declaration order (public + private + auto-accessor).
                     self.emit_private_brand_initialization_ir(&mut ctor_body, true);
-                    self.emit_private_field_initializations_ir(&mut ctor_body, true);
-                    self.emit_auto_accessor_initializations_ir(&mut ctor_body, true);
-
-                    // Instance property initializations
-                    for &prop_idx in &instance_props {
-                        self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                        if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
-                            ctor_body.push(ir);
-                        }
-                    }
+                    self.emit_instance_field_initializations_ir(
+                        &mut ctor_body,
+                        true,
+                        true,
+                        &instance_props,
+                    );
                     self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(
                         &mut ctor_body,
                         true,
@@ -225,22 +237,15 @@ impl<'a> ES5ClassTransformer<'a> {
                     ctor_body.push(Self::class_constructor_new_target_capture_ir());
                 }
 
-                // Emit private brand and field initializations
+                // Emit private brand, then instance field initializers in source
+                // declaration order (public + private + auto-accessor).
                 self.emit_private_brand_initialization_ir(&mut ctor_body, false);
-                self.emit_private_field_initializations_ir(&mut ctor_body, false);
-                self.emit_auto_accessor_initializations_ir(&mut ctor_body, false);
-
-                // Instance property initializations
-                for &prop_idx in &instance_props {
-                    self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                    if let Some(ir) = self.emit_property_initializer_ir(
-                        prop_idx,
-                        false,
-                        instance_props_need_this_capture,
-                    ) {
-                        ctor_body.push(ir);
-                    }
-                }
+                self.emit_instance_field_initializations_ir(
+                    &mut ctor_body,
+                    false,
+                    instance_props_need_this_capture,
+                    &instance_props,
+                );
                 self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(&mut ctor_body, false);
                 self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, false);
             }
@@ -461,21 +466,13 @@ impl<'a> ES5ClassTransformer<'a> {
             body.extend(prologue);
         }
 
-        // Emit parameter properties
-        self.emit_parameter_properties_ir(body, params, true);
-
-        // Emit private brand and field initializations
+        // Emit private brand, parameter properties, then instance field
+        // initializers in source declaration order (public + private +
+        // auto-accessor). `tsc` orders these as brand → parameter properties →
+        // textual-order field initializers.
         self.emit_private_brand_initialization_ir(body, true);
-        self.emit_private_field_initializations_ir(body, true);
-        self.emit_auto_accessor_initializations_ir(body, true);
-
-        // Emit instance property initializers
-        for &prop_idx in instance_props {
-            self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
-                body.push(ir);
-            }
-        }
+        self.emit_parameter_properties_ir(body, params, true);
+        self.emit_instance_field_initializations_ir(body, true, true, instance_props);
         self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         // Emit remaining statements after super()
@@ -560,17 +557,10 @@ impl<'a> ES5ClassTransformer<'a> {
             try_body.extend(prologue);
         }
 
-        self.emit_parameter_properties_ir(&mut try_body, params, true);
+        // brand → parameter properties → source-ordered instance field inits.
         self.emit_private_brand_initialization_ir(&mut try_body, true);
-        self.emit_private_field_initializations_ir(&mut try_body, true);
-        self.emit_auto_accessor_initializations_ir(&mut try_body, true);
-
-        for &prop_idx in instance_props {
-            self.emit_property_leading_comment(&mut try_body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
-                try_body.push(ir);
-            }
-        }
+        self.emit_parameter_properties_ir(&mut try_body, params, true);
+        self.emit_instance_field_initializations_ir(&mut try_body, true, true, instance_props);
         self.emit_tc39_instance_field_extra_initializers_ir(&mut try_body, true);
 
         if super_stmt_idx.is_some() {
@@ -652,17 +642,10 @@ impl<'a> ES5ClassTransformer<'a> {
             body.extend(prologue);
         }
 
-        self.emit_parameter_properties_ir(body, params, true);
+        // brand → parameter properties → source-ordered instance field inits.
         self.emit_private_brand_initialization_ir(body, true);
-        self.emit_private_field_initializations_ir(body, true);
-        self.emit_auto_accessor_initializations_ir(body, true);
-
-        for &prop_idx in instance_props {
-            self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
-                body.push(ir);
-            }
-        }
+        self.emit_parameter_properties_ir(body, params, true);
+        self.emit_instance_field_initializations_ir(body, true, true, instance_props);
         self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         let mut prev_stmt_end = body_node.pos;
@@ -977,22 +960,18 @@ impl<'a> ES5ClassTransformer<'a> {
             body.extend(prologue);
         }
 
-        // Emit private brand and field initializations
+        // Emit private brand, parameter properties, then instance field
+        // initializers in source declaration order (public + private +
+        // auto-accessor), matching `tsc`'s brand → parameter properties →
+        // textual-order initializer sequence.
         self.emit_private_brand_initialization_ir(body, false);
-        self.emit_private_field_initializations_ir(body, false);
-        self.emit_auto_accessor_initializations_ir(body, false);
-
-        // Emit parameter properties
         self.emit_parameter_properties_ir(body, params, false);
-
-        // Emit instance property initializers
-        for &prop_idx in instance_props {
-            self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false, needs_this_capture)
-            {
-                body.push(ir);
-            }
-        }
+        self.emit_instance_field_initializations_ir(
+            body,
+            false,
+            needs_this_capture,
+            instance_props,
+        );
         self.emit_tc39_instance_field_extra_initializers_ir(body, false);
 
         // Emit original constructor body
@@ -1386,63 +1365,132 @@ impl<'a> ES5ClassTransformer<'a> {
         )));
     }
 
-    /// Emit private field initializations using `__classPrivateFieldSet`.
-    fn emit_private_field_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
-        let receiver = if use_this {
-            IRNode::id("_this")
-        } else {
-            IRNode::this()
-        };
-
-        for field in &self.private_fields {
-            if field.is_static {
-                continue;
+    /// Emit every instance field initializer — public property assignments,
+    /// private-field `WeakMap` stores, and auto-accessor stores — in a single
+    /// pass ordered by source declaration position.
+    ///
+    /// `tsc` initializes instance members in textual order regardless of
+    /// accessibility (`this.a = 1; _C_p.set(this, 2); this.b = 3;` for
+    /// `a; #p; b`). Emitting all private/accessor stores as a block before the
+    /// public assignments (or vice versa) reorders observable initializer side
+    /// effects, so the three sources are merged and sorted by the declaration
+    /// node's source position here. The private brand `add(this)` and
+    /// parameter-property assignments are emitted by their own callers *before*
+    /// this pass, matching `tsc`.
+    fn emit_instance_field_initializations_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        use_this: bool,
+        lexical_this_capture: bool,
+        instance_props: &[NodeIndex],
+    ) {
+        for (_, entry) in self.instance_field_initializer_plan(instance_props) {
+            match entry {
+                InstanceFieldInit::Public(prop_idx) => {
+                    self.emit_property_leading_comment(body, prop_idx);
+                    if let Some(ir) =
+                        self.emit_property_initializer_ir(prop_idx, use_this, lexical_this_capture)
+                    {
+                        body.push(ir);
+                    }
+                }
+                InstanceFieldInit::Private(field_index) => {
+                    self.emit_one_private_field_init_ir(body, field_index, use_this);
+                }
+                InstanceFieldInit::Accessor(accessor_index) => {
+                    self.emit_one_auto_accessor_init_ir(body, accessor_index, use_this);
+                }
             }
-
-            self.emit_property_leading_comment(body, field.member_idx);
-            let value = if field.has_initializer && field.initializer.is_some() {
-                self.convert_expression(field.initializer)
-            } else {
-                IRNode::Undefined
-            };
-            // The in-constructor initializer for a private instance field is the
-            // field's definition point, so tsc emits a direct `_C_field.set(this, value)`
-            // WeakMap store (see `createPrivateInstanceFieldInitializer`). The
-            // `__classPrivateFieldSet` helper is reserved for later assignment
-            // expressions (`this.#x = v`) where a brand check is required.
-            body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                weakmap_name: field.weakmap_name.clone().into(),
-                key: Box::new(receiver.clone()),
-                value: Box::new(value),
-            }));
         }
     }
 
-    /// Emit auto-accessor field initializations using `WeakMap.set()`
-    fn emit_auto_accessor_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
-        let key = if use_this {
-            IRNode::id("_this")
-        } else {
-            IRNode::this()
-        };
-
-        for accessor in &self.auto_accessors {
+    /// Build the source-ordered list of instance field initializers by merging
+    /// the public properties, private instance fields, and instance
+    /// auto-accessors and sorting on each declaration's source position. The
+    /// sort is stable, so members that (impossibly) share a position keep their
+    /// insertion order. Each entry keeps its source position so the caller can
+    /// iterate the sorted vec directly without a second allocation.
+    fn instance_field_initializer_plan(
+        &self,
+        instance_props: &[NodeIndex],
+    ) -> Vec<(u32, InstanceFieldInit)> {
+        let pos_of = |idx: NodeIndex| self.arena.get(idx).map_or(0u32, |node| node.pos);
+        let mut plan: Vec<(u32, InstanceFieldInit)> = Vec::new();
+        for &prop_idx in instance_props {
+            plan.push((pos_of(prop_idx), InstanceFieldInit::Public(prop_idx)));
+        }
+        for (i, field) in self.private_fields.iter().enumerate() {
+            if field.is_static {
+                continue;
+            }
+            plan.push((pos_of(field.member_idx), InstanceFieldInit::Private(i)));
+        }
+        for (i, accessor) in self.auto_accessors.iter().enumerate() {
             if accessor.is_static {
                 continue;
             }
-
-            let value = accessor
-                .initializer
-                .map(|initializer| self.convert_expression(initializer))
-                .unwrap_or(IRNode::Undefined);
-
-            // _Class_accessor_storage.set(this, value);
-            body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                weakmap_name: accessor.weakmap_name.clone().into(),
-                key: Box::new(key.clone()),
-                value: Box::new(value),
-            }));
+            plan.push((pos_of(accessor.member_idx), InstanceFieldInit::Accessor(i)));
         }
+        plan.sort_by_key(|(pos, _)| *pos);
+        plan
+    }
+
+    /// The constructor receiver expression: `_this` once `this` has been
+    /// captured into the derived-class temp, otherwise `this`.
+    fn instance_receiver_ir(use_this: bool) -> IRNode {
+        if use_this {
+            IRNode::id("_this")
+        } else {
+            IRNode::this()
+        }
+    }
+
+    /// Emit a single private instance field's in-constructor `WeakMap` store.
+    fn emit_one_private_field_init_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        field_index: usize,
+        use_this: bool,
+    ) {
+        let receiver = Self::instance_receiver_ir(use_this);
+        let field = &self.private_fields[field_index];
+        self.emit_property_leading_comment(body, field.member_idx);
+        let value = if field.has_initializer && field.initializer.is_some() {
+            self.convert_expression(field.initializer)
+        } else {
+            IRNode::Undefined
+        };
+        // The in-constructor initializer for a private instance field is the
+        // field's definition point, so tsc emits a direct `_C_field.set(this, value)`
+        // WeakMap store (see `createPrivateInstanceFieldInitializer`). The
+        // `__classPrivateFieldSet` helper is reserved for later assignment
+        // expressions (`this.#x = v`) where a brand check is required.
+        body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
+            weakmap_name: field.weakmap_name.clone().into(),
+            key: Box::new(receiver),
+            value: Box::new(value),
+        }));
+    }
+
+    /// Emit a single instance auto-accessor's backing-storage `WeakMap` store.
+    fn emit_one_auto_accessor_init_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        accessor_index: usize,
+        use_this: bool,
+    ) {
+        let key = Self::instance_receiver_ir(use_this);
+        let accessor = &self.auto_accessors[accessor_index];
+        let value = accessor
+            .initializer
+            .map(|initializer| self.convert_expression(initializer))
+            .unwrap_or(IRNode::Undefined);
+        // _Class_accessor_storage.set(this, value);
+        body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
+            weakmap_name: accessor.weakmap_name.clone().into(),
+            key: Box::new(key),
+            value: Box::new(value),
+        }));
     }
 
     pub(super) fn find_auto_accessor(

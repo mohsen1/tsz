@@ -330,6 +330,10 @@ path = "tests/legacy_decorator_member_order_tests.rs"
 name = "dynamic_import_amd_umd_parity_tests"
 path = "tests/dynamic_import_amd_umd_parity_tests.rs"
 
+[[test]]
+name = "es5_instance_field_init_order_tests"
+path = "tests/es5_instance_field_init_order_tests.rs"
+
 [lints]
 workspace = true
 
