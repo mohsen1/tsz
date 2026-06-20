@@ -20,7 +20,7 @@ fn union_contains_literals(interner: &TypeInterner, type_id: TypeId, expected: &
     };
     let member_list = interner.type_list(members);
     let expected_set: std::collections::HashSet<String> =
-        expected.iter().map(|s| s.to_string()).collect();
+        expected.iter().map(|&s| s.to_string()).collect();
 
     let mut found_literals = std::collections::HashSet::new();
     for &member in member_list.iter() {

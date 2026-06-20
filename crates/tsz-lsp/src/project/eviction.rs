@@ -212,7 +212,7 @@ mod tests {
     fn make_project_with_files(names: &[&str]) -> Project {
         let mut project = Project::new();
         for name in names {
-            project.set_file(name.to_string(), format!("const x_{name} = 1;"));
+            project.set_file((*name).to_string(), format!("const x_{name} = 1;"));
         }
         project
     }

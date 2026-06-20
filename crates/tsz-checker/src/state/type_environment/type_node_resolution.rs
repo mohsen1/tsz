@@ -1056,6 +1056,14 @@ impl<'a> CheckerState<'a> {
             if let Some(type_id) = prop_result.success_type() {
                 return type_id;
             }
+            // The lib `Window` type does not carry `declare global { interface
+            // Window { ... } }` augmentation members (e.g. a computed/string key
+            // like `[GLOBAL_TSR]`). Consult the augmentation map before erroring,
+            // matching tsc, which finds the member on the `Window` arm of
+            // `window: Window & typeof globalThis`.
+            if let Some(type_id) = self.resolve_augmentation_property_by_name("Window", name) {
+                return type_id;
+            }
         }
 
         if let Some(sym_id) = self.resolve_global_value_symbol(name) {

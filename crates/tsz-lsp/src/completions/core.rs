@@ -813,7 +813,7 @@ impl<'a> Completions<'a> {
         keywords
             .iter()
             .map(|kw| {
-                let mut item = CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
+                let mut item = CompletionItem::new((*kw).to_string(), CompletionItemKind::Keyword);
                 item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
                 item
             })
