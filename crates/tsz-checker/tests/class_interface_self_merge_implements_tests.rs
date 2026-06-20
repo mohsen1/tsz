@@ -9,7 +9,7 @@
 //! class … Did you mean to extend") because the merged symbol's own class
 //! declaration carries private members.
 //!
-//! See https://github.com/tsz-org/tsz/issues/14114 (xstate `SimulatedClock`).
+//! See <https://github.com/tsz-org/tsz/issues/14114> (xstate `SimulatedClock`).
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
