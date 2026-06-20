@@ -21,6 +21,29 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
+/// Pre-fetched ordering key for a single `Application` component (its base or
+/// one of its type arguments).
+///
+/// `compare_application_component` resolves each component through the interner
+/// (`builtin_sort_key`, `lookup`, `DefId` of `Lazy`/`Enum`) every time two
+/// `Application` union members are compared. Pre-computing this key once per
+/// component during the `O(N)` cache pass removes those lookups from the inner
+/// `O(N log N)` sort comparator. The fields mirror exactly what the resolving
+/// comparator inspects, so the cached comparison is order-identical.
+#[derive(Clone, Copy)]
+pub(in crate::intern::core) struct AppComponentKey {
+    /// `builtin_sort_key(id)` — `Some` for intrinsic/builtin component types.
+    pub(in crate::intern::core) builtin_key: Option<u32>,
+    /// `type_data_rank` of the component's `TypeData`; `None` when the component
+    /// has no resolvable `TypeData` (matches the comparator's `lookup` miss).
+    pub(in crate::intern::core) rank: Option<u8>,
+    /// Raw `DefId` for `Lazy`/`Enum` components; `None` otherwise. Only consulted
+    /// when both components share the same rank, mirroring the resolving path.
+    pub(in crate::intern::core) lazy_or_enum_defid: Option<u32>,
+    /// Raw `TypeId` of the component, used as the final stable tiebreak.
+    pub(in crate::intern::core) raw: u32,
+}
+
 /// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
 /// lookups during sort comparisons. Each field corresponds to a lookup that
 /// `compare_union_members` would otherwise perform per comparison.
@@ -39,6 +62,11 @@ pub(in crate::intern::core) struct CachedUnionMember {
     pub(in crate::intern::core) callable_symbol: Option<u32>,
     /// For string literals: resolved text used by union-member ordering.
     pub(in crate::intern::core) string_literal_text: Option<Arc<str>>,
+    /// For `Application` members: pre-fetched component ordering keys (base
+    /// followed by each type argument). Lets the comparator order two
+    /// `Application` members without any interner lookups. Boxed so that the
+    /// far more common non-`Application` members keep `CachedUnionMember` small.
+    pub(in crate::intern::core) app_components: Option<Box<[AppComponentKey]>>,
     /// Monotonic allocation counter for source-order sorting
     pub(in crate::intern::core) alloc_order: Option<u32>,
 }
