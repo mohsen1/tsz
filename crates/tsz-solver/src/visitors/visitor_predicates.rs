@@ -396,9 +396,10 @@ pub fn is_merged_intersection_object(types: &dyn TypeDatabase, type_id: TypeId) 
     if type_id.is_intrinsic() {
         return false;
     }
-    let shape_id = match types.lookup(type_id) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
-        _ => return false,
+    let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+        types.lookup(type_id)
+    else {
+        return false;
     };
     types
         .object_shape(shape_id)
