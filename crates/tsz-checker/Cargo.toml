@@ -1594,6 +1594,9 @@ path = "tests/ts7053_template_mapped_tests.rs"
 name = "ts7053_record_constrained_type_param_index_tests"
 path = "tests/ts7053_record_constrained_type_param_index_tests.rs"
 [[test]]
+name = "ts7053_unique_symbol_constrained_type_param_index_tests"
+path = "tests/ts7053_unique_symbol_constrained_type_param_index_tests.rs"
+[[test]]
 name = "ts7053_unconstrained_type_param_index_tests"
 path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
 [[test]]

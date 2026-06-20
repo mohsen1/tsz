@@ -755,6 +755,109 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Reports TS7053 when a type parameter is indexed by *another* type
+    /// parameter whose constraint is symbol-only and which is not a valid key of
+    /// the receiver (e.g. `T[K]` where `K extends typeof sym` but `K` is unrelated
+    /// to `keyof T`). Returns true when a diagnostic was emitted, so the caller
+    /// can short-circuit the access to `error`.
+    pub(crate) fn report_symbol_only_type_param_index_mismatch(
+        &mut self,
+        access_expression: NodeIndex,
+        pre_resolution_object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        if !crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object_type,
+        ) || !crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+            || !crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                index_type,
+            )
+            .is_some_and(|constraint| {
+                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                    self.ctx.types,
+                    constraint,
+                )
+            })
+            || self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+        {
+            return false;
+        }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let index_type_str = self.format_type(index_type);
+        let object_type_str = self.format_type(pre_resolution_object_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            &[&index_type_str, &object_type_str],
+        );
+        self.error_at_node(
+            access_expression,
+            &message,
+            diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+        );
+        true
+    }
+
+    /// The deferred indexed access `T[typeof sym]` when `pre_resolution_object`
+    /// is a type parameter and `index_type` is a unique symbol that names a
+    /// member of that parameter's constraint; `None` otherwise.
+    ///
+    /// `tsc` resolves a generic receiver to its constraint's apparent type before
+    /// indexing, so `x[fooProp]` on `T extends Foo<number>` (where `Foo` declares
+    /// `[fooProp]: T`) is the deferred indexed access `T[typeof fooProp]`, never a
+    /// TS7053. The string-keyed property path already resolves the constraint for
+    /// member lookup; the symbol-keyed path otherwise indexed the bare,
+    /// unresolved type parameter — whose element access fails — and produced a
+    /// false implicit-any element access. `resolve_type_for_property_access`
+    /// intentionally leaves a type parameter unresolved, so this consults the
+    /// constraint directly, following it transitively (`T extends U extends Foo`).
+    pub(crate) fn type_param_unique_symbol_index_access(
+        &mut self,
+        pre_resolution_object: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        if !crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object,
+        ) || crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+            .is_none()
+        {
+            return None;
+        }
+
+        let mut current = pre_resolution_object;
+        // Follow the constraint chain so a type parameter bounded by another
+        // type parameter still reaches the concrete object constraint. The bound
+        // also terminates a pathological self-referential constraint cycle.
+        const MAX_CONSTRAINT_CHAIN_DEPTH: usize = 8;
+        for _ in 0..MAX_CONSTRAINT_CHAIN_DEPTH {
+            let constraint = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                current,
+            )?;
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, constraint) {
+                current = constraint;
+                continue;
+            }
+            let apparent = self.resolve_type_for_property_access(constraint);
+            let member = self
+                .ctx
+                .types
+                .resolve_element_access_type(apparent, index_type, None);
+            if member != TypeId::ERROR && member != TypeId::UNDEFINED {
+                return Some(
+                    self.ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object, index_type),
+                );
+            }
+            return None;
+        }
+        None
+    }
+
     pub(crate) fn constraint_keyof_write_target_for_type_param(
         &mut self,
         index_type: TypeId,
