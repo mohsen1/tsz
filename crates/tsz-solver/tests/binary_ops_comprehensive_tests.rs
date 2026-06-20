@@ -1670,3 +1670,144 @@ fn test_string_constrained_type_param_or_empty_object_not_assignable_to_object()
          but got {result_id:?} which appears to be assignable."
     );
 }
+
+// =============================================================================
+// instanceof RHS eligibility (TS2359)
+//
+// tsc accepts an `instanceof` RHS whose *apparent* type carries a call or
+// construct signature — including a type parameter constrained to a constructor
+// and a generic class constructor value — without requiring structural
+// assignability to the global `Function` interface. These tests drive the
+// eligibility predicate with an `assignable_check` stub that always reports
+// `false`, proving the apparent-type path is authoritative and does not lean on
+// the (project-sensitive) Function relation.
+// =============================================================================
+
+/// A constructor type: `new (...args: any[]) => any`, with no call signatures.
+fn make_constructor_callable(interner: &TypeInterner) -> TypeId {
+    let mut shape = CallableShape::default();
+    shape
+        .construct_signatures
+        .push(CallSignature::new(vec![], TypeId::ANY));
+    interner.callable(shape)
+}
+
+/// A plain function type: `(...args: any[]) => any`, with a call signature only.
+fn make_function_callable(interner: &TypeInterner) -> TypeId {
+    let mut shape = CallableShape::default();
+    shape
+        .call_signatures
+        .push(CallSignature::new(vec![], TypeId::ANY));
+    interner.callable(shape)
+}
+
+fn type_param_constrained_to(interner: &TypeInterner, name: &str, constraint: TypeId) -> TypeId {
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    })
+}
+
+/// `assignable_check` that always denies — isolates the apparent-type path.
+fn never_assignable(_src: TypeId, _tgt: TypeId) -> bool {
+    false
+}
+
+#[test]
+fn instanceof_rhs_accepts_constructor_callable() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let ctor = make_constructor_callable(&interner);
+    assert!(
+        eval.is_valid_instanceof_right_operand(ctor, TypeId::FUNCTION, &mut never_assignable),
+        "a construct-signature type is a valid instanceof RHS without Function assignability"
+    );
+}
+
+#[test]
+fn instanceof_rhs_accepts_call_signature_function() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let func = make_function_callable(&interner);
+    assert!(
+        eval.is_valid_instanceof_right_operand(func, TypeId::FUNCTION, &mut never_assignable),
+        "a call-signature type is a valid instanceof RHS without Function assignability"
+    );
+}
+
+#[test]
+fn instanceof_rhs_accepts_constructor_constrained_type_param() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let ctor = make_constructor_callable(&interner);
+    // `K extends new (...args: any[]) => any`
+    let k = type_param_constrained_to(&interner, "K", ctor);
+    assert!(
+        eval.is_valid_instanceof_right_operand(k, TypeId::FUNCTION, &mut never_assignable),
+        "a constructor-constrained type parameter is a valid instanceof RHS via its constraint"
+    );
+}
+
+#[test]
+fn instanceof_rhs_accepts_constructor_via_intersection_member() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let ctor = make_constructor_callable(&interner);
+    let plain = interner.object(vec![]);
+    // `{} & (new (...args: any[]) => any)` — an intersection is eligible when any
+    // member carries a construct signature.
+    let intersection = interner.intersection(vec![plain, ctor]);
+    assert!(
+        eval.is_valid_instanceof_right_operand(
+            intersection,
+            TypeId::FUNCTION,
+            &mut never_assignable
+        ),
+        "an intersection with a constructor member is a valid instanceof RHS"
+    );
+}
+
+#[test]
+fn instanceof_rhs_accepts_type_param_constrained_to_constructor_intersection() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let ctor = make_constructor_callable(&interner);
+    let plain = interner.object(vec![]);
+    let intersection = interner.intersection(vec![plain, ctor]);
+    // `K extends {} & (new () => any)` — apparent type resolves through the
+    // constraint, then through the intersection.
+    let k = type_param_constrained_to(&interner, "K", intersection);
+    assert!(
+        eval.is_valid_instanceof_right_operand(k, TypeId::FUNCTION, &mut never_assignable),
+        "a type parameter constrained to a constructor-bearing intersection is valid"
+    );
+}
+
+#[test]
+fn instanceof_rhs_rejects_plain_object_without_signatures() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    // A plain object literal type with no construct/call signatures is NOT a valid
+    // instanceof RHS; the `[Symbol.hasInstance]` allowance is handled separately in
+    // the checker, so here the predicate must reject it.
+    let plain = interner.object(vec![]);
+    assert!(
+        !eval.is_valid_instanceof_right_operand(plain, TypeId::FUNCTION, &mut never_assignable),
+        "a plain object without signatures must remain an invalid instanceof RHS"
+    );
+}
+
+#[test]
+fn instanceof_rhs_rejects_unconstrained_type_param() {
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    // A bare `T` (no constraint) has no apparent construct/call signature.
+    let t = make_unconstrained_type_param(&interner, "T");
+    assert!(
+        !eval.is_valid_instanceof_right_operand(t, TypeId::FUNCTION, &mut never_assignable),
+        "an unconstrained type parameter must remain an invalid instanceof RHS"
+    );
+}

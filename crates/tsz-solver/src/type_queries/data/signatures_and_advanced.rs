@@ -7,7 +7,7 @@ use super::accessors::get_object_shape;
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
-use crate::construction::TypeDatabase;
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::relations::subtype::SubtypeChecker;
@@ -483,6 +483,80 @@ pub fn get_construct_signatures(
         }
     }
     None
+}
+
+/// Returns `true` when the *apparent* type of `type_id` carries a call or
+/// construct signature.
+///
+/// Mirrors tsc's `typeHasCallOrConstructSignatures(getApparentType(type))`:
+/// - the apparent type of a type parameter is the apparent type of its base
+///   constraint;
+/// - `readonly` wrappers are transparent;
+/// - an intersection qualifies when *any* member does;
+/// - a union qualifies only when *every* member does (an empty union never
+///   qualifies);
+/// - deferred forms (`Lazy`, `typeof` queries, generic class constructors, and
+///   anything that only exposes its constructor/call shape after evaluation)
+///   are resolved on demand, guarded against cycles.
+///
+/// This is the structural predicate behind `instanceof` right-operand
+/// eligibility (TS2359): it is intentionally broader than a bare
+/// `Callable`/`Function` shape check so a constructor-constrained type
+/// parameter or a generic class value is recognised as a constructor without
+/// depending on structural assignability to the global `Function` interface.
+pub fn apparent_type_has_call_or_construct_signatures(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    let mut visited = FxHashSet::default();
+    apparent_type_has_signatures_rec(db, type_id, &mut visited)
+}
+
+fn apparent_type_has_signatures_rec(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if type_id.is_intrinsic() || !visited.insert(type_id) {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty()
+        }
+        Some(TypeData::Function(_)) => true,
+        Some(TypeData::ReadonlyType(inner)) => apparent_type_has_signatures_rec(db, inner, visited),
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&m| apparent_type_has_signatures_rec(db, m, visited)),
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&m| apparent_type_has_signatures_rec(db, m, visited))
+        }
+        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info
+            .constraint
+            .is_some_and(|c| apparent_type_has_signatures_rec(db, c, visited)),
+        Some(TypeData::Lazy(def_id)) => {
+            db.resolve_lazy(def_id, db.as_type_database())
+                .is_some_and(|resolved| {
+                    resolved != type_id && apparent_type_has_signatures_rec(db, resolved, visited)
+                })
+        }
+        // `typeof Class` (TypeQuery), generic class constructors (Application),
+        // and other deferred forms only expose their constructor/call shape
+        // after (resolver-backed) evaluation. Resolve once; the visited guard
+        // prevents cycles.
+        Some(_) => {
+            let evaluated = db.evaluate_type(type_id);
+            evaluated != type_id && apparent_type_has_signatures_rec(db, evaluated, visited)
+        }
+        None => false,
+    }
 }
 
 /// Get the union of all construct signature return types from a callable shape.
