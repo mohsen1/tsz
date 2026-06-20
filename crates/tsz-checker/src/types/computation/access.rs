@@ -510,7 +510,7 @@ impl<'a> CheckerState<'a> {
                             &name,
                             idx,
                             true,
-                            "typeof globalThis",
+                            GlobalReceiver::GlobalThis,
                         );
                         if resolved != TypeId::ANY && resolved != TypeId::ERROR {
                             resolved_types.push(resolved);
