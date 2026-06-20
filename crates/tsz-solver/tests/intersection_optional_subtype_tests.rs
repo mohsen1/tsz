@@ -391,6 +391,106 @@ fn test_intersection_literal_property_mismatch_with_primitive_member() {
     );
 }
 
+/// Regression test for issue #14156 (remeda false positive TS1360):
+/// a **function value** must be assignable to a target intersection whose
+/// members are an **all-optional object type** and a **call signature**
+/// (`Fn <: ({ m?: T } & Call)`), even when the comparison happens at
+/// property-comparison depth (`{ p: Fn } <: { p: { m?: T } & Call }`).
+///
+/// The structural rule: a source is assignable to `A & B` iff it is assignable
+/// to each constituent independently. A function value is assignable to an
+/// all-optional object type vacuously, and to the call-signature constituent by
+/// the usual function-subtype rules. Previously, when the intersection target
+/// was reached while comparing a nested property type, `in_property_check`
+/// leaked into the per-member decomposition; the weak-type gate
+/// (`enforce_weak_types && (!in_intersection_member_check || in_property_check)`)
+/// then spuriously fired against the all-optional object member and rejected the
+/// whole relation. Decomposing a target intersection is not a nested object
+/// property comparison, so `in_property_check` must be cleared for the per-member
+/// checks.
+///
+/// Binder names are varied (no reliance on the issue's `lazy`/`single` names) to
+/// keep the test structural rather than identifier-driven.
+#[test]
+fn test_function_subtype_of_intersection_optional_object_and_call() {
+    use crate::relations::subtype::core::SubtypeChecker;
+
+    let interner = TypeInterner::new();
+
+    // Call-signature constituent: `() => string`.
+    let call_sig = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+
+    // All-optional (weak) object constituent: `{ meta?: boolean }`.
+    let weak_object = make_optional_object(&interner, "meta", TypeId::BOOLEAN);
+
+    // Target member: `{ meta?: boolean } & (() => string)`.
+    let intersection_member = interner.intersection2(weak_object, call_sig);
+
+    // Source value: a bare function `() => string`.
+    let source_fn = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+
+    // Top-level: `Fn <: ({ meta?: boolean } & Call)` must hold even with
+    // weak-type enforcement on (this case already passed via the
+    // `in_intersection_member_check` suppression).
+    {
+        let mut checker = SubtypeChecker::new(&interner);
+        checker.enforce_weak_types = true;
+        assert!(
+            checker.is_subtype_of(source_fn, intersection_member),
+            "A function value must be assignable to `{{ meta?: boolean }} & (() => string)`: \
+             the object constituent is satisfied vacuously (all-optional) and the call \
+             constituent by function subtyping"
+        );
+    }
+
+    // Property-level: `{ run: Fn } <: { run: { meta?: boolean } & Call }`.
+    // This is the shape that reproduced #14156 — the intersection target is
+    // reached while comparing the `run` property type, so `in_property_check`
+    // is active when the per-member decomposition runs.
+    {
+        let run = interner.intern_string("run");
+        let source_object = interner.object(vec![PropertyInfo::new(run, source_fn)]);
+        let target_object = interner.object(vec![PropertyInfo::new(run, intersection_member)]);
+
+        let mut checker = SubtypeChecker::new(&interner);
+        checker.enforce_weak_types = true;
+        assert!(
+            checker.is_subtype_of(source_object, target_object),
+            "A property whose source type is a function must satisfy a property whose \
+             target type is `{{ meta?: boolean }} & Call`, even at property-comparison depth"
+        );
+    }
+}
+
+/// Negative control for issue #14156: when the object constituent of the target
+/// intersection has a **required** member, a bare function value (which carries
+/// no such property) must NOT satisfy the intersection. This pins the fix to the
+/// all-optional case and proves it does not blanket-accept functions against any
+/// object-bearing intersection.
+#[test]
+fn test_function_not_subtype_of_intersection_with_required_object_member() {
+    use crate::relations::subtype::core::SubtypeChecker;
+
+    let interner = TypeInterner::new();
+
+    let call_sig = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+
+    // Object constituent with a REQUIRED member: `{ tag: string }`.
+    let tag = interner.intern_string("tag");
+    let required_object = interner.object(vec![PropertyInfo::new(tag, TypeId::STRING)]);
+
+    let intersection_member = interner.intersection2(required_object, call_sig);
+    let source_fn = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+    assert!(
+        !checker.is_subtype_of(source_fn, intersection_member),
+        "A bare function value must NOT satisfy `{{ tag: string }} & Call` — the required \
+         `tag` member is absent on the function, so the object constituent fails"
+    );
+}
+
 #[test]
 fn test_intersection_member_shortcut_preserves_optional_property_conflict() {
     use crate::relations::subtype::core::SubtypeChecker;
