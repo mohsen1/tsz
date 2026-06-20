@@ -1592,17 +1592,25 @@ main() {
     run_isolated "xstate-project"                    run_xstate_project_benchmarks
     run_isolated "mobx-project"                      run_mobx_project_benchmarks
     run_isolated "umami-project"                     run_application_project_benchmarks "umami-project"
+    run_isolated "excalidraw-project"                run_application_project_benchmarks "excalidraw-project"
     run_isolated "dub-project"                       run_application_project_benchmarks "dub-project"
     run_isolated "formbricks-project"                run_application_project_benchmarks "formbricks-project"
+    run_isolated "typebot-project"                   run_application_project_benchmarks "typebot-project"
     run_isolated "lobe-chat-project"                 run_application_project_benchmarks "lobe-chat-project"
     run_isolated "supabase-studio-project"           run_application_project_benchmarks "supabase-studio-project"
     run_isolated "infisical-project"                 run_application_project_benchmarks "infisical-project"
     run_isolated "payload-project"                   run_application_project_benchmarks "payload-project"
+    run_isolated "medusa-project"                    run_application_project_benchmarks "medusa-project"
+    run_isolated "outline-project"                   run_application_project_benchmarks "outline-project"
     run_isolated "trigger-dev-project"               run_application_project_benchmarks "trigger-dev-project"
+    run_isolated "joplin-project"                    run_application_project_benchmarks "joplin-project"
     run_isolated "directus-project"                  run_application_project_benchmarks "directus-project"
     run_isolated "n8n-project"                       run_application_project_benchmarks "n8n-project"
+    run_isolated "cal-com-project"                   run_application_project_benchmarks "cal-com-project"
     run_isolated "documenso-project"                 run_application_project_benchmarks "documenso-project"
+    run_isolated "affine-project"                    run_application_project_benchmarks "affine-project"
     run_isolated "immich-server-project"             run_application_project_benchmarks "immich-server-project"
+    run_isolated "rocketchat-project"                run_application_project_benchmarks "rocketchat-project"
     run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks
