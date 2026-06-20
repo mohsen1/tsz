@@ -25,6 +25,24 @@ use tsz_solver::Visibility;
 // Interface Type Resolution
 // =============================================================================
 
+/// Debug kill-switch for #14101 part-4 (heritage base-member incorporation).
+///
+/// When a heritage base classifies as `Other` but still has an extractable
+/// object shape (a constrained type-parameter seen through its constraint, or a
+/// function-with-properties), its members were dropped at the `_ => derived`
+/// fallthrough of `merge_interface_types_impl`, causing false member-drop
+/// `TS2339`/`TS2344`. Incorporating them changes a diagnostic, so it is gated:
+/// set `TSZ_DISABLE_HERITAGE_BASE_MEMBER_INCORP=1` to restore the legacy drop
+/// for byte-parity bisection / conformance A/B; defaults to enabled.
+fn heritage_base_member_incorp_disabled() -> bool {
+    use std::sync::OnceLock;
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_HERITAGE_BASE_MEMBER_INCORP")
+            .is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Deduplicate call signatures keeping the LAST occurrence of each unique
 /// signature. Two signatures are considered duplicates when they have identical
 /// parameter type lists and return types. This handles diamond inheritance:
@@ -1386,6 +1404,47 @@ impl<'a> CheckerState<'a> {
                 ) && derived != TypeId::ANY =>
             {
                 factory.intersection2(derived, base_resolved)
+            }
+            // #14101 part-4: a base classified `Other` that nonetheless has an
+            // extractable object shape (constrained type-parameter through its
+            // constraint, or a function-with-properties) drops the base's members
+            // at the `_ => derived` fallthrough below. Incorporate them (derived
+            // overrides base by name, via Heritage-mode `merge_properties`) so
+            // inherited members are not lost. Conservative: ONLY when both sides
+            // have object shapes; non-object bases (Union/Enum/Function) keep the
+            // legacy `derived` (no broad intersection). Gated by
+            // `heritage_base_member_incorp_disabled`.
+            (_, InterfaceMergeKind::Other)
+                if mode == InterfaceMergeMode::Heritage
+                    && derived != TypeId::ANY
+                    && !heritage_base_member_incorp_disabled() =>
+            {
+                match (
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        derived_resolved,
+                    ),
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        base_resolved,
+                    ),
+                ) {
+                    (Some(derived_shape), Some(base_shape)) => {
+                        let properties = self.merge_properties(
+                            &derived_shape.properties,
+                            &base_shape.properties,
+                            mode,
+                        );
+                        factory.object_with_index(ObjectShape {
+                            properties,
+                            string_index: derived_shape.string_index,
+                            number_index: derived_shape.number_index,
+                            symbol: derived_shape.symbol,
+                            ..ObjectShape::default()
+                        })
+                    }
+                    _ => derived,
+                }
             }
             _ => derived,
         }
