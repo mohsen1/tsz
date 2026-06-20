@@ -1256,6 +1256,22 @@ bitflags::bitflags! {
         /// object of the same shape. It is identity-only: structural subtyping
         /// ignores it (a merged `A & B` and a plain `{ a; b }` still relate).
         const INTERSECTION_MERGED = 1 << 9;
+
+        /// The `string_index` signature is *optional* (`[k: string]?: V`), as
+        /// produced by an optional mapped type such as `Partial<Record<string, V>>`.
+        /// tsc has no `optional` slot on an `IndexInfo`; the `?` modifier instead
+        /// makes the index signature impose no requirement on a property-less
+        /// source, so an `object`-typed value (or an `object`-constrained generic)
+        /// is assignable to it even though it is rejected by a *required* index
+        /// signature. The value type already carries `| undefined` (added when the
+        /// mapped type is evaluated); this flag records the relaxation needed by
+        /// the assignability relation and keeps the optional form a distinct
+        /// interned shape from the required `Record<string, V>`.
+        const STRING_INDEX_OPTIONAL = 1 << 10;
+
+        /// The `number_index` signature is *optional* (`[k: number]?: V`). The
+        /// numeric mirror of [`Self::STRING_INDEX_OPTIONAL`].
+        const NUMBER_INDEX_OPTIONAL = 1 << 11;
     }
 }
 
@@ -1324,6 +1340,18 @@ impl ObjectShape {
     /// directly outside the solver.
     pub fn mark_no_module_augmentation_lookup(&mut self) {
         self.flags |= ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP;
+    }
+
+    /// Return true if this shape's `string_index` signature is optional
+    /// (`[k: string]?: V`, e.g. from `Partial<Record<string, V>>`).
+    pub const fn string_index_is_optional(&self) -> bool {
+        self.flags.contains(ObjectFlags::STRING_INDEX_OPTIONAL)
+    }
+
+    /// Return true if this shape's `number_index` signature is optional
+    /// (`[k: number]?: V`, e.g. from `Partial<Record<number, V>>`).
+    pub const fn number_index_is_optional(&self) -> bool {
+        self.flags.contains(ObjectFlags::NUMBER_INDEX_OPTIONAL)
     }
 }
 

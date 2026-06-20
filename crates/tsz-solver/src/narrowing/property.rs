@@ -200,16 +200,26 @@ impl<'a> NarrowingContext<'a> {
                 .collect();
 
             if matching.is_empty() {
-                // When NO union member has the property, TypeScript narrows to
-                // `Union & Record<prop, unknown>` instead of `never`.
-                // This matches TSC behavior: if the type could structurally have the
-                // property at runtime (it passed the `in` operator check), we create
-                // an intersection rather than discarding the type entirely.
-                trace!(
-                    "No members have property, creating intersection with Record<prop, unknown>"
-                );
-                let record_type = self.make_record_type(property_name);
-                return self.db.intersect_types_raw2(source_type, record_type);
+                if present {
+                    // Positive branch with NO member declaring the property:
+                    // tsc's `narrowTypeByInKeyword` sees `isKnownProperty` as
+                    // false and, on the `assumeTrue` path, narrows to
+                    // `Union & Record<prop, unknown>` rather than discarding the
+                    // type entirely (it could structurally gain the property at
+                    // runtime, having passed the `in` check).
+                    trace!(
+                        "No members have property, creating intersection with Record<prop, unknown>"
+                    );
+                    let record_type = self.make_record_type(property_name);
+                    return self.db.intersect_types_raw2(source_type, record_type);
+                }
+                // Negative branch with every member *requiring* the property:
+                // `filterType` drops all constituents because the `in` check can
+                // never be false, so tsc narrows to `never`. (A member lacking
+                // the property, or holding it optionally, is kept above, so an
+                // empty result here means presence was guaranteed everywhere.)
+                trace!("All members require property; negative `in` branch is never");
+                return TypeId::NEVER;
             } else if matching.len() == 1 {
                 trace!(
                     "Found single member after filtering, returning {}",
@@ -260,32 +270,29 @@ impl<'a> NarrowingContext<'a> {
             }
         } else {
             // Negative: !("prop" in x)
-            // Exclude ONLY if property is required (not optional)
+            //
+            // tsc's `narrowTypeByInKeyword` runs
+            // `filterType(type, t => isTypePresencePossible(t, name, /*assumeTrue*/ false))`.
+            // For a non-union receiver `filterType` either keeps the whole type
+            // or drops it to `never`; it never rewrites the property's value
+            // type. `isTypePresencePossible` reports a property as *possibly
+            // absent* (keeping the receiver) for every case except a *required*
+            // own property, whose presence is guaranteed and therefore makes
+            // the negative branch unreachable (`never`).
+            //
+            // In particular an *optional* property keeps the receiver unchanged
+            // even when its declared type excludes `undefined`: the property may
+            // legitimately be missing at runtime, so a later `x.p = ...` write
+            // must still type-check. Intersecting the receiver with a synthetic
+            // `{ p: undefined }` shape (the previous behavior) collapsed `p` to
+            // `never` whenever its declared type omitted `undefined`, producing
+            // spurious TS2322 on the negative branch.
             if self.is_property_required(resolved_type, property_name) {
                 return TypeId::NEVER;
             }
-            if let Some(prop) = self.get_property_info(resolved_type, property_name)
-                && prop.optional
-            {
-                let absent_prop = PropertyInfo {
-                    name: property_name,
-                    type_id: TypeId::UNDEFINED,
-                    write_type: prop.write_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                };
-                let filter_obj = self.db.object(vec![absent_prop]);
-                return self.db.intersection2(source_type, filter_obj);
-            }
-            // Keep source_type (no required property found, or property is optional)
+            // Optional own property, index-signature match, or no property at
+            // all: the property may be absent at runtime, so the receiver is
+            // returned unchanged.
             source_type
         }
     }

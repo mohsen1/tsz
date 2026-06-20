@@ -225,3 +225,90 @@ function reset(config: Config) {
         "expected no TS2790 deleting an optional property, got: {got:?}"
     );
 }
+
+/// The negative `in` branch over a *non-union* receiver must leave an optional
+/// property's value type unchanged, even when its declared type excludes
+/// `undefined`. tsc's `narrowTypeByInKeyword` keeps the constituent (the
+/// property may legitimately be absent at runtime), so a subsequent write of a
+/// valid value to the property still type-checks. The previous behavior
+/// intersected the receiver with a synthetic `{ p: undefined }`, collapsing the
+/// property to `never` and emitting a spurious TS2322 — the ofetch witness.
+#[test]
+fn negative_in_keeps_non_union_optional_property_assignable() {
+    let source = r#"
+interface Opts {
+  method?: string;
+  duplex?: "half";
+}
+declare const options: Opts;
+if (!("duplex" in options)) {
+  options.duplex = "half";
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2322),
+        "expected no TS2322 — negative `in` must keep an optional property assignable, got: {got:?}"
+    );
+}
+
+/// Binder-name and shape variation of the same rule: the behavior must be driven
+/// by the optional-own-property shape, not by any identifier spelling, and must
+/// hold when the property's declared type is a wider literal union that still
+/// excludes `undefined`.
+#[test]
+fn negative_in_keeps_optional_property_assignable_varied_binders() {
+    let source = r#"
+interface Settings {
+  retries?: number;
+  mode?: "fast" | "slow";
+}
+declare const settings: Settings;
+if (!("mode" in settings)) {
+  settings.mode = "fast";
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2322),
+        "expected no TS2322 — varied-binder optional property must stay assignable, got: {got:?}"
+    );
+}
+
+/// Negative counterpart for a *required* property: `!("p" in x)` is unreachable
+/// when `p` is guaranteed present, so tsc narrows the receiver to `never`. The
+/// fix preserves this — a required property still drops to `never` on the
+/// negative branch (no spurious acceptance, no synthetic intersection).
+#[test]
+fn negative_in_required_property_narrows_to_never() {
+    let source = r#"
+interface Tagged { tag: "x"; value: number; }
+declare const obj: Tagged;
+if (!("tag" in obj)) {
+    const unreachable: never = obj;
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2322),
+        "expected the receiver to be `never` on the negative branch of a required property, got: {got:?}"
+    );
+}
+
+/// Union variant: when *every* constituent requires the property, the negative
+/// branch filters them all out, so tsc narrows to `never`. Assigning the
+/// narrowed receiver to a `never` annotation must therefore be accepted.
+#[test]
+fn negative_in_union_all_required_narrows_to_never() {
+    let source = r#"
+declare const node: { kind: "a"; a: 1 } | { kind: "b"; a: 2 };
+if (!("a" in node)) {
+    const unreachable: never = node;
+}
+"#;
+    let got = codes(source);
+    assert!(
+        !got.contains(&2322),
+        "expected `never` when every union member requires the property, got: {got:?}"
+    );
+}

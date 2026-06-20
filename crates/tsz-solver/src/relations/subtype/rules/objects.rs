@@ -1062,6 +1062,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
+                // An *optional* target string index (`[k: string]?: V`, e.g.
+                // `Partial<Record<string, V>>`) imposes no requirement on a
+                // property-less source. tsc accepts `object`, `{}`, an empty
+                // interface, or an `object`-constrained generic `T` against it,
+                // even though a *required* `Record<string, V>` rejects them all.
+                // (A source WITH properties is still subject to the inferable-
+                // index / explicit-index rules below — `interface Foo { x }` is
+                // rejected, a `{ x }` type literal checks its members.)
+                if target.string_index_is_optional() && source.properties.is_empty() {
+                    return SubtypeResult::True;
+                }
+
                 // Target has string index, source doesn't have a string index.
                 // Check if source has a number index — in TypeScript, a numeric index
                 // signature implies a string index (JS converts numeric keys to strings).
@@ -1225,6 +1237,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
+                // An *optional* target number index (`[k: number]?: V`, e.g.
+                // `Partial<Record<number, V>>`) imposes no requirement on a
+                // property-less source — the numeric mirror of the optional
+                // string-index relaxation above.
+                if target.number_index_is_optional() && source.properties.is_empty() {
+                    return SubtypeResult::True;
+                }
+
                 // TypeScript only synthesizes an implicit numeric index signature
                 // for anonymous object types and enum namespaces. Named class/interface
                 // instance types must declare a real number/string index signature.
@@ -1716,11 +1736,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Named class/interface types require an explicit string index signature to
         // satisfy a string-indexed target — compatible properties alone are not enough.
         // Symbol-keyed indices and any-value targets are exempted (same shortcircuits
-        // as check_string_index_compatibility).
-        if target.string_index.as_ref().is_some_and(|idx| {
-            idx.key_type != TypeId::SYMBOL
-                && (self.disable_method_bivariance || !idx.value_type.is_any())
-        }) && self.requires_explicit_declared_index_signature_for(&source_shape, source_receiver)
+        // as check_string_index_compatibility). An *optional* target string index
+        // imposes no requirement on a property-less source, so it is exempt too
+        // (mirrors the relaxation in `check_string_index_compatibility`).
+        let optional_index_satisfied_by_empty_source =
+            target.string_index_is_optional() && source_shape.properties.is_empty();
+        if !optional_index_satisfied_by_empty_source
+            && target.string_index.as_ref().is_some_and(|idx| {
+                idx.key_type != TypeId::SYMBOL
+                    && (self.disable_method_bivariance || !idx.value_type.is_any())
+            })
+            && self.requires_explicit_declared_index_signature_for(&source_shape, source_receiver)
         {
             return SubtypeResult::False;
         }
