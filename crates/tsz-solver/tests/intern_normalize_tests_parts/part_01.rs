@@ -297,6 +297,49 @@ fn intersect_types_raw_with_unknown() {
 }
 
 #[test]
+fn intersect_types_raw_absorbs_error() {
+    let i = TypeInterner::new();
+    // The raw (unsimplified) intersection path must absorb the `error` sentinel
+    // exactly like the full `normalize_intersection` path. Otherwise `error`
+    // survives inside an `Intersection(error, T)` node that the top-level error
+    // predicates cannot see, defeating error suppression downstream.
+    assert_eq!(
+        i.intersect_types_raw(vec![TypeId::ERROR, TypeId::STRING]),
+        TypeId::ERROR,
+        "Raw intersection with error => error"
+    );
+    // Order-independent, and independent of which concrete member it pairs with.
+    let obj = i.object(vec![PropertyInfo::new(
+        i.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    assert_eq!(
+        i.intersect_types_raw(vec![obj, TypeId::ERROR]),
+        TypeId::ERROR,
+        "Raw intersection with error (reversed, object member) => error"
+    );
+    assert_eq!(
+        i.intersect_types_raw2(TypeId::ERROR, TypeId::NUMBER),
+        TypeId::ERROR,
+        "Raw intersection2 with error => error"
+    );
+    // `error` has highest precedence: it trumps even `never` (matching the full
+    // `normalize_intersection` path, so the two stay consistent).
+    assert_eq!(
+        i.intersect_types_raw(vec![TypeId::NEVER, TypeId::ERROR]),
+        TypeId::ERROR,
+        "error outranks never in the raw path, matching normalize_intersection"
+    );
+    // Consistency witness: the raw and full intersection paths now agree on the
+    // common `error & T` case.
+    assert_eq!(
+        i.intersect_types_raw(vec![TypeId::ERROR, TypeId::STRING]),
+        i.intersection(vec![TypeId::ERROR, TypeId::STRING]),
+        "raw and normalized intersection agree on error & T"
+    );
+}
+
+#[test]
 fn intersection_with_distinct_private_brand_sets_reduces_to_never() {
     let i = TypeInterner::new();
     let brand_a = i.intern_string("__private_brand_A");

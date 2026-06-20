@@ -1128,6 +1128,18 @@ impl TypeInterner {
         // O(1) Fast Paths (Safe to do without recursion)
         // =========================================================
 
+        // 0. If any member is the `error` sentinel, the result is `error`.
+        // `error` is contagious and absorbs every other member (precedence
+        // `error` > `never` > `any`), exactly as the full `normalize_intersection`
+        // path does. Skipping this here let `error` survive *inside* an
+        // `Intersection(error, T)` node, which the top-level error predicates
+        // (`is_error_type`, the `== TypeId::ERROR` fast paths) do not see — so the
+        // leaked `error` silently defeated error suppression and seeded cascading
+        // false positives downstream.
+        if flat.contains(&TypeId::ERROR) {
+            return TypeId::ERROR;
+        }
+
         // 1. If any member is Never, the result is Never
         if flat.contains(&TypeId::NEVER) {
             return TypeId::NEVER;
