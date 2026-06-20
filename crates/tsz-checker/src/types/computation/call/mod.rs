@@ -917,7 +917,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::ContextualTypeContext;
         use tsz_parser::parser::syntax_kind_ext;
 
-        self.ensure_relation_input_ready(callee_type_for_resolution);
+        self.ensure_callee_relation_inputs_ready(callee_type_for_resolution);
 
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_call = self.resolve_lazy_type(callee_type_for_call);
@@ -940,7 +940,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        self.ensure_relation_input_ready(callee_type_for_call);
+        self.ensure_callee_relation_inputs_ready(callee_type_for_call);
 
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
             self.sanitize_generic_inference_arg_types(callee_expr, args, &arg_types)
