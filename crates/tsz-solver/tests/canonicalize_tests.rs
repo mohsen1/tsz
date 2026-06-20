@@ -1397,3 +1397,139 @@ fn canonicalize_free_type_param_constraint_convergence_is_name_agnostic() {
         "a genuinely different constraint shape must not be merged by canonicalization"
     );
 }
+
+// ===================================================================
+// `infer` parameters must canonicalize like free type parameters (#13609)
+// ===================================================================
+
+// An `infer R` declaration carries the same `TypeParamInfo` as a type
+// parameter, so the same identity rule applies: `tsc` identifies the parameter
+// by itself — its name and the *shape* of its constraint — never by the
+// optional `default` nor the *resolution state* its constraint snapshot
+// happened to be in. The canonicalizer previously left `Infer` in the
+// catch-all passthrough (it only normalized `TypeParameter`), so two
+// structurally-identical conditionals whose `infer` parameter captured a
+// resolved constraint on one path and a still-`Lazy` alias on the other (or
+// merely differed in a captured default) fragmented into distinct identities,
+// losing the relation's reflexive/identity fast path. This is the `Infer`
+// analogue of `canonicalize_free_type_param_*`.
+#[test]
+fn canonicalize_infer_param_ignores_optional_default() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let name = interner.intern_string("R");
+    let constraint = Some(TypeId::STRING);
+    let make_infer = |default| {
+        interner.infer(TypeParamInfo {
+            name,
+            constraint,
+            default,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        })
+    };
+
+    let infer_with_default = make_infer(Some(TypeId::NUMBER));
+    let infer_no_default = make_infer(None);
+
+    assert_ne!(
+        infer_with_default, infer_no_default,
+        "precondition: interning keeps the default distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(infer_with_default),
+        c2.canonicalize(infer_no_default),
+        "an infer parameter's default must not fragment canonical identity"
+    );
+}
+
+// The same convergence the free-`TypeParameter` branch gives for a constraint
+// captured as a still-`Lazy` alias vs its expanded body must hold for `infer`
+// parameters too (`infer R extends SomeCrossFileAlias`), restoring the
+// relation's reflexive short-circuit (#13609 `507`/`516` axis).
+#[test]
+fn canonicalize_infer_param_constraint_resolution_state_converges() {
+    let interner = TypeInterner::new();
+    let union_body = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let resolver = AliasConstraintResolver { body: union_body };
+
+    let r = interner.intern_string("R");
+    let make_infer = |constraint| {
+        interner.infer(TypeParamInfo {
+            name: r,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        })
+    };
+    let infer_lazy = make_infer(interner.lazy(DefId(1)));
+    let infer_resolved = make_infer(union_body);
+
+    assert_ne!(
+        infer_lazy, infer_resolved,
+        "precondition: interning keeps the two constraint snapshots distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &resolver);
+    let mut c2 = Canonicalizer::new(&interner, &resolver);
+    assert_eq!(
+        c1.canonicalize(infer_lazy),
+        c2.canonicalize(infer_resolved),
+        "an infer parameter's constraint resolution state must not fragment identity"
+    );
+}
+
+// Identity-widening must not erase genuine distinctions: the normalization only
+// drops `default` and converges the constraint's resolution state. A different
+// constraint *shape* or a different binder name must stay distinct, and the
+// rule is name-agnostic (anti-hardcoding gate).
+#[test]
+fn canonicalize_infer_param_preserves_real_distinctions() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let make_infer = |name, constraint, default| {
+        interner.infer(TypeParamInfo {
+            name,
+            constraint: Some(constraint),
+            default,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        })
+    };
+    let r = interner.intern_string("R");
+    let infer_r = make_infer(r, TypeId::STRING, None);
+    // Same parameter, differing only in a captured default — collapses.
+    let infer_r_default = make_infer(r, TypeId::STRING, Some(TypeId::NUMBER));
+    // Different constraint shape — stays distinct.
+    let infer_r_num = make_infer(r, TypeId::NUMBER, None);
+    // Different binder name — stays distinct.
+    let infer_s = make_infer(interner.intern_string("S"), TypeId::STRING, None);
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    let mut c4 = Canonicalizer::new(&interner, &env);
+    let mut c5 = Canonicalizer::new(&interner, &env);
+
+    assert_eq!(
+        c1.canonicalize(infer_r),
+        c2.canonicalize(infer_r_default),
+        "infer params differing only in default canonicalize identically"
+    );
+    assert_ne!(
+        c3.canonicalize(infer_r),
+        c4.canonicalize(infer_r_num),
+        "distinct infer constraints stay distinct after dropping default"
+    );
+    assert_ne!(
+        c3.canonicalize(infer_r),
+        c5.canonicalize(infer_s),
+        "distinct infer parameter names stay distinct"
+    );
+}
