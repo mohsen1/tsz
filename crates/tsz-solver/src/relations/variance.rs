@@ -1252,20 +1252,57 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         }
     }
 
-    /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
+    /// Conditional types: branch types contribute variance; the `check_type`
+    /// selects a branch and the `extends_type` is a bound.
     fn visit_conditional(&mut self, cond_id: u32) {
         let cond = self.computer.db.get_conditional(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
-        // In TypeScript, conditional types `T extends U ? X : Y` determine variance
-        // solely from the branch types X and Y. The check_type T acts as a guard
-        // condition, not a usage position, so it doesn't contribute to variance.
-        // Similarly, extends_type U is a bound, not a variance contributor.
-        // This matches tsc's probe-based variance inference behavior.
-
-        // True and false branches preserve polarity (covariant positions)
+        // The branch types X and Y are ordinary covariant usage positions.
         self.visit_with_polarity(cond.true_type, current_polarity);
         self.visit_with_polarity(cond.false_type, current_polarity);
+
+        // The `extends_type` U is only a bound on the branch selection. tsc
+        // treats a parameter that appears *solely* in an extends position as
+        // bivariant: two instantiations differing only in that argument relate
+        // in either direction (e.g. `M<DB, TB>` whose member returns
+        // `R extends TB[] ? X : Y` accepts `M<{a:1}, "a">` against `M<DB, TB>`).
+        // So the extends position is intentionally NOT visited — leaving such a
+        // parameter independent (bivariant).
+        //
+        // The `check_type` T, however, selects the branch: tsc measures a
+        // parameter appearing there (two instantiations differing in it do
+        // NOT relate, even when both branches collapse to the same type).
+        //
+        // When the parameter also occurs in a branch it is already measured by
+        // the covariant visits above (so it is not independent and the
+        // "all positions independent" shortcut cannot fire for it); only a
+        // parameter that appears *solely* in the check position would otherwise
+        // be left independent and wrongly treated as bivariant. The exact
+        // measured variance of a distributive check position is subtle (it
+        // depends on branch-vs-bound probing), so for that solely-check case we
+        // mark the result as needing the structural fallback rather than
+        // asserting a co/contra/invariant direction we cannot reliably model —
+        // the structural comparison then judges the pair.
+        let in_check = crate::contains_type_parameter_named_shallow(
+            self.computer.db,
+            cond.check_type,
+            self.target_param,
+        );
+        if in_check {
+            let in_branch = crate::contains_type_parameter_named_shallow(
+                self.computer.db,
+                cond.true_type,
+                self.target_param,
+            ) || crate::contains_type_parameter_named_shallow(
+                self.computer.db,
+                cond.false_type,
+                self.target_param,
+            );
+            if !in_branch {
+                self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            }
+        }
     }
 
     /// Mapped types: constraint is contravariant, template is covariant.
