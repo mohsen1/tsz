@@ -1120,11 +1120,12 @@ jobs:
           # Passing-canary perf rows. Isolated from the required `projects` shard
           # so timing the opt-in canary corpus (PERF_TIMED_CANARY_PROJECT_ROWS in
           # scripts/bench/project-rows.mjs) never spends the required shard's
-          # budget or stalls the publish gate. Bounded to lighter external
-          # libraries; the website only charts the ones that check green.
+          # budget or stalls the publish gate. These are external-library rows
+          # with bench-vs-tsgo runners; the website only charts the ones that
+          # check green.
           - label: bench-canaries
             timeout: 135
-            filter: 'ofetch-project|ts-pattern-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|neverthrow-project'
+            filter: 'valibot-project|msw-project|effect-project|drizzle-orm-project|ts-rest-project|ofetch-project|ts-pattern-project|trpc-project|tanstack-query-project|tanstack-router-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|ts-morph-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|class-transformer-project|type-graphql-project|neverthrow-project|xstate-project|mobx-project'
           - label: large-ts-repo
             timeout: 135
             filter: '^large-ts-repo$'

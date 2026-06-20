@@ -201,6 +201,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "e7bcacb107b1c5a74dfd564babd2c8697037ee06",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -217,6 +218,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "8a19d5485adad2b8a816e04a937f4c76169cd5b9",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -249,6 +251,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "626c61b3ef0dce59ffb038590bc834d36afc5d1d",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -265,6 +268,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "48e5406027103a9fca6eb66417187c4a8b5c6aa3",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -281,6 +285,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "dd7239bc950d1e254d9c9cd6df7dbccc529c33cb",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -331,6 +336,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "f8f0c0e3979ecb980d38e9369fa8c98df95d212b",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -347,6 +353,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "feb1efd804c1262106f72c8adc1d82a8ce9cfbb0",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -363,6 +370,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "36ed57409a98878e5c1a7aabf50d3aa65ebde1e0",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -481,6 +489,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "699815f54ae9b5c2a93f016ba1a9df1e8ac1c014",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -582,6 +591,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "a2734a5d154c9b0beb9a10555a04416bc371de06",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -598,6 +608,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "4535c3192fd321be6bade6192f0cf8d264de9baf",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -631,6 +642,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "afa374afd52dc4f05baad1ead66c977a46aa5b47",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   {
@@ -647,6 +659,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "2a069e41024433da401f3e8b3470adf194924911",
     guard_set: "canary",
     benchmark_set: "canary",
+    perf_timed: true,
     category: "external",
   },
   // --- application/dashboard canary rows (category:"application") ---
@@ -1049,13 +1062,13 @@ export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
 export const COMPILE_GUARD_CANARY_PROJECT_ROWS = COMPILE_CANARY_PROJECT_ROWS;
 
 // Canary rows opted into the vs-tsgo timing chart via `perf_timed: true`. These
-// are bounded, lighter external libraries: they get real tsz_ms/tsgo_ms timings
-// from the dedicated `bench-canaries` shard so the performance comparison page
-// can show passing canaries next to the required rows. They stay
-// benchmark_set:"canary", so they are NOT part of REQUIRED_PROJECT_ROWS and
-// never affect the artifact-readiness/publish gate; the website only promotes a
-// perf-timed canary onto the chart once it actually checks green (see the
-// green-compat filter in crates/tsz-website/src/_data/benchmark_data.js).
+// external-library rows already have bench-vs-tsgo runners, so the dedicated
+// `bench-canaries` shard can produce real tsz_ms/tsgo_ms timings for any row
+// that compiles cleanly. They stay benchmark_set:"canary", so they are NOT part
+// of REQUIRED_PROJECT_ROWS and never affect the artifact-readiness/publish gate;
+// the website only promotes a perf-timed canary onto the chart once it actually
+// checks green (see the green-compat filter in
+// crates/tsz-website/src/_data/benchmark_data.js).
 export const PERF_TIMED_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.perf_timed === true)
   .map((row) => row.name);
