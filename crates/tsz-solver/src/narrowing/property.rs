@@ -123,10 +123,19 @@ impl<'a> NarrowingContext<'a> {
             return narrowed;
         }
 
+        // Resolve a `Lazy` alias / generic `Application` to its structural form
+        // before dispatching on union-vs-type-parameter-vs-non-union: a union
+        // written behind a (possibly generic) alias arrives as `Lazy`/`Application`,
+        // not a `Union`, so without this the union check misses it and the receiver
+        // is degraded to `source & Record<prop, unknown>`. Structural decisions use
+        // the resolved view; no-op narrowings still return the original `source_type`
+        // to preserve the alias display.
+        let resolved_source = self.resolve_type(source_type);
+
         // Handle type parameters: narrow the constraint and intersect if changed
-        if let Some(type_param_info) = type_param_info(self.db, source_type) {
+        if let Some(type_param_info) = type_param_info(self.db, resolved_source) {
             if let Some(constraint) = type_param_info.constraint
-                && constraint != source_type
+                && constraint != resolved_source
             {
                 let narrowed_constraint =
                     self.narrow_by_property_presence(constraint, property_name, present);
@@ -159,7 +168,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // If source is a union, filter members based on property presence
-        if let Some(members_id) = union_list_id(self.db, source_type) {
+        if let Some(members_id) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members_id);
             trace!(
                 "Checking property {} in union with {} members",
@@ -231,10 +240,9 @@ impl<'a> NarrowingContext<'a> {
             return self.db.union(matching);
         }
 
-        // For non-union types, check if the property exists
-        // CRITICAL: Resolve Lazy types before checking
-        let resolved_type = self.resolve_type(source_type);
-        let has_property = self.type_has_property(resolved_type, property_name);
+        // For non-union types, check if the property exists. `resolved_source`
+        // already resolved any Lazy/Application reference above.
+        let has_property = self.type_has_property(resolved_source, property_name);
 
         if present {
             // Positive: "prop" in x
@@ -287,7 +295,7 @@ impl<'a> NarrowingContext<'a> {
             // `{ p: undefined }` shape (the previous behavior) collapsed `p` to
             // `never` whenever its declared type omitted `undefined`, producing
             // spurious TS2322 on the negative branch.
-            if self.is_property_required(resolved_type, property_name) {
+            if self.is_property_required(resolved_source, property_name) {
                 return TypeId::NEVER;
             }
             // Optional own property, index-signature match, or no property at
