@@ -304,6 +304,9 @@ mod index_sig_param_resolved_key_type_tests;
 #[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
 mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
+#[path = "tests/instanceof_indexed_access_lhs_tests.rs"]
+mod instanceof_indexed_access_lhs_tests;
+#[cfg(test)]
 #[path = "tests/instantiation_expression_inline_utility_modifier_tests.rs"]
 mod instantiation_expression_inline_utility_modifier_tests;
 #[cfg(test)]
