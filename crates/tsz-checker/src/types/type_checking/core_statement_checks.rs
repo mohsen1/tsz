@@ -598,18 +598,32 @@ impl<'a> CheckerState<'a> {
                         let at_top_level = self.ctx.function_depth == 0;
 
                         if at_top_level {
-                            // TS1378: Top-level await requires ES2022+/ESNext module and ES2017+ target
+                            // tsc's `checkAwaitExpression` emits these two
+                            // grammar diagnostics *independently*: a non-module
+                            // file gets TS1375, and an unsupported module/target
+                            // combination gets TS1378. Both fire when both
+                            // conditions hold, in this order — they are not
+                            // mutually exclusive. This mirrors the `await using`
+                            // sibling path, which emits TS2853/TS2854 the same
+                            // way (`check_using_declaration_list` in `core.rs`).
+
+                            // TS1375: top-level await is only valid in a module.
+                            if !self.ctx.is_external_module_file() {
+                                self.error_at_node(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                );
+                            }
+
+                            // TS1378: top-level await requires a module in
+                            // {ES2022, ESNext, System, Node16/18/20, NodeNext,
+                            // Preserve} and target >= ES2017.
                             if !self.supports_top_level_await() {
                                 self.error_at_node(
                                     current_idx,
                                     diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                     diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
-                                );
-                            } else if !self.ctx.is_external_module_file() {
-                                self.error_at_node(
-                                    current_idx,
-                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
-                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
                                 );
                             }
                         } else {
