@@ -842,18 +842,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             &mut properties,
         );
 
+        // Track whether each materialized index signature is optional (`?`
+        // modifier). Recorded as shape-level flags below, since `IndexSignature`
+        // cannot carry it.
+        let mut string_index_optional = false;
+        let mut number_index_optional = false;
+
         let string_index = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
                         return self.interner().mapped(*mapped);
                     }
-                    Some(self.build_index_signature_for_mapped(
+                    let (sig, optional) = self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::STRING,
                         is_identity_homomorphic || is_homomorphic,
                         source_object,
-                    ))
+                    );
+                    string_index_optional = optional;
+                    Some(sig)
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
@@ -868,12 +876,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if remapped != TypeId::NUMBER {
                         return self.interner().mapped(*mapped);
                     }
-                    Some(self.build_index_signature_for_mapped(
+                    let (sig, optional) = self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::NUMBER,
                         is_identity_homomorphic || is_homomorphic,
                         source_object,
-                    ))
+                    );
+                    number_index_optional = optional;
+                    Some(sig)
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
@@ -885,12 +895,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let string_index = if string_index.is_none() && !key_set.template_literals.is_empty() {
             let key_type =
                 crate::utils::union_or_single(self.interner(), key_set.template_literals);
-            Some(self.build_index_signature_for_mapped(
+            let (sig, optional) = self.build_index_signature_for_mapped(
                 *mapped,
                 key_type,
                 is_identity_homomorphic || is_homomorphic,
                 source_object,
-            ))
+            );
+            string_index_optional = optional;
+            Some(sig)
         } else {
             string_index
         };
@@ -900,11 +912,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // constraint, so `keyof` of the materialized object is the
             // constraint key space (see `ObjectFlags::MAPPED_CONSTRAINT_KEYS`).
             // Homomorphic maps keep `keyof T` and stay unflagged.
-            let flags = if is_homomorphic || is_identity_homomorphic {
+            let mut flags = if is_homomorphic || is_identity_homomorphic {
                 ObjectFlags::empty()
             } else {
                 ObjectFlags::MAPPED_CONSTRAINT_KEYS
             };
+            if string_index_optional {
+                flags |= ObjectFlags::STRING_INDEX_OPTIONAL;
+            }
+            if number_index_optional {
+                flags |= ObjectFlags::NUMBER_INDEX_OPTIONAL;
+            }
             self.interner().object_with_index(ObjectShape {
                 flags,
                 properties,
@@ -917,13 +935,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Build the result index signature for a mapped type, returning whether the
+    /// `?` modifier made it *optional* (`[k: K]?: V`). The optionality cannot be
+    /// stored on `IndexSignature` itself (it has no such slot); the caller records
+    /// it as a shape-level `STRING_INDEX_OPTIONAL` / `NUMBER_INDEX_OPTIONAL` flag
+    /// so the assignability relation can relax the index requirement for a
+    /// property-less source, exactly as tsc does for an optional index signature.
     fn build_index_signature_for_mapped(
         &mut self,
         mapped: MappedType,
         key_type: TypeId,
         inherits_modifiers: bool,
         source_object: Option<TypeId>,
-    ) -> IndexSignature {
+    ) -> (IndexSignature, bool) {
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
         let instantiated =
             instantiate_type_cached(self.interner(), self.query_db(), mapped.template, &subst);
@@ -933,12 +957,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if idx_optional {
             value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
         }
-        IndexSignature {
-            key_type,
-            value_type,
-            readonly: idx_readonly,
-            param_name: None,
-        }
+        (
+            IndexSignature {
+                key_type,
+                value_type,
+                readonly: idx_readonly,
+                param_name: None,
+            },
+            idx_optional,
+        )
     }
 
     /// Evaluate a mapped type with an `as` clause when the constraint is a union of
