@@ -10,12 +10,12 @@
 //! decision in the solver `in`-narrowing path, so `"length" in items` narrows to
 //! the `ArrayLike<T>` member and `items.length` is `number`.
 //!
-//! Before the fix the alias instantiation reached narrowing as a
-//! `TypeData::Application`, `union_list_id` returned `None`, the union-filtering
-//! path was skipped, and the receiver fell through to the non-union branch
-//! (`union & Record<prop, unknown>`), so the property read back as `unknown` —
-//! remeda's `length.ts:35` emitted a false `TS2322` (`unknown` not assignable to
-//! `number`).
+//! Before the fix the alias instantiation reached narrowing as an unresolved
+//! generic application (not a raw union), `union_list_id` returned `None`, the
+//! union-filtering path was skipped, and the receiver fell through to the
+//! non-union branch (`union & Record<prop, unknown>`), so the property read back
+//! as `unknown` — remeda's `length.ts:35` emitted a false `TS2322` (`unknown`
+//! not assignable to `number`).
 //!
 //! A non-literal computed key (`k in x`, `k: string`) must still NOT narrow
 //! (negative control). Verified against `tsc` 5.8.3.
@@ -23,7 +23,7 @@
 //! The remeda witness uses `ArrayLike<T> | Iterable<T>`; these cases use
 //! lib-free generic aliases of the same shape (a generic application union where
 //! one member declares the key) so the checker test harness resolves every name
-//! while still exercising the `TypeData::Application` resolution path.
+//! while still exercising the unresolved-generic-application resolution path.
 
 use tsz_checker::test_utils::check_source_strict_messages;
 
@@ -34,10 +34,10 @@ fn ts2322_count(diagnostics: &[(u32, String)]) -> usize {
 #[test]
 fn in_operator_narrows_generic_alias_application_union_to_member_with_key() {
     // remeda length.ts shape, lib-free so the harness resolves all names: a
-    // *generic* alias instantiation `Enumerable<T>` reaches narrowing as a
-    // `TypeData::Application` (not a raw `Union`), which is exactly the path the
-    // fix resolves. Only `WithLen<T>` has `length: number`; `"length" in items`
-    // narrows to it so `items.length` reads back as `number`.
+    // *generic* alias instantiation `Enumerable<T>` reaches narrowing as an
+    // unresolved generic application (not a raw `Union`), which is exactly the
+    // path the fix resolves. Only `WithLen<T>` has `length: number`; `"length" in
+    // items` narrows to it so `items.length` reads back as `number`.
     let diagnostics = check_source_strict_messages(
         r#"
 type WithLen<T> = { length: number; item: T };
