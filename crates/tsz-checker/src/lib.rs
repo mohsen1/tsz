@@ -931,6 +931,9 @@ mod index_signature_property_relation_routing_arch_tests;
 #[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
 mod index_signature_value_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/indexed_access_callable_member_constraint_ts2344_tests.rs"]
+mod indexed_access_callable_member_constraint_ts2344_tests;
+#[cfg(test)]
 #[path = "tests/indexed_access_constraint_relation_routing_arch_tests.rs"]
 mod indexed_access_constraint_relation_routing_arch_tests;
 #[cfg(test)]
