@@ -14,6 +14,29 @@ use tsz_solver::{
     Visibility,
 };
 
+/// Structural classification of an implicit-`any` constructor property, carried
+/// as a fact rather than re-derived from its rendered display string. The
+/// producer already knows which case applies (it chooses between `TypeId::ANY`
+/// and an `any`-element array); the `TS7008` display label is derived from this
+/// enum only at the message site, so semantics never read the rendered text back.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImplicitAnyKind {
+    /// The property is implicitly `any`.
+    Any,
+    /// The property is implicitly `any[]` (an array whose element type is `any`).
+    AnyArray,
+}
+
+impl ImplicitAnyKind {
+    /// The `tsc` display label (`any` / `any[]`) for the `TS7008` message.
+    const fn label(self) -> &'static str {
+        match self {
+            ImplicitAnyKind::Any => "any",
+            ImplicitAnyKind::AnyArray => "any[]",
+        }
+    }
+}
+
 impl CheckerState<'_> {
     /// Push the enclosing JS class's `@template T` JSDoc-derived type
     /// parameters into `type_parameter_scope` for the lifetime of a
@@ -564,7 +587,7 @@ impl CheckerState<'_> {
         let this_aliases = self.collect_this_aliases(&stmts);
         let mut constructor_collected_props = FxHashSet::default();
         let mut pending_implicit_any =
-            FxHashMap::<Atom, (String, &'static str, NodeIndex)>::default();
+            FxHashMap::<Atom, (String, ImplicitAnyKind, NodeIndex)>::default();
 
         for &stmt_idx in &stmts {
             let Some((prop_name, rhs_idx, is_private, report_idx)) = self
@@ -679,23 +702,23 @@ impl CheckerState<'_> {
                 && !any_is_explicit
                 && !enclosing_has_this_tag
             {
-                let implicit_type = if type_id == TypeId::ANY
+                let implicit_kind = if type_id == TypeId::ANY
                     || (provisional_open && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED))
                 {
-                    Some("any")
+                    Some(ImplicitAnyKind::Any)
                 } else if crate::query_boundaries::common::array_element_type(
                     self.ctx.types,
                     type_id,
                 ) == Some(TypeId::ANY)
                 {
-                    Some("any[]")
+                    Some(ImplicitAnyKind::AnyArray)
                 } else {
                     None
                 };
-                if let Some(implicit_type) = implicit_type {
+                if let Some(implicit_kind) = implicit_kind {
                     pending_implicit_any
                         .entry(name_atom)
-                        .or_insert_with(|| (prop_name.clone(), implicit_type, stmt_idx));
+                        .or_insert_with(|| (prop_name.clone(), implicit_kind, stmt_idx));
                 }
             }
 
@@ -758,7 +781,7 @@ impl CheckerState<'_> {
             );
         }
 
-        for (name_atom, (prop_name, implicit_type, implicit_anchor)) in pending_implicit_any {
+        for (name_atom, (prop_name, implicit_kind, implicit_anchor)) in pending_implicit_any {
             let still_implicit = properties.get(&name_atom).is_some_and(|property| {
                 property.write_type == TypeId::ANY
                     || property.type_id == TypeId::ANY
@@ -772,7 +795,7 @@ impl CheckerState<'_> {
             }
 
             if let Some(property) = properties.get_mut(&name_atom) {
-                if implicit_type == "any[]" {
+                if implicit_kind == ImplicitAnyKind::AnyArray {
                     let any_array = self.ctx.types.factory().array(TypeId::ANY);
                     let nullish_part = if property.type_id.is_nullable() {
                         Some(property.type_id)
@@ -806,7 +829,10 @@ impl CheckerState<'_> {
                 }
             }
 
-            let message = format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
+            let message = format!(
+                "Member '{prop_name}' implicitly has an '{}' type.",
+                implicit_kind.label()
+            );
             let already_emitted = self.ctx.diagnostics.iter().any(|d| {
                 d.code == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
                     && d.start == self.ctx.arena.get(implicit_anchor).map_or(0, |n| n.pos)
@@ -816,7 +842,7 @@ impl CheckerState<'_> {
                 self.error_at_node_msg(
                     implicit_anchor,
                     crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                    &[&prop_name, implicit_type],
+                    &[&prop_name, implicit_kind.label()],
                 );
             }
         }
