@@ -671,15 +671,21 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
     /// Canonical (identity) form of a declared type parameter.
     ///
-    /// The `constraint` is canonicalized recursively, but `default` is dropped:
-    /// `tsc` never distinguishes type parameters by their declared `default` in
-    /// relation/identity (the default is consumed only at instantiation when no
-    /// argument is supplied). Keeping it would let two otherwise-identical
-    /// generic signatures — `<R extends X = "json">` vs `<R extends X>` —
-    /// canonicalize to distinct identities and miss the relation's reflexive
-    /// short-circuit (#13609). Callers that manage an alpha-equivalence scope
-    /// (function/signature/mapped) must push the parameter name before calling
-    /// so the constraint's self/sibling references resolve to bound parameters.
+    /// The `constraint` is canonicalized recursively, but the identity-irrelevant
+    /// declaration modifiers `default` and `is_const` are dropped: `tsc` never
+    /// distinguishes type parameters by either in relation/identity. The `default`
+    /// is consumed only at instantiation when no argument is supplied, and the
+    /// `const` modifier (`<const R>`) is an inference-site modifier that preserves
+    /// literal types at call sites — `compareTypeParametersIdentical` compares
+    /// constraints only. Keeping either would let two otherwise-identical generic
+    /// signatures — `<R extends X = "json">` / `<const R extends X>` vs
+    /// `<R extends X>` — canonicalize to distinct identities and miss the
+    /// relation's reflexive short-circuit (#13609). Both modifiers are still read
+    /// where they matter (instantiation / inference) off the *interned* parameter,
+    /// which is unchanged; only this comparison/hashing-only canonical form drops
+    /// them. Callers that manage an alpha-equivalence scope (function/signature/
+    /// mapped) must push the parameter name before calling so the constraint's
+    /// self/sibling references resolve to bound parameters.
     fn canonical_type_param(
         &mut self,
         tp: crate::types::TypeParamInfo,
@@ -688,7 +694,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             name: tp.name,
             constraint: tp.constraint.map(|c| self.canonicalize(c)),
             default: None,
-            is_const: tp.is_const,
+            is_const: false,
             origin: tp.origin,
         }
     }

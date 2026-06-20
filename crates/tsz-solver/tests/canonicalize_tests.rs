@@ -1533,3 +1533,180 @@ fn canonicalize_infer_param_preserves_real_distinctions() {
         "distinct infer parameter names stay distinct"
     );
 }
+
+// ===================================================================
+// The `const` modifier must not fragment canonical type-parameter identity
+// (#13609 — the same family as the dropped `default` and the `Infer` arm)
+// ===================================================================
+
+// `tsc` identifies a type parameter by itself (its name and the *shape* of its
+// constraint), never by the `const` modifier. `const` (`<const R>`) is an
+// inference-site modifier that preserves literal types at call sites
+// (`compareTypeParametersIdentical` compares constraints only) — it is erased
+// from the parameter's type identity, exactly like `default`. `TypeParamInfo`
+// derives `Eq`/`Hash` over `is_const`, so a free reference to a `const`
+// parameter and one to its non-`const` twin intern to distinct `TypeId`s; both
+// must canonicalize to one identity or the relation's reflexive/identity fast
+// path fragments.
+#[test]
+fn canonicalize_free_type_param_ignores_const_modifier() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let name = interner.intern_string("R");
+    let constraint = Some(TypeId::STRING);
+    let make = |is_const| {
+        interner.type_param(TypeParamInfo {
+            name,
+            constraint,
+            default: None,
+            is_const,
+            origin: crate::types::TypeParamOrigin::User,
+        })
+    };
+
+    let r_const = make(true);
+    let r_plain = make(false);
+
+    assert_ne!(
+        r_const, r_plain,
+        "precondition: interning keeps the `const` modifier distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(r_const),
+        c2.canonicalize(r_plain),
+        "the `const` modifier must not fragment canonical identity"
+    );
+
+    // The `const` and `default` drops compose: a `const` param with a captured
+    // default still collapses onto its bare twin.
+    let r_const_default = interner.type_param(TypeParamInfo {
+        name,
+        constraint,
+        default: Some(TypeId::NUMBER),
+        is_const: true,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    let mut c4 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c3.canonicalize(r_const_default),
+        c4.canonicalize(r_plain),
+        "dropping `const` and `default` compose to one identity"
+    );
+}
+
+// The same identity rule applies when the type parameter is declared in a
+// signature's type-parameter list: two generic function types that differ only
+// in a type parameter's `const` modifier must canonicalize to one identity, so
+// the relation's reflexive short-circuit holds for `<const R extends X>() => R`
+// against `<R extends X>() => R`.
+#[test]
+fn canonicalize_function_type_param_list_ignores_const_modifier() {
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let r = interner.intern_string("R");
+    let make = |is_const: bool| {
+        let body = interner.type_param(TypeParamInfo {
+            name: r,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        interner.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: r,
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const,
+                origin: crate::types::TypeParamOrigin::User,
+            }],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: body,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: body,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let const_fn = make(true);
+    let plain_fn = make(false);
+    assert_ne!(
+        const_fn, plain_fn,
+        "precondition: interning keeps the `const` modifier distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(const_fn),
+        c2.canonicalize(plain_fn),
+        "the `const` modifier in a signature list must not fragment identity"
+    );
+}
+
+// The `Infer` arm follows the same rule: `infer R` differing only in the
+// `const` modifier must canonicalize identically, while genuine distinctions
+// (name, constraint) stay distinct. Anti-hardcoding: the rule keys on the
+// structural `is_const` flag, not on any binder name.
+#[test]
+fn canonicalize_infer_param_ignores_const_modifier() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let name = interner.intern_string("R");
+    let constraint = Some(TypeId::STRING);
+    let make_infer = |is_const| {
+        interner.infer(TypeParamInfo {
+            name,
+            constraint,
+            default: None,
+            is_const,
+            origin: crate::types::TypeParamOrigin::User,
+        })
+    };
+
+    let infer_const = make_infer(true);
+    let infer_plain = make_infer(false);
+    assert_ne!(
+        infer_const, infer_plain,
+        "precondition: interning keeps the `const` modifier distinct"
+    );
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(infer_const),
+        c2.canonicalize(infer_plain),
+        "an infer parameter's `const` modifier must not fragment canonical identity"
+    );
+
+    // Negative control: dropping `const` must not merge genuinely different
+    // parameters (different constraint shape stays distinct).
+    let infer_const_num = interner.infer(TypeParamInfo {
+        name,
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: true,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    let mut c4 = Canonicalizer::new(&interner, &env);
+    assert_ne!(
+        c3.canonicalize(infer_plain),
+        c4.canonicalize(infer_const_num),
+        "a genuinely different constraint stays distinct after dropping `const`"
+    );
+}
