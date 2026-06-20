@@ -538,7 +538,7 @@ fn apparent_type_has_signatures_rec(
                     .iter()
                     .all(|&m| apparent_type_has_signatures_rec(db, m, visited))
         }
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .is_some_and(|c| apparent_type_has_signatures_rec(db, c, visited)),
         Some(TypeData::Lazy(def_id)) => {
