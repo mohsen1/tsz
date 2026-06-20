@@ -1262,16 +1262,12 @@ impl<'a> Printer<'a> {
     fn es5_computed_temp_decls_from_init_exprs(&self, init_exprs: &[IRNode]) -> Vec<String> {
         let mut decls = Vec::new();
         for init_expr in init_exprs {
-            self.collect_es5_computed_temp_decls_from_init_expr(init_expr, &mut decls);
+            Self::collect_es5_computed_temp_decls_from_init_expr(init_expr, &mut decls);
         }
         decls
     }
 
-    fn collect_es5_computed_temp_decls_from_init_expr(
-        &self,
-        init_expr: &IRNode,
-        decls: &mut Vec<String>,
-    ) {
+    fn collect_es5_computed_temp_decls_from_init_expr(init_expr: &IRNode, decls: &mut Vec<String>) {
         let expr = match init_expr {
             IRNode::ExpressionStatement(inner) => inner.as_ref(),
             other => other,

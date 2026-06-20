@@ -123,7 +123,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let Some(top_reference) =
-            self.single_top_level_type_reference(source_arena, type_annotation)
+            Self::single_top_level_type_reference(source_arena, type_annotation)
         else {
             return false;
         };
@@ -164,7 +164,6 @@ impl<'a> DeclarationEmitter<'a> {
     /// composite types (unions, intersections, object literals, function types,
     /// …) where a contained alias reference does not name the whole type.
     fn single_top_level_type_reference(
-        &self,
         source_arena: &NodeArena,
         type_idx: NodeIndex,
     ) -> Option<NodeIndex> {
