@@ -115,6 +115,58 @@ function yes<T extends object | null | undefined>() {
     );
 }
 
+/// A universal index-signature record (`{ [k: string]: unknown }`, the inline
+/// shape of `Record<PropertyKey, unknown>`) asserted to a `T extends object`
+/// must NOT emit TS2352 — the record is object-like and comparable to the
+/// `object` constraint. Mirrors remeda's `clone.ts` `copiedValue as T` (#14152).
+/// The record has NO required named members, so the structural-fit walk is
+/// vacuously satisfied; only the empty-`{}` special case currently covers this,
+/// and it excludes objects carrying an index signature.
+#[test]
+fn index_signature_record_as_object_constrained_type_param_no_ts2352() {
+    for (rec, t_name) in [
+        ("{ [k: string]: unknown }", "T"),
+        ("{ [p: string]: unknown }", "U"),
+        ("{ [key: string]: any }", "Elem"),
+    ] {
+        let source = format!(
+            r#"
+function clone<{t_name} extends object>(value: {t_name}): {t_name} {{
+    const copied: {rec} = {{}};
+    return copied as {t_name};
+}}
+"#
+        );
+        let codes = check_strict(&source);
+        let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+        assert!(
+            ts2352.is_empty(),
+            "[{rec}/{t_name}] no TS2352 expected — an index-signature record is object-like \
+             and comparable to the `object` constraint. Got: {codes:?}"
+        );
+    }
+}
+
+/// Negative control for the index-signature-record rule: a primitive source
+/// asserted to a `T extends object` must STILL emit TS2352 (a primitive does
+/// not overlap an object constraint). Guards against over-permitting the
+/// constraint walk.
+#[test]
+fn primitive_as_object_constrained_type_param_still_emits_ts2352() {
+    let source = r#"
+function f<T extends object>(): T {
+    return 123 as T;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        !ts2352.is_empty(),
+        "TS2352 expected — a number primitive does not overlap an `object` constraint. \
+         Got: {codes:?}"
+    );
+}
+
 /// Source assigned to a constrained type parameter whose constraint is an
 /// intersection of object-likes — ANY intersection member providing a
 /// matching property is sufficient (the intersection exposes all members'
