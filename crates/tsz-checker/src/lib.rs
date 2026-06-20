@@ -574,6 +574,9 @@ mod typeof_operator_result_union_tests;
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
+#[path = "tests/typeof_unknown_logical_narrowing_tests.rs"]
+mod typeof_unknown_logical_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/using_binding_pattern_diagnostics_tests.rs"]
 mod using_binding_pattern_diagnostics_tests;
 #[cfg(test)]

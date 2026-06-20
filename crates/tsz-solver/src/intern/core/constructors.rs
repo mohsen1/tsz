@@ -175,7 +175,19 @@ impl TypeInterner {
 
     /// Intern a union type while preserving member structure.
     ///
-    /// This keeps unknown/literal members intact for property access checks.
+    /// Unlike [`union`](Self::union), this skips structural subtype reduction, so
+    /// distinct members that merely share an interface (e.g. `Derived1 | Derived2`)
+    /// stay separate — narrowing and property-access need that structure.
+    ///
+    /// It still applies the *universal* absorptions that hold for every union
+    /// regardless of member structure: the top/bottom sentinels. A union that
+    /// contains `error`, `any`, or `unknown` collapses to that type (precedence
+    /// `error` > `any` > `unknown`), exactly as `normalize_union` does, because
+    /// `unknown | T` is `unknown`, `any | T` is `any`, and `error | T` is `error`
+    /// for all `T`. Without this, flow narrowing combiners (e.g. the false branch
+    /// of `typeof x === "object" && x !== null` on an `unknown`) produced a
+    /// non-normalized `unknown | null`, which then mis-narrowed under a later
+    /// `typeof` guard. `never` members are dropped (the identity of union).
     pub fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
         if members.is_empty() {
             return TypeId::NEVER;
@@ -189,6 +201,28 @@ impl TypeInterner {
             } else {
                 flat.push(member);
             }
+        }
+
+        // Absorb the universal sentinels before structural interning. These hold
+        // for any member set, so scanning the flattened list (which has already
+        // expanded nested unions) catches a sentinel nested inside a member union.
+        let mut has_any = false;
+        let mut has_unknown = false;
+        for &id in &flat {
+            if id == TypeId::ERROR {
+                return TypeId::ERROR; // error trumps everything
+            }
+            if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            }
+        }
+        if has_any {
+            return TypeId::ANY;
+        }
+        if has_unknown {
+            return TypeId::UNKNOWN;
         }
 
         self.sort_union_members(&mut flat);
@@ -1834,5 +1868,69 @@ impl TypeInterner {
 impl Default for TypeInterner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod union_preserve_members_tests {
+    use crate::TypeInterner;
+    use crate::types::TypeId;
+
+    /// `union_preserve_members` skips structural subtype reduction but must still
+    /// apply the universal top/bottom sentinel absorptions (`error` > `any` >
+    /// `unknown`), since `unknown | T` is `unknown`, `any | T` is `any`, and
+    /// `error | T` is `error` for every `T`. The flow-narrowing logical-condition
+    /// combiner relied on this: the false branch of
+    /// `typeof x === "object" && x !== null` over an `unknown` produced a stray
+    /// `unknown | null`, which then mis-narrowed under a later `typeof` guard.
+    #[test]
+    fn union_preserve_members_absorbs_top_and_bottom_sentinels() {
+        let interner = TypeInterner::new();
+
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::UNKNOWN, TypeId::NULL]),
+            TypeId::UNKNOWN,
+            "unknown | null must absorb to unknown"
+        );
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::STRING, TypeId::UNKNOWN, TypeId::NUMBER]),
+            TypeId::UNKNOWN,
+            "any member set containing unknown collapses to unknown"
+        );
+
+        // `any | T` is `any`; `any` outranks `unknown`.
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::ANY, TypeId::STRING]),
+            TypeId::ANY,
+            "any | string must absorb to any"
+        );
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::UNKNOWN, TypeId::ANY]),
+            TypeId::ANY,
+            "any outranks unknown"
+        );
+
+        // `error | T` is `error`; `error` outranks everything.
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::ERROR, TypeId::ANY]),
+            TypeId::ERROR,
+            "error outranks any"
+        );
+
+        // A sentinel nested inside a member union is also caught (members are
+        // flattened before the scan).
+        let nested = interner.union_preserve_members(vec![TypeId::STRING, TypeId::UNKNOWN]);
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::NUMBER, nested]),
+            TypeId::UNKNOWN,
+            "unknown nested inside a member union still absorbs"
+        );
+
+        // Non-sentinel members keep their structure (no subtype reduction).
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::STRING, TypeId::NUMBER]),
+            interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
+            "ordinary members are unaffected"
+        );
     }
 }
