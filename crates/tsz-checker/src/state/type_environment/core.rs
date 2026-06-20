@@ -235,12 +235,12 @@ impl CheckerState<'_> {
         // the same evaluation result within a file check context.
         let is_monomorphic = !self.contains_type_parameters_cached(type_id);
 
-        // Canonicalize application keys by evaluating type arguments first. This
-        // allows structurally equivalent applications from different declaration
-        // sites (e.g., repeated inline object-literal args) to share a cache hit.
-        // Only applies to monomorphic types where argument evaluation is meaningful.
+        // Canonicalize application keys by evaluating type arguments first so
+        // structurally equivalent applications share a cache hit. #14101 extends
+        // this from monomorphic-only to type-parameter-bearing apps (recursive-
+        // heritage convergence); see `super::app_canon_arg_identity_enabled`.
         let mut canonical_key: Option<TypeId> = None;
-        if is_monomorphic
+        if (is_monomorphic || super::app_canon_arg_identity_enabled())
             && let Some((base, args)) = query::application_info(self.ctx.types, type_id)
             && !args.is_empty()
         {
