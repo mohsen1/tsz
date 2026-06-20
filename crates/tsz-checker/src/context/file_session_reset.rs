@@ -185,6 +185,13 @@ impl<'a> CheckerContext<'a> {
         self.name_resolution_diagnostics
             .spelling_suggestions_emitted
             .set(0);
+        // The suggestion-scan memo is keyed by per-file `NodeIndex`; clear it
+        // alongside `reported_nodes` so a new file's identically-numbered nodes
+        // never inherit the previous file's cached suggestions.
+        self.name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow_mut()
+            .clear();
 
         // Class chain / heritage caches keyed by `NodeIndex`.
         self.class_chain_summary_cache.borrow_mut().clear();
