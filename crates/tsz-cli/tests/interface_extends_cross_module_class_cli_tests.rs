@@ -47,8 +47,8 @@ fn compile_in_order(files: &[(&str, &str)], root_order: &[&str]) -> Vec<Diagnost
     ];
     argv.extend_from_slice(root_order);
 
-    let args = CliArgs::try_parse_from(argv).expect("parse args");
-    crate::driver::compile(&args, dir.path())
+    let cli_args = CliArgs::try_parse_from(argv).expect("parse args");
+    crate::driver::compile(&cli_args, dir.path())
         .expect("compile should succeed")
         .diagnostics
 }
