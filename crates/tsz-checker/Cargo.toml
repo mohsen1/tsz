@@ -1847,6 +1847,9 @@ path = "tests/recursive_utility_alias_fanout_tests.rs"
 name = "recursive_conditional_alias_concrete_fixpoint_tests"
 path = "tests/recursive_conditional_alias_concrete_fixpoint_tests.rs"
 [[test]]
+name = "issue_14123_repro_tests"
+path = "tests/issue_14123_repro_tests.rs"
+[[test]]
 name = "recursive_alias_counter_convergence_ts2589_tests"
 path = "tests/recursive_alias_counter_convergence_ts2589_tests.rs"
 [[test]]

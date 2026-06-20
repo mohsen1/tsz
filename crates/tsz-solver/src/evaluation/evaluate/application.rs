@@ -923,6 +923,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// DAG is re-walked, and sharing is blocked *because* the limit fired).
     /// Termination stays owned by the recursion guards and fuel, so this only
     /// collapses redundant re-evaluation.
+    ///
+    /// Parameter-freedom and `error`-freedom alone are NOT sufficient: a
+    /// recursive conditional alias whose body expansion was *deferred* (a depth
+    /// guard returned the unevaluated branch, or a relation/limited-resolver
+    /// sub-evaluation declined to reduce) leaves a residual `Application` of the
+    /// alias **in the result** — e.g. `D<{id:0}[]>` finalizing to the
+    /// unevaluated `D<{id:0}>`. That residue carries no free type parameter and
+    /// no `error`, so it passes both predicates above, yet it is a self-applied
+    /// placeholder, not a converged value. Persisting `(D, args) -> D<…>` poisons
+    /// the resolver-independent cache: a later authoritative read returns the
+    /// deferred self-application, whose re-evaluation re-reads the same entry and
+    /// re-applies `D` on the same input without ever recognizing the cycle —
+    /// unbounded recursion to a SIGABRT (#14123, a regression introduced when
+    /// this permit was added in #13508/#13894). A genuine concrete fixpoint of a
+    /// terminating recursion contains no residual application of a recursive
+    /// alias, so [`Self::result_has_residual_recursive_alias`] is the final
+    /// discriminator.
     fn is_concrete_application_fixpoint(&self, args: &[TypeId], result: TypeId) -> bool {
         // Concrete instantiation: every argument must itself be parameter-free,
         // so the key identifies one global instantiation rather than a
@@ -942,6 +959,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         result != TypeId::ERROR
             && !crate::type_queries::contains_error_type_db(self.interner, result)
             && !crate::type_queries::contains_type_parameters_db(self.interner, result)
+            && !self.result_has_residual_recursive_alias(result)
+    }
+
+    /// Whether `result` still contains an unevaluated `Application` of a
+    /// *recursive* generic type — one whose resolved body re-references its own
+    /// `DefId`. Such a residue means the recursion was deferred (a depth guard
+    /// returned the unevaluated branch, or a relation/limited sub-evaluation
+    /// declined to reduce it) rather than converged, so `result` is a self- or
+    /// mutually-applied placeholder, not a fixpoint. Caching it would let a
+    /// later read re-enter the same recursive evaluation and re-apply the alias
+    /// on the same input without recognizing the cycle (#14123).
+    ///
+    /// Only `Application` (generic-instantiation) nodes are inspected: a
+    /// concrete, fully-reduced result of a terminating recursion never retains
+    /// an application of a recursive alias. Non-recursive applications (whose
+    /// body does not refer to itself) cannot re-enter their own evaluation on a
+    /// cache read, so they remain cacheable residue.
+    ///
+    /// `DefKind` is intentionally *not* consulted: under a limited/relation
+    /// resolver `get_def_kind` can return `None` for a def that nonetheless
+    /// `resolve_lazy`-resolves to a self-referential body (the exact case in
+    /// #14123). The body-self-reference signal is the resolver-robust
+    /// discriminator.
+    fn result_has_residual_recursive_alias(&self, result: TypeId) -> bool {
+        // Memoize the self-reference verdict per `DefId`: a result can carry many
+        // applications of the same alias, and `contains_lazy_def_id` walks the
+        // alias body on every call. The cache collapses that to one body walk
+        // per distinct def.
+        let mut is_recursive: FxHashMap<DefId, bool> = FxHashMap::default();
+        let mut found = false;
+        crate::visitor::walk_referenced_types(self.interner, result, |current| {
+            if found {
+                return;
+            }
+            let Some(TypeData::Application(app_id)) = self.interner.lookup(current) else {
+                return;
+            };
+            let base = self.interner.type_application(app_id).base;
+            let Some(def_id) = self.resolve_application_def_id(base) else {
+                return;
+            };
+            found = *is_recursive.entry(def_id).or_insert_with(|| {
+                self.resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .is_some_and(|body| {
+                        crate::visitor::contains_lazy_def_id(self.interner, body, def_id)
+                    })
+            });
+        });
+        found
     }
 
     /// Extract the instance side of a class-shaped resolved body.
