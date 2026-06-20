@@ -259,6 +259,12 @@ impl CheckerState<'_> {
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            if let Some(global_this) = self
+                .ctx
+                .global_this_typeof_override(decl_arena, expr_name_idx)
+            {
+                return Some(global_this);
+            }
             if let Some(symbol_type) =
                 self.cross_arena_well_known_symbol_type_query(decl_arena, expr_name_idx)
             {

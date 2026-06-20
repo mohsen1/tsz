@@ -1,3 +1,7 @@
+use self::global_this_keyed::{
+    GlobalThisAccessKind, GlobalThisFlowMode, GlobalThisKeyStatus, GlobalThisReceiverStatus,
+    GlobalThisStringLikeElementAccess,
+};
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -5,67 +9,18 @@ use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[path = "access/global_this_keyed.rs"]
+mod global_this_keyed;
+#[path = "access/optional_chain.rs"]
+mod optional_chain;
 #[path = "access/symbol_constructor_index.rs"]
 mod symbol_constructor_index;
 
-pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
-    let Some(node) = arena.get(idx) else {
-        return false;
-    };
-
-    match node.kind {
-        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-        {
-            if let Some(access) = arena.get_access_expr(node) {
-                // Parentheses break the chain (fall through to `_ => false`),
-                // so `(o?.a).b` is not a continuation.
-                access.question_dot_token || is_optional_chain(arena, access.expression)
-            } else {
-                false
-            }
-        }
-        k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            if node.is_optional_chain() {
-                return true;
-            }
-            if let Some(call) = arena.get_call_expr(node) {
-                is_optional_chain(arena, call.expression)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeIndex {
-    let Some(node) = arena.get(idx) else {
-        return idx;
-    };
-    match node.kind {
-        k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            if let Some(call) = arena.get_call_expr(node) {
-                return optional_chain_root(arena, call.expression);
-            }
-            idx
-        }
-        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-        {
-            if let Some(access) = arena.get_access_expr(node) {
-                return optional_chain_root(arena, access.expression);
-            }
-            idx
-        }
-        _ => idx,
-    }
-}
+pub(crate) use optional_chain::{is_optional_chain, optional_chain_root};
 
 impl<'a> CheckerState<'a> {
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
@@ -476,6 +431,36 @@ impl<'a> CheckerState<'a> {
                     self.apply_flow_narrowing(idx, combined)
                 };
             }
+        }
+
+        if let Some(result) =
+            self.try_global_this_string_like_element_access(GlobalThisStringLikeElementAccess {
+                idx,
+                access_kind: if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                    GlobalThisAccessKind::Element
+                } else {
+                    GlobalThisAccessKind::Other
+                },
+                access_expression: access.expression,
+                key_status: if literal_string.is_none() {
+                    GlobalThisKeyStatus::NoLiteralStringKey
+                } else {
+                    GlobalThisKeyStatus::HasLiteralStringKey
+                },
+                index_type,
+                receiver_status: if is_this_global {
+                    GlobalThisReceiverStatus::GlobalThisLike
+                } else {
+                    GlobalThisReceiverStatus::Other
+                },
+                flow_mode: if skip_flow_narrowing {
+                    GlobalThisFlowMode::SkipFlowNarrowing
+                } else {
+                    GlobalThisFlowMode::ApplyFlowNarrowing
+                },
+            })
+        {
+            return result;
         }
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {

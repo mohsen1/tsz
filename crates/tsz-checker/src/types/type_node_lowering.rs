@@ -231,6 +231,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             Some(def_id)
         };
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            if let Some(global_this) = self
+                .ctx
+                .global_this_typeof_override(self.ctx.arena, expr_name_idx)
+            {
+                return Some(global_this);
+            }
             if let Some(expr_node) = self.ctx.arena.get(expr_name_idx)
                 && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
                 && let Some(&param_type) =
