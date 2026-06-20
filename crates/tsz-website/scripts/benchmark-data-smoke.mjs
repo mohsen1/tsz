@@ -452,7 +452,7 @@ try {
   assert.equal(valibotPage.category, "Projects: external libraries");
   assert.equal(valibotPage.kind, "project");
   assert.equal(valibotPage.source_files.length, 0);
-  assert.match(valibotPage.detail_focus, /Full project type-check throughput/i);
+  assert.match(valibotPage.detail_focus, /schema-validation library/i);
 
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
