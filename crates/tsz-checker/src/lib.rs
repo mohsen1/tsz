@@ -190,6 +190,9 @@ mod cross_module_class_self_member_tests;
 #[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
 mod decorator_return_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/defaulted_param_deferred_undefined_strip_tests.rs"]
+mod defaulted_param_deferred_undefined_strip_tests;
+#[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]

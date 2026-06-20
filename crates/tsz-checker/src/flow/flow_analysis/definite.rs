@@ -255,11 +255,43 @@ impl<'a> CheckerState<'a> {
             && param.initializer.is_some()
             && !self.is_in_default_parameter(idx)
         {
-            crate::query_boundaries::flow::narrow_destructuring_default(
+            // tsc strips `undefined` from a defaulted parameter's declared type
+            // (`getTypeForVariableLikeDeclaration` -> `getTypeWithFacts`). The
+            // solver-boundary strip below no-ops on a DEFERRED annotation
+            // (indexed-access / conditional / mapped) that is not yet a surface
+            // union, so `undefined` leaks into the parameter's body type and
+            // produces false TS2488/TS18048/TS2322 (e.g. jotai
+            // `names: Opts['names'] = []` then `[...names]`). Resolve the deferred
+            // annotation first — using the checker context as the type resolver,
+            // the same `&self`-reachable path the relation layer uses — then strip.
+            // Adopt the resolved form only when stripping actually removes
+            // `undefined`, so concrete and undefined-free annotations stay
+            // unchanged (minimal blast radius).
+            let stripped = crate::query_boundaries::flow::narrow_destructuring_default(
                 self.ctx.types,
                 declared_type,
                 true,
-            )
+            );
+            if stripped == declared_type {
+                let resolved =
+                    crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                        self.ctx.types,
+                        &self.ctx,
+                        declared_type,
+                    );
+                let stripped_resolved = crate::query_boundaries::flow::narrow_destructuring_default(
+                    self.ctx.types,
+                    resolved,
+                    true,
+                );
+                if stripped_resolved == resolved {
+                    declared_type
+                } else {
+                    stripped_resolved
+                }
+            } else {
+                stripped
+            }
         } else {
             declared_type
         };
