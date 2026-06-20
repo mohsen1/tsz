@@ -38,7 +38,7 @@ mod cache;
 mod display;
 mod storage;
 
-pub(super) use storage::{CachedUnionMember, TypeShard};
+pub(super) use storage::{AppComponentKey, CachedUnionMember, TypeShard};
 use storage::{ConcurrentSliceInterner, ConcurrentValueInterner, write_id_slot};
 
 /// Global counter for assigning unique `instance_id`s to `TypeInterner`

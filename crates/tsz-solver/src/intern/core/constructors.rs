@@ -4,8 +4,8 @@
 //! interned types: literals, unions, intersections, objects, functions, etc.
 
 use super::interner::{
-    CachedUnionMember, PredicateCacheEntry, TYPE_LIST_INLINE, TypeInterner, TypeListBuffer,
-    TypeShard,
+    AppComponentKey, CachedUnionMember, PredicateCacheEntry, TYPE_LIST_INLINE, TypeInterner,
+    TypeListBuffer, TypeShard,
 };
 use crate::def::DefId;
 use crate::types::{
@@ -451,6 +451,7 @@ impl TypeInterner {
                 obj_anon_shape: None,
                 callable_symbol: None,
                 string_literal_text: None,
+                app_components: None,
                 alloc_order: None,
             };
         }
@@ -462,6 +463,7 @@ impl TypeInterner {
         let mut obj_anon_shape = None;
         let mut callable_symbol = None;
         let mut string_literal_text = None;
+        let mut app_components = None;
 
         if let Some(ref d) = data {
             match d {
@@ -482,6 +484,13 @@ impl TypeInterner {
                         callable_symbol = Some(sym.0);
                     }
                 }
+                TypeData::Application(app) => {
+                    let app = self.type_application(*app);
+                    let mut keys = Vec::with_capacity(1 + app.args.len());
+                    keys.push(self.app_component_key(app.base));
+                    keys.extend(app.args.iter().map(|&arg| self.app_component_key(arg)));
+                    app_components = Some(keys.into_boxed_slice());
+                }
                 _ => {}
             }
         }
@@ -494,8 +503,75 @@ impl TypeInterner {
             obj_anon_shape,
             callable_symbol,
             string_literal_text,
+            app_components,
             alloc_order,
         }
+    }
+
+    /// Pre-fetch the ordering key for a single `Application` component (base or
+    /// type argument), performing every interner lookup that
+    /// `compare_application_component` would otherwise do inside the sort
+    /// comparator. The key captures exactly the fields that comparator inspects,
+    /// so comparing two keys is order-identical to comparing the resolved ids.
+    fn app_component_key(&self, id: TypeId) -> AppComponentKey {
+        let builtin_key = Self::builtin_sort_key(id);
+
+        let mut rank = None;
+        let mut lazy_or_enum_defid = None;
+        // Builtins sort purely by their fixed key, so skip the interner lookup.
+        if builtin_key.is_none()
+            && let Some(data) = self.lookup(id)
+        {
+            rank = Some(Self::type_data_rank(&data));
+            match &data {
+                TypeData::Lazy(def) | TypeData::Enum(def, _) => {
+                    lazy_or_enum_defid = Some(def.0);
+                }
+                _ => {}
+            }
+        }
+
+        AppComponentKey {
+            builtin_key,
+            rank,
+            lazy_or_enum_defid,
+            raw: id.0,
+        }
+    }
+
+    /// Compare two pre-fetched `Application` component keys.
+    ///
+    /// This is the lookup-free equivalent of `compare_application_component`:
+    /// builtin-key bucket first, then `TypeData` rank, then `DefId` for
+    /// `Lazy`/`Enum`, then the raw `TypeId` as a stable tiebreak.
+    fn compare_app_component_key(a: &AppComponentKey, b: &AppComponentKey) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        if a.raw == b.raw {
+            return Ordering::Equal;
+        }
+
+        match (a.builtin_key, b.builtin_key) {
+            (Some(ka), Some(kb)) => return ka.cmp(&kb).then_with(|| a.raw.cmp(&b.raw)),
+            (Some(ka), None) => return ka.cmp(&100),
+            (None, Some(kb)) => return 100u32.cmp(&kb),
+            (None, None) => {}
+        }
+
+        if let (Some(ra), Some(rb)) = (a.rank, b.rank) {
+            let rank_cmp = ra.cmp(&rb);
+            if rank_cmp != Ordering::Equal {
+                return rank_cmp;
+            }
+            if let (Some(da), Some(db)) = (a.lazy_or_enum_defid, b.lazy_or_enum_defid) {
+                let cmp = da.cmp(&db);
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+            }
+        }
+
+        a.raw.cmp(&b.raw)
     }
 
     /// Compare two cached union members using pre-fetched data.
@@ -604,24 +680,23 @@ impl TypeInterner {
                         return cmp;
                     }
                 }
-                (TypeData::Application(app1), TypeData::Application(app2)) => {
+                (TypeData::Application(_), TypeData::Application(_)) => {
                     // Keep application ordering total by comparing the stable raw
-                    // component key sequence instead of recursing into union-member ordering.
-                    let a1 = self.type_application(*app1);
-                    let a2 = self.type_application(*app2);
-                    let cmp = self.compare_application_component(a1.base, a2.base);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                    for (arg1, arg2) in a1.args.iter().zip(a2.args.iter()) {
-                        let cmp = self.compare_application_component(*arg1, *arg2);
+                    // component key sequence instead of recursing into union-member
+                    // ordering. Components (base followed by each type argument)
+                    // were pre-fetched into `app_components`, so this needs no
+                    // interner lookups.
+                    if let (Some(ca), Some(cb)) = (&a.app_components, &b.app_components) {
+                        for (ka, kb) in ca.iter().zip(cb.iter()) {
+                            let cmp = Self::compare_app_component_key(ka, kb);
+                            if cmp != Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        let cmp = ca.len().cmp(&cb.len());
                         if cmp != Ordering::Equal {
                             return cmp;
                         }
-                    }
-                    let cmp = a1.args.len().cmp(&a2.args.len());
-                    if cmp != Ordering::Equal {
-                        return cmp;
                     }
                 }
                 _ => {}
@@ -695,39 +770,6 @@ impl TypeInterner {
             TypeData::Error => 32,
             TypeData::UnresolvedTypeName(_) => 33,
         }
-    }
-
-    fn compare_application_component(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        if a == b {
-            return std::cmp::Ordering::Equal;
-        }
-
-        match (Self::builtin_sort_key(a), Self::builtin_sort_key(b)) {
-            (Some(ka), Some(kb)) => return ka.cmp(&kb).then_with(|| a.0.cmp(&b.0)),
-            (Some(ka), None) => return ka.cmp(&100),
-            (None, Some(kb)) => return 100u32.cmp(&kb),
-            (None, None) => {}
-        }
-
-        if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
-            let rank_cmp = Self::type_data_rank(&data_a).cmp(&Self::type_data_rank(&data_b));
-            if rank_cmp != std::cmp::Ordering::Equal {
-                return rank_cmp;
-            }
-
-            match (&data_a, &data_b) {
-                (TypeData::Lazy(def_a), TypeData::Lazy(def_b))
-                | (TypeData::Enum(def_a, _), TypeData::Enum(def_b, _)) => {
-                    let cmp = def_a.0.cmp(&def_b.0);
-                    if cmp != std::cmp::Ordering::Equal {
-                        return cmp;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        a.0.cmp(&b.0)
     }
 
     /// Sort union members using pre-cached lookups to avoid redundant `DashMap` reads.
