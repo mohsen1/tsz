@@ -766,22 +766,23 @@ impl<'a> CheckerState<'a> {
         pre_resolution_object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
-        if !crate::query_boundaries::common::is_type_parameter(
-            self.ctx.types,
-            pre_resolution_object_type,
-        ) || !crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
-            || !crate::query_boundaries::common::type_parameter_constraint(
+        let symbol_only_constraint =
+            crate::query_boundaries::common::is_type_parameter(
                 self.ctx.types,
-                index_type,
-            )
-            .is_some_and(|constraint| {
-                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                pre_resolution_object_type,
+            ) && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+                && crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
-                    constraint,
+                    index_type,
                 )
-            })
-            || self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
-        {
+                .is_some_and(|constraint| {
+                    crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                        self.ctx.types,
+                        constraint,
+                    )
+                })
+                && !self.is_valid_index_for_type_param(index_type, pre_resolution_object_type);
+        if !symbol_only_constraint {
             return false;
         }
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -826,12 +827,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut current = pre_resolution_object;
-        // Follow the constraint chain so a type parameter bounded by another
-        // type parameter still reaches the concrete object constraint. The bound
-        // also terminates a pathological self-referential constraint cycle.
+        // Advance `current` up the constraint chain until it reaches a concrete
+        // (non-type-parameter) constraint, then decide indexability against that
+        // constraint's apparent type. The depth bound also terminates a
+        // pathological self-referential constraint cycle.
         const MAX_CONSTRAINT_CHAIN_DEPTH: usize = 8;
-        for _ in 0..MAX_CONSTRAINT_CHAIN_DEPTH {
+        let mut current = pre_resolution_object;
+        let mut depth = 0;
+        while depth < MAX_CONSTRAINT_CHAIN_DEPTH {
+            depth += 1;
             let constraint = crate::query_boundaries::common::type_parameter_constraint(
                 self.ctx.types,
                 current,
@@ -845,15 +849,15 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .resolve_element_access_type(apparent, index_type, None);
-            if member != TypeId::ERROR && member != TypeId::UNDEFINED {
-                return Some(
-                    self.ctx
-                        .types
-                        .factory()
-                        .index_access(pre_resolution_object, index_type),
-                );
+            if member == TypeId::ERROR || member == TypeId::UNDEFINED {
+                return None;
             }
-            return None;
+            return Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .index_access(pre_resolution_object, index_type),
+            );
         }
         None
     }
