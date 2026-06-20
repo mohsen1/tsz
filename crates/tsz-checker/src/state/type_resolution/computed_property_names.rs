@@ -230,6 +230,13 @@ impl<'a> CheckerState<'a> {
             return Some(name);
         }
         let sym_id = self.resolve_computed_property_symbol_in_arena(arena, computed.expression)?;
+        // Canonicalize to the declaring binder's symbol id so a cross-file
+        // interface member keyed here agrees with the same `const`'s key reached
+        // through a different import path (e.g. a fresh object literal's
+        // directly-imported `[matcher]`). Without this the member atom embeds
+        // whichever per-file alias copy resolved here, producing a spurious
+        // TS2353/TS2561 excess-property mismatch.
+        let sym_id = crate::types_domain::computed_names::follow_import_aliases(&self.ctx, sym_id);
         Some(format!("__unique_{}", sym_id.0))
     }
 

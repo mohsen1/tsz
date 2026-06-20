@@ -115,6 +115,33 @@ export const lit = { [wireTag]: () => 1 };
     assert_clean(&diags);
 }
 
+#[test]
+fn merged_regular_symbol_interface_member_resolves() {
+    // #14129: a *regular* `symbol` const (not `unique symbol`) name-merged with
+    // `type matcher = typeof matcher`, imported across modules and used as a
+    // computed interface key, must resolve to the value's `symbol` type — not
+    // the type alias body — so it is a valid computed property name (no TS2464).
+    let diags = check(
+        r#"
+export declare const matcher: symbol;
+export type matcher = typeof matcher;
+"#,
+        r#"
+import { matcher } from "./symbols";
+interface Matcher { [matcher](): number; }
+declare const b: Matcher;
+const n: number = b[matcher]();
+"#,
+    );
+    assert_clean(&diags);
+}
+
+// NOTE: re-export-chain coverage (#14129) lives in the CLI end-to-end suite
+// `crates/tsz-cli/tests/symbol_keyed_member_cross_arena_cli_tests.rs`. The
+// in-crate global-index harness builds a single merged binder and does not
+// reproduce the driver's per-file cross-arena alias delegation, so a barrel
+// re-export hop cannot be exercised here.
+
 // ── controls: trigger is cross-file + name-merge specifically ─────────────────
 
 #[test]

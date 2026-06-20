@@ -481,3 +481,70 @@ fn genuine_parallel_disposable_delegation_matches_sequential() {
         8,
     );
 }
+
+/// Forced-parallel witness for the still-open #13862 materialization campaign.
+///
+/// `dom_element_heritage_clean_sequential` proves the *default* (DOM-gated
+/// sequential) schedule is correct. This test pins the *forced-parallel*
+/// schedule that the gate currently suppresses: when the DOM serialization gate
+/// is lifted (`TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK[_TINY]`), sibling fresh
+/// per-file checkers race on deep-heritage DOM/SVG interface materialization
+/// (`SVGGraphicsElement -> SVGElement -> Element -> Node`) and a reader's
+/// relation can observe a heritage-thin body, producing a schedule-dependent
+/// cluster of false `TS2345` ("`SVGGraphicsElement` is missing the following
+/// properties from type 'Node': ...").
+///
+/// Confirmed contamination vectors (all on `main`, monotone publication
+/// default-on): the per-file `TypeEnvironment` rebuild, the program-shared
+/// `DefinitionStore` first-form/last-writer window before a def's first
+/// *finalized* publish, and the `shared_lib_type_cache`
+/// (`lib_resolution.rs` `resolve_lib_type_by_name`, which adopts a sibling's
+/// cached interface `TypeId` whenever `cached_lib_type_is_usable` passes —
+/// that check validates body-presence, not heritage-completeness). Priming the
+/// referenced lib-interface heritage closure in the sequential prime pass plus
+/// freeze/defer does **not** close it, because the divergence is driven by the
+/// per-worker env rebuild and the shared-cache adoption, not only the
+/// `DefinitionStore`. Lifting the gate requires the complete + deterministic
+/// materialization campaign tracked in #13862 / #13861.
+///
+/// `#[ignore]`d (repo known-bug-witness convention): un-ignoring it reproduces
+/// the open non-determinism deterministically across the attempt loop.
+#[test]
+#[ignore = "open bug #13862: forced-parallel DOM/SVG deep-heritage materialization is schedule-dependent"]
+fn forced_parallel_dom_heritage_matches_sequential_witness() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping #13862 forced-parallel DOM witness: tsz binary not found");
+        return;
+    };
+    // Each file references a distinct deep-heritage DOM element interface and a
+    // shared `SVGGraphicsElement`, both asserted assignable to `Node` via
+    // `appendChild`. Binders vary per file (anti-hardcoding discipline).
+    let temp = TempDir::new("dom_heritage_parallel").expect("temp dir");
+    for (i, elem) in DOM_ELEMENT_NAMES.iter().enumerate() {
+        let contents = format!(
+            "export function attach_{elem}(node: HTML{elem}Element): Node {{\n\
+             \x20   const host = document.createElement(\"div\");\n\
+             \x20   host.appendChild(node);\n\
+             \x20   const shape: SVGGraphicsElement =\n\
+             \x20       document.createElementNS(\"http://www.w3.org/2000/svg\", \"g\");\n\
+             \x20   host.appendChild(shape);\n\
+             \x20   return host;\n\
+             }}\n"
+        );
+        std::fs::write(temp.path.join(format!("f{i}.ts")), contents).expect("write fixture file");
+    }
+    std::fs::write(temp.path.join("tsconfig.json"), DOM_HERITAGE_TSCONFIG).expect("write tsconfig");
+
+    let sequential = run_project(&tsz_bin, &temp.path, false);
+    assert!(
+        !sequential.contains("error TS"),
+        "sequential baseline must be clean (matches tsc); got:\n{sequential}"
+    );
+    for attempt in 0..8 {
+        let parallel = run_project_tiny_parallel(&tsz_bin, &temp.path);
+        assert_eq!(
+            parallel, sequential,
+            "forced-parallel DOM heritage diverged from sequential on attempt {attempt}"
+        );
+    }
+}
