@@ -551,6 +551,10 @@ FILE_LINE_LIMIT_CHECKS = [
         2608,
     ),
     # Emitter property/element access: split by access kind per §19.
+    # Bumped by 4 (1499->1503) for the ES5 optional-chain `this`-receiver fix:
+    # the four leaf downlevel branches (property/element x simple/non-simple)
+    # each record `optional_chain_sync_tail_start` so a consuming optional call
+    # can splice the captured receiver inside the nullish guard.
     (
         "Emitter boundary: emitter/expressions/access size ratchet",
         ROOT
@@ -560,7 +564,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "expressions"
         / "access.rs",
-        1499,
+        1503,
     ),
     # --- Blanket coverage batch: all production files > 2000 lines per §19 ---
     # These entries pin the current baseline and prevent silent growth.
