@@ -1374,6 +1374,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if self.empty_object_with_nullish_target(target).is_some() {
                 return Some(true);
             }
+            // A deferred conditional target (`T extends X ? A : B`) resolves to
+            // one of its branches once instantiated, so `unknown` is assignable
+            // to it exactly when every branch accepts `unknown` — i.e. each
+            // branch is itself a top type. tsc accepts `unknown` against
+            // `T extends X ? unknown : unknown` for this reason. Defer to the
+            // structural check, whose `subtype_of_conditional_target` rule
+            // requires the source to relate to *both* branches, instead of
+            // rejecting a top-type source here at the simple fast path.
+            if matches!(self.interner.lookup(target), Some(TypeData::Conditional(_))) {
+                return None;
+            }
             return Some(false);
         }
 
