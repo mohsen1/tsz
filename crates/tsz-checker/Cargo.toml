@@ -752,6 +752,9 @@ path = "tests/ts2353_mapped_template_literal_key_tests.rs"
 name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 [[test]]
+name = "ts2353_cross_module_symbol_computed_key_tests"
+path = "tests/ts2353_cross_module_symbol_computed_key_tests.rs"
+[[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
 [[test]]

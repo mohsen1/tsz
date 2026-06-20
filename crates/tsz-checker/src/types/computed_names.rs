@@ -204,7 +204,54 @@ pub(crate) fn follow_import_aliases(ctx: &CheckerContext<'_>, mut sym_id: Symbol
         }
         sym_id = next;
     }
-    sym_id
+    canonical_binding_symbol(ctx, sym_id)
+}
+
+/// Map a binding to the `SymbolId` assigned by the binder that OWNS its
+/// declaration.
+///
+/// Cross-file resolution mints a per-binder copy of an imported binding: one
+/// declaration acquires several distinct `SymbolId`s, one per importing file's
+/// view. Re-export chains land on whichever copy `resolve_import_symbol` reached
+/// (path-dependent), while a direct import lands on the declaring binder's own
+/// id. Keying `__unique_<id>` on the copy makes a member reached through a
+/// re-export chain (e.g. `Matcher.[matcher]`) mismatch the directly-imported
+/// member of the *same* `const` in a fresh object literal — a false TS2353/
+/// TS2561. Collapsing every copy onto the declaring binder's id gives one
+/// stable identity per declaration regardless of import path, matching tsc's
+/// single-symbol model. Idempotent for symbols already owned by their declaring
+/// binder (the common case), so local bindings are unaffected.
+fn canonical_binding_symbol(ctx: &CheckerContext<'_>, sym_id: SymbolId) -> SymbolId {
+    let Some(symbol) = symbol_from_any_context(ctx, sym_id) else {
+        return sym_id;
+    };
+    let owner_file = symbol.decl_file_idx;
+    // A symbol owned by the file under check already carries its declaring
+    // binder's id, so it is canonical and needs no remapping (the common case).
+    if owner_file == u32::MAX || owner_file as usize == ctx.current_file_idx {
+        return sym_id;
+    }
+    let Some(owner_binder) = ctx.get_binder_for_file(owner_file as usize) else {
+        return sym_id;
+    };
+    let decl = if symbol.value_declaration.is_some() {
+        symbol.value_declaration
+    } else {
+        symbol.primary_declaration().unwrap_or(NodeIndex::NONE)
+    };
+    if decl.is_none() {
+        return sym_id;
+    }
+    // The binder maps a variable declaration's NAME identifier to the canonical
+    // symbol; resolve through to it so the const declaration recovers the
+    // owner-binder id (non-variable declarations are bound at the node itself).
+    let owner_arena = ctx.get_arena_for_file(owner_file);
+    let name_node = owner_arena
+        .get(decl)
+        .and_then(|node| owner_arena.get_variable_declaration(node))
+        .and_then(|var_decl| var_decl.name.into_option())
+        .unwrap_or(decl);
+    owner_binder.get_node_symbol(name_node).unwrap_or(sym_id)
 }
 
 /// Run `pred` over every (owner binder, candidate arena, declaration) triple
