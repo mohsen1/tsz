@@ -709,6 +709,38 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     .evaluate_object_index(&shape.properties, self.index_type)
             });
 
+        // A property whose declared type is a `this`-relative type
+        // (`return: this["args"]`) is stored with `this` unsubstituted. When the
+        // receiver is a plain interface its members are materialized with `this`
+        // already bound, but a *merged* receiver (e.g. the object formed from an
+        // intersection `Identity & { args: true }`) keeps the unbound `this`, so
+        // the access would leak a deferred `this[K]`. tsc substitutes `this` with
+        // the concrete receiver when reading a property off it, so reduce here
+        // using the object being indexed.
+        //
+        // Only do this when no `this`-type is otherwise in scope
+        // (`resolve_this_type` is `None`) — the exact dangling-`this` condition of
+        // the bug. When a `this`-context already exists (class-method bodies,
+        // polymorphic-`this` chains, mapped/keyof evaluation that binds `this`),
+        // the existing machinery resolves `this` correctly and must not be
+        // pre-empted. The `contains_this_type` guard keeps the common no-`this`
+        // path free of the extra work entirely.
+        let result = if crate::contains_this_type(self.evaluator.interner(), result)
+            && self
+                .evaluator
+                .resolver()
+                .resolve_this_type(self.evaluator.interner())
+                .is_none()
+        {
+            crate::instantiation::instantiate::substitute_this_type(
+                self.evaluator.interner(),
+                result,
+                self.object_type,
+            )
+        } else {
+            result
+        };
+
         // CRITICAL FIX: If we can't find the property, but the index is generic,
         // we must defer evaluation (return None) instead of returning UNDEFINED.
         // This prevents mapped type template evaluation from hardcoding UNDEFINED

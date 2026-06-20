@@ -1955,3 +1955,7 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+
+[[test]]
+name = "this_type_indexed_access_intersection_tests"
+path = "tests/this_type_indexed_access_intersection_tests.rs"
