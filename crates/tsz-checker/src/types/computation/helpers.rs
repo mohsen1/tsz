@@ -164,10 +164,26 @@ impl<'a> CheckerState<'a> {
         // the union is checked against the contextual type.
         let contextual_type = request.contextual_type;
 
-        // Preserve literal types in conditional branches so that
-        // `const x = cond ? "a" : "b"` infers `"a" | "b"` (tsc behavior).
+        // Preserve the *fresh literal* type of a branch so that
+        // `const x = cond ? "a" : "b"` infers `"a" | "b"` (tsc behavior). tsc's
+        // `checkConditionalExpression` types each branch with `checkExpression`,
+        // which keeps the fresh literal of a primitive-literal expression but
+        // still widens nested array/object literal element types via
+        // best-common-type (those go through `checkExpressionForMutableLocation`,
+        // independent of the surrounding conditional). The `preserve_literal_types`
+        // context flag models the freshness, but it *also* suppresses
+        // array/object-literal element widening, so enabling it for every branch
+        // makes `cond ? ["a", "b"] : []` keep `("a" | "b")[]` instead of widening
+        // to `string[]` — a later `.push(string)` then wrongly fails (TS2345).
+        //
+        // Scope the flag to syntactic primitive-literal branches, exactly as the
+        // `&&`/`||`/`??` logical-operator path does (see
+        // `logical_operand_is_primitive_literal`): a primitive-literal branch
+        // keeps its fresh literal, while an array/object-literal branch widens its
+        // elements like any other expression.
+        let preserve_when_true = self.logical_operand_is_primitive_literal(cond.when_true);
+        let preserve_when_false = self.logical_operand_is_primitive_literal(cond.when_false);
         let prev_preserve = self.ctx.preserve_literal_types;
-        self.ctx.preserve_literal_types = true;
 
         // tsc always evaluates BOTH branches and unions them for the result
         // type, even when the condition is a literal boolean.  This ensures
@@ -215,6 +231,7 @@ impl<'a> CheckerState<'a> {
         let true_ctx = contextual_type
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_true));
         let true_request = request.contextual_opt(true_ctx);
+        self.ctx.preserve_literal_types = prev_preserve || preserve_when_true;
         let when_true = if condition_is_false {
             // Dead branch — suppress diagnostics but still compute type.
             // Must save/restore BOTH the diagnostics vec AND the dedup set,
@@ -228,10 +245,12 @@ impl<'a> CheckerState<'a> {
             suppress_contextual_branch_ts2322(self, cond.when_true, snap);
             ty
         };
+        self.ctx.preserve_literal_types = prev_preserve;
 
         let false_ctx = contextual_type
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_false));
         let false_request = request.contextual_opt(false_ctx);
+        self.ctx.preserve_literal_types = prev_preserve || preserve_when_false;
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
             self.speculative_type_of_node(cond.when_false, &false_request)
@@ -241,7 +260,6 @@ impl<'a> CheckerState<'a> {
             suppress_contextual_branch_ts2322(self, cond.when_false, snap);
             ty
         };
-
         self.ctx.preserve_literal_types = prev_preserve;
 
         // Do NOT widen branch literal types here. In tsc, conditional expressions
