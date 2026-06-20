@@ -43,6 +43,14 @@ pub(crate) fn widen_type_for_mutable_binding(db: &dyn TypeDatabase, type_id: Typ
     tsz_solver::operations::widening::widen_type_for_mutable_binding(db, type_id)
 }
 
+/// Widen a `const` declaration's fresh initializer: preserve a top-level
+/// primitive literal (or union of them) while widening the mutable members of
+/// fresh arrays/tuples/objects. `const c = cond ? ["x"] : []` → `string[]`,
+/// `const c = cond ? "x" : "y"` → `"x" | "y"`.
+pub(crate) fn widen_const_initializer(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::widen_const_initializer(db, type_id)
+}
+
 /// Whether `type_id` is a *plain* object/array shape: `Object`,
 /// `ObjectWithIndex`, `Array`, or `Tuple` only. Excludes `Function`,
 /// `Callable`, `Mapped`, `Intersection`, `TypeParameter`, and `Lazy`.
