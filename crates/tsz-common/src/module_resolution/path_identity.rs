@@ -127,10 +127,31 @@ pub fn resolve_relative_slash_specifier(base_dir: &str, specifier: &str) -> Opti
 /// Returns `true` when `path` contains no `.` or `..` segment, i.e. it is
 /// already lexically canonical and [`normalize_segments`] would be an identity
 /// transform. Callers on hot probe paths use this to avoid an allocation.
+///
+/// This must scan the raw text rather than [`Path::components`]: that iterator
+/// silently collapses *interior* `.` segments, so `a/./b` yields the same
+/// components as `a/b` and would be misreported as already-normalized. But
+/// [`normalize_segments`] rebuilds from components and therefore *does* strip
+/// that interior `.`, so trusting `components` here let the fast path return
+/// `a/./b` verbatim while a direct `normalize_segments` call returned `a/b` —
+/// two textual spellings for one file, defeating the textual module identity
+/// this module exists to keep stable (e.g. a `package.json` `main`/`types`
+/// entry written `"./dist/index.js"` resolving to `pkg/./dist/index.js`).
 pub fn is_already_normalized(path: &Path) -> bool {
-    !path
-        .components()
-        .any(|c| matches!(c, Component::CurDir | Component::ParentDir))
+    match path.to_str() {
+        // Scan textual segments so an interior `.` (invisible to `components`)
+        // is still witnessed; a leading `.` and any `..` are caught here too.
+        Some(text) => !text
+            .split(std::path::is_separator)
+            .any(|segment| segment == "." || segment == ".."),
+        // Non-UTF-8 path: fall back to the component scan. This forgoes the
+        // interior-`.` correction (the owned `normalize_segments` rebuild below
+        // is always correct, so this only risks taking the borrow fast path for
+        // a non-UTF-8 path that has an interior `.`).
+        None => !path
+            .components()
+            .any(|c| matches!(c, Component::CurDir | Component::ParentDir)),
+    }
 }
 
 #[cfg(test)]
@@ -255,10 +276,13 @@ mod tests {
         // Already-canonical paths take the borrow fast path.
         assert!(is_already_normalized(Path::new("/a/b/c.ts")));
         assert!(is_already_normalized(Path::new("a/b/c.ts")));
-        // `std::path::Path::components` collapses *interior* `.` (so `a/./b`
-        // already has no `CurDir` component and compares equal to `a/b` as a
-        // map key); a *leading* `.` and any `..` survive and must be normalized.
+        // A leading `.`, an *interior* `.` (which `Path::components` hides but
+        // `normalize_segments` still strips), and any `..` must all be reported
+        // as not-yet-normalized so the fast path agrees with the rebuild.
         assert!(!is_already_normalized(Path::new("./a/b")));
+        assert!(!is_already_normalized(Path::new("a/./b")));
+        assert!(!is_already_normalized(Path::new("/pkg/./dist/index.d.ts")));
+        assert!(!is_already_normalized(Path::new("a/b/.")));
         assert!(!is_already_normalized(Path::new("a/../b")));
         // Any path the fast path skips must be byte-identical after normalizing,
         // so taking the borrow path never changes the resulting identity.
@@ -268,5 +292,23 @@ mod tests {
                 assert_eq!(normalize_segments(p), PathBuf::from(already));
             }
         }
+        // Conversely, every path the fast path declines must be exactly what the
+        // owned rebuild produces — the fast path and `normalize_segments` agree
+        // on one textual spelling. Interior `.` is the case that regressed.
+        for needs_norm in [
+            "a/./b",
+            "/pkg/./dist/index.d.ts",
+            "a/b/.",
+            "./a/b",
+            "a/../b",
+        ] {
+            let p = Path::new(needs_norm);
+            assert!(!is_already_normalized(p), "{needs_norm} is not canonical");
+        }
+        assert_eq!(normalize_segments(Path::new("a/./b")), PathBuf::from("a/b"));
+        assert_eq!(
+            normalize_segments(Path::new("/pkg/./dist/index.d.ts")),
+            PathBuf::from("/pkg/dist/index.d.ts")
+        );
     }
 }
