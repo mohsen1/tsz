@@ -442,6 +442,11 @@ impl CheckerState<'_> {
 
         let text = Self::cross_arena_expression_name_text(arena, computed.expression)?;
         let sym_id = resolve_symbol(&text)?;
+        // `resolve_symbol` resolves in the binder of the file computing the alias
+        // body, so a re-exported symbol lands on a per-file alias copy. Canonicalize
+        // to the declaring binder's id so this `[k]: T` member key agrees with the
+        // same `const`'s key minted on any other import path (matching #14126).
+        let sym_id = crate::types_domain::computed_names::follow_import_aliases(&self.ctx, sym_id);
         self.cross_arena_symbol_is_unique(sym_id)
             .then(|| format!("__unique_{}", sym_id.0))
     }

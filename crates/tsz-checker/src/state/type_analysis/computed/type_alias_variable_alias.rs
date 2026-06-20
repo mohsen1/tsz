@@ -1693,6 +1693,18 @@ impl<'a> CheckerState<'a> {
                         module_name,
                     );
 
+                    // TYPE_ALIAS + VALUE merge (`const x = Symbol.for(...)` paired
+                    // with `type x = typeof x`): a value-context import resolves the
+                    // VALUE declaration's type, not the type-alias body. See helper.
+                    if let Some(result) = self.imported_merged_type_alias_value_type(
+                        export_sym_id,
+                        sym_id,
+                        module_name,
+                        export_name,
+                    ) {
+                        return (result, Vec::new());
+                    }
+
                     // TYPE_ALIAS + ALIAS merge: cache type alias body for type contexts,
                     // return namespace type for value contexts.
                     if let Some(alias_id) =
