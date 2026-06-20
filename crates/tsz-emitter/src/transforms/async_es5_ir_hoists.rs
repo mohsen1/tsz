@@ -94,7 +94,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     continue;
                 }
                 IRNode::VarDecl { name, initializer } if initializer.is_none() => {
-                    current_group.push(name.to_string());
+                    current_group.push(name.as_ref().to_string());
                     statements.remove(i);
                     continue;
                 }

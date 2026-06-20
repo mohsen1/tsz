@@ -640,6 +640,25 @@ impl<'a> TypeLowering<'a> {
             if let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression) {
                 return Some(self.interner.intern_string(&symbol_name));
             }
+            // A direct string/numeric literal inside `[...]` is a statically known
+            // property name (tsc `getPropertyNameForPropertyNameNode`), independent
+            // of any resolver: `['x']` and `[1]` key the same members as `'x'`/`1`.
+            // Resolve it syntactically so lowering paths that wire no computed-name
+            // resolver (the global/module-augmentation merge host) keep the member
+            // instead of dropping it as late-bound — a false TS2339 on
+            // `declare global { interface Window { ['$_TSR']?: T } }`.
+            if let Some(expr_node) = self.arena.get(computed.expression)
+                && let Some(lit_data) = self.arena.get_literal(expr_node)
+                && !lit_data.text.is_empty()
+            {
+                if expr_node.is_numeric_literal()
+                    && let Some(canonical) =
+                        tsz_solver::utils::canonicalize_numeric_name(&lit_data.text)
+                {
+                    return Some(self.interner.intern_string(&canonical));
+                }
+                return Some(self.interner.intern_string(&lit_data.text));
+            }
         }
         None
     }

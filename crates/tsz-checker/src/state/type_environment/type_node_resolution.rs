@@ -1044,15 +1044,23 @@ impl<'a> CheckerState<'a> {
         // from the Window interface (the more specific type member).
         // This ensures properties like `name` on Window are found before
         // falling back to globalThis resolution.
-        if base_display == "Window & typeof globalThis"
-            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
-        {
-            let prop_result = crate::query_boundaries::property_access::resolve_property_access(
-                self.ctx.types,
-                window_type,
-                self.ctx.types.intern_string(name),
-            );
-            if let Some(type_id) = prop_result.success_type() {
+        if base_display == "Window & typeof globalThis" {
+            if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
+                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    window_type,
+                    self.ctx.types.intern_string(name),
+                );
+                if let Some(type_id) = prop_result.success_type() {
+                    return type_id;
+                }
+            }
+            // The lib `Window` type does not carry `declare global { interface
+            // Window { ... } }` augmentation members (e.g. a computed/string key
+            // like `[GLOBAL_TSR]`). Consult the augmentation map before erroring,
+            // matching tsc, which finds the member on the `Window` arm of
+            // `window: Window & typeof globalThis`.
+            if let Some(type_id) = self.resolve_augmentation_property_by_name("Window", name) {
                 return type_id;
             }
         }
