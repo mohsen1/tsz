@@ -9,7 +9,7 @@ use super::super::*;
 
 /// The checker target must be the exact emitter target — both are the same
 /// `tsz_common` `ScriptTarget`. A historical collapse mapped `ES2021`..`ES2025`
-/// to `ESNext`, which made the checker treat those targets as ESNext and
+/// to `ESNext`, which made the checker treat those targets as `ESNext` and
 /// silently skip every target-gated diagnostic in that range (e.g. the
 /// `useDefineForClassFields` default at `ES2022`, the `ES2024` regex-`v`-flag
 /// gate, and the `using`/`await using` disposable-global checks).
