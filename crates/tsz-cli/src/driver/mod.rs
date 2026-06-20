@@ -20,3 +20,7 @@ pub(crate) use self::core::with_types_versions_env;
 #[cfg(test)]
 #[path = "cross_file_user_interface_name_override_tests.rs"]
 mod cross_file_user_interface_name_override_tests;
+
+#[cfg(test)]
+#[path = "declare_global_interface_keyof_merge_tests.rs"]
+mod declare_global_interface_keyof_merge_tests;

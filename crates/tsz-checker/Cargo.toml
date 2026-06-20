@@ -581,6 +581,9 @@ path = "tests/hkt_self_augmentation_keyof_repro.rs"
 name = "hkt_cross_file_augmentation_13653_repro"
 path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
 [[test]]
+name = "declare_global_interface_keyof_merge_tests"
+path = "tests/declare_global_interface_keyof_merge_tests.rs"
+[[test]]
 name = "hkt_typeof_uri_instance_assignability_13930_repro"
 path = "tests/hkt_typeof_uri_instance_assignability_13930_repro.rs"
 [[test]]
