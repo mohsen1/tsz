@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
+import { PERF_TIMED_CANARY_PROJECT_ROWS } from "./project-rows.mjs";
+
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
 const runner = fs.readFileSync("scripts/bench/bench-vs-tsgo.sh", "utf8");
 const websiteData = fs.readFileSync(
@@ -80,6 +82,7 @@ assert.deepEqual(
     "algorithmic-constraint",
     "algorithmic-mapped",
     "projects",
+    "bench-canaries",
     "large-ts-repo",
   ],
   "bench workflow shard labels should stay explicit when adding timed benchmark families",
@@ -139,6 +142,17 @@ assert.match(
   websiteData,
   /Recursive utility aliases\|Indexed access hotspot\|Remapped accessor hotspot\|Conditional infer hotspot\|Object spread hotspot\|Contextual callback hotspot/,
   "website benchmark category logic should recognize every project-hotspots shard row family",
+);
+
+// The dedicated passing-canary perf shard must time exactly the rows opted in
+// via PERF_TIMED_CANARY_PROJECT_ROWS, so the single source of truth in
+// project-rows.mjs cannot drift away from the bench workflow filter.
+const benchCanariesFilter = shardFilters.find((filter) => filter.label === "bench-canaries");
+assert.ok(benchCanariesFilter, "bench workflow should have a dedicated bench-canaries shard");
+assert.deepEqual(
+  [...benchCanariesFilter.pattern.split("|")].sort(),
+  [...PERF_TIMED_CANARY_PROJECT_ROWS].sort(),
+  "bench-canaries shard filter must match PERF_TIMED_CANARY_PROJECT_ROWS exactly",
 );
 
 console.log("bench workflow micro coverage tests passed");
