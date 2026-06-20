@@ -1220,6 +1220,20 @@ impl<'a> CheckerState<'a> {
     /// (it does not re-apply the suppression predicates or touch the cap
     /// counter), and only when a diagnostic is actually being emitted.
     pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
+        // Memoize per reference site: the same unresolved reference is
+        // re-resolved many times under demand-driven evaluation, and each
+        // revisit would otherwise repeat the full-symbol-universe scan below.
+        // See `NameResolutionDiagnostics::suggestion_scan_cache`.
+        if let Some(cached) = self
+            .ctx
+            .name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow()
+            .get(&idx)
+        {
+            return cached.clone();
+        }
+
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
@@ -1230,8 +1244,17 @@ impl<'a> CheckerState<'a> {
             tsz_binder::symbol_flags::VALUE
         };
 
-        self.find_similar_identifiers(name, idx, suggestion_meaning)
-            .unwrap_or_default()
+        let suggestions = self
+            .find_similar_identifiers(name, idx, suggestion_meaning)
+            .unwrap_or_default();
+
+        self.ctx
+            .name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow_mut()
+            .insert(idx, suggestions.clone());
+
+        suggestions
     }
 
     /// Report TS2318: Cannot find global type 'X' at a raw source position.
