@@ -697,6 +697,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
     }
 
+    /// Bind every `infer` in `pattern` that has no candidate yet to its
+    /// no-candidate default, mirroring tsc's `getInferredType` for an inference
+    /// variable with zero candidates: the declared constraint when present,
+    /// otherwise `fallback`. Callers pass `unknown` for a plain `infer`
+    /// position and `unknown[]` for a rest `...infer T` position. Never
+    /// overwrites a binding a matched position already produced.
+    fn bind_unmatched_infer_defaults(
+        &self,
+        pattern: TypeId,
+        fallback: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+    ) {
+        let mut visited = FxHashSet::default();
+        self.for_each_infer(
+            pattern,
+            &mut |info| {
+                let default_ty = info.constraint.unwrap_or(fallback);
+                bindings.entry(info.name).or_insert(default_ty);
+                true
+            },
+            &mut visited,
+        );
+    }
+
     /// Bind an inferred type to an infer parameter.
     ///
     /// Handles constraint checking and merging with existing bindings.
@@ -1240,14 +1264,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // collect remaining middle elements into the rest tuple.
             let prefix_len = rest_index;
             let suffix_len = pattern_len - rest_index - 1;
-            let fixed_count = prefix_len + suffix_len;
 
-            // Source must have at least enough elements for the fixed parts
-            if source_len < fixed_count {
+            // Optional leading (prefix) elements may be absent in the source:
+            // tsc lets a short/empty source match `[(infer H)?, ...rest]` by
+            // taking the optional prefix slot(s) as absent. Only the *required*
+            // (non-optional) prefix elements plus the always-required suffix
+            // elements impose a minimum source arity. (Once any prefix element
+            // is optional a tuple type cannot place a fixed element after the
+            // rest — TS1257 — so a partially-absent prefix implies an empty
+            // suffix; the general arithmetic below stays correct regardless.)
+            let required_prefix_len = pattern_elems[..prefix_len]
+                .iter()
+                .filter(|elem| !elem.optional)
+                .count();
+            if source_len < required_prefix_len + suffix_len {
                 return false;
             }
 
             let rest_source_end = source_len - suffix_len;
+            // Number of prefix slots the source actually fills. Any remaining
+            // prefix slots are necessarily optional (required ones come first
+            // and are covered by the arity check above) and read as absent.
+            let present_prefix_len = std::cmp::min(prefix_len, rest_source_end);
 
             // Collect the fixed prefix and suffix `(source, pattern)` pairs.
             // These are all co-located *covariant* tuple positions: when the
@@ -1261,8 +1299,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // branch. The fixed-slot validity checks (no nested rest, optional
             // source cannot fill a required slot) stay eager so an invalid
             // shape rejects before any inference work.
-            let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_count);
-            for i in 0..prefix_len {
+            let mut fixed_pairs: Vec<(TypeId, TypeId)> =
+                Vec::with_capacity(present_prefix_len + suffix_len);
+            for i in 0..present_prefix_len {
                 if !self.push_fixed_tuple_pair(
                     &source_elems[i],
                     &pattern_elems[i],
@@ -1295,6 +1334,50 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return false;
             }
 
+            let pattern_rest_type = pattern_elems[rest_index].type_id;
+
+            if present_prefix_len < prefix_len {
+                // The source did not fill the entire prefix, so the trailing
+                // optional prefix slots are absent and the rest slot has no
+                // source elements to match (the residual is empty). tsc gives an
+                // inference variable with zero candidates its declared
+                // constraint, or its position default otherwise: `unknown` for a
+                // plain `infer`, `unknown[]` for a rest `...infer T`. Bind those
+                // defaults explicitly so the conditional takes its true branch
+                // with the bindings tsc produces (e.g.
+                // `[] extends [(infer H)?, ...infer T]` -> `H = unknown`,
+                // `T = unknown[]`) instead of being rejected on arity or
+                // collapsing the empty residual into `T = []`.
+                for pattern_elem in &pattern_elems[present_prefix_len..prefix_len] {
+                    if !pattern_elem.optional {
+                        return false;
+                    }
+                    self.bind_unmatched_infer_defaults(
+                        pattern_elem.type_id,
+                        TypeId::UNKNOWN,
+                        bindings,
+                    );
+                }
+                // An unconstrained top-level `...infer T` defaults to
+                // `unknown[]`; a constrained `...infer T extends C` to `C`. Any
+                // infers nested inside a structured rest pattern default to a
+                // plain `unknown`.
+                match self.interner().lookup(pattern_rest_type) {
+                    Some(TypeData::Infer(info)) => {
+                        let default_ty = info
+                            .constraint
+                            .unwrap_or_else(|| self.interner().array(TypeId::UNKNOWN));
+                        bindings.entry(info.name).or_insert(default_ty);
+                    }
+                    _ => self.bind_unmatched_infer_defaults(
+                        pattern_rest_type,
+                        TypeId::UNKNOWN,
+                        bindings,
+                    ),
+                }
+                return true;
+            }
+
             // Match the residual source slice against the pattern's rest slot.
             // This runs *after* the merged prefix/suffix bindings so a name
             // shared between a fixed position and the rest slot (e.g.
@@ -1308,8 +1391,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // each source element's `rest`/`optional` flags and structurally
             // simplify a single-rest-non-optional residual (`[...X[]]` -> `X[]`)
             // so that `infer R` binds to the array form tsc treats as identical.
-            let residual = &source_elems[prefix_len..rest_source_end];
-            let pattern_rest_type = pattern_elems[rest_index].type_id;
+            let residual = &source_elems[present_prefix_len..rest_source_end];
             return self.match_residual_against_pattern_rest(
                 residual,
                 pattern_rest_type,
