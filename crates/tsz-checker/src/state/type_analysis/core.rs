@@ -1046,14 +1046,13 @@ impl CheckerState<'_> {
         // carry the same breaker as the merge entry points (#14111). `None`
         // signals a bail (already tripped, or this probe tripped it); cache
         // `ERROR` for the symbol on that path, matching the prior behaviour.
-        match crate::checkers_domain::with_stack_guard(None, || {
+        if let Some(type_id) = crate::checkers_domain::with_stack_guard(None, || {
             Some(self.get_type_of_symbol_inner(sym_id))
         }) {
-            Some(type_id) => type_id,
-            None => {
-                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
-                TypeId::ERROR
-            }
+            type_id
+        } else {
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            TypeId::ERROR
         }
     }
 
