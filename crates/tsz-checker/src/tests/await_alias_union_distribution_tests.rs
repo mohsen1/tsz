@@ -9,10 +9,10 @@
 //! `compute_awaited_type` never fired and the awaited type stayed
 //! `number | Promise<number>` — a spurious `TS2322` on the assignment.
 //!
-//! The fix evaluates a still-deferred operand to its structural form before the
-//! union/intersection distribution, keying purely on the structural shape (not
-//! on alias/type-parameter names). These tests vary the binder and alias names
-//! to keep that name-agnostic.
+//! The fix evaluates a still-deferred residual operand to its structural form
+//! and only retries awaiting when that exposes a union, intersection, or
+//! thenable layer. These tests vary the binder and alias names to keep that
+//! name-agnostic.
 
 use crate::test_utils::check_source_codes;
 
@@ -81,6 +81,36 @@ async function f(x: Awaitable<number | string>) {
     assert!(
         !codes.contains(&2322),
         "alias union over a union argument must unwrap each branch; got {codes:?}"
+    );
+}
+
+/// Awaiting `Promise.all` over an async mapper must preserve the awaited array
+/// application as the value type. The deferred-await fallback must not eagerly
+/// expand ordinary generic applications like arrays into structural object
+/// shapes after the Promise layer has already been unwrapped.
+#[test]
+fn await_promise_all_async_mapper_preserves_array_value_shape() {
+    let source = r#"
+interface Item {
+    ready: boolean;
+}
+type Metadata = {
+    updated: boolean;
+};
+declare function scan(item: Item): Promise<Metadata | undefined>;
+
+async function collect(items: Item[]): Promise<void> {
+    const pairs: [Item, Metadata | undefined][] = await Promise.all(
+        items
+            .filter((item) => item.ready)
+            .map(async (item) => [item, await scan(item)])
+    );
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "`Promise.all` over an async mapper should await to the array value type without structural over-expansion; got {codes:?}"
     );
 }
 
