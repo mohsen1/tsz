@@ -386,6 +386,26 @@ pub fn is_intersection_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Intersection(_)))
 }
 
+/// Whether `type_id` is an object that was synthesized by merging the object
+/// members of an object-only intersection (`{ a } & { b }`). Carries the
+/// `ObjectFlags::INTERSECTION_MERGED` marker, which is part of the shape's
+/// identity, so it never aliases a plain object literal of the same shape.
+/// Diagnostics use this to recover that a target really is an intersection even
+/// after the merge collapsed the structural `Intersection`.
+pub fn is_merged_intersection_object(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let shape_id = match types.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+        _ => return false,
+    };
+    types
+        .object_shape(shape_id)
+        .flags
+        .contains(crate::types::ObjectFlags::INTERSECTION_MERGED)
+}
+
 /// Check if a type is an array type.
 pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {

@@ -509,6 +509,11 @@ impl TypeInterner {
             // display as `{ x: string; } & { x: string; }` everywhere.
             if raw_intersection != merged_id && !original_objects.contains(&merged_id) {
                 self.store_display_alias(merged_id, raw_intersection);
+                // Stable structural provenance for diagnostics. Unlike the display
+                // alias above, this is never repainted by a later `Application`
+                // evaluation (`Wrap<X> = X & B`), so an intersection target can be
+                // elaborated member-by-member however it was constructed.
+                self.store_merged_intersection_origin(merged_id, raw_intersection);
             }
         }
 
@@ -915,27 +920,57 @@ impl TypeInterner {
         // Sort properties by name for consistent hashing
         merged_props.sort_by_key(|p| p.name.0);
 
-        let merged_flags = if merged_fresh {
+        let base_flags = if merged_fresh {
             ObjectFlags::FRESH_LITERAL
         } else {
             ObjectFlags::empty()
         };
+        let has_index = merged_string_index.is_some() || merged_number_index.is_some();
 
-        let shape = ObjectShape {
-            flags: merged_flags,
-            properties: merged_props,
-            string_index: merged_string_index,
-            number_index: merged_number_index,
-            symbol: None,
+        let intern_shape = |this: &Self, flags: ObjectFlags, properties: Vec<PropertyInfo>| {
+            let shape_id = this.intern_object_shape(ObjectShape {
+                flags,
+                properties,
+                string_index: merged_string_index,
+                number_index: merged_number_index,
+                symbol: None,
+            });
+            if has_index {
+                this.intern(TypeData::ObjectWithIndex(shape_id))
+            } else {
+                this.intern(TypeData::Object(shape_id))
+            }
         };
 
-        let shape_id = self.intern_object_shape(shape);
-        let result = if self.object_shape(shape_id).string_index.is_some()
-            || self.object_shape(shape_id).number_index.is_some()
-        {
-            self.intern(TypeData::ObjectWithIndex(shape_id))
-        } else {
-            self.intern(TypeData::Object(shape_id))
+        // Intern the plain merge first (consuming `merged_props`), then decide
+        // whether to stamp it `INTERSECTION_MERGED`. The flag applies only when
+        // the merge genuinely loses the structural `Intersection` view tsc keeps
+        // for an anonymous object intersection (`{ a } & { b }`):
+        //   * Every member must be an anonymous (symbol-less) object. A nominal
+        //     class/interface instance intersection (`Derived & Base`) is reduced
+        //     by tsc through nominal subtyping and elaborated against the nominal
+        //     name, never as an `A & B` intersection, so it must not be flagged.
+        //   * The merge must widen — produce a new combined object rather than
+        //     reduce to one of its own members (`Base & Derived` where
+        //     `Derived <: Base` already carries every merged property is that
+        //     member; keep its identity intact).
+        // Otherwise the merged object is a distinct identity diagnostics can
+        // recognize as an intersection target — the disambiguation the display
+        // alias alone cannot provide, since a merged object otherwise interns
+        // identically to a plain object of that shape. Only an anonymous merge
+        // can be flagged, so the properties are copied for the (rare) flagged
+        // re-intern only in that case; nominal merges consume `merged_props`
+        // with no copy.
+        let all_anonymous = objects.iter().all(|obj| obj.symbol.is_none());
+        let flag_properties = all_anonymous.then(|| merged_props.clone());
+        let plain_result = intern_shape(self, base_flags, merged_props);
+        let result = match flag_properties {
+            Some(properties) if !members.contains(&plain_result) => intern_shape(
+                self,
+                base_flags | ObjectFlags::INTERSECTION_MERGED,
+                properties,
+            ),
+            _ => plain_result,
         };
 
         // Propagate display properties from input objects to the merged result.

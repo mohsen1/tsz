@@ -1202,6 +1202,10 @@ pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::is_intersection_type(db, type_id)
 }
 
+pub(crate) fn is_merged_intersection_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_merged_intersection_object(db, type_id)
+}
+
 pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::has_call_signatures(db, type_id)
 }

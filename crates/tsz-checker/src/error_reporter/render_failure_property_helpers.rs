@@ -786,17 +786,32 @@ impl<'a> CheckerState<'a> {
             return Some((direct, false));
         }
         // tsz eagerly merges concrete object-intersections (`{ a } & { b }`) into
-        // a single object (`{ a; b }`) and records a display alias back to the
-        // original `{ a } & { b }` intersection so the formatter can still print
-        // the `&` form. Recover that intersection here so a missing-property
-        // mismatch reports member-by-member like tsc ("required in type 'B'")
-        // instead of collapsing to the merged object and reporting a flat
-        // TS2741/TS2739 against `{ a; b }`.
+        // a single object (`{ a; b }`) so member lookup is O(1). The merged object
+        // carries the `INTERSECTION_MERGED` shape flag and a stable
+        // `merged_intersection_origin` back to the original `Intersection`.
+        // Recover that intersection here so a missing-property mismatch is
+        // elaborated member-by-member like tsc ("required in type 'B'") with the
+        // top-level `TS2322`, instead of collapsing to the merged object and
+        // reporting a flat `TS2741`/`TS2739` against `{ a; b }`.
         //
-        // The merged object interns identically to a plain object literal of the
-        // same shape, so its `TypeId` (and display alias) alone cannot tell the
-        // two apart. Gate the recovery on the target *annotation* actually being
-        // written as an intersection, which is the only reliable signal.
+        // The flag is part of the merged object's identity, so it never aliases a
+        // plain object literal of the same shape — it is the reliable structural
+        // signal that the target genuinely is an intersection, regardless of how
+        // it was produced (a written `A & B`, a generic instantiation
+        // `Wrap<X> = X & B`, an alias, a conditional, or an `infer` capture). The
+        // origin map (unlike the display alias, which a later `Application`
+        // evaluation repaints) always yields the original members for the
+        // elaboration. A written intersection annotation is honored as a fallback
+        // for the rare resolver gap where the flagged merge sits behind a defer
+        // the diagnostic target does not observe.
+        if let Some(origin) = [evaluated, target, target_type].into_iter().find_map(|t| {
+            diagnostic_query::is_merged_intersection_object(self.ctx.types, t)
+                .then(|| self.ctx.types.get_merged_intersection_origin(t))
+                .flatten()
+                .filter(|&origin| diagnostic_query::is_intersection_type(self.ctx.types, origin))
+        }) {
+            return Some((origin, true));
+        }
         if !self.target_annotation_denotes_intersection(anchor_idx) {
             return None;
         }
