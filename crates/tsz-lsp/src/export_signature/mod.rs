@@ -221,8 +221,8 @@ impl ExportSignatureInput {
         let mut export_names: Vec<&str> =
             surface.module_exports.keys().map(String::as_str).collect();
         export_names.sort();
-        for name in &export_names {
-            if let Some(entry) = surface.module_exports.get(*name) {
+        for &name in &export_names {
+            if let Some(entry) = surface.module_exports.get(name) {
                 input
                     .exports
                     .push((name.to_string(), entry.flags, entry.is_type_only));
@@ -258,8 +258,8 @@ impl ExportSignatureInput {
             .map(String::as_str)
             .collect();
         local_names.sort();
-        for name in &local_names {
-            if let Some(entry) = surface.file_exported_locals.get(*name) {
+        for &name in &local_names {
+            if let Some(entry) = surface.file_exported_locals.get(name) {
                 input
                     .exported_locals
                     .push((name.to_string(), entry.flags, entry.is_type_only));

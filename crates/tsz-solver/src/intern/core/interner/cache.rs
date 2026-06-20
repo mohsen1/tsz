@@ -147,6 +147,7 @@ const EMPTY_STRING_ENTRY: StringCacheEntry = StringCacheEntry {
 
 #[allow(dead_code)]
 impl TypeInternerCache {
+    #[allow(clippy::large_stack_arrays)]
     const fn new() -> Self {
         Self {
             lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],

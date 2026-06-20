@@ -993,7 +993,7 @@ fn test_deep_tree_topology() {
     assert_eq!(affected.len(), 6);
     for name in &["l1a.ts", "l1b.ts", "l2a.ts", "l2b.ts", "l2c.ts", "l2d.ts"] {
         assert!(
-            affected.contains(&name.to_string()),
+            affected.iter().any(|affected_name| affected_name == *name),
             "{name} should be affected"
         );
     }

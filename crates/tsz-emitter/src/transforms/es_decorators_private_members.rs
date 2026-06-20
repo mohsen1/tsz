@@ -82,7 +82,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let ctor_arg = if member.kind == MemberKind::Field {
             "null".to_string()
         } else {
-            class_alias.to_string()
+            (*class_alias).to_string()
         };
 
         // For fields/accessors, pass per-field initializer and extra-initializer arrays.
@@ -90,12 +90,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let (init_arg, extra_init_arg) = if is_field_like {
             let init = var_info.initializers_var.as_deref().unwrap_or("null");
             let extra = var_info.extra_initializers_var.as_deref().unwrap_or("null");
-            (init.to_string(), extra.to_string())
+            ((*init).to_string(), (*extra).to_string())
         } else {
             let extra = if member.is_static {
-                static_extra_initializers_var.to_string()
+                (*static_extra_initializers_var).to_string()
             } else {
-                instance_extra_initializers_var.to_string()
+                (*instance_extra_initializers_var).to_string()
             };
             ("null".to_string(), extra)
         };
@@ -504,7 +504,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let set_helper = self.helper("__classPrivateFieldSet");
             let has_helper = self.helper("__classPrivateFieldIn");
             let private_state = if member.is_static {
-                class_alias.to_string()
+                (*class_alias).to_string()
             } else {
                 self.instance_private_brand_name(class_name)
             };

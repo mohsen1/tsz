@@ -370,8 +370,8 @@ fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
             if lib_path.exists()
                 && let Ok(content) = std::fs::read_to_string(&lib_path)
             {
-                if seen_files.insert(lib_name.to_string()) {
-                    let lib_file = LibFile::from_source(lib_name.to_string(), content);
+                if seen_files.insert((*lib_name).to_string()) {
+                    let lib_file = LibFile::from_source((*lib_name).to_string(), content);
                     lib_files.push(Arc::new(lib_file));
                 }
                 break;
