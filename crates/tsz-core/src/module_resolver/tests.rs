@@ -8,6 +8,7 @@
 mod fixtures;
 
 mod cache_statistics;
+mod canonical_entry_path;
 mod conditional_types_flavor;
 mod diagnostics_ts2307;
 mod diagnostics_ts2792;
