@@ -561,6 +561,112 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Ready the relation inputs that *calling* `callee_type` consumes —
+    /// argument checking against its parameters, `this`, type-parameter bounds,
+    /// and predicate — while **deferring the return type** when the callee is
+    /// directly a function type.
+    ///
+    /// # Why (issue #13983)
+    ///
+    /// A call's return type is the call *result*: it is selected and carried as
+    /// the result type, not relationally consumed during argument checking.
+    /// [`Self::ensure_relation_input_ready`] readies the *whole* callee type,
+    /// which (transitively, via [`Self::ensure_refs_resolved`]) force-resolved
+    /// the return interface and its currently pre-flattened heritage closure on
+    /// every call — e.g. `document.getElementById("x")` lowered all of
+    /// `HTMLElement`/`Element`/`Node`/`EventTarget` just to type a call whose
+    /// result the caller may never touch. Property reads of the same interface
+    /// already stay lazy via the single-member fast path
+    /// ([`crate::state_checking::lazy_lib_member`]); this gives method-call
+    /// returns the same treatment.
+    ///
+    /// # Soundness
+    ///
+    /// The deferral is transparent, **not** a bound (contrast the rejected
+    /// static `ensure_relation_input_ready` bound in #13979): the carried result
+    /// `TypeId` is the identical `Lazy(DefId)` reference either way — only the
+    /// timing of populating the type environment with the def's body changes. A
+    /// consuming relation/evaluation forces the def on demand at the
+    /// [`crate::context::CheckerContext::resolve_lazy`] miss via
+    /// `force_def_on_miss` (the #14016 mechanism), so every resolution-dependent
+    /// path observes the same resolved type.
+    ///
+    /// Every *input* position is still readied eagerly. Only the callee's own
+    /// top-level `return_type` is replaced (with an intrinsic) before the
+    /// readiness walk; parameters keep their full structure, so a parameter that
+    /// is itself a callback (`(e: HTMLElement) => void`) still has its nested
+    /// return readied — a relation against that callback *does* consume it, and
+    /// leaving it unresolved would reintroduce the #12144 "unresolved `Lazy`
+    /// treated as compatible" hazard.
+    ///
+    /// The optimization applies only when `callee_type` is *directly* a function
+    /// type ([`tsz_solver::TypeData::Function`]); overload sets, callable
+    /// objects, and lazy/application/union callee forms take the unchanged
+    /// full-readiness path.
+    pub(crate) fn ensure_callee_relation_inputs_ready(&mut self, callee_type: TypeId) {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, callee_type)
+            && self.call_return_is_lazy_lib_deferrable(shape.return_type)
+        {
+            let inputs_probe =
+                self.ctx
+                    .types
+                    .factory()
+                    .function(crate::query_boundaries::common::FunctionShape {
+                        return_type: TypeId::UNKNOWN,
+                        ..(*shape).clone()
+                    });
+            self.ensure_relation_input_ready(inputs_probe);
+            return;
+        }
+        self.ensure_relation_input_ready(callee_type);
+    }
+
+    /// Whether a call's `return_type` may have its referenced interfaces left
+    /// unresolved during argument-checking readiness (deferred to on-demand
+    /// forcing) — see [`Self::ensure_callee_relation_inputs_ready`].
+    ///
+    /// Deferral is restricted to the **provably resolution-independent** shape:
+    /// a union of intrinsics and *bare* `Lazy(DefId)` references to
+    /// force-eligible simple lib interfaces (non-generic, unmerged, unaugmented,
+    /// unshadowed — [`Self::force_eligible_lib_def`]), with at least one such
+    /// lib reference to defer. A force-eligible lib interface resolves
+    /// identically in every requester/arena context, so populating the type
+    /// environment with its body on demand (at the consuming `resolve_lazy`
+    /// miss) yields the same resolved type the eager pre-walk would have — the
+    /// carried result `TypeId` is unchanged either way.
+    ///
+    /// Anything resolution-*dependent* in the return — type parameters,
+    /// `Application`s (e.g. `Promise<T>`, `Array<T>`), conditionals, mapped /
+    /// index-access / `infer` / template-literal types, function/object shapes,
+    /// or a `Lazy` to a non-lib / generic / augmented def — disqualifies it.
+    /// Those returns are read structurally by downstream computation (async
+    /// Promise-unwrap, index-access elaboration, `instanceof`, tuple growth,
+    /// utility-type expansion) whose results are cached as canonical node types;
+    /// deferring their refs would change computed type identity (the hazard
+    /// traced in #13979). They take the unchanged full-readiness path.
+    fn call_return_is_lazy_lib_deferrable(&self, return_type: TypeId) -> bool {
+        // Fast path for the most common return shapes (bare `void`/primitive): a
+        // single intrinsic references no def to defer, so skip the classifier
+        // walk and allocation on this per-call hot path.
+        if return_type.is_intrinsic() {
+            return false;
+        }
+        // Structural classification (union of intrinsics + bare `Lazy` refs) is
+        // owned by the solver query boundary; the checker only layers the
+        // force-eligibility (binder/symbol) judgement on each referenced def.
+        let Some(def_ids) = crate::query_boundaries::common::union_of_bare_lazy_def_ids(
+            self.ctx.types,
+            return_type,
+        ) else {
+            return false;
+        };
+        !def_ids.is_empty()
+            && def_ids
+                .iter()
+                .all(|&def_id| self.force_eligible_lib_def(def_id))
+    }
+
     // =========================================================================
     // Type Evaluation for Assignability
     // =========================================================================

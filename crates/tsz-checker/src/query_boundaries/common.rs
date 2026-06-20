@@ -1553,6 +1553,17 @@ pub(crate) fn contains_lazy_def_id(
     tsz_solver::visitor::contains_lazy_def_id(db, root, target_def_id)
 }
 
+/// If `root` is a (possibly nested) union of intrinsics and *bare*
+/// `Lazy(DefId)` references with no other structure, return the de-duplicated
+/// referenced `DefId`s; otherwise `None`. See
+/// [`tsz_solver::visitor::union_of_bare_lazy_def_ids`].
+pub(crate) fn union_of_bare_lazy_def_ids(
+    db: &dyn TypeDatabase,
+    root: TypeId,
+) -> Option<Vec<tsz_solver::def::DefId>> {
+    tsz_solver::visitor::union_of_bare_lazy_def_ids(db, root)
+}
+
 pub(crate) fn collect_type_queries(
     db: &dyn TypeDatabase,
     root: TypeId,
