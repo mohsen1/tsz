@@ -1513,6 +1513,15 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                // ES2015+ targets lower the binding pattern through the recursive
+                // `flatten` form (`tsc`'s `flattenDestructuringAssignment`), which
+                // honors default initializers and nested patterns. The ES5 path
+                // below keeps its own inline-comma shape.
+                if !self.ctx.target_es5 {
+                    self.emit_cjs_destructuring_export_flattened(decl.name, decl.initializer);
+                    continue;
+                }
+
                 // Get binding pattern elements
                 let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
                     continue;

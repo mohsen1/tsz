@@ -1372,6 +1372,153 @@ export const { a: bar2 } = { a: 2 };
     );
 }
 
+fn emit_commonjs_es2015(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+/// A binding-element default initializer in an exported pattern must survive
+/// lowering as the `tmp === void 0 ? <default> : tmp` check (matching `tsc`'s
+/// `flattenDestructuringAssignment`). Binder/property names are arbitrary so the
+/// behavior follows the structural shape, not any identifier.
+#[test]
+fn commonjs_exported_object_destructuring_preserves_default_initializer() {
+    let output = emit_commonjs_es2015("export const { first, second = 9 } = bag;\n");
+    assert!(
+        output.contains(
+            "exports.first = bag.first, _a = bag.second, exports.second = _a === void 0 ? 9 : _a;"
+        ),
+        "Object default must lower to a void-0 check; got:\n{output}"
+    );
+    // The default value must not be dropped.
+    assert!(
+        !output.contains("exports.second = bag.second;"),
+        "Default initializer must not be dropped; got:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_exported_array_destructuring_preserves_default_initializer() {
+    let output = emit_commonjs_es2015("export const [head, tail = 7] = seq;\n");
+    assert!(
+        output
+            .contains("exports.head = seq[0], _a = seq[1], exports.tail = _a === void 0 ? 7 : _a;"),
+        "Array default must lower by element index with a void-0 check; got:\n{output}"
+    );
+}
+
+/// A nested binding pattern must recurse into the corresponding access path
+/// rather than emit an empty export name.
+#[test]
+fn commonjs_exported_nested_destructuring_recurses_into_access_path() {
+    let single = emit_commonjs_es2015("export const { outer, inner: { leaf } } = root;\n");
+    assert!(
+        single.contains("exports.outer = root.outer, exports.leaf = root.inner.leaf;"),
+        "Single-element nested pattern inlines the access chain; got:\n{single}"
+    );
+    assert!(
+        !single.contains("exports. ="),
+        "Nested pattern must never produce an empty export name; got:\n{single}"
+    );
+
+    let multi = emit_commonjs_es2015("export const { outer, inner: { left, right } } = root;\n");
+    assert!(
+        multi.contains(
+            "exports.outer = root.outer, _a = root.inner, exports.left = _a.left, exports.right = _a.right;"
+        ),
+        "Multi-element nested pattern caches the intermediate access; got:\n{multi}"
+    );
+}
+
+/// An identifier source is reused inline at every access; a non-identifier
+/// source used by more than one element is cached once.
+#[test]
+fn commonjs_exported_destructuring_source_caching_matches_tsc() {
+    let ident = emit_commonjs_es2015("export const { alpha, beta } = store;\n");
+    assert!(
+        ident.contains("exports.alpha = store.alpha, exports.beta = store.beta;"),
+        "Identifier source must be reused inline (no temp); got:\n{ident}"
+    );
+
+    let call = emit_commonjs_es2015("export const { alpha, beta } = make();\n");
+    assert!(
+        call.contains("_a = make(), exports.alpha = _a.alpha, exports.beta = _a.beta;"),
+        "Non-identifier multi-use source must be cached once; got:\n{call}"
+    );
+}
+
+/// Object rest uses `__rest`; array rest uses `.slice(<index>)`.
+#[test]
+fn commonjs_exported_destructuring_rest_forms_match_tsc() {
+    let obj = emit_commonjs_es2015("export const { keep, ...others } = source;\n");
+    assert!(
+        obj.contains("exports.keep = source.keep, exports.others = __rest(source, [\"keep\"]);"),
+        "Object rest must exclude collected keys; got:\n{obj}"
+    );
+
+    let arr = emit_commonjs_es2015("export const [lead, ...remainder] = list;\n");
+    assert!(
+        arr.contains("exports.lead = list[0], exports.remainder = list.slice(1);"),
+        "Array rest must use slice at the rest index; got:\n{arr}"
+    );
+}
+
+/// Leading comments attached to a binding element in an exported pattern are
+/// printable output trivia and must move with the generated `exports.*`
+/// assignment.
+#[test]
+fn commonjs_exported_destructuring_preserves_binding_element_leading_comments() {
+    let output = emit_commonjs_es2015(
+        "export let {\n    /**\n     * retained leaf\n     */\n    pickedMethod\n} = source;\n",
+    );
+    let comment_pos = output
+        .find("retained leaf")
+        .unwrap_or_else(|| panic!("Binding-element comment must be emitted.\nOutput:\n{output}"));
+    let export_pos = output
+        .find("exports.pickedMethod = source.pickedMethod;")
+        .unwrap_or_else(|| panic!("Export assignment must be emitted.\nOutput:\n{output}"));
+    assert!(
+        comment_pos < export_pos,
+        "Binding-element leading comment must precede its export assignment.\nOutput:\n{output}"
+    );
+
+    let renamed = emit_commonjs_es2015(
+        "export let { sourceName:\n    /**\n     * renamed retained\n     */\n    renamedMethod\n} = bag;\n",
+    );
+    let renamed_comment_pos = renamed
+        .find("renamed retained")
+        .unwrap_or_else(|| panic!("Renamed binding comment must be emitted.\nOutput:\n{renamed}"));
+    let renamed_export_pos = renamed
+        .find("exports.renamedMethod = bag.sourceName;")
+        .unwrap_or_else(|| {
+            panic!("Renamed export assignment must be emitted.\nOutput:\n{renamed}")
+        });
+    assert!(
+        renamed_comment_pos < renamed_export_pos,
+        "Renamed binding-element comment must precede its export assignment.\nOutput:\n{renamed}"
+    );
+}
+
+/// Non-identifier property keys read through bracket access (string/number).
+#[test]
+fn commonjs_exported_destructuring_uses_bracket_access_for_non_identifier_keys() {
+    let output = emit_commonjs_es2015("export const { \"dash-ed\": renamed, plain } = bag;\n");
+    assert!(
+        output.contains("exports.renamed = bag[\"dash-ed\"], exports.plain = bag.plain;"),
+        "String keys must read through bracket access; got:\n{output}"
+    );
+}
+
 #[test]
 fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
     let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
