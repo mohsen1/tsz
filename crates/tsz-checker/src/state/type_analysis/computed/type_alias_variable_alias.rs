@@ -35,6 +35,26 @@ impl<'a> CheckerState<'a> {
             {
                 return (self.builtin_iterator_return_intrinsic_type(), Vec::new());
             }
+            // The unique-symbol idiom merges a value `const X = Symbol()` /
+            // `const X = Symbol.for(...)` / `const X: unique symbol` with a
+            // same-named type alias `type X = typeof X` (e.g. ts-pattern's
+            // `symbols.ts`). Both meanings denote the single `unique symbol`
+            // identity of `X`. Resolving the alias through the generic body path
+            // lowers `typeof X` by asking for the value of `X`, which re-enters
+            // this symbol while it is on the resolution stack: the lookup hits
+            // the circular guard, collapses to the error type, and caches it.
+            // Every later value- or type-position read of the merged symbol
+            // (including reads reached across a re-export chain or a namespace
+            // member access) then observes `any`, silently suppressing
+            // computed-key / indexed-access diagnostics. Resolve the value's
+            // `unique symbol` identity directly — exactly what `typeof X`
+            // denotes — which is correct for both meanings and breaks the cycle.
+            if flags & symbol_flags::VALUE != 0
+                && let Some(unique) =
+                    self.merged_self_typeof_unique_symbol_type(declarations, &escaped_name)
+            {
+                return (unique, Vec::new());
+            }
             let decl_idx = declarations
                 .iter()
                 .copied()
@@ -1983,5 +2003,83 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    /// Resolve the `unique symbol` identity of a value+type-alias symbol that
+    /// follows the self-`typeof` idiom: a `const X = Symbol()` /
+    /// `const X = Symbol.for(...)` / `const X: unique symbol` value merged with a
+    /// same-named `type X = typeof X` alias.
+    ///
+    /// Returns `Some` only when this symbol owns BOTH a self-referential
+    /// `typeof X` type-alias declaration and a unique-symbol const value
+    /// declaration, so non-idiomatic value+type-alias merges (e.g. `const X =
+    /// 5; type X = string`) keep their generic alias-body resolution. The
+    /// returned type is exactly what `typeof X` denotes, so it is correct for
+    /// both the value and type meanings of the merged symbol.
+    fn merged_self_typeof_unique_symbol_type(
+        &mut self,
+        declarations: &[NodeIndex],
+        escaped_name: &str,
+    ) -> Option<TypeId> {
+        let has_self_typeof_alias = declarations
+            .iter()
+            .copied()
+            .any(|decl_idx| self.type_alias_body_is_self_typeof(decl_idx, escaped_name));
+        if !has_self_typeof_alias {
+            return None;
+        }
+        for decl_idx in declarations.iter().copied() {
+            // Unannotated `const X = Symbol()` / `const X = Symbol.for(...)`.
+            if let Some(unique) = self.const_symbol_factory_unique_value_type(decl_idx) {
+                return Some(unique);
+            }
+            // Annotated `const X: unique symbol`.
+            if let Some(node) = self.ctx.arena.get(decl_idx)
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+                && var_decl.type_annotation.is_some()
+                && self.is_const_variable_declaration(decl_idx)
+            {
+                let upgraded = self.const_unique_symbol_value_type(
+                    decl_idx,
+                    var_decl.type_annotation,
+                    TypeId::SYMBOL,
+                );
+                if upgraded != TypeId::SYMBOL {
+                    return Some(upgraded);
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether `decl_idx` is a `type X = typeof X` declaration whose `typeof`
+    /// operand names `escaped_name` — a self-referential typeof of the merged
+    /// symbol's own value. Pure syntactic check (no symbol resolution) so it
+    /// cannot re-enter symbol-type computation for the symbol being resolved.
+    fn type_alias_body_is_self_typeof(&self, decl_idx: NodeIndex, escaped_name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            return false;
+        }
+        let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+            return false;
+        };
+        let Some(body) = self.ctx.arena.get(type_alias.type_node) else {
+            return false;
+        };
+        if body.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.ctx.arena.get_type_query(body) else {
+            return false;
+        };
+        // A self-`typeof` references a bare identifier (not a qualified name)
+        // whose text matches the merged symbol's name.
+        self.ctx
+            .arena
+            .get_identifier_text(type_query.expr_name)
+            .is_some_and(|name| name == escaped_name)
     }
 }
