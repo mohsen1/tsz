@@ -354,6 +354,37 @@ impl<'a> Printer<'a> {
         Some(read_name)
     }
 
+    /// After the source temp `value_name` has been written, emit the
+    /// default-check temp `, _c = value_name === void 0 ? <init> : value_name`
+    /// when `initializer` is present, and return the name the nested pattern
+    /// should destructure from (the fresh default temp, or `value_name` when
+    /// there is no default).
+    ///
+    /// tsc materializes a *fresh* temp for the default-checked value before
+    /// destructuring the nested pattern (mirroring `ensureIdentifier` after
+    /// `createDefaultValueCheck`), rather than reusing the source temp, e.g.
+    /// `_b = _a.a, _c = _b === void 0 ? init : _b, x = _c.x` — not
+    /// `_b = _a.a, _b = _b === void 0 ? init : _b, x = _b.x`.
+    fn emit_param_nested_default_source(
+        &mut self,
+        value_name: String,
+        initializer: NodeIndex,
+    ) -> String {
+        if initializer.is_none() {
+            return value_name;
+        }
+        let default_name = self.get_temp_var_name();
+        self.write(", ");
+        self.write(&default_name);
+        self.write(" = ");
+        self.write(&value_name);
+        self.write(" === void 0 ? ");
+        self.emit_expression(initializer);
+        self.write(" : ");
+        self.write(&value_name);
+        default_name
+    }
+
     pub(in crate::emitter) fn emit_param_object_binding_element(
         &mut self,
         elem_idx: NodeIndex,
@@ -385,20 +416,8 @@ impl<'a> Printer<'a> {
                     computed_key_temp.as_deref(),
                 );
 
-                let source_name = if elem.initializer.is_some() {
-                    let default_name = self.get_temp_var_name();
-                    self.write(", ");
-                    self.write(&default_name);
-                    self.write(" = ");
-                    self.write(&value_name);
-                    self.write(" === void 0 ? ");
-                    self.emit_expression(elem.initializer);
-                    self.write(" : ");
-                    self.write(&value_name);
-                    default_name
-                } else {
-                    value_name
-                };
+                let source_name =
+                    self.emit_param_nested_default_source(value_name, elem.initializer);
 
                 // For defaulted empty nested patterns, tsc materializes a final
                 // pattern temp after applying the default. Empty patterns have nothing
@@ -435,18 +454,9 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
 
-            if elem.initializer.is_some() {
-                self.write(", ");
-                self.write(&value_name);
-                self.write(" = ");
-                self.write(&value_name);
-                self.write(" === void 0 ? ");
-                self.emit_expression(elem.initializer);
-                self.write(" : ");
-                self.write(&value_name);
-            }
+            let source_name = self.emit_param_nested_default_source(value_name, elem.initializer);
 
-            self.emit_param_binding_assignments(elem.name, &value_name, started);
+            self.emit_param_binding_assignments(elem.name, &source_name, started);
             return Some(rest_prop);
         }
 
@@ -566,21 +576,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            let source_name = if elem.initializer.is_some() {
-                // Allocate a NEW temp for the defaulted value
-                let default_name = self.get_temp_var_name();
-                self.write(", ");
-                self.write(&default_name);
-                self.write(" = ");
-                self.write(&value_name);
-                self.write(" === void 0 ? ");
-                self.emit_expression(elem.initializer);
-                self.write(" : ");
-                self.write(&value_name);
-                default_name
-            } else {
-                value_name
-            };
+            let source_name = self.emit_param_nested_default_source(value_name, elem.initializer);
 
             self.emit_param_binding_assignments(elem.name, &source_name, started);
             return;
