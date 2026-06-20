@@ -27,18 +27,43 @@ use tsz_solver::TypeId;
 pub(crate) struct CallableContext {
     /// The callable type of the call expression being processed.
     pub callable_type: Option<TypeId>,
+    /// Whether [`CallableContext::callable_type`] is the synthetic
+    /// `sigA | sigB | ...` union built for the overload-resolution first pass.
+    ///
+    /// That union is an *existential* alternative set: a call type-checks when
+    /// *some* member admits it, not all. The non-tuple-spread arity check
+    /// (TS2556) must therefore treat the union existentially here — a non-tuple
+    /// spread lands on a rest position as long as *any* overload has a rest
+    /// parameter at that slot. Without this, `Array.prototype.splice`'s
+    /// `(start, deleteCount?)` overload (no rest) would poison a valid spread
+    /// into the `(start, deleteCount, ...items)` overload's rest. A genuine
+    /// union-typed *value* (not an overload set) keeps the conjunctive
+    /// semantics, since calling it must satisfy every member.
+    pub union_is_overload_set: bool,
 }
 
 impl CallableContext {
     pub const fn new(callable_type: TypeId) -> Self {
         Self {
             callable_type: Some(callable_type),
+            union_is_overload_set: false,
         }
     }
 
     pub const fn none() -> Self {
         Self {
             callable_type: None,
+            union_is_overload_set: false,
+        }
+    }
+
+    /// As [`CallableContext::new`], but marking `callable_type` as the synthetic
+    /// union of overload signatures (see
+    /// [`CallableContext::union_is_overload_set`]).
+    pub const fn new_overload_union(callable_type: TypeId) -> Self {
+        Self {
+            callable_type: Some(callable_type),
+            union_is_overload_set: true,
         }
     }
 }

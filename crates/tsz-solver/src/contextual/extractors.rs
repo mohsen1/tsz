@@ -1800,33 +1800,39 @@ impl<'a> TypeVisitor for RestPositionCheckExtractor<'a> {
     }
 }
 
+/// How a union expected type is combined when deciding whether a non-tuple
+/// spread lands on a rest position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnionSpreadMode {
+    /// Every member must admit the spread (a union-typed value: a call must
+    /// satisfy all members).
+    Conjunctive,
+    /// Any member may admit the spread (a synthetic overload-signature union:
+    /// a call type-checks when some overload admits it).
+    Existential,
+}
+
 pub(crate) struct RestOrOptionalTailPositionExtractor<'a> {
     db: &'a dyn TypeDatabase,
     index: usize,
-    arg_count: usize,
+    union_mode: UnionSpreadMode,
 }
 
 impl<'a> RestOrOptionalTailPositionExtractor<'a> {
-    pub(crate) fn new(db: &'a dyn TypeDatabase, index: usize, arg_count: usize) -> Self {
+    pub(crate) fn new_with_union_mode(
+        db: &'a dyn TypeDatabase,
+        index: usize,
+        union_mode: UnionSpreadMode,
+    ) -> Self {
         Self {
             db,
             index,
-            arg_count,
+            union_mode,
         }
     }
 
     pub(crate) fn extract(&mut self, type_id: TypeId) -> bool {
         self.visit_type(self.db, type_id).unwrap_or(false)
-    }
-
-    fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
-        let required_count = params.iter().filter(|p| !p.optional).count();
-        let has_rest = params.iter().any(|p| p.rest);
-        if has_rest {
-            arg_count >= required_count
-        } else {
-            arg_count >= required_count && arg_count <= params.len()
-        }
     }
 }
 
@@ -1848,62 +1854,64 @@ impl<'a> TypeVisitor for RestOrOptionalTailPositionExtractor<'a> {
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
-        let all_sigs: Vec<&[ParamInfo]> = shape
+        let mut sigs = shape
             .call_signatures
             .iter()
             .chain(shape.construct_signatures.iter())
-            .map(|sig| sig.params.as_slice())
-            .collect();
+            .peekable();
+        sigs.peek()?;
 
-        if all_sigs.is_empty() {
-            return None;
-        }
-
-        let mut any_matched = false;
-        let mut all_allowed = true;
-        for &params in &all_sigs {
-            if self.signature_accepts_arg_count(params, self.arg_count) {
-                any_matched = true;
-                if !is_rest_or_optional_tail_position(params, self.index) {
-                    all_allowed = false;
-                }
-            }
-        }
-
-        if !any_matched {
-            for &params in &all_sigs {
-                if !is_rest_or_optional_tail_position(params, self.index) {
-                    return Some(false);
-                }
-            }
-            return Some(true);
-        }
-
-        Some(all_allowed)
+        // tsc resolves overloads existentially: a non-tuple spread is legal as
+        // long as *any* call/construct signature can absorb it at a rest (or
+        // optional-tail) position. This mirrors `hasCorrectArity`'s spread
+        // branch — TS2556 is reported only when *no* signature has correct
+        // arity for the spread. A non-rest overload (e.g. `splice`'s
+        // `(start, deleteCount?)` signature) must not poison the decision for a
+        // sibling overload whose trailing rest does absorb the spread.
+        Some(sigs.any(|sig| is_rest_or_optional_tail_position(&sig.params, self.index)))
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
-        for &m in members.iter() {
-            let mut extractor =
-                RestOrOptionalTailPositionExtractor::new(self.db, self.index, self.arg_count);
-            if !extractor.extract(m) {
-                return Some(false);
-            }
-        }
-        Some(true)
+        let admits = |m| {
+            RestOrOptionalTailPositionExtractor::new_with_union_mode(
+                self.db,
+                self.index,
+                self.union_mode,
+            )
+            .extract(m)
+        };
+        Some(match self.union_mode {
+            // Calling a union-typed value must satisfy *every* member, so the
+            // spread is legal only when all members accept it at a
+            // rest/optional-tail slot.
+            UnionSpreadMode::Conjunctive => members.iter().all(|&m| admits(m)),
+            // A synthetic union of overload signatures is an alternative set: the
+            // spread is legal when *any* member admits it.
+            UnionSpreadMode::Existential => members.iter().any(|&m| admits(m)),
+        })
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
+        // An intersection of function types is an overload set: the spread is
+        // legal when *any* callable member can absorb it, mirroring the
+        // existential overload resolution in `visit_callable`.
+        let mut saw_answer = false;
         for &m in members.iter() {
-            let mut extractor =
-                RestOrOptionalTailPositionExtractor::new(self.db, self.index, self.arg_count);
+            let mut extractor = RestOrOptionalTailPositionExtractor::new_with_union_mode(
+                self.db,
+                self.index,
+                self.union_mode,
+            );
             if let Some(result) = extractor.visit_type(self.db, m) {
-                return Some(result);
+                if result {
+                    return Some(true);
+                }
+                saw_answer = true;
             }
         }
-        None
+        saw_answer.then_some(false)
     }
 
     fn default_output() -> Self::Output {

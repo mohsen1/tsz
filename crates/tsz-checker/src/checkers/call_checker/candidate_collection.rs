@@ -586,20 +586,19 @@ impl<'a> CheckerState<'a> {
                             tuple_slice_variable_rest_offset(self.ctx.types, &elems)
                         {
                             let variable_index = effective_index + variable_offset;
-                            let at_rest_position = if let Some(callable_type) =
-                                callable_ctx.callable_type
-                            {
-                                let ctx = ContextualTypeContext::with_expected(
-                                    self.ctx.types,
-                                    callable_type,
-                                );
-                                ctx.allows_non_tuple_spread_position(variable_index, expanded_count)
-                            } else {
-                                // No callable type means callee is
-                                // any/error/unknown; accept the spread when a
-                                // large-index probe still resolves a param.
-                                expected_for_index(usize::MAX / 2, expanded_count).is_some()
-                            };
+                            let at_rest_position =
+                                if let Some(callable_type) = callable_ctx.callable_type {
+                                    let ctx = ContextualTypeContext::with_expected(
+                                        self.ctx.types,
+                                        callable_type,
+                                    );
+                                    ctx.allows_non_tuple_spread_position(variable_index)
+                                } else {
+                                    // No callable type means callee is
+                                    // any/error/unknown; accept the spread when a
+                                    // large-index probe still resolves a param.
+                                    expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                                };
                             if !at_rest_position
                                 && !self.spread_callee_infers_params_from_arguments(
                                     arg_idx,
@@ -832,13 +831,10 @@ impl<'a> CheckerState<'a> {
                             // fall back to the large-index probe heuristic.
                             let at_rest_position =
                                 if let Some(callable_type) = callable_ctx.callable_type {
-                                    let ctx = ContextualTypeContext::with_expected(
-                                        self.ctx.types,
+                                    self.spread_lands_on_rest_position(
                                         callable_type,
-                                    );
-                                    ctx.allows_non_tuple_spread_position(
                                         effective_index,
-                                        expanded_count,
+                                        callable_ctx.union_is_overload_set,
                                     )
                                 } else {
                                     // No callable type means callee is any/error/unknown.
@@ -895,17 +891,18 @@ impl<'a> CheckerState<'a> {
                         // a rest parameter position (same logic as array spread above).
                         let current_expected = expected_for_index(effective_index, expanded_count);
 
-                        let at_rest_position = if let Some(callable_type) =
-                            callable_ctx.callable_type
-                        {
-                            let ctx =
-                                ContextualTypeContext::with_expected(self.ctx.types, callable_type);
-                            ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
-                        } else {
-                            // No callable type → callee is any/error/unknown; accept spread
+                        let at_rest_position =
+                            if let Some(callable_type) = callable_ctx.callable_type {
+                                self.spread_lands_on_rest_position(
+                                    callable_type,
+                                    effective_index,
+                                    callable_ctx.union_is_overload_set,
+                                )
+                            } else {
+                                // No callable type → callee is any/error/unknown; accept spread
 
-                            expected_for_index(usize::MAX / 2, expanded_count).is_some()
-                        };
+                                expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                            };
 
                         if !at_rest_position {
                             if current_expected.is_none() {
@@ -1825,32 +1822,6 @@ impl<'a> CheckerState<'a> {
         func_type: TypeId,
     ) {
         let ctx = ContextualTypeContext::with_expected(self.ctx.types, func_type);
-        let mut expanded_count = 0usize;
-        for &arg_idx in args {
-            if let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
-            {
-                let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-                // A variadic-tuple type-parameter spread stays a single unit (see argument
-                // collection); do not count its constraint's tuple elements.
-                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
-                    && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
-                {
-                    expanded_count += elems.len();
-                    continue;
-                }
-                if array_element_type_for_type(self.ctx.types, spread_type).is_some()
-                    && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
-                    && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
-                {
-                    expanded_count += literal.elements.nodes.len();
-                    continue;
-                }
-            }
-            expanded_count += 1;
-        }
-
         let mut effective_index = 0usize;
         for &arg_idx in args {
             let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
@@ -1905,9 +1876,7 @@ impl<'a> CheckerState<'a> {
             let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
                 .is_some()
                 || self.is_iterable_type(spread_type);
-            if is_non_tuple_spread
-                && !ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
-            {
+            if is_non_tuple_spread && !ctx.allows_non_tuple_spread_position(effective_index) {
                 self.error_spread_must_be_tuple_or_rest_at(arg_idx);
                 return;
             }

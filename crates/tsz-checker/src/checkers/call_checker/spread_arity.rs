@@ -3,11 +3,37 @@
 //! Split from `candidate_collection` to keep that module under the per-file
 //! line ceiling. Hosts the open-ended-tuple-spread TS2556 suppression query.
 
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether a non-tuple array/iterable spread covering positional argument
+    /// `index` lands on a rest parameter (or an optional trailing slot) of
+    /// `callable_type` — the gate for TS2556.
+    ///
+    /// When `union_is_overload_set` is set, `callable_type` is the synthetic
+    /// `sigA | sigB | ...` union built for the overload-resolution first pass; a
+    /// union member is then treated as an *alternative* (existential), so the
+    /// spread is admitted when any overload has a rest at `index`. A genuine
+    /// union-typed value keeps the conjunctive semantics (all members must
+    /// admit the spread).
+    pub(crate) fn spread_lands_on_rest_position(
+        &self,
+        callable_type: TypeId,
+        index: usize,
+        union_is_overload_set: bool,
+    ) -> bool {
+        let ctx = ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+        if union_is_overload_set {
+            ctx.allows_non_tuple_spread_position_existential_union(index)
+        } else {
+            ctx.allows_non_tuple_spread_position(index)
+        }
+    }
+
     /// Whether the open-ended tuple spread `arg_idx`, whose variable rest lands
     /// at positional argument index `variable_index`, targets a callee whose
     /// parameter at that position tsc contextually types from the spread — in

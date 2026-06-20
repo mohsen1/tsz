@@ -1,6 +1,7 @@
 //! Small standalone helpers for overload resolution — pure code motion from
 //! the parent `overload_resolution` module.
 
+use crate::query_boundaries::checkers::call::array_element_type_for_type;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -23,6 +24,18 @@ impl<'a> CheckerState<'a> {
         sig: &tsz_solver::CallSignature,
         arg_types: &[TypeId],
     ) -> Option<CallResult> {
+        // Position of the trailing rest parameter, if any. Arguments at or past
+        // this index are matched element-wise against the rest's element type,
+        // not against the rest's (array-like) declared type — so a `string`
+        // spread element landing on a `...items: string[]` rest is *not* a
+        // mismatch. Without this, a non-tuple spread (`f(..., ...stringArr)`)
+        // whose element type was collected as `string` would be wrongly rejected
+        // here as "string argument vs array parameter".
+        let rest_start = sig
+            .params
+            .last()
+            .filter(|param| param.rest)
+            .map(|_| sig.params.len() - 1);
         arg_types
             .iter()
             .copied()
@@ -35,15 +48,14 @@ impl<'a> CheckerState<'a> {
                 {
                     return None;
                 }
-                let expected = sig
-                    .params
-                    .get(index)
-                    .map(|param| param.type_id)
-                    .or_else(|| {
-                        sig.params
-                            .last()
-                            .and_then(|param| param.rest.then_some(param.type_id))
-                    })?;
+                let expected = if rest_start.is_some_and(|start| index >= start) {
+                    // `index` lands on the trailing rest parameter: compare
+                    // against its element type.
+                    let rest_type = sig.params.last()?.type_id;
+                    array_element_type_for_type(self.ctx.types, rest_type).unwrap_or(rest_type)
+                } else {
+                    sig.params.get(index).map(|param| param.type_id)?
+                };
                 self.is_array_like_type(expected)
                     .then_some(CallResult::ArgumentTypeMismatch {
                         index,
