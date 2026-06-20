@@ -7,6 +7,7 @@
 
 mod fixtures;
 
+mod ambient_vs_runtime;
 mod cache_statistics;
 mod canonical_entry_path;
 mod conditional_types_flavor;

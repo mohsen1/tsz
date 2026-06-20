@@ -805,6 +805,26 @@ impl ModuleResolver {
         }
         match primary_resolution {
             Ok(resolved_module) => {
+                // Ambient-module precedence over an untyped on-disk runtime package.
+                //
+                // When an in-program `declare module "X"` exists for this bare
+                // specifier (`ambient_match`) and the only on-disk resolution is an
+                // *untyped* JavaScript file (a runtime package with no bundled or
+                // `@types` declarations), tsc resolves the import to the ambient
+                // declaration rather than treating the module as untyped (TS7016 /
+                // TS6504). A typed package — one whose primary resolution lands on a
+                // `.d.ts`/`@types` declaration — is never a JavaScript module here, so
+                // it keeps its real resolved path and is unaffected.
+                if ambient_match && resolved_module.extension.is_javascript() {
+                    if self.trace_resolution {
+                        println!(
+                            "File '{}' is an untyped runtime package shadowed by an in-program ambient module declaration for '{}'.",
+                            resolved_module.resolved_path.display(),
+                            specifier
+                        );
+                    }
+                    return ModuleLookupResult::ambient();
+                }
                 if self.trace_resolution {
                     println!(
                         "File '{}' exists - use it as a name resolution result.",
