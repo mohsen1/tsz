@@ -427,6 +427,9 @@ mod string_literal_arithmetic_tests;
 #[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
+#[path = "tests/this_prop_nullish_operand_code_tests.rs"]
+mod this_prop_nullish_operand_code_tests;
+#[cfg(test)]
 #[path = "../tests/this_type_tests.rs"]
 mod this_type_tests;
 #[cfg(test)]
