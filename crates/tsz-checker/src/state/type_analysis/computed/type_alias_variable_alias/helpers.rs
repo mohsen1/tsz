@@ -106,6 +106,125 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(super) fn resolve_default_import_namespace_fallback(
+        &mut self,
+        module_name: &str,
+        is_node_esm_importing_cjs: bool,
+    ) -> Option<TypeId> {
+        if self
+            .ctx
+            .module_namespace_resolution_set
+            .contains(module_name)
+        {
+            return Some(TypeId::ANY);
+        }
+        self.ctx
+            .module_namespace_resolution_set
+            .insert(module_name.to_string());
+
+        let result = self
+            .resolve_default_import_namespace_from_exports(module_name)
+            .or_else(|| {
+                is_node_esm_importing_cjs
+                    .then(|| self.resolve_node_esm_cjs_default_import_namespace(module_name))
+                    .flatten()
+            });
+
+        self.ctx.module_namespace_resolution_set.remove(module_name);
+        result
+    }
+
+    fn resolve_default_import_namespace_from_exports(
+        &mut self,
+        module_name: &str,
+    ) -> Option<TypeId> {
+        let exports_table = self.resolve_effective_module_exports_from_file(
+            module_name,
+            Some(self.ctx.current_file_idx),
+        )?;
+        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+        if exports_table.has("export=")
+            && let Some(export_eq_sym) = exports_table.get("export=")
+        {
+            let export_eq_type = self.get_type_of_symbol(export_eq_sym);
+            let export_eq_type =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, export_eq_type);
+            let export_eq_type =
+                self.widen_fresh_object_literal_properties_for_display(export_eq_type);
+            return Some(export_eq_type);
+        }
+
+        use tsz_solver::PropertyInfo;
+        let mut props: Vec<PropertyInfo> = Vec::new();
+        for &(name, export_sym_id) in &ordered_exports {
+            if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
+                continue;
+            }
+            let declaration_order = if name == "default" {
+                1
+            } else {
+                props.len() as u32 + 2
+            };
+            let prop_type = self.get_type_of_symbol(export_sym_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+        Self::normalize_namespace_export_declaration_order(&mut props);
+        let module_type = self.ctx.types.factory().object(props);
+        self.ctx.namespace_module_names.insert(
+            module_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(module_type)
+    }
+
+    fn resolve_node_esm_cjs_default_import_namespace(
+        &mut self,
+        module_name: &str,
+    ) -> Option<TypeId> {
+        let default_sym_id = self.resolve_cross_file_export_from_file(
+            module_name,
+            "default",
+            Some(self.ctx.current_file_idx),
+        )?;
+        use tsz_solver::PropertyInfo;
+        let default_type = self.get_type_of_symbol(default_sym_id);
+        let module_type = self.ctx.types.factory().object(vec![PropertyInfo {
+            name: self.ctx.types.intern_string("default"),
+            type_id: default_type,
+            write_type: default_type,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }]);
+        self.ctx.namespace_module_names.insert(
+            module_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(module_type)
+    }
+
     /// Resolve the `unique symbol` identity of a value+type-alias symbol that
     /// follows the self-`typeof` idiom: a `const X = Symbol()` /
     /// `const X = Symbol.for(...)` / `const X: unique symbol` value merged with a
