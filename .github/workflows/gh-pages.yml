@@ -84,6 +84,33 @@ jobs:
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          artifact_ready_for_pages() {
+            local artifact_id="$1"
+            local tmpdir
+            tmpdir="$(mktemp -d)"
+            if ! gh api \
+              "repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip" \
+              > "${tmpdir}/artifact.zip"; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            if ! unzip -q "${tmpdir}/artifact.zip" -d "${tmpdir}/artifact"; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            if ! jq -e '
+              .application_compatibility.required == true and
+              .application_compatibility.missing == 0 and
+              .application_compatibility.incomplete == 0 and
+              .application_compatibility.duplicates == 0 and
+              .successful_project_timing_pairs >= .required_project_timing_pairs
+            ' "${tmpdir}/artifact/bench-results-readiness.json" >/dev/null; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            rm -rf "${tmpdir}"
+            return 0
+          }
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             if [ "$WORKFLOW_RUN_CONCLUSION" != "success" ] || \
               [ "$WORKFLOW_RUN_HEAD_BRANCH" != "main" ]; then
@@ -96,9 +123,12 @@ jobs:
                 "repos/${{ github.repository }}/actions/runs/${WORKFLOW_RUN_ID}/artifacts" \
                 --jq '.artifacts[]? | select(.name == "bench-results-merged" and .expired == false) | .id' 2>/dev/null |
                 head -n 1)"
-              if [ -n "$artifact_id" ]; then
-                echo "Bench run ${WORKFLOW_RUN_ID} published bench-results-merged; deploying fresh benchmark data."
+              if [ -n "$artifact_id" ] && artifact_ready_for_pages "$artifact_id"; then
+                echo "Bench run ${WORKFLOW_RUN_ID} published a readiness-clean bench-results-merged artifact; deploying fresh benchmark data."
                 echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              elif [ -n "$artifact_id" ]; then
+                echo "Bench run ${WORKFLOW_RUN_ID} published bench-results-merged, but readiness failed; skipping benchmark redeploy."
+                echo "should_deploy=false" >> "$GITHUB_OUTPUT"
               else
                 echo "Bench run ${WORKFLOW_RUN_ID} did not publish bench-results-merged; skipping stale benchmark redeploy."
                 echo "should_deploy=false" >> "$GITHUB_OUTPUT"
@@ -209,18 +239,58 @@ jobs:
         run: |
           set -euo pipefail
 
-          artifact_record="$(gh api \
+          artifact_ready_for_pages() {
+            local artifact_id="$1"
+            local tmpdir
+            tmpdir="$(mktemp -d)"
+            if ! gh api \
+              "repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip" \
+              > "${tmpdir}/artifact.zip"; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            if ! unzip -q "${tmpdir}/artifact.zip" -d "${tmpdir}/artifact"; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            if ! jq -e '
+              .application_compatibility.required == true and
+              .application_compatibility.missing == 0 and
+              .application_compatibility.incomplete == 0 and
+              .application_compatibility.duplicates == 0 and
+              .successful_project_timing_pairs >= .required_project_timing_pairs
+            ' "${tmpdir}/artifact/bench-results-readiness.json" >/dev/null; then
+              rm -rf "${tmpdir}"
+              return 1
+            fi
+            rm -rf "${tmpdir}"
+            return 0
+          }
+
+          RUN_ID=""
+          ARTIFACT_ID=""
+          ARTIFACT_CREATED=""
+          while IFS=$'\t' read -r candidate_run_id candidate_artifact_id candidate_created; do
+            if [[ -z "${candidate_run_id}" || -z "${candidate_artifact_id}" ]]; then
+              continue
+            fi
+            if artifact_ready_for_pages "${candidate_artifact_id}"; then
+              RUN_ID="${candidate_run_id}"
+              ARTIFACT_ID="${candidate_artifact_id}"
+              ARTIFACT_CREATED="${candidate_created}"
+              break
+            fi
+            echo "Skipping benchmark artifact ${candidate_artifact_id} from run ${candidate_run_id}: readiness failed."
+          done < <(gh api \
             "repos/${{ github.repository }}/actions/artifacts?name=bench-results-merged&per_page=20" \
-            --jq '[.artifacts[]? | select(.expired == false and (.workflow_run.head_branch // "") == "main")] | first | if . == null then "" else [.workflow_run.id, .id, .created_at] | @tsv end')"
-          RUN_ID="$(cut -f1 <<<"${artifact_record}")"
-          ARTIFACT_ID="$(cut -f2 <<<"${artifact_record}")"
-          ARTIFACT_CREATED="$(cut -f3 <<<"${artifact_record}")"
+            --jq '.artifacts[]? | select(.expired == false and (.workflow_run.head_branch // "") == "main") | [.workflow_run.id, .id, .created_at] | @tsv')
+
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
           if [[ -n "$RUN_ID" ]]; then
-            echo "Latest benchmark merged artifact: run=${RUN_ID} artifact=${ARTIFACT_ID} created=${ARTIFACT_CREATED}"
+            echo "Latest readiness-clean benchmark merged artifact: run=${RUN_ID} artifact=${ARTIFACT_ID} created=${ARTIFACT_CREATED}"
           else
-            echo "No non-expired main benchmark run has a bench-results-merged artifact."
+            echo "No non-expired main benchmark run has a readiness-clean bench-results-merged artifact."
           fi
         continue-on-error: true
 

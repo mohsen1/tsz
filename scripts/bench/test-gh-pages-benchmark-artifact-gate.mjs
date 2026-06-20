@@ -25,8 +25,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /actions\/artifacts\?name=bench-results-merged&per_page=20[\s\S]+workflow_run\.head_branch[\s\S]+Latest benchmark merged artifact/,
-  "Pages deploy should find merged benchmark artifacts directly instead of scanning a small window of successful Bench runs",
+  /actions\/artifacts\?name=bench-results-merged&per_page=20[\s\S]+workflow_run\.head_branch[\s\S]+Latest readiness-clean benchmark merged artifact/,
+  "Pages deploy should find readiness-clean merged benchmark artifacts directly instead of scanning a small window of successful Bench runs",
 );
 
 assert.doesNotMatch(
@@ -39,6 +39,18 @@ assert.match(
   workflow,
   /select\(\.name == "bench-results-merged" and \.expired == false\)/,
   "Pages deploy should require a non-expired merged benchmark artifact",
+);
+
+assert.match(
+  workflow,
+  /artifact_ready_for_pages\(\)[\s\S]+application_compatibility\.required == true[\s\S]+application_compatibility\.missing == 0[\s\S]+application_compatibility\.incomplete == 0[\s\S]+application_compatibility\.duplicates == 0[\s\S]+successful_project_timing_pairs >= \.required_project_timing_pairs/,
+  "Pages deploy should require benchmark readiness JSON with complete application compatibility before using merged artifacts",
+);
+
+assert.match(
+  workflow,
+  /Bench run \$\{WORKFLOW_RUN_ID\} published bench-results-merged, but readiness failed; skipping benchmark redeploy\.[\s\S]+should_deploy=false/,
+  "Bench-triggered Pages deploys must skip diagnostic benchmark artifacts whose readiness gate failed",
 );
 
 assert.match(
