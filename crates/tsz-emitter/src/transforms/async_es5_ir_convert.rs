@@ -1043,10 +1043,26 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     let mut decls = Vec::new();
+                    let mut has_destructuring = false;
                     for &decl_idx in &var_data.declarations.nodes {
                         if let Some(decl_node) = self.arena.get(decl_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                         {
+                            // Binding patterns (`{ a } = obj`) cannot be emitted
+                            // as a `var` name; down-level them to member-access
+                            // assignments instead. Reached only for non-suspended
+                            // declarations — async statement processing routes
+                            // awaited initializers through
+                            // `process_destructuring_variable_declaration` first.
+                            if self.is_binding_pattern_name(decl.name) && decl.initializer.is_some()
+                            {
+                                has_destructuring = true;
+                                decls.extend(self.lower_sync_destructuring_declaration(
+                                    decl.name,
+                                    decl.initializer,
+                                ));
+                                continue;
+                            }
                             let name = crate::transforms::emit_utils::identifier_text_or_empty(
                                 self.arena, decl.name,
                             );
@@ -1063,6 +1079,12 @@ impl<'a> AsyncES5Transformer<'a> {
                     }
                     if decls.len() == 1 {
                         decls.remove(0)
+                    } else if has_destructuring {
+                        // The lowering mixes hoisted `var` decls and extraction
+                        // expression statements, so a `var`-only declaration list
+                        // node cannot represent it; a sequence keeps each
+                        // statement distinct and lets the hoist pass recurse.
+                        IRNode::Sequence(decls)
                     } else {
                         IRNode::VarDeclList(decls)
                     }

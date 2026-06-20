@@ -1161,6 +1161,23 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         if let Some(decl) = self.arena.get_variable_declaration(node) {
+            // Binding patterns (`var { a, b } = obj` / `var [x] = arr`) have no
+            // identifier name: down-level them to member-access assignments
+            // (`a = obj.a, b = obj.b`) instead of emitting an empty `var`.
+            if self.is_binding_pattern_name(decl.name) {
+                let pattern = decl.name;
+                let initializer = decl.initializer;
+                self.process_destructuring_variable_declaration(
+                    pattern,
+                    initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                    trailing_comment,
+                );
+                return;
+            }
+
             let name =
                 crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name);
 
@@ -1310,6 +1327,71 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: init,
                 });
             }
+        }
+    }
+
+    /// Down-level a destructuring variable declaration (`var { a } = obj`,
+    /// `var [x] = arr`) inside an async generator body. ES5 has no
+    /// destructuring syntax, so each binding becomes a member-access
+    /// assignment; the extracted names are hoisted by the generator var pass
+    /// and the assignments are comma-joined into one statement, matching `tsc`.
+    pub(in crate::transforms) fn process_destructuring_variable_declaration(
+        &mut self,
+        pattern: NodeIndex,
+        initializer: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        trailing_comment: &mut Option<String>,
+    ) {
+        // An absent initializer cannot be destructured at runtime; `tsc` rejects
+        // it (`A destructuring declaration must have an initializer`), so there
+        // is nothing to extract.
+        if initializer.is_none() {
+            return;
+        }
+
+        if self.contains_await_recursive(initializer) {
+            // Capture the (possibly awaited) value into a temp, then destructure
+            // from that temp once it is resolved.
+            let source_temp = self.generate_hoisted_temp();
+            current_statements.push(IRNode::VarDecl {
+                name: source_temp.clone().into(),
+                initializer: None,
+            });
+
+            if self.is_suspension_expression(initializer) {
+                let trailing_comment = trailing_comment.take();
+                self.process_await_expression_with_trailing_comment(
+                    initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                    trailing_comment.as_deref(),
+                );
+                current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                    IRNode::id(source_temp.clone()),
+                    IRNode::GeneratorSent,
+                ))));
+            } else {
+                self.emit_nested_suspension(initializer, cases, current_statements, current_label);
+                let value = self.expression_to_ir(initializer);
+                current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                    IRNode::id(source_temp.clone()),
+                    value,
+                ))));
+            }
+
+            let statements =
+                self.lower_binding_pattern_statements(pattern, IRNode::id(source_temp), false);
+            current_statements.extend(statements);
+            return;
+        }
+
+        // Synchronous initializer: extract directly from the initializer value.
+        current_statements.extend(self.lower_sync_destructuring_declaration(pattern, initializer));
+        if let Some(comment) = trailing_comment.take() {
+            current_statements.push(IRNode::TrailingComment(comment.into()));
         }
     }
 
