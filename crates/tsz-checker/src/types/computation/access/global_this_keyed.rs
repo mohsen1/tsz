@@ -4,14 +4,34 @@ use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+pub(super) enum GlobalThisAccessKind {
+    Element,
+    Other,
+}
+
+pub(super) enum GlobalThisKeyStatus {
+    NoLiteralStringKey,
+    HasLiteralStringKey,
+}
+
+pub(super) enum GlobalThisReceiverStatus {
+    GlobalThisLike,
+    Other,
+}
+
+pub(super) enum GlobalThisFlowMode {
+    SkipFlowNarrowing,
+    ApplyFlowNarrowing,
+}
+
 pub(super) struct GlobalThisStringLikeElementAccess {
     pub(super) idx: NodeIndex,
-    pub(super) is_element_access: bool,
+    pub(super) access_kind: GlobalThisAccessKind,
     pub(super) access_expression: NodeIndex,
-    pub(super) has_no_literal_string_key: bool,
+    pub(super) key_status: GlobalThisKeyStatus,
     pub(super) index_type: TypeId,
-    pub(super) is_this_global: bool,
-    pub(super) skip_flow_narrowing: bool,
+    pub(super) receiver_status: GlobalThisReceiverStatus,
+    pub(super) flow_mode: GlobalThisFlowMode,
 }
 
 impl<'a> CheckerState<'a> {
@@ -19,10 +39,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         request: GlobalThisStringLikeElementAccess,
     ) -> Option<TypeId> {
-        if !request.has_no_literal_string_key
-            || !request.is_element_access
+        if !matches!(request.key_status, GlobalThisKeyStatus::NoLiteralStringKey)
+            || !matches!(request.access_kind, GlobalThisAccessKind::Element)
             || !(self.is_global_this_expression(request.access_expression)
-                || request.is_this_global)
+                || matches!(
+                    request.receiver_status,
+                    GlobalThisReceiverStatus::GlobalThisLike
+                ))
             || !self.ctx.no_implicit_any()
             || self.is_js_file()
         {
@@ -58,13 +81,15 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if all_resolved && !resolved_types.is_empty() {
-                return Some(if request.skip_flow_narrowing {
-                    tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
-                } else {
-                    let combined =
-                        tsz_solver::utils::union_or_single(self.ctx.types, resolved_types);
-                    self.apply_flow_narrowing(request.idx, combined)
-                });
+                return Some(
+                    if matches!(request.flow_mode, GlobalThisFlowMode::SkipFlowNarrowing) {
+                        tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
+                    } else {
+                        let combined =
+                            tsz_solver::utils::union_or_single(self.ctx.types, resolved_types);
+                        self.apply_flow_narrowing(request.idx, combined)
+                    },
+                );
             }
         }
 
