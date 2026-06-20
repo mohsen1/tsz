@@ -298,3 +298,88 @@ fn using_declaration_no_disposable_diagnostic_at_esnext() {
         result.diagnostics
     );
 }
+
+// Compile a `moduleSuffixes: [".ios", ""]` project from the given on-disk files
+// (the first file written is always the shared tsconfig) and return the emitted
+// diagnostic codes. Globs `**/*.ts`, so every written source enters the program.
+fn module_suffixes_project_codes(sources: &[(&str, &str)]) -> Vec<u32> {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "strict": true,
+            "noEmit": true,
+            "skipLibCheck": true,
+            "moduleSuffixes": [".ios", ""]
+          },
+          "include": ["**/*.ts"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+    for (path, contents) in sources {
+        write_file(&base.join(path), contents);
+    }
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    result.diagnostics.iter().map(|d| d.code).collect()
+}
+
+// A relative import in a project that configures `moduleSuffixes` must bind to
+// the highest-priority suffix variant the module resolver selected, even when
+// the lower-priority base file is *also* in the program (the React Native shape
+// where `widget.ios.ts` and `widget.ts` are both globbed and export the same
+// API). The checker's `global_file_name_index` fan-out spells `<stem>.<ext>`
+// directly and does not apply `moduleSuffixes`, so it used to bind `./widget`
+// to the base `widget.ts`; the fix prefers the driver's authoritative
+// `resolved_module_paths` (which honored the `.ios` suffix). Binder names
+// deliberately differ from the original witness so the behavior follows the
+// resolved file, not a spelling.
+#[test]
+fn compile_project_module_suffixes_relative_import_binds_suffix_variant_over_base() {
+    let codes = module_suffixes_project_codes(&[
+        // Highest-priority suffix variant: the API is a string-literal type.
+        ("src/mobileWidget.ios.ts", "export const palette = \"ios-theme\";\n"),
+        // Base file (also globbed into the program): the SAME export name with an
+        // incompatible type. If the import mis-binds here it surfaces as TS2322.
+        ("src/mobileWidget.ts", "export const palette: number = 42;\n"),
+        (
+            "src/appEntry.ts",
+            "import { palette } from \"./mobileWidget\";\nconst check: \"ios-theme\" = palette;\nexport { check };\n",
+        ),
+    ]);
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "`./mobileWidget` must bind to the `.ios` suffix variant (palette: \"ios-theme\"), \
+         not the base `mobileWidget.ts` (palette: number). Diagnostic codes: {codes:?}",
+    );
+}
+
+// Control: when `moduleSuffixes` is configured but no suffix variant exists on
+// disk, the relative import still resolves to the base file (the fix falls
+// through to the file-index fan-out when the authoritative map has no
+// higher-priority entry). Guards against the fix dropping plain relative
+// resolution.
+#[test]
+fn compile_project_module_suffixes_relative_import_falls_back_to_base_when_no_variant() {
+    let codes = module_suffixes_project_codes(&[
+        ("src/desktopWidget.ts", "export const palette: number = 7;\n"),
+        (
+            "src/appEntry.ts",
+            "import { palette } from \"./desktopWidget\";\nconst check: number = palette;\nexport { check };\n",
+        ),
+    ]);
+
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS)
+            && !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "`./desktopWidget` must still resolve to the base file when no suffix \
+         variant exists. Diagnostic codes: {codes:?}",
+    );
+}

@@ -34,15 +34,22 @@ impl<'a> CheckerContext<'a> {
             && !specifier.starts_with("../")
             && !specifier.starts_with('/')
             && !specifier.starts_with('\\');
-        if is_bare_specifier && let Some(paths) = self.resolved_module_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
-                    return Some(
-                        self.types_versions_redirected_target_index(specifier, *target_idx)
-                            .unwrap_or(*target_idx),
-                    );
-                }
-            }
+
+        // Prefer the driver's authoritative resolution (`resolved_module_paths`,
+        // computed by the real `ModuleResolver`) over the heuristic
+        // `global_file_name_index` fan-out below — for every specifier kind. The
+        // fan-out spells out `<stem>.<ext>` candidates directly and does NOT
+        // apply resolver features such as `moduleSuffixes`, so for a project that
+        // configures them (for example a React Native tree with `foo.ios.ts`
+        // alongside `foo.ts`) it would bind `./foo` to the base `foo.ts` instead
+        // of the higher-priority `foo.ios.ts` the resolver actually selected.
+        // Bare specifiers additionally pick up package-metadata redirects
+        // (`exports`, `typesVersions`) the fan-out does not model. Falling
+        // through to the fan-out when the authoritative map has no entry
+        // preserves the standalone-checker path that runs without a
+        // driver-populated map.
+        if let Some(target_idx) = self.resolved_module_path_target(source_file_idx, specifier) {
+            return Some(target_idx);
         }
 
         // An ambient `declare module "<specifier>"` takes priority over the
@@ -103,17 +110,30 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        if let Some(paths) = self.resolved_module_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
-                    return Some(
-                        self.types_versions_redirected_target_index(specifier, *target_idx)
-                            .unwrap_or(*target_idx),
-                    );
-                }
+        None
+    }
+
+    /// Resolve `specifier` through the driver's authoritative
+    /// `resolved_module_paths` map (populated by the real `ModuleResolver`),
+    /// trying each candidate spelling and applying any `typesVersions` redirect.
+    ///
+    /// Returns the target file index when the map resolved it, or `None` when no
+    /// driver-populated map exists or it has no entry for this
+    /// `(source_file_idx, specifier)`.
+    fn resolved_module_path_target(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+    ) -> Option<usize> {
+        let paths = self.resolved_module_paths.as_ref()?;
+        for candidate in module_specifier_candidates(specifier) {
+            if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
+                return Some(
+                    self.types_versions_redirected_target_index(specifier, *target_idx)
+                        .unwrap_or(*target_idx),
+                );
             }
         }
-
         None
     }
 
