@@ -356,3 +356,95 @@ fn nested_object_literal_spread_keeps_empty_outer_assign_target() {
         "Trailing props should not mutate the inner object-spread assign result.\nOutput:\n{output2}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `multiLine` parity for the lowered computed-property comma sequence.
+//
+// `tsc` lays the `(_a = {}, _a.k = …, _a)` comma sequence (and any leading
+// prefix object literal `{ … }`) out multi-line only when the *source* object
+// literal was multi-line — i.e. there is a line break right after the opening
+// `{` (the parser's `multiLine` flag, `hasPrecedingLineBreak()`). Accessors and
+// trailing line comments do not force a multi-line layout. The spread/`__assign`
+// lowering builds fresh synthesized literals with no `multiLine` flag, so those
+// comma sequences are always single-line regardless of source formatting.
+// ---------------------------------------------------------------------------
+
+/// The whole lowered sequence stays on one logical line when the source literal
+/// is single-line, even when it contains an accessor (which lowers to a
+/// multi-line `Object.defineProperty` descriptor). Only the descriptor object
+/// itself breaks; the comma sequence does not.
+#[test]
+fn single_line_computed_accessor_keeps_comma_sequence_inline() {
+    let output = emit_es5("const o = { ['k' + 1]: 1, m() {}, get g() { return 1; } };");
+    assert!(
+        output.contains(
+            "(_a = {}, _a['k' + 1] = 1, _a.m = function () { }, Object.defineProperty(_a, \"g\", {"
+        ),
+        "Single-line computed+accessor literal must keep the comma sequence inline.\nOutput:\n{output}"
+    );
+    // The comma sequence must not put each operand on its own line.
+    assert!(
+        !output.contains("_a = {},\n"),
+        "Comma sequence must not break after `_a = {{}}` for single-line source.\nOutput:\n{output}"
+    );
+}
+
+/// Binder-name-agnostic: the rule keys on source formatting, not identifiers.
+/// Renaming the computed key / accessor must not change the inline layout.
+#[test]
+fn single_line_computed_accessor_inline_is_name_agnostic() {
+    let output =
+        emit_es5("const widget = { [primaryKey]: 1, run() {}, get value() { return 1; } };");
+    assert!(
+        output.contains("(_a = {}, _a[primaryKey] = 1, _a.run = function () { }, Object.defineProperty(_a, \"value\", {"),
+        "Renamed single-line computed+accessor literal must still be inline.\nOutput:\n{output}"
+    );
+}
+
+/// A multi-line source literal (line break right after `{`) keeps the lowered
+/// comma sequence multi-line, with each operand on its own line.
+#[test]
+fn multiline_source_computed_breaks_comma_sequence() {
+    let source = "const o = {\n  ['k']: 1,\n  get g() { return 1; },\n  m() {},\n};";
+    let output = emit_es5(source);
+    assert!(
+        output.contains("(_a = {},\n"),
+        "Multi-line source literal must break the comma sequence after `_a = {{}}`.\nOutput:\n{output}"
+    );
+}
+
+/// A line break elsewhere (between properties, or before `}`) does NOT make the
+/// literal multi-line — only a break immediately after `{` does.
+#[test]
+fn line_break_between_props_keeps_inline() {
+    // `{` and the first property share a line; the break is between properties.
+    let output = emit_es5("const o = { ['k']: 1,\n a: 2 };");
+    assert!(
+        output.contains("(_a = {}, _a['k'] = 1, _a.a = 2, _a)"),
+        "Break between properties (not after `{{`) must stay inline.\nOutput:\n{output}"
+    );
+}
+
+/// The leading prefix object literal `{ a: 1, get g() {…} }` follows the same
+/// `multiLine` flag: inline for single-line source, even with an accessor.
+#[test]
+fn single_line_prefix_object_literal_stays_inline() {
+    let output = emit_es5("const o = { a: 1, get g() { return 1; }, ['k']: 2 };");
+    assert!(
+        output.contains("(_a = { a: 1, get g() { return 1; } }, _a['k'] = 2, _a)"),
+        "Single-line prefix object literal must stay inline.\nOutput:\n{output}"
+    );
+}
+
+/// The spread/`__assign` lowering is always single-line, even when the source
+/// literal is multi-line — the synthesized literals carry no `multiLine` flag.
+#[test]
+fn spread_lowering_is_always_inline_even_for_multiline_source() {
+    let source = "declare const spread: any;\nconst o = {\n  a: 1,\n  get g() { return 1; },\n  ['k']: 2,\n  ...spread,\n};";
+    let output = emit_es5(source);
+    assert!(
+        output
+            .contains("__assign((_a = { a: 1, get g() { return 1; } }, _a['k'] = 2, _a), spread)"),
+        "Spread lowering must keep the comma sequence inline for multi-line source.\nOutput:\n{output}"
+    );
+}

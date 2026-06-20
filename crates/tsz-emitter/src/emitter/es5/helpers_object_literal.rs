@@ -1,4 +1,4 @@
-use super::super::{CommentKind, Printer, get_trailing_comment_ranges};
+use super::super::Printer;
 use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{MethodDeclData, Node};
@@ -71,25 +71,16 @@ impl<'a> Printer<'a> {
         self.emit_object_literal_entries_es5_with_comments(elements, false, None, false);
     }
 
-    fn emit_object_literal_assign_entries_es5(
-        &mut self,
-        elements: &[NodeIndex],
-        source_range: Option<(u32, u32)>,
-    ) {
-        if self.object_literal_assign_segment_can_emit_compact(elements, source_range) {
-            self.emit_object_literal_entries_es5_compact(elements);
+    /// Emit the leading non-computed properties of a lowered object literal as the
+    /// `{ … }` target of the comma sequence. `multiline` is the source literal's
+    /// `multiLine` flag (a line break right after `{`): the prefix shares that
+    /// opening brace, so it lays out the same way — inline for single-line source.
+    fn emit_object_literal_prefix_entries_es5(&mut self, elements: &[NodeIndex], multiline: bool) {
+        if multiline {
+            self.emit_object_literal_entries_es5_with_comments(elements, false, None, true);
         } else {
-            self.emit_object_literal_entries_es5_with_comments(
-                elements,
-                false,
-                source_range,
-                false,
-            );
+            self.emit_object_literal_entries_es5_compact(elements);
         }
-    }
-
-    fn emit_object_literal_prefix_entries_es5(&mut self, elements: &[NodeIndex]) {
-        self.emit_object_literal_entries_es5_with_comments(elements, false, None, true);
     }
 
     fn emit_object_literal_entries_es5_compact(&mut self, elements: &[NodeIndex]) {
@@ -106,6 +97,23 @@ impl<'a> Printer<'a> {
             self.emit_object_literal_member_es5(prop);
         }
         self.write(" }");
+    }
+
+    fn emit_object_literal_assign_entries_es5(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) {
+        if self.object_literal_assign_segment_can_emit_compact(elements, source_range) {
+            self.emit_object_literal_entries_es5_compact(elements);
+        } else {
+            self.emit_object_literal_entries_es5_with_comments(
+                elements,
+                false,
+                source_range,
+                false,
+            );
+        }
     }
 
     fn object_literal_assign_segment_can_emit_compact(
@@ -167,20 +175,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let open_brace_end = source_range.and_then(|(start_pos, end_pos)| {
-            self.source_text.and_then(|text| {
-                let bytes = text.as_bytes();
-                let start = start_pos as usize;
-                let end = std::cmp::min(end_pos as usize, bytes.len());
-                if start >= end {
-                    return None;
-                }
-                bytes[start..end]
-                    .iter()
-                    .position(|&b| b == b'{')
-                    .map(|off| (start + off + 1) as u32)
-            })
-        });
+        let open_brace_end = self.position_after_open_brace(source_range);
         let source_end = source_range.map(|(_, end)| end);
 
         if elements.len() > 1 {
@@ -563,35 +558,45 @@ impl<'a> Printer<'a> {
         self.emit_object_literal_with_spread_es5(elements, source_range);
     }
 
-    /// Emit object literal without spread (computed properties only)
+    /// Emit object literal without spread (computed properties only).
+    ///
+    /// A standalone (non-spread) computed-property literal preserves the source
+    /// `multiLine` flag in its lowered comma sequence — `tsc` reuses the original
+    /// literal node, so a line break right after `{` produces a multi-line layout.
     fn emit_object_literal_without_spread_es5(
         &mut self,
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
         has_trailing_comma: bool,
     ) {
-        // Use multiline layout when any element is an accessor: tsc always emits
-        // Object.defineProperty for accessors, and that descriptor spans multiple
-        // lines, so the whole comma expression must be multiline. Simple
-        // methods/properties stay inline.
-        let has_accessor = elements.iter().any(|&idx| {
-            self.arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SET_ACCESSOR
-            })
-        });
+        let multiline = self.object_literal_lowering_is_multiline(elements, source_range);
         self.emit_object_literal_without_spread_es5_with_layout(
             elements,
             source_range,
             has_trailing_comma,
             true,
-            has_accessor,
+            multiline,
         );
     }
 
     pub(in crate::emitter) fn try_emit_object_literal_es5_return_expression(
         &mut self,
         expression: NodeIndex,
+    ) -> bool {
+        // A return statement can own the comma expression directly, so `tsc` emits
+        // the lowering without an extra wrapping paren.
+        self.try_emit_object_literal_es5_computed_lowering(expression, false)
+    }
+
+    /// Lower a non-spread object literal that contains a computed property to the
+    /// ES5 `(_a = {}, _a[k] = …, _a)` comma sequence. Returns `false` (emitting
+    /// nothing) when `expression` is not such a literal, so callers can fall back
+    /// to their default emit. `wrap_in_parens` parenthesizes the comma sequence
+    /// for assignment-like contexts.
+    fn try_emit_object_literal_es5_computed_lowering(
+        &mut self,
+        expression: NodeIndex,
+        wrap_in_parens: bool,
     ) -> bool {
         if !self.ctx.target_es5 {
             return false;
@@ -624,12 +629,15 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        let elements = &literal.elements.nodes;
+        let source_range = Some((node.pos, node.end));
+        let multiline = self.object_literal_lowering_is_multiline(elements, source_range);
         self.emit_object_literal_without_spread_es5_with_layout(
-            &literal.elements.nodes,
-            Some((node.pos, node.end)),
-            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
-            false,
-            false,
+            elements,
+            source_range,
+            self.has_trailing_comma_in_source(node, elements),
+            wrap_in_parens,
+            multiline,
         );
         true
     }
@@ -638,45 +646,9 @@ impl<'a> Printer<'a> {
         &mut self,
         expression: NodeIndex,
     ) -> bool {
-        if !self.ctx.target_es5 {
-            return false;
-        }
-
-        let Some(node) = self.arena.get(expression) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return false;
-        }
-
-        let Some(literal) = self.arena.get_literal_expr(node) else {
-            return false;
-        };
-        if literal
-            .elements
-            .nodes
-            .iter()
-            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
-        {
-            return false;
-        }
-        if !literal
-            .elements
-            .nodes
-            .iter()
-            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
-        {
-            return false;
-        }
-
-        self.emit_object_literal_without_spread_es5_with_layout(
-            &literal.elements.nodes,
-            Some((node.pos, node.end)),
-            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
-            true,
-            false,
-        );
-        true
+        // Assignment-like contexts (variable initializers, using declarations, …)
+        // wrap the comma sequence in parens.
+        self.try_emit_object_literal_es5_computed_lowering(expression, true)
     }
 
     fn emit_object_literal_without_spread_es5_with_layout(
@@ -702,16 +674,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let use_multiline = use_multiline
-            || self.computed_object_literal_needs_multiline_layout(elements, source_range);
-
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
-
-        // Assignment-like expression contexts use the parenthesized multi-line
-        // lowering. A return statement can own the comma expression directly,
-        // and `tsc` keeps that form on one line.
-        let _ = source_range;
 
         if wrap_in_parens {
             self.write("(");
@@ -724,7 +688,10 @@ impl<'a> Printer<'a> {
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
-            self.emit_object_literal_prefix_entries_es5(&elements[..first_computed_idx]);
+            self.emit_object_literal_prefix_entries_es5(
+                &elements[..first_computed_idx],
+                use_multiline,
+            );
         } else {
             self.write("{}");
         }
@@ -756,56 +723,42 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn computed_object_literal_needs_multiline_layout(
+    /// Source offset just past the opening `{` of an object literal whose span is
+    /// `source_range`, or `None` when there is no source or no brace in range.
+    fn position_after_open_brace(&self, source_range: Option<(u32, u32)>) -> Option<u32> {
+        let (start, end) = source_range?;
+        let bytes = self.source_text?.as_bytes();
+        let start = (start as usize).min(bytes.len());
+        let end = (end as usize).min(bytes.len());
+        let brace_off = bytes[start..end].iter().position(|&b| b == b'{')?;
+        Some((start + brace_off + 1) as u32)
+    }
+
+    /// Whether the lowered comma-sequence form of an object literal should use a
+    /// multi-line layout. `tsc` keys this on the parser's `multiLine` flag, which
+    /// is `scanner.hasPrecedingLineBreak()` captured right after the opening `{`:
+    /// the literal is multi-line iff there is a line break between `{` and the
+    /// first property. A line break later in the literal (between properties or
+    /// before `}`) does not count, and accessors/line comments are irrelevant.
+    fn object_literal_lowering_is_multiline(
         &self,
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
     ) -> bool {
-        let has_computed = elements
-            .iter()
-            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
-        if !has_computed {
-            return false;
-        }
-
-        if let Some((start, end)) = source_range
-            && self.source_range_contains_line_comment(start, end)
-        {
-            return true;
-        }
-
-        elements.iter().any(|&idx| {
-            if !emit_utils::is_computed_property_member(self.arena, idx) {
-                return false;
-            }
-
-            let Some(text) = self.source_text else {
-                return false;
-            };
-            let Some(node) = self.arena.get(idx) else {
-                return false;
-            };
-
-            if self.source_range_contains_line_comment(node.pos, node.end) {
-                return true;
-            }
-
-            get_trailing_comment_ranges(text, node.end as usize)
-                .iter()
-                .any(|comment| comment.kind == CommentKind::SingleLine)
-        })
-    }
-
-    fn source_range_contains_line_comment(&self, start: u32, end: u32) -> bool {
         let Some(text) = self.source_text else {
             return false;
         };
-        let start = (start as usize).min(text.len());
-        let end = (end as usize).min(text.len());
-        start < end
-            && tsz_common::comments::get_comment_ranges(&text[start..end])
-                .iter()
-                .any(|comment| !comment.is_multi_line)
+        let Some(after_brace) = self.position_after_open_brace(source_range) else {
+            return false;
+        };
+        let Some(first) = elements.first().and_then(|&idx| self.arena.get(idx)) else {
+            return false;
+        };
+
+        let bytes = text.as_bytes();
+        let after_brace = (after_brace as usize).min(bytes.len());
+        let first_pos = (first.pos as usize).min(bytes.len());
+        after_brace < first_pos && bytes[after_brace..first_pos].contains(&b'\n')
     }
 
     /// Emit object literal with spread using __assign pattern
@@ -814,6 +767,12 @@ impl<'a> Printer<'a> {
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
     ) {
+        // The spread lowering builds fresh synthesized object literals for each
+        // `__assign` argument, none of which carry the original `multiLine` flag,
+        // so `tsc` always keeps these comma sequences (and their prefix literals)
+        // single-line — regardless of how the source literal was formatted.
+        let multiline = false;
+
         // Split into segments
         let mut segments: Vec<ObjectSegment> = Vec::new();
         let mut current_start = 0;
@@ -848,7 +807,13 @@ impl<'a> Printer<'a> {
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 if has_computed {
-                    self.emit_object_literal_without_spread_es5(elems, source_range, false);
+                    self.emit_object_literal_without_spread_es5_with_layout(
+                        elems,
+                        source_range,
+                        false,
+                        true,
+                        multiline,
+                    );
                 } else {
                     self.emit_object_literal_entries_es5(elems);
                 }
@@ -883,7 +848,13 @@ impl<'a> Printer<'a> {
                 self.write_helper("__assign");
                 self.write("(");
                 if has_computed {
-                    self.emit_object_literal_without_spread_es5(elems, source_range, false);
+                    self.emit_object_literal_without_spread_es5_with_layout(
+                        elems,
+                        source_range,
+                        false,
+                        true,
+                        multiline,
+                    );
                 } else {
                     self.emit_object_literal_assign_entries_es5(elems, source_range);
                 }
@@ -921,7 +892,10 @@ impl<'a> Printer<'a> {
                         .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
                         .unwrap_or(elems.len());
                     if first_computed > 0 {
-                        self.emit_object_literal_prefix_entries_es5(&elems[..first_computed]);
+                        self.emit_object_literal_prefix_entries_es5(
+                            &elems[..first_computed],
+                            multiline,
+                        );
                     } else {
                         self.write("{}");
                     }
@@ -988,6 +962,7 @@ impl<'a> Printer<'a> {
                             if first_computed > 0 {
                                 self.emit_object_literal_prefix_entries_es5(
                                     &elems[..first_computed],
+                                    multiline,
                                 );
                             } else {
                                 self.write("{}");
@@ -1036,6 +1011,7 @@ impl<'a> Printer<'a> {
                                 if first_computed > 0 {
                                     self.emit_object_literal_prefix_entries_es5(
                                         &elems[..first_computed],
+                                        multiline,
                                     );
                                 } else {
                                     self.write("{}");
