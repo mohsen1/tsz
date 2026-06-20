@@ -31,6 +31,10 @@ name = "async_es5_destructuring_tests"
 path = "tests/async_es5_destructuring_tests.rs"
 
 [[test]]
+name = "es5_optional_chain_call_receiver_tests"
+path = "tests/es5_optional_chain_call_receiver_tests.rs"
+
+[[test]]
 name = "es5_super_object_literal_accessor_tests"
 path = "tests/es5_super_object_literal_accessor_tests.rs"
 
@@ -249,6 +253,10 @@ path = "tests/for_statement_recovery_tests.rs"
 [[test]]
 name = "try_statement_recovery_tests"
 path = "tests/try_statement_recovery_tests.rs"
+
+[[test]]
+name = "es5_catch_clause_destructuring_tests"
+path = "tests/es5_catch_clause_destructuring_tests.rs"
 
 [[test]]
 name = "system_top_level_using_env_position_tests"

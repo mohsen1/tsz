@@ -849,7 +849,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             |s_arg, t_arg| self.check_subtype(s_arg, t_arg).is_true(),
         );
 
-        if any_checked && all_ok && !needs_structural_fallback {
+        // Accept when the per-argument variance walk found no mismatch and no
+        // position needs the structural fallback. This covers two cases: at
+        // least one argument occupied a variance-relevant position and related
+        // (`any_checked`), OR every parameter is independent/bivariant so no
+        // argument is variance-relevant at all (`!any_checked`, with a
+        // non-empty variance list). In the all-bivariant case `tsc` relates the
+        // two instantiations via `relateVariances` before any structural
+        // expansion; without it a generic interface whose only type-parameter
+        // usages are bivariant (e.g. a member returning `R extends TB[] ? X : Y`,
+        // where `TB` appears solely in a conditional extends position) falls
+        // through to a structural member walk and spuriously rejects the pair
+        // because the deferred conditional members differ only in that bivariant
+        // argument (the kysely/valibot/zod `T`-not-assignable-to-`T` family).
+        // `needs_structural_fallback` keeps any not-cleanly-bivariant position
+        // (e.g. a conditional *check* position, or a modifier mapped type) on
+        // the structural path.
+        if all_ok && !needs_structural_fallback && (any_checked || !variances.is_empty()) {
             return Some(SubtypeResult::True);
         }
         // When structural fallback is needed (mapped types), variance failures

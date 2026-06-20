@@ -47,6 +47,9 @@ mod dual_package_exports_tests;
 #[path = "../tests/fs_tests.rs"]
 mod fs_tests;
 #[cfg(test)]
+#[path = "../tests/generic_interface_bivariant_param_relation_tests.rs"]
+mod generic_interface_bivariant_param_relation_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_generic_alias_cli_tests.rs"]
 mod interface_extends_generic_alias_cli_tests;
 #[cfg(test)]

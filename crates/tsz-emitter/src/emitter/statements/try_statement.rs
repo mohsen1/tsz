@@ -149,6 +149,37 @@ impl<'a> Printer<'a> {
         self.write("catch");
 
         if catch.variable_declaration.is_some() {
+            // ES5/ES3 has no destructuring syntax, so a binding pattern in a
+            // catch clause is invalid output. Mirror tsc's down-level transform:
+            // bind the caught value to a synthesized catch parameter, then
+            // extract the pattern into a leading `var` statement.
+            //   catch ({ message }) { use(message); }
+            // becomes
+            //   catch (_a) { var message = _a.message; use(message); }
+            if self.ctx.target_es5
+                && let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration)
+                && self.is_binding_pattern(pattern_idx)
+            {
+                self.emit_catch_temp_wrapper(node.pos, node.end, catch.block, |s, temp| {
+                    // An empty pattern (`catch ({})` / `catch ([])`, or one that
+                    // only holds elisions) extracts nothing, so no `var`
+                    // statement is emitted — just the synthesized parameter and
+                    // the original body. The shared ES5 destructuring lowering
+                    // handles defaults, nested patterns, and object/array rest.
+                    if let Some(pattern_node) = s.arena.get(pattern_idx) {
+                        let (count, has_rest) = s.count_effective_bindings(pattern_node);
+                        if count > 0 || has_rest {
+                            s.write("var ");
+                            let mut first = true;
+                            s.emit_es5_destructuring_pattern_direct(pattern_node, temp, &mut first);
+                            s.write(";");
+                            s.write_line();
+                        }
+                    }
+                });
+                return;
+            }
+
             // Check if catch variable has object rest that needs ES2018 lowering.
             let needs_rest_lowering = self.ctx.needs_es2018_lowering
                 && !self.ctx.target_es5
@@ -157,33 +188,12 @@ impl<'a> Printer<'a> {
             if needs_rest_lowering
                 && let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration)
             {
-                let temp = self.get_temp_var_name();
-                self.write(" ");
-                self.map_token_after(node.pos, node.end, b'(');
-                self.write("(");
-                self.write(&temp);
-                self.write(")");
-
-                self.write(" {");
-                self.write_line();
-                self.increase_indent();
-
-                self.write("var ");
-                self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
-                self.write(";");
-                self.write_line();
-
-                if let Some(block_node) = self.arena.get(catch.block)
-                    && let Some(block) = self.arena.get_block(block_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.emit(stmt);
-                        self.write_line();
-                    }
-                }
-
-                self.decrease_indent();
-                self.write("}");
+                self.emit_catch_temp_wrapper(node.pos, node.end, catch.block, |s, temp| {
+                    s.write("var ");
+                    s.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(temp));
+                    s.write(";");
+                    s.write_line();
+                });
                 return;
             }
 
@@ -211,6 +221,44 @@ impl<'a> Printer<'a> {
 
         self.write(" ");
         self.emit(catch.block);
+    }
+
+    /// Emit a catch clause whose binding has been replaced by a synthesized
+    /// parameter: `catch (<temp>) { <preamble> <original statements> }`. The
+    /// `preamble` writes the leading extraction statement(s) that recover the
+    /// original binding from `<temp>`. Shared by the ES2018 object-rest and
+    /// ES5 down-level paths, which differ only in how they extract.
+    fn emit_catch_temp_wrapper(
+        &mut self,
+        node_pos: u32,
+        node_end: u32,
+        block_idx: NodeIndex,
+        preamble: impl FnOnce(&mut Self, &str),
+    ) {
+        let temp = self.get_temp_var_name();
+        self.write(" ");
+        self.map_token_after(node_pos, node_end, b'(');
+        self.write("(");
+        self.write(&temp);
+        self.write(")");
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        preamble(self, &temp);
+
+        if let Some(block_node) = self.arena.get(block_idx)
+            && let Some(block) = self.arena.get_block(block_node)
+        {
+            for &stmt in &block.statements.nodes {
+                self.emit(stmt);
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
     }
 
     fn catch_clause_has_recovered_empty_binding_parens(
