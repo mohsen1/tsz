@@ -716,17 +716,11 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         let name = self
             .evaluator
             .literal_property_lookup_atom(self.index_type)?;
-        let members: Vec<TypeId> = self
-            .evaluator
-            .interner()
-            .type_list(list_id)
-            .iter()
-            .copied()
-            .collect();
+        let members = self.evaluator.interner().type_list(list_id);
 
         let mut parts = Vec::new();
         let mut saw_this = false;
-        for member in members {
+        for &member in members.iter() {
             let Some(raw) = self.member_own_property_type(member, name) else {
                 continue;
             };
