@@ -775,35 +775,25 @@ impl<'a> CheckerState<'a> {
         let mut report_no_index = false;
         let mut use_index_signature_check = true;
 
-        if crate::query_boundaries::common::is_type_parameter(
-            self.ctx.types,
+        if self.report_symbol_only_type_param_index_mismatch(
+            access.expression,
             pre_resolution_object_type,
-        ) && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
-            && crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                index_type,
-            )
-            .is_some_and(|constraint| {
-                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
-                    self.ctx.types,
-                    constraint,
-                )
-            })
-            && !self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let index_type_str = self.format_type(index_type);
-            let object_type_str = self.format_type(pre_resolution_object_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
-                &[&index_type_str, &object_type_str],
-            );
-            self.error_at_node(
-                access.expression,
-                &message,
-                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
-            );
+            index_type,
+        ) {
             result_type = Some(TypeId::ERROR);
+            use_index_signature_check = false;
+        }
+
+        // A generic receiver indexed by a unique symbol that keys a member of its
+        // constraint is a valid indexed access: tsc produces the deferred
+        // `T[typeof sym]` rather than a false TS7053 (a non-key symbol falls
+        // through to the index-signature checks below). See
+        // `type_param_unique_symbol_index_access`.
+        if result_type.is_none()
+            && let Some(deferred) =
+                self.type_param_unique_symbol_index_access(pre_resolution_object_type, index_type)
+        {
+            result_type = Some(deferred);
             use_index_signature_check = false;
         }
 
