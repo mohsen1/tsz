@@ -93,8 +93,8 @@ fn test_target_sensitive_check_js_strictness_stability() {
     );
 
     assert!(count_code(&strict, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE) >= 1);
-    assert!(count_code(&strict, 2345) == 0);
-    assert!(count_code(&loose, 2345) == 0);
+    assert_eq!(count_code(&strict, 2345), 0);
+    assert_eq!(count_code(&loose, 2345), 0);
 }
 
 #[test]

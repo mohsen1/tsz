@@ -39,7 +39,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::recursion::{RecursionGuard, RecursionProfile, RecursionResult};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    ConditionalType, IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId,
+    ConditionalType, IndexSignature, ObjectShapeId, ParamInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypePredicate, TypePredicateTarget,
 };
 use rustc_hash::FxHashMap;
 use std::mem::size_of;
@@ -215,7 +216,14 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         .iter()
                         .map(|e| TupleElement {
                             type_id: self.canonicalize(e.type_id),
-                            name: e.name,
+                            // Identity-exempt: a tuple element's label is cosmetic.
+                            // `[a: number]`, `[b: number]` and `[number]` are the
+                            // same type — `tsc` never compares labels for tuple
+                            // identity/assignability. `TupleElement` derives
+                            // `Eq`/`Hash` over `name`, so keeping it here fragments
+                            // alpha-equivalent tuples and misses the relation's
+                            // reflexive fast path (#13609, value-name axis).
+                            name: None,
                             optional: e.optional,
                             rest: e.rest,
                         })
@@ -296,17 +304,9 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     let c_this_type = shape.this_type.map(|t| self.canonicalize(t));
                     // Canonicalize return type
                     let c_return_type = self.canonicalize(shape.return_type);
-                    // Canonicalize parameter types
-                    let c_params: Vec<crate::types::ParamInfo> = shape
-                        .params
-                        .iter()
-                        .map(|p| crate::types::ParamInfo {
-                            name: p.name,
-                            type_id: self.canonicalize(p.type_id),
-                            optional: p.optional,
-                            rest: p.rest,
-                        })
-                        .collect();
+                    // Canonicalize parameter types (names dropped — see
+                    // `canonical_params`).
+                    let c_params = self.canonical_params(&shape.params);
 
                     // Canonicalize type parameter constraints. Names and the
                     // identity-irrelevant modifiers are dropped for
@@ -318,17 +318,12 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         .map(|&tp| self.canonical_bound_type_param(tp))
                         .collect();
 
-                    // Canonicalize type predicate (if it has a type_id)
-                    let c_type_predicate =
-                        shape
-                            .type_predicate
-                            .as_ref()
-                            .map(|pred| crate::types::TypePredicate {
-                                asserts: pred.asserts,
-                                target: pred.target,
-                                type_id: pred.type_id.map(|t| self.canonicalize(t)),
-                                parameter_index: pred.parameter_index,
-                            });
+                    // Canonicalize type predicate (identifier target normalized —
+                    // see `canonical_type_predicate`).
+                    let c_type_predicate = shape
+                        .type_predicate
+                        .as_ref()
+                        .map(|pred| self.canonical_type_predicate(pred));
 
                     // Pop scope
                     if pushed_scope {
@@ -632,7 +627,13 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             key_type: self.canonicalize(idx.key_type),
             value_type: self.canonicalize(idx.value_type),
             readonly: idx.readonly,
-            param_name: idx.param_name,
+            // Identity-exempt: the source key name (`[k: string]` vs
+            // `[key: string]`) is cosmetic. `IndexSignature` itself excludes it
+            // from `Eq`/`Hash`, but `ObjectShape`/`CallableShape` re-add it to
+            // interned identity for display, so two structurally-identical
+            // index signatures fragment on it. The comparison-only canonical
+            // form drops it so they reduce identically (#13609, value-name axis).
+            param_name: None,
         })
     }
 
@@ -737,8 +738,60 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         tp: crate::types::TypeParamInfo,
     ) -> crate::types::TypeParamInfo {
         crate::types::TypeParamInfo {
-            name: self.interner.intern_string(""),
+            name: Atom::NONE,
             ..self.canonical_type_param(tp)
+        }
+    }
+
+    /// Canonical (identity) forms of a parameter list, with the cosmetic
+    /// parameter `name` dropped.
+    ///
+    /// A function/method parameter's name is **not** part of TypeScript
+    /// structural identity: `(a: string) => void` and `(b: string) => void` are
+    /// the same type, and `compareSignaturesIdentical` matches parameters
+    /// positionally and compares their types only — never their names. But
+    /// [`ParamInfo`] derives `Eq`/`Hash` over `name`, so keeping it would let two
+    /// alpha-equivalent signatures intern to distinct canonical `TypeId`s and
+    /// miss the relation's reflexive/identity fast path (#13609, the value-name
+    /// analogue of the type-parameter name fix #14096). The optional/rest flags
+    /// and the parameter *type* are identity-bearing and preserved; only the
+    /// comparison/hashing-only canonical form drops the name — the *interned*
+    /// signature keeps it where it is rendered.
+    fn canonical_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
+        params
+            .iter()
+            .map(|p| ParamInfo {
+                name: None,
+                type_id: self.canonicalize(p.type_id),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect()
+    }
+
+    /// Canonical (identity) form of a type predicate.
+    ///
+    /// The asserted `type_id` is canonicalized recursively. An `Identifier`
+    /// target's atom is dropped (normalized to the empty atom) on the same
+    /// rationale as [`Self::canonical_params`]: the predicate names a parameter
+    /// that `parameter_index` already anchors positionally, so the identifier
+    /// text is cosmetic and `(x: unknown): x is string` and
+    /// `(y: unknown): y is string` are the same type. The `This`/`Identifier`
+    /// discriminant, `asserts`, and `parameter_index` are identity-bearing and
+    /// preserved.
+    fn canonical_type_predicate(&mut self, pred: &TypePredicate) -> TypePredicate {
+        let target = match pred.target {
+            // `parameter_index` already anchors the referenced parameter; the
+            // identifier atom is cosmetic, so erase it to the empty sentinel.
+            // `This` is identity-bearing and passes through unchanged.
+            TypePredicateTarget::Identifier(_) => TypePredicateTarget::Identifier(Atom::NONE),
+            TypePredicateTarget::This => TypePredicateTarget::This,
+        };
+        TypePredicate {
+            asserts: pred.asserts,
+            target,
+            type_id: pred.type_id.map(|t| self.canonicalize(t)),
+            parameter_index: pred.parameter_index,
         }
     }
 
@@ -762,17 +815,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         // Canonicalize return type
         let c_return_type = self.canonicalize(sig.return_type);
 
-        // Canonicalize parameter types
-        let c_params: Vec<crate::types::ParamInfo> = sig
-            .params
-            .iter()
-            .map(|p| crate::types::ParamInfo {
-                name: p.name,
-                type_id: self.canonicalize(p.type_id),
-                optional: p.optional,
-                rest: p.rest,
-            })
-            .collect();
+        // Canonicalize parameter types (names dropped — see `canonical_params`).
+        let c_params = self.canonical_params(&sig.params);
 
         // Canonicalize type parameter constraints. Names and the
         // identity-irrelevant modifiers are dropped for alpha-equivalence —
@@ -783,16 +827,12 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             .map(|&tp| self.canonical_bound_type_param(tp))
             .collect();
 
-        // Canonicalize type predicate (if it has a type_id)
-        let c_type_predicate =
-            sig.type_predicate
-                .as_ref()
-                .map(|pred| crate::types::TypePredicate {
-                    asserts: pred.asserts,
-                    target: pred.target,
-                    type_id: pred.type_id.map(|t| self.canonicalize(t)),
-                    parameter_index: pred.parameter_index,
-                });
+        // Canonicalize type predicate (identifier target normalized — see
+        // `canonical_type_predicate`).
+        let c_type_predicate = sig
+            .type_predicate
+            .as_ref()
+            .map(|pred| self.canonical_type_predicate(pred));
 
         // Pop scope
         if pushed_scope {

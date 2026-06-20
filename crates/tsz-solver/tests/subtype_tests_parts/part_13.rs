@@ -692,7 +692,7 @@ fn test_overload_subtype_signature_order_matters() {
     });
 
     // These should be different types due to signature order
-    assert!(specific_first != general_first);
+    assert_ne!(specific_first, general_first);
 }
 
 #[test]
@@ -1804,4 +1804,3 @@ fn test_explain_failure_intrinsic_mismatch() {
         other => panic!("Expected IntrinsicTypeMismatch, got {other:?}"),
     }
 }
-
