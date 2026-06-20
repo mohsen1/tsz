@@ -1149,6 +1149,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_jsdoc_implements_target(
         &mut self,
         target_name: &str,
+        class_idx: NodeIndex,
     ) -> Option<JsDocImplementsTarget> {
         let sym_id = if let Some(sym) = self.ctx.binder.file_locals.get(target_name) {
             Some(sym)
@@ -1174,7 +1175,14 @@ impl<'a> CheckerState<'a> {
             {
                 let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
-                if is_class {
+                // Declaration self-merge (`class Foo` + `@implements {Foo}` where
+                // `Foo` also names an interface that merges into the class symbol):
+                // the class trivially implements its own reflexive type, so the
+                // nominal class-target TS2720 must not fire. Mirrors the syntactic
+                // `implements` path in `core.rs`.
+                let is_self_merge = symbol_declarations.contains(&class_idx);
+
+                if is_class && !is_self_merge {
                     // Implementing a class with private/protected members is
                     // TS2720 regardless of structural shape.
                     let has_private_members = symbol_declarations.iter().any(|&decl_idx| {
@@ -1331,7 +1339,7 @@ impl<'a> CheckerState<'a> {
             // class/interface/type alias (a binder symbol) or as a JSDoc
             // `@typedef` alias (no binder symbol; resolved via the JSDoc
             // typedef table). Try the binder first; fall back to JSDoc.
-            let target = self.resolve_jsdoc_implements_target(target_name);
+            let target = self.resolve_jsdoc_implements_target(target_name, class_idx);
             let Some(target) = target else {
                 continue;
             };

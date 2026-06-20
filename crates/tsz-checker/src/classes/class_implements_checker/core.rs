@@ -1073,6 +1073,20 @@ impl<'a> CheckerState<'a> {
 
                     let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
+                    // Declaration self-merge: a class and a same-named interface merge
+                    // into one symbol, and the class legally `implements` that name
+                    // (`class Foo implements Foo`). The implements target then resolves
+                    // to the merged symbol whose declarations include this very class
+                    // node. tsc treats the class as trivially implementing its own
+                    // (reflexive) type, so the nominal class-vs-class diagnostics that
+                    // assume a *distinct* target — TS2720 for a class target with
+                    // private/protected members, and the private/protected brand
+                    // mismatch forms of TS2420 — must not fire. Public-member value
+                    // assignability still runs below, so a generic non-identity
+                    // self-reference (e.g. `class Box<T> implements Box<string>`) is
+                    // still checked.
+                    let is_self_merge = symbol_declarations.contains(&class_idx);
+
                     let mut interface_type_params = None;
                     let mut has_private_members = false;
 
@@ -1132,7 +1146,7 @@ impl<'a> CheckerState<'a> {
                     let report_inaccessible_privates =
                         any_inaccessible_privates && !any_accessible_privates;
 
-                    if has_private_members {
+                    if has_private_members && !is_self_merge {
                         let message = format!(
                             "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
                         );
@@ -1373,35 +1387,42 @@ impl<'a> CheckerState<'a> {
                             let is_class_member_protected =
                                 (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
                             let interface_visibility = prop.visibility;
-                            if is_class_member_private {
-                                // When BOTH class member and interface member are private,
-                                // they're nominally separate declarations (different brands).
-                                // tsc behavior:
-                                //   - Types compatible: emit TS2420 with
-                                //     "Types have separate declarations of a private property 'x'."
-                                //   - Types incompatible: emit TS2416 (per-property type mismatch),
-                                //     suppress the visibility-form TS2420 entirely.
-                                if interface_visibility == tsz_solver::Visibility::Private {
-                                    let types_incompatible = interface_member_type
-                                        != tsz_solver::TypeId::ANY
-                                        && class_member_type != tsz_solver::TypeId::ANY
-                                        && interface_member_type != tsz_solver::TypeId::ERROR
-                                        && class_member_type != tsz_solver::TypeId::ERROR
-                                        && should_report_own_member_type_mismatch(
-                                            self,
-                                            class_member_type,
-                                            interface_member_type,
-                                            class_member_idx,
-                                        );
-                                    if types_incompatible {
-                                        incompatible_members.push((
-                                            class_member_idx,
-                                            member_name.clone(),
-                                            interface_member_type,
-                                            class_member_type,
-                                        ));
-                                    } else {
-                                        self.error_at_node(
+                            // In a declaration self-merge the class member and the
+                            // merged-interface member are the *same* declaration, so they
+                            // share a private/protected brand. The nominal "separate
+                            // declarations" / visibility-mismatch diagnostics below assume
+                            // two distinct declarations; skip them all and let the
+                            // value-type assignability check (further down) own this member.
+                            if !is_self_merge {
+                                if is_class_member_private {
+                                    // When BOTH class member and interface member are private,
+                                    // they're nominally separate declarations (different brands).
+                                    // tsc behavior:
+                                    //   - Types compatible: emit TS2420 with
+                                    //     "Types have separate declarations of a private property 'x'."
+                                    //   - Types incompatible: emit TS2416 (per-property type mismatch),
+                                    //     suppress the visibility-form TS2420 entirely.
+                                    if interface_visibility == tsz_solver::Visibility::Private {
+                                        let types_incompatible = interface_member_type
+                                            != tsz_solver::TypeId::ANY
+                                            && class_member_type != tsz_solver::TypeId::ANY
+                                            && interface_member_type != tsz_solver::TypeId::ERROR
+                                            && class_member_type != tsz_solver::TypeId::ERROR
+                                            && should_report_own_member_type_mismatch(
+                                                self,
+                                                class_member_type,
+                                                interface_member_type,
+                                                class_member_idx,
+                                            );
+                                        if types_incompatible {
+                                            incompatible_members.push((
+                                                class_member_idx,
+                                                member_name.clone(),
+                                                interface_member_type,
+                                                class_member_type,
+                                            ));
+                                        } else {
+                                            self.error_at_node(
                                                 class_error_idx,
                                                 &format!(
                                                     "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  {}",
@@ -1412,74 +1433,75 @@ impl<'a> CheckerState<'a> {
                                                 ),
                                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                             );
+                                        }
+                                        continue;
                                     }
-                                    continue;
-                                }
-                                self.error_at_node(
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_display_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            if is_class_member_protected {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                if is_class_member_protected {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_display_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            // Interface-side private/protected: an interface may inherit a
-                            // private/protected member from a base class (e.g., `interface I
-                            // extends Foo`). A class implementing that interface with a
-                            // non-private same-named property breaks nominal compatibility.
-                            //
-                            // For *protected*, if the class also extends the same base (so it
-                            // has the inherited protected brand), tsc allows the widened
-                            // public redeclaration. Skip the error in that case.
-                            //
-                            // For *private*, no such leniency — redeclaring a private member
-                            // is always a nominal mismatch even when the class extends the
-                            // declaring base.
-                            if interface_visibility == tsz_solver::Visibility::Private {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                // Interface-side private/protected: an interface may inherit a
+                                // private/protected member from a base class (e.g., `interface I
+                                // extends Foo`). A class implementing that interface with a
+                                // non-private same-named property breaks nominal compatibility.
+                                //
+                                // For *protected*, if the class also extends the same base (so it
+                                // has the inherited protected brand), tsc allows the widened
+                                // public redeclaration. Skip the error in that case.
+                                //
+                                // For *private*, no such leniency — redeclaring a private member
+                                // is always a nominal mismatch even when the class extends the
+                                // declaring base.
+                                if interface_visibility == tsz_solver::Visibility::Private {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
-                            if interface_visibility == tsz_solver::Visibility::Protected
-                                && !inherited_non_public_members.contains_key(&member_name)
-                            {
-                                self.error_at_node(
+                                    continue;
+                                }
+                                if interface_visibility == tsz_solver::Visibility::Protected
+                                    && !inherited_non_public_members.contains_key(&member_name)
+                                {
+                                    self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{interface_display_name}' but not in type '{class_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
-                                continue;
-                            }
+                                    continue;
+                                }
 
-                            // Visibility widening (TS2420): interface member is
-                            // PRIVATE (because the interface extends a class with
-                            // a private member) but the class declares the same
-                            // name as public. Private members are nominal in tsc,
-                            // so a public member cannot satisfy a private slot
-                            // even when the class extends the same base class.
-                            // Protected widening to public is NOT an error here:
-                            // tsc allows a subclass to override a protected member
-                            // with public visibility, and the implementing-class
-                            // check delegates to that rule.
-                            if prop.visibility == Visibility::Private {
-                                self.error_at_node(
-                                    class_error_idx,
-                                    &format!(
-                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."
-                                    ),
-                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                );
-                                continue;
+                                // Visibility widening (TS2420): interface member is
+                                // PRIVATE (because the interface extends a class with
+                                // a private member) but the class declares the same
+                                // name as public. Private members are nominal in tsc,
+                                // so a public member cannot satisfy a private slot
+                                // even when the class extends the same base class.
+                                // Protected widening to public is NOT an error here:
+                                // tsc allows a subclass to override a protected member
+                                // with public visibility, and the implementing-class
+                                // check delegates to that rule.
+                                if prop.visibility == Visibility::Private {
+                                    self.error_at_node(
+                                        class_error_idx,
+                                        &format!(
+                                            "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."
+                                        ),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                    continue;
+                                }
                             }
 
                             // Check type compatibility using regular assignability.
