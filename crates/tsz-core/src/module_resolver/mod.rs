@@ -716,7 +716,15 @@ impl ModuleResolver {
         let is_ordinary_bare = !specifier.starts_with('.')
             && !specifier.starts_with('/')
             && (!specifier.contains(':') || specifier.starts_with("node:"));
-        let ambient_match = is_ordinary_bare && is_ambient_module(specifier);
+        // A `node:` builtin specifier (e.g. `node:fs`, `node:stream/promises`)
+        // resolves like its scheme-less form: tsc strips the `node:` scheme and
+        // resolves the remainder against the Node typings (`@types/node`, which
+        // declares each builtin as an ambient module / package subpath).
+        let node_builtin: Option<&str> = specifier
+            .strip_prefix("node:")
+            .filter(|stripped| !stripped.is_empty());
+        let ambient_match = is_ordinary_bare
+            && (is_ambient_module(specifier) || node_builtin.is_some_and(&is_ambient_module));
         let containing_is_declaration =
             ModuleExtension::from_path(containing_file).is_declaration();
         if self.trace_resolution {
@@ -760,14 +768,31 @@ impl ModuleResolver {
             request.resolution_mode_override,
         );
 
-        // 1. Try primary resolution
-        match self.resolve_with_kind_and_module_kind(
+        // 1. Try primary resolution. A `node:` builtin that does not resolve
+        // under its full specifier retries with the scheme stripped, matching
+        // tsc's resolution of Node builtins through `@types/node`.
+        let mut primary_resolution = self.resolve_with_kind_and_module_kind(
             specifier,
             containing_file,
             span,
             import_kind,
             request.resolution_mode_override,
-        ) {
+        );
+        if primary_resolution.is_err()
+            && let Some(stripped) = node_builtin
+        {
+            let stripped_resolution = self.resolve_with_kind_and_module_kind(
+                stripped,
+                containing_file,
+                span,
+                import_kind,
+                request.resolution_mode_override,
+            );
+            if stripped_resolution.is_ok() {
+                primary_resolution = stripped_resolution;
+            }
+        }
+        match primary_resolution {
             Ok(resolved_module) => {
                 if self.trace_resolution {
                     println!(
