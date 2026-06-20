@@ -766,6 +766,8 @@ impl<'a> CheckerState<'a> {
         pre_resolution_object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
         let symbol_only_constraint =
             crate::query_boundaries::common::is_type_parameter(
                 self.ctx.types,
@@ -785,7 +787,6 @@ impl<'a> CheckerState<'a> {
         if !symbol_only_constraint {
             return false;
         }
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let index_type_str = self.format_type(index_type);
         let object_type_str = self.format_type(pre_resolution_object_type);
         let message = format_message(
@@ -818,6 +819,8 @@ impl<'a> CheckerState<'a> {
         pre_resolution_object: TypeId,
         index_type: TypeId,
     ) -> Option<TypeId> {
+        const MAX_CONSTRAINT_CHAIN_DEPTH: usize = 8;
+
         if !crate::query_boundaries::common::is_type_parameter(
             self.ctx.types,
             pre_resolution_object,
@@ -831,7 +834,6 @@ impl<'a> CheckerState<'a> {
         // (non-type-parameter) constraint, then decide indexability against that
         // constraint's apparent type. The depth bound also terminates a
         // pathological self-referential constraint cycle.
-        const MAX_CONSTRAINT_CHAIN_DEPTH: usize = 8;
         let mut current = pre_resolution_object;
         let mut depth = 0;
         while depth < MAX_CONSTRAINT_CHAIN_DEPTH {
