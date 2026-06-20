@@ -76,6 +76,51 @@ pub fn headroom_below(min_bytes: usize) -> bool {
     measured_headroom_below(stacker::remaining_stack(), min_bytes)
 }
 
+/// Remaining-stack headroom below which a guarded entry point trips the breaker
+/// and bails. Sits well above the `stacker::maybe_grow` red zone so the breaker
+/// engages before a fresh segment would be needed for the next deep frame.
+const STACK_BAILOUT_HEADROOM_BYTES: usize = 1024 * 1024;
+/// `stacker::maybe_grow` red-zone: grow the stack once free headroom drops below
+/// this many bytes. Shared by every guarded checker recursion site.
+const STACK_RED_ZONE_BYTES: usize = 256 * 1024;
+/// `stacker::maybe_grow` new-segment size for guarded checker recursion sites.
+const STACK_GROW_BYTES: usize = 2 * 1024 * 1024;
+
+/// Run `body` under the shared checker stack-overflow breaker.
+///
+/// This is the single owner of the probe → trip → grow sequence that guards
+/// every deep, *cross-context* recursive checker entry point (expression
+/// dispatch, interface heritage merging, …). The thread-local breaker is the
+/// only stack-safety mechanism that survives the fresh / cross-arena child
+/// `CheckerContext`s spun up while resolving a base symbol — the per-context
+/// logical depth `Cell`s (`heritage_merge_depth`, `enter_recursion`) reset to
+/// zero across those boundaries, so a recursion that hops contexts accumulates
+/// real OS-stack frames that no per-context counter ever bounds (#14111).
+///
+/// Behaviour, mirroring the original inline `dispatch_type_computation` guard:
+/// 1. If the breaker has already tripped on this thread, return `on_exhausted`
+///    immediately (no further recursion for the rest of the file).
+/// 2. On a periodic [`should_probe_stack`] tick, measure remaining stack; if it
+///    is below [`STACK_BAILOUT_HEADROOM_BYTES`], trip the shared breaker and
+///    return `on_exhausted`.
+/// 3. Otherwise run `body` on a (possibly freshly grown) stack via
+///    `stacker::maybe_grow`.
+///
+/// `on_exhausted` is the safe, relation-preserving value the caller would have
+/// returned anyway when its own logical depth guard fires (e.g. the partially
+/// merged `derived_type`, or `TypeId::ERROR` for expression dispatch).
+#[inline]
+pub fn with_stack_guard<T>(on_exhausted: T, body: impl FnOnce() -> T) -> T {
+    if stack_overflow_tripped() {
+        return on_exhausted;
+    }
+    if should_probe_stack() && headroom_below(STACK_BAILOUT_HEADROOM_BYTES) {
+        trip_stack_overflow();
+        return on_exhausted;
+    }
+    stacker::maybe_grow(STACK_RED_ZONE_BYTES, STACK_GROW_BYTES, body)
+}
+
 /// Trip the stack overflow breaker.  Called from guards in `dispatch.rs` and
 /// `state/type_analysis/core.rs` when `stacker::remaining_stack()` reports
 /// < 256 KB remaining.
@@ -337,6 +382,56 @@ mod tests {
         // After 255 calls, counter == 255. Call 256: 255 + 1 = 256, masked
         // to 0. `0 & 0x0F == 0` → true.
         assert!(should_probe_stack());
+        reset();
+    }
+
+    #[test]
+    fn with_stack_guard_runs_body_when_healthy() {
+        reset();
+        let mut ran = false;
+        let out = with_stack_guard(-1, || {
+            ran = true;
+            42
+        });
+        assert!(ran, "body must run when the breaker is healthy");
+        assert_eq!(out, 42, "with_stack_guard must return the body result");
+        reset();
+    }
+
+    #[test]
+    fn with_stack_guard_bails_without_running_body_when_tripped() {
+        reset();
+        trip_stack_overflow();
+        let mut ran = false;
+        let out = with_stack_guard(-1, || {
+            ran = true;
+            42
+        });
+        assert!(
+            !ran,
+            "body must NOT run once the shared breaker has tripped — this is what \
+             unwedges the cross-context heritage-merge recursion (#14111)"
+        );
+        assert_eq!(
+            out, -1,
+            "with_stack_guard must return on_exhausted when tripped"
+        );
+        reset();
+    }
+
+    #[test]
+    fn with_stack_guard_does_not_trip_on_probe_ticks_when_headroom_is_ample() {
+        reset();
+        // Drive enough calls to cross several probe ticks. A real test thread has
+        // ample headroom, so none of the probes should trip the breaker.
+        for _ in 0..64 {
+            let out = with_stack_guard(0u32, || 7u32);
+            assert_eq!(out, 7, "body must keep running while headroom is ample");
+        }
+        assert!(
+            !stack_overflow_tripped(),
+            "ample-headroom probes must not trip the breaker"
+        );
         reset();
     }
 

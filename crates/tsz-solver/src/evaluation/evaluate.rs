@@ -368,6 +368,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     fn increment_def_depth(&mut self, def_id: DefId) -> bool {
         let depth = self.def_depth.entry(def_id).or_insert(0);
+        // #14101 step-2 probe: a non-zero prior depth means this def's application
+        // is re-entered while already in-flight (a recursive-heritage back-edge).
+        // Pure instrumentation (probe-gated); quantifies SCC materialize-once headroom.
+        if *depth >= 1 {
+            crate::evaluation::eval_materialization_probe::record_def_reentry(*depth);
+        }
         if *depth >= Self::MAX_DEF_DEPTH {
             // Depth-bounded run (see `deep_recursion_seen`).
             self.mark_deep_recursion_seen();

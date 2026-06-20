@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
 import {
-  PERF_TIMED_CANARY_PROJECT_ROWS,
+  PERF_TIMED_PROJECT_ROWS,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { fmt } from "./loc.js";
@@ -29,7 +29,7 @@ function hasSuccessfulTiming(row) {
 
 const PROJECT_BENCHMARK_NAMES = new Set([
   ...REQUIRED_PROJECT_ROWS,
-  ...PERF_TIMED_CANARY_PROJECT_ROWS,
+  ...PERF_TIMED_PROJECT_ROWS,
 ]);
 
 function isProjectBenchmark(row) {

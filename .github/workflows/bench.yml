@@ -143,10 +143,10 @@ jobs:
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
                   --json databaseId,headSha,url,createdAt \
-                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
+                  --jq '.[] | select(.databaseId < ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status queued --limit 20 \
                   --json databaseId,headSha,url,createdAt \
-                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
+                  --jq '.[] | select(.databaseId < ${{ github.run_id }}) | [.databaseId, .headSha, .url, .createdAt] | @tsv'
               } | sort -u
             }
             if ! active_runs_raw="$(gh_retry list_other_active_runs)"; then
@@ -172,7 +172,15 @@ jobs:
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run."
+              # Defer only to STRICTLY-OLDER active runs (databaseId < run_id, set
+              # in list_other_active_runs). Run ids are a strict total order, so
+              # among any set of near-simultaneous push-triggered runs exactly one
+              # — the oldest — finds no older-active run and proceeds; all newer
+              # ones defer to it. This breaks the symmetric "any other active run
+              # exists -> everyone defers" deadlock that left the site ~2h stale,
+              # while preserving the one-active-bench invariant (no concurrency:
+              # group needed) and the 180m stale-break above.
+              echo "An older Bench run is already active; deferring to the oldest concurrent run and skipping this newer duplicate."
               printf '%s\n' "$active_runs"
               IFS=$'\t' read -r active_run_id active_run_sha active_run_url <<< "$(printf '%s\n' "$active_runs" | head -n 1)"
               echo "active_run_id=${active_run_id}" >> "$GITHUB_OUTPUT"
@@ -1126,6 +1134,13 @@ jobs:
           - label: bench-canaries
             timeout: 135
             filter: 'valibot-project|msw-project|effect-project|drizzle-orm-project|ts-rest-project|ofetch-project|ts-pattern-project|trpc-project|tanstack-query-project|tanstack-router-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|ts-morph-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|class-transformer-project|type-graphql-project|neverthrow-project|xstate-project|mobx-project'
+          # Application rows need their real dependency graph to produce a
+          # meaningful tsz-vs-tsgo timing pair. Keep them in an optional shard:
+          # clean rows get chart data when timing completes, but app install
+          # flakiness never blocks required benchmark publishing.
+          - label: bench-applications
+            timeout: 135
+            filter: 'umami-project|dub-project|formbricks-project|lobe-chat-project|supabase-studio-project|infisical-project|payload-project|trigger-dev-project|directus-project|n8n-project|documenso-project|immich-server-project'
           - label: large-ts-repo
             timeout: 135
             filter: '^large-ts-repo$'
@@ -1564,12 +1579,12 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
-          # The bench-canaries shard (passing-canary perf rows) is OPTIONAL: it
-          # is merged when present but must NOT count toward — or break — the
-          # required-shard completeness gate. A failed/slow canary shard then
-          # never blocks publishing the required benchmark timings.
+          # Optional perf shards are merged when present but must NOT count
+          # toward — or break — the required-shard completeness gate. A
+          # failed/slow canary or application shard then never blocks publishing
+          # the required benchmark timings.
           mapfile -t required_files < <(
-            printf '%s\n' "${json_files[@]}" | grep -v '/bench-results-bench-canaries\.json$' || true
+            printf '%s\n' "${json_files[@]}" | grep -Ev '/bench-results-bench-(canaries|applications)\.json$' || true
           )
           expected_shards=9
           echo "json_count=${#required_files[@]}" >> "$GITHUB_OUTPUT"

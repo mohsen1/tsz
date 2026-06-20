@@ -175,6 +175,49 @@ where
     collect_properties_cached(type_id, interner, resolver, None)
 }
 
+/// Whether a named property is *declared optional* on the apparent type,
+/// resolving through heritage, intersection, application, union, mapped,
+/// conditional, and type-parameter constraints.
+///
+/// `tsc` decides `delete obj.p` legality (TS2790) from the deleted property's
+/// declared symbol — resolved through the receiver's full apparent type — not
+/// from the receiver's own flattened [`ObjectShape`]. A property declared `?`
+/// in a base interface and inherited (without redeclaration) by a derived
+/// interface, or one surfaced only through a deferred `Application` /
+/// intersection receiver, must therefore read as optional even though it is
+/// absent from — or required-looking on — the receiver's direct shape. A bare
+/// `get_object_shape` lookup returns `None` for `Lazy`/`Application`/
+/// intersection/union receivers and only the derived interface's own members
+/// for a flat shape, so it cannot answer this on its own.
+///
+/// Resolution order:
+/// 1. Fast path — a directly available object shape is already heritage-merged
+///    for nominal interfaces, so its own `optional` flag is authoritative when
+///    the property is present there.
+/// 2. Apparent-type path — otherwise collect the merged members through
+///    [`collect_properties`]; optionality survives unless a required occurrence
+///    overrides it (intersection semantics, matching the merge rule above).
+pub fn property_is_optional<R>(
+    type_id: TypeId,
+    name: Atom,
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+) -> bool
+where
+    R: TypeResolver,
+{
+    if let Some(prop) = crate::type_queries::find_property_in_object(interner, type_id, name) {
+        return prop.optional;
+    }
+    match collect_properties(type_id, interner, resolver) {
+        PropertyCollectionResult::Properties { properties, .. } => properties
+            .iter()
+            .find(|prop| prop.name == name)
+            .is_some_and(|prop| prop.optional),
+        PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => false,
+    }
+}
+
 /// [`collect_properties`] with an explicit cross-call query cache so spawned
 /// evaluators can reuse memoized application/instantiation results. Callers
 /// that already hold a `QueryDatabase` (checker/solver paths) should pass it to
@@ -614,9 +657,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 
         // Collect property names present in ALL members
         // Start with first member's property names, intersect with rest
-        let first = match &member_props[0] {
-            PropertyCollectionResult::Properties { properties, .. } => properties,
-            _ => return, // First member has no properties
+        let PropertyCollectionResult::Properties {
+            properties: first, ..
+        } = &member_props[0]
+        else {
+            // First member has no properties.
+            return;
         };
 
         // For each property in the first member, check if it's in all others
@@ -635,23 +681,18 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             let mut visibility = prop.visibility;
 
             for member_result in member_props.iter().skip(1) {
-                match member_result {
-                    PropertyCollectionResult::Properties { properties, .. } => {
-                        if let Some(other_prop) = PropertyInfo::find_in_slice(properties, prop.name)
-                        {
-                            type_ids.push(other_prop.type_id);
-                            any_optional = any_optional || other_prop.optional;
-                            any_readonly = any_readonly || other_prop.readonly;
-                            visibility = merge_visibility(visibility, other_prop.visibility);
-                        } else {
-                            present_in_all = false;
-                            break;
-                        }
-                    }
-                    _ => {
-                        present_in_all = false;
-                        break;
-                    }
+                let PropertyCollectionResult::Properties { properties, .. } = member_result else {
+                    present_in_all = false;
+                    break;
+                };
+                if let Some(other_prop) = PropertyInfo::find_in_slice(properties, prop.name) {
+                    type_ids.push(other_prop.type_id);
+                    any_optional = any_optional || other_prop.optional;
+                    any_readonly = any_readonly || other_prop.readonly;
+                    visibility = merge_visibility(visibility, other_prop.visibility);
+                } else {
+                    present_in_all = false;
+                    break;
                 }
             }
 

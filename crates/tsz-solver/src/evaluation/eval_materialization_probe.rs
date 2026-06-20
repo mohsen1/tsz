@@ -71,6 +71,26 @@ fn gate_enabled() -> bool {
     perf_counters::enabled_fast()
 }
 
+/// SCC re-entry probe (#14101 step-2 headroom). Counts how often a `DefId`'s
+/// application is re-entered while already in-flight up the evaluation stack
+/// (a recursive-heritage back-edge — `def_depth[def_id] >= 1`), plus the deepest
+/// such prior depth. This is the "redundant per-member re-eval" headroom that
+/// decides whether the SCC materialize-once fixpoint is worth its soundness
+/// cost; pure instrumentation, gated on the probe, no behavior change.
+static DEF_REENTRIES: AtomicU64 = AtomicU64::new(0);
+static DEF_REENTRY_MAX_DEPTH: AtomicU64 = AtomicU64::new(0);
+
+/// Record a recursive re-entry of a def's application at `prior_depth` (`>= 1`
+/// means a back-edge / cycle through that def). No-op unless the probe is gated on.
+#[inline]
+pub(crate) fn record_def_reentry(prior_depth: u32) {
+    if !gate_enabled() {
+        return;
+    }
+    DEF_REENTRIES.fetch_add(1, Ordering::Relaxed);
+    DEF_REENTRY_MAX_DEPTH.fetch_max(prior_depth as u64, Ordering::Relaxed);
+}
+
 /// Eval-engine kinds the lever targets. Index into [`ProbeState`] arrays.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(usize)]
@@ -618,6 +638,15 @@ pub fn dump_report() -> String {
         "[totals] computes {total_computes} -> distinct results {total_distinct_results} \
          (overall fan-out {overall_fanout:.1}%)"
     );
+    let reentries = DEF_REENTRIES.load(Ordering::Relaxed);
+    if reentries > 0 {
+        let _ = writeln!(
+            out,
+            "[scc] def re-entries (recursive-heritage back-edges) {reentries}, \
+             max prior depth {}  (#14101 step-2 materialize-once headroom)",
+            DEF_REENTRY_MAX_DEPTH.load(Ordering::Relaxed)
+        );
+    }
     out
 }
 

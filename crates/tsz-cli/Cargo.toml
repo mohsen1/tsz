@@ -92,6 +92,10 @@ name = "parallel_sequential_agreement_tests"
 path = "tests/parallel_sequential_agreement_tests.rs"
 
 [[test]]
+name = "delete_inherited_optional_heritage_tests"
+path = "tests/delete_inherited_optional_heritage_tests.rs"
+
+[[test]]
 name = "sound_declaration_projection_tests"
 path = "tests/sound_declaration_projection_tests.rs"
 

@@ -740,6 +740,9 @@ path = "tests/union_source_missing_property_elaboration_tests.rs"
 name = "union_target_missing_property_elaboration_tests"
 path = "tests/union_target_missing_property_elaboration_tests.rs"
 [[test]]
+name = "union_generic_class_shared_member_tests"
+path = "tests/union_generic_class_shared_member_tests.rs"
+[[test]]
 name = "union_source_structural_elaboration_tests"
 path = "tests/union_source_structural_elaboration_tests.rs"
 [[test]]
@@ -751,6 +754,9 @@ path = "tests/ts2353_mapped_template_literal_key_tests.rs"
 [[test]]
 name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
+[[test]]
+name = "ts2353_cross_module_symbol_computed_key_tests"
+path = "tests/ts2353_cross_module_symbol_computed_key_tests.rs"
 [[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
@@ -1846,6 +1852,9 @@ path = "tests/recursive_utility_alias_fanout_tests.rs"
 [[test]]
 name = "recursive_conditional_alias_concrete_fixpoint_tests"
 path = "tests/recursive_conditional_alias_concrete_fixpoint_tests.rs"
+[[test]]
+name = "issue_14123_repro_tests"
+path = "tests/issue_14123_repro_tests.rs"
 [[test]]
 name = "recursive_alias_counter_convergence_ts2589_tests"
 path = "tests/recursive_alias_counter_convergence_ts2589_tests.rs"
