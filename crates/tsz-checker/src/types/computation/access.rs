@@ -1,3 +1,4 @@
+use self::global_this_keyed::GlobalThisStringLikeElementAccess;
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -429,15 +430,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(result) = self.try_global_this_string_like_element_access(
-            idx,
-            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
-            access.expression,
-            literal_string.is_none(),
-            index_type,
-            is_this_global,
-            skip_flow_narrowing,
-        ) {
+        if let Some(result) =
+            self.try_global_this_string_like_element_access(GlobalThisStringLikeElementAccess {
+                idx,
+                is_element_access: node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
+                access_expression: access.expression,
+                has_no_literal_string_key: literal_string.is_none(),
+                index_type,
+                is_this_global,
+                skip_flow_narrowing,
+            })
+        {
             return result;
         }
 
