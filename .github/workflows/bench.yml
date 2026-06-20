@@ -1517,22 +1517,37 @@ jobs:
       # Best-effort by design: only the workflow_run (push-to-main) publish
       # path has a triggering CI run; a missing/old artifact must NEVER block
       # publishing the timing benchmarks (app rows just fall back to gray).
-      - name: Download application compile compatibility (best-effort)
+      - name: Download required compile compatibility from triggering CI (best-effort)
         if: github.event_name == 'workflow_run'
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: project-compile-compatibility
+          path: .target/app-compile-required-compat
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download canary compile compatibility from triggering CI (best-effort)
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: project-compile-canary-logs
+          path: .target/app-compile-canary-compat
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: List application compile compatibility
+        if: github.event_name == 'workflow_run'
         shell: bash
         run: |
-          set -uo pipefail
-          mkdir -p .target/app-compile-compat
-          if [[ -n "${CI_RUN_ID:-}" ]]; then
-            gh run download "$CI_RUN_ID" -n project-compile-canary-logs \
-              -D .target/app-compile-compat \
-              || echo "::warning::could not download project-compile-canary-logs from run ${CI_RUN_ID}; application rows will render gray this run"
+          set -euo pipefail
+          if ! find .target/app-compile-required-compat .target/app-compile-canary-compat \
+            -name 'project-compatibility.jsonl' -type f -size +0c 2>/dev/null | grep -q .; then
+            echo "::warning::no triggering-CI project compatibility JSONL downloaded; application rows will render gray this run"
           fi
-          find .target/app-compile-compat -type f -print 2>/dev/null || true
+          find .target/app-compile-required-compat .target/app-compile-canary-compat \
+            -type f -print 2>/dev/null || true
 
       - id: merge
         name: Merge benchmark results
@@ -1561,10 +1576,17 @@ jobs:
           # Add the application-row compat from the triggering CI run if present
           # (mergeCompatibilityCanaries is idempotent: re-attaching the same
           # canary compat is harmless and required rows are never overwritten).
-          app_compat="$(find "$GITHUB_WORKSPACE/.target/app-compile-compat" -name 'project-compatibility.jsonl' -type f 2>/dev/null | head -1)"
-          if [[ -n "$app_compat" && -s "$app_compat" ]]; then
-            echo "Including application compile compatibility from triggering CI run: $app_compat"
-            compat_args+=( --compat-jsonl "$app_compat" )
+          mapfile -t triggering_compat_files < <(
+            find \
+              "$GITHUB_WORKSPACE/.target/app-compile-required-compat" \
+              "$GITHUB_WORKSPACE/.target/app-compile-canary-compat" \
+              -name 'project-compatibility.jsonl' -type f -size +0c 2>/dev/null | sort
+          )
+          if [[ "${#triggering_compat_files[@]}" -gt 0 ]]; then
+            for app_compat in "${triggering_compat_files[@]}"; do
+              echo "Including application compile compatibility from triggering CI run: $app_compat"
+              compat_args+=( --compat-jsonl "$app_compat" )
+            done
           else
             echo "::warning::no application compile compatibility found; application rows will render gray this run"
           fi
