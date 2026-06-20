@@ -281,10 +281,18 @@ function analyzeArtifact(artifact, expectedCommit) {
     const state = stateFn(row, duplicate);
     const def = PROJECT_ROWS_BY_NAME[name];
     const compatibility = row?.compatibility ?? {};
+    const metadataComplete = (
+      row != null &&
+      duplicate !== true &&
+      row.artifact_missing !== true &&
+      row.compatibility != null &&
+      hasCompletePhaseMetadata(row.compatibility)
+    );
     return {
       name,
       label: def?.label ?? name,
       state,
+      metadata_complete: metadataComplete,
       duplicate_count: duplicateCount,
       tsz_ms: row?.tsz_ms ?? null,
       tsgo_ms: row?.tsgo_ms ?? null,
@@ -321,7 +329,11 @@ function analyzeArtifact(artifact, expectedCommit) {
     rows,
     applicationRows,
     applicationMissing: applicationRows.filter((r) => r.state === "missing"),
-    applicationIncomplete: applicationRows.filter((r) => r.state === "gray"),
+    applicationIncomplete: applicationRows.filter((r) => (
+      r.state !== "missing" &&
+      r.duplicate_count <= 1 &&
+      r.metadata_complete !== true
+    )),
     applicationDuplicates: applicationRows.filter((r) => r.duplicate_count > 1),
     successfulProjectTimingPairs: rows.filter((row) => (
       row.state === "green" &&
