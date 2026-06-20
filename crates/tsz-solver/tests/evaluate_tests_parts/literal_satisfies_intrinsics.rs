@@ -1052,7 +1052,7 @@ fn test_boolean_literal_union() {
     match interner.lookup(union) {
         Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
-            assert!(members.len() == 2);
+            assert_eq!(members.len(), 2);
         }
         Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => {
             // Simplified to boolean

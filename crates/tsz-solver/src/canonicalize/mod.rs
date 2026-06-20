@@ -772,7 +772,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             // identifier atom is cosmetic, so erase it to the empty sentinel.
             // `This` is identity-bearing and passes through unchanged.
             TypePredicateTarget::Identifier(_) => TypePredicateTarget::Identifier(Atom::NONE),
-            other => other,
+            TypePredicateTarget::This => TypePredicateTarget::This,
         };
         TypePredicate {
             asserts: pred.asserts,
