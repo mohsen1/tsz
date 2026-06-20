@@ -308,12 +308,16 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         })
                         .collect();
 
-                    // Canonicalize type parameter constraints (defaults are
-                    // identity-irrelevant; see `canonical_type_param`).
+                    // Canonicalize type parameter constraints. The declaration
+                    // name, the `default`, and the `const` modifier are all
+                    // identity-irrelevant here: references inside the function
+                    // are already rewritten to positional `BoundParameter`
+                    // indices, so the bound declaration is alpha-equivalent
+                    // (see `canonical_bound_type_param`).
                     let c_type_params: Vec<crate::types::TypeParamInfo> = shape
                         .type_params
                         .iter()
-                        .map(|&tp| self.canonical_type_param(tp))
+                        .map(|&tp| self.canonical_bound_type_param(tp))
                         .collect();
 
                     // Canonicalize type predicate (if it has a type_id)
@@ -371,13 +375,14 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     // 5. Pop scope
                     self.param_stack.pop();
 
-                    // 6. Normalize the TypeParamInfo name for alpha-equivalence
-                    // We must erase the original name ("K", "P", etc.) so that
-                    // { [K in T]: K } and { [P in T]: P } hash to the same value.
-                    // Since we use De Bruijn indices (BoundParameter) in the body,
-                    // this name is never looked up, only used for hashing identity.
-                    let mut c_type_param = self.canonical_type_param(mapped.type_param);
-                    c_type_param.name = self.interner.intern_string("");
+                    // 6. Normalize the iteration variable for alpha-equivalence.
+                    // The name ("K", "P", etc.) is erased so that { [K in T]: K }
+                    // and { [P in T]: P } hash to the same value: references in
+                    // the body use De Bruijn `BoundParameter` indices, so the
+                    // name is never looked up, only used for hashing identity.
+                    // Shared with the function/call-signature bound scopes via
+                    // `canonical_bound_type_param`.
+                    let c_type_param = self.canonical_bound_type_param(mapped.type_param);
 
                     let c_mapped = crate::types::MappedType {
                         type_param: c_type_param,
@@ -699,6 +704,33 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         }
     }
 
+    /// Canonical form of a **bound** type parameter — like
+    /// [`Self::canonical_type_param`] but with the declaration name erased to the
+    /// [`Atom::NONE`] sentinel for alpha-equivalence.
+    ///
+    /// Used for `type_params` declarations in a scope already pushed onto
+    /// `param_stack` (function / call-signature / mapped type). References to the
+    /// parameter inside the scope are already rewritten to positional
+    /// `BoundParameter(n)` (De Bruijn) indices, so the surviving `name`
+    /// contributes only to the structural hash. Erasing it keeps two generic
+    /// signatures that differ only in the chosen binder (`<T>(x: T) => T` vs
+    /// `<U>(x: U) => U`) from fragmenting into distinct canonical identities and
+    /// missing the relation's reflexive short-circuit — the same fragmentation
+    /// #13609 closes for `default`/`is_const`, and what `tsc`'s
+    /// `compareSignaturesIdentical` (which remaps type parameters positionally)
+    /// already ignores. The mapped-type path always erased this name; routing the
+    /// function/call-signature paths here makes all three bound scopes agree.
+    fn canonical_bound_type_param(
+        &mut self,
+        tp: crate::types::TypeParamInfo,
+    ) -> crate::types::TypeParamInfo {
+        crate::types::TypeParamInfo {
+            // `intern_string("")` is the `Atom::NONE` sentinel; use it directly.
+            name: Atom::NONE,
+            ..self.canonical_type_param(tp)
+        }
+    }
+
     /// Canonicalize a single call signature with type parameter scope management.
     fn canonicalize_signature(
         &mut self,
@@ -731,12 +763,15 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             })
             .collect();
 
-        // Canonicalize type parameter constraints (defaults are
-        // identity-irrelevant; see `canonical_type_param`).
+        // Canonicalize type parameter constraints. The declaration name, the
+        // `default`, and the `const` modifier are all identity-irrelevant here:
+        // references inside the signature are already rewritten to positional
+        // `BoundParameter` indices, so the bound declaration is alpha-equivalent
+        // (see `canonical_bound_type_param`).
         let c_type_params: Vec<crate::types::TypeParamInfo> = sig
             .type_params
             .iter()
-            .map(|&tp| self.canonical_type_param(tp))
+            .map(|&tp| self.canonical_bound_type_param(tp))
             .collect();
 
         // Canonicalize type predicate (if it has a type_id)

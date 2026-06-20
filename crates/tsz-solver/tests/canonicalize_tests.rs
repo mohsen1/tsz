@@ -2,7 +2,7 @@ use super::*;
 use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
 use crate::intern::TypeInterner;
-use crate::relations::subtype::{TypeEnvironment, TypeResolver};
+use crate::relations::subtype::{TypeEnvironment, TypeResolver, are_types_structurally_identical};
 use crate::types::{PropertyInfo, SymbolRef, TypeData, TypeParamInfo};
 
 // ===================================================================
@@ -419,87 +419,207 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
     }
 }
 
+/// Build `<NAME>(x: NAME) => NAME` as an interned function type, where `NAME`
+/// is the type-parameter name. Used to probe alpha-equivalence: only the
+/// binder name varies between calls.
+fn identity_fn_with_type_param_named(interner: &TypeInterner, name: &str) -> TypeId {
+    use crate::types::{FunctionShape, ParamInfo};
+    let atom = interner.intern_string(name);
+    let param = interner.type_param(TypeParamInfo {
+        name: atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
+
 #[test]
-fn canonicalize_function_type_params_name_preserved_in_shape() {
-    // Note: The canonicalizer preserves type parameter names in function shapes
-    // (unlike mapped types where the name is erased). This means two functions
-    // with different type param names but same structure will have different
-    // canonical TypeIds. Full alpha-equivalence for functions would require
-    // erasing names in the TypeParamInfo as well.
+fn canonicalize_function_type_params_are_alpha_equivalent_on_binder_name() {
+    // #13609: the canonicalizer alpha-renames type-parameter *references* to
+    // positional `BoundParameter` indices, so the *declaration* name on the
+    // bound `type_params` entry is identity-irrelevant — exactly like the
+    // mapped-type iteration variable, which was already erased. Two structurally
+    // identical generic functions that differ only in the chosen binder name
+    // (`<T>(x: T) => T` vs `<U>(x: U) => U`) must canonicalize to the SAME form,
+    // matching tsc's `compareSignaturesIdentical` (which remaps type parameters
+    // positionally and never compares their names).
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    use crate::types::{FunctionShape, ParamInfo};
-
-    let t_atom = interner.intern_string("T");
-    let t_param = interner.type_param(TypeParamInfo {
-        name: t_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-        origin: crate::types::TypeParamOrigin::User,
-    });
-    let func_t = interner.function(FunctionShape {
-        type_params: vec![TypeParamInfo {
-            name: t_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-            origin: crate::types::TypeParamOrigin::User,
-        }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_param,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    let u_atom = interner.intern_string("U");
-    let u_param = interner.type_param(TypeParamInfo {
-        name: u_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-        origin: crate::types::TypeParamOrigin::User,
-    });
-    let func_u = interner.function(FunctionShape {
-        type_params: vec![TypeParamInfo {
-            name: u_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-            origin: crate::types::TypeParamOrigin::User,
-        }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: u_param,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: u_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
+    let func_t = identity_fn_with_type_param_named(&interner, "T");
+    let func_u = identity_fn_with_type_param_named(&interner, "U");
+    // A third, differently-spelled binder, to be sure nothing keys on a
+    // specific identifier.
+    let func_elem = identity_fn_with_type_param_named(&interner, "Element");
 
     let mut c1 = Canonicalizer::new(&interner, &env);
     let mut c2 = Canonicalizer::new(&interner, &env);
+    let mut c3 = Canonicalizer::new(&interner, &env);
     let r1 = c1.canonicalize(func_t);
     let r2 = c2.canonicalize(func_u);
+    let r3 = c3.canonicalize(func_elem);
 
-    // Due to type param name preservation, these produce different canonical forms
-    // Both use BoundParameter(0) in body, but the TypeParamInfo name differs
-    assert_ne!(
+    assert_eq!(
         r1, r2,
-        "Functions with different type param names have different canonical forms \
-         (name is preserved in function shapes, unlike mapped types)"
+        "`<T>(x: T) => T` and `<U>(x: U) => U` are alpha-equivalent and must \
+         canonicalize identically"
+    );
+    assert_eq!(
+        r1, r3,
+        "alpha-equivalence must not depend on the chosen binder spelling"
+    );
+
+    // End-to-end through the relation's structural-identity gateway.
+    assert!(
+        are_types_structurally_identical(&interner, &env, func_t, func_u),
+        "alpha-equivalent generic functions must be structurally identical"
+    );
+}
+
+#[test]
+fn canonicalize_constrained_type_params_are_alpha_equivalent_on_binder_name() {
+    // The binder name stays identity-irrelevant when the parameter carries a
+    // constraint: `<T extends string>(x: T) => T` and
+    // `<U extends string>(x: U) => U` are alpha-equivalent. (The constraint
+    // itself is still part of identity — that is covered by the negative
+    // control below.)
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let make = |name: &str, constraint: TypeId| {
+        let atom = interner.intern_string(name);
+        let info = TypeParamInfo {
+            name: atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        };
+        let param = interner.type_param(info);
+        interner.function(FunctionShape {
+            type_params: vec![info],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: param,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let t_string = make("T", TypeId::STRING);
+    let u_string = make("U", TypeId::STRING);
+    let t_number = make("T", TypeId::NUMBER);
+
+    let mut c1 = Canonicalizer::new(&interner, &env);
+    let mut c2 = Canonicalizer::new(&interner, &env);
+    let mut c3 = Canonicalizer::new(&interner, &env);
+    assert_eq!(
+        c1.canonicalize(t_string),
+        c2.canonicalize(u_string),
+        "alpha-equivalence holds with a shared constraint"
+    );
+    assert_ne!(
+        c1.canonicalize(t_string),
+        c3.canonicalize(t_number),
+        "the constraint itself remains part of identity (string vs number)"
+    );
+}
+
+#[test]
+fn canonicalize_two_type_params_alpha_equivalence_respects_position() {
+    // With two binders, alpha-renaming both at once is identity-preserving, but
+    // the *positional* role each plays is not: `<A, B>(a: A, b: B) => B` must
+    // stay distinct from `<A, B>(a: A, b: B) => A`. Position is carried by the
+    // `BoundParameter` index, not the erased declaration name.
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    let make_info = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    // Builds `<P0, P1>(a: P0, b: P1) => P{return_first ? 0 : 1}` with the two
+    // binders named `n0`/`n1`.
+    let make = |n0: &str, n1: &str, return_first: bool| {
+        let info0 = make_info(n0);
+        let info1 = make_info(n1);
+        let p0 = interner.type_param(info0);
+        let p1 = interner.type_param(info1);
+        interner.function(FunctionShape {
+            type_params: vec![info0, info1],
+            params: vec![
+                ParamInfo {
+                    name: Some(interner.intern_string("a")),
+                    type_id: p0,
+                    optional: false,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(interner.intern_string("b")),
+                    type_id: p1,
+                    optional: false,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: if return_first { p0 } else { p1 },
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    // Positive: rename both binders, same positional roles → identical.
+    assert!(
+        are_types_structurally_identical(
+            &interner,
+            &env,
+            make("A", "B", false),
+            make("X", "Y", false),
+        ),
+        "renaming all binders preserves identity"
+    );
+    // Negative: same binders, but the returned position differs → distinct.
+    assert!(
+        !are_types_structurally_identical(
+            &interner,
+            &env,
+            make("A", "B", false),
+            make("A", "B", true),
+        ),
+        "returning the first vs second positional parameter is a real difference"
     );
 }
 
