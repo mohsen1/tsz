@@ -586,14 +586,30 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// If a type couldn't be resolved (TS2304, etc.), we don't want to add noise
     /// with arithmetic errors - the primary error is more useful.
     pub fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        // Don't emit arithmetic errors for error/unknown/never types - prevents cascading errors.
+        self.is_arithmetic_operand_inner(type_id, false, 0)
+    }
+
+    /// Core arithmetic-operand predicate.
+    ///
+    /// `via_constraint` is `true` once we have descended into an instantiable
+    /// type's base constraint / apparent type: a bare `unknown` operand is
+    /// accepted at the surface (to avoid cascading after an earlier error), but
+    /// an instantiable type whose base constraint is merely `unknown` (e.g. an
+    /// unconstrained type parameter) is NOT a numeric operand in `tsc`, so the
+    /// constraint path holds `unknown` to the stricter test.
+    fn is_arithmetic_operand_inner(
+        &self,
+        type_id: TypeId,
+        via_constraint: bool,
+        depth: u8,
+    ) -> bool {
+        // Don't emit arithmetic errors for error/never types - prevents cascading errors.
         // NEVER (bottom type) is assignable to all types, so it's valid everywhere.
-        if type_id == TypeId::ANY
-            || type_id == TypeId::ERROR
-            || type_id == TypeId::UNKNOWN
-            || type_id == TypeId::NEVER
-        {
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::NEVER {
             return true;
+        }
+        if type_id == TypeId::UNKNOWN {
+            return !via_constraint;
         }
         if self.is_number_like(type_id) || self.is_bigint_like(type_id) {
             return true;
@@ -601,18 +617,73 @@ impl<'a> BinaryOpEvaluator<'a> {
         // For unions like `bigint | number`, the all-number-like and all-bigint-like
         // checks both fail because neither is uniform. But each member is individually
         // a valid arithmetic type. Check if all union members are individually arithmetic.
-        if let Some(members) = crate::visitor::union_list_id(self.interner, type_id) {
-            let member_list = self.interner.type_list(members);
-            return !member_list.is_empty()
-                && member_list.iter().all(|&m| {
-                    m == TypeId::ANY
-                        || m == TypeId::ERROR
-                        || m == TypeId::NEVER
-                        || self.is_number_like(m)
-                        || self.is_bigint_like(m)
-                });
+        if self.all_union_members_arithmetic(type_id) {
+            return true;
+        }
+        // tsc's `checkArithmeticOperandType` validates an operand by assignability
+        // to `number | bigint`, which for an *instantiable* type (a deferred
+        // conditional, a bare type parameter, ...) is decided against the type's
+        // base constraint / apparent type. Resolve the operand toward that apparent
+        // form and re-check, so a deferred conditional whose branches are all numeric
+        // (`T extends [] ? 0 : number`) and a numeric-constrained type parameter
+        // (`T extends number`) are accepted exactly as tsc accepts them — while a
+        // conditional with a non-numeric branch (`... ? number : string`) and an
+        // unconstrained parameter still fail.
+        if depth < 4
+            && let Some(resolved) = self.arithmetic_operand_apparent_type(type_id)
+            && resolved != type_id
+        {
+            return self.is_arithmetic_operand_inner(resolved, true, depth + 1);
         }
         false
+    }
+
+    /// Whether `type_id` is a non-empty union whose members are each individually
+    /// a valid arithmetic operand (e.g. `number | bigint`).
+    fn all_union_members_arithmetic(&self, type_id: TypeId) -> bool {
+        let Some(members) = crate::visitor::union_list_id(self.interner, type_id) else {
+            return false;
+        };
+        let member_list = self.interner.type_list(members);
+        !member_list.is_empty()
+            && member_list.iter().all(|&m| {
+                m == TypeId::ANY
+                    || m == TypeId::ERROR
+                    || m == TypeId::NEVER
+                    || self.is_number_like(m)
+                    || self.is_bigint_like(m)
+            })
+    }
+
+    /// Resolve an instantiable operand to the apparent type / base constraint that
+    /// `tsc` uses to validate arithmetic-operand-ness, or `None` when there is no
+    /// such reduction (a concrete type, or a deferred form whose constituents stay
+    /// opaque). Mirrors the relevant slice of `getBaseConstraintOfType`.
+    fn arithmetic_operand_apparent_type(&self, type_id: TypeId) -> Option<TypeId> {
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        match self.interner.lookup(type_id)? {
+            TypeData::TypeParameter(_) | TypeData::Infer(_) => {
+                let constraint =
+                    crate::type_queries::get_base_constraint_or_type(self.interner, type_id);
+                (constraint != type_id).then_some(constraint)
+            }
+            TypeData::Conditional(_) => {
+                // The union of the branch results is the conditional's base
+                // constraint (tsc's `getBaseConstraintOfType` of a conditional is
+                // `getUnionType([trueType, falseType])`); fall back to the default
+                // constraint for branch shapes the union helper keeps opaque.
+                crate::type_queries::conditional_branch_union_constraint(self.interner, type_id)
+                    .or_else(|| {
+                        crate::type_queries::get_conditional_default_constraint(
+                            self.interner,
+                            type_id,
+                        )
+                    })
+            }
+            _ => None,
+        }
     }
 
     /// Evaluate a binary operation on two types.
