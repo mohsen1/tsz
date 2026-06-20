@@ -578,11 +578,7 @@ impl TypeInterner {
     ///
     /// This is semantically identical to `compare_union_members` but avoids
     /// all DashMap/arena lookups since data was pre-fetched into `CachedUnionMember`.
-    fn compare_cached_members(
-        &self,
-        a: &CachedUnionMember,
-        b: &CachedUnionMember,
-    ) -> std::cmp::Ordering {
+    fn compare_cached_members(a: &CachedUnionMember, b: &CachedUnionMember) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
         // Fast path: built-in types have fixed sort positions. Break equal
@@ -787,7 +783,7 @@ impl TypeInterner {
             flat.iter().map(|&id| self.cache_union_member(id)).collect();
 
         // Sort using cached data: O(N log N) comparisons with zero further lookups.
-        cached.sort_by(|a, b| self.compare_cached_members(a, b));
+        cached.sort_by(Self::compare_cached_members);
 
         // Write sorted TypeIds back
         for (i, member) in cached.iter().enumerate() {
