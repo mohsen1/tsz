@@ -219,6 +219,12 @@ assert.doesNotMatch(
 
 assert.match(
   workflow,
+  /publish_stale_minutes="\$\{BENCH_PUBLISH_STALE_MINUTES:-45\}"[\s\S]+bench-publish[\s\S]+\.conclusion[\s\S]+data_is_fresh[\s\S]+Published benchmark data is stale[\s\S]+publishing despite an older active run to break streaming starvation\.[\s\S]+active_runs=""/,
+  "bench gate should publish despite older active runs when the published data is stale (streaming-starvation breaker)",
+);
+
+assert.match(
+  workflow,
   /catch-up:[\s\S]+needs: \[bench-gate, bench-prep-artifact, bench, publish\][\s\S]+github\.event_name == 'workflow_run'[\s\S]+needs\.bench-gate\.outputs\.should_run == 'true'[\s\S]+needs\.publish\.result != 'success'/,
   "benchmark workflow should schedule catch-up only after a publish-capable workflow_run exits without publishing",
 );

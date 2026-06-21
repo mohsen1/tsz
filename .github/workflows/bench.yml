@@ -171,6 +171,49 @@ jobs:
               fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
+            # Freshness override (streaming-starvation breaker). The strict-order
+            # deferral below stops the symmetric A<->B deadlock, but not a
+            # STREAMING chain: under a high merge rate every run finds an older
+            # active run at gate time and defers to it -- yet that older run
+            # already deferred to ITS predecessor, so the chain never publishes
+            # and the site goes stale indefinitely. So we only honour deferral
+            # while the PUBLISHED data is still fresh. If no bench-publish job has
+            # succeeded within the staleness window, this run proceeds (publishes)
+            # despite older active runs; redundant concurrent publishes are rare
+            # (only when already stale) and the publish is last-write-wins.
+            if [[ -n "$active_runs" ]]; then
+              publish_stale_minutes="${BENCH_PUBLISH_STALE_MINUTES:-45}"
+              if ! [[ "$publish_stale_minutes" =~ ^[0-9]+$ ]]; then
+                publish_stale_minutes=45
+              fi
+              find_last_publish_epoch() {
+                local rid concl ts ep
+                for rid in $(gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status completed --limit 15 --json databaseId --jq '.[].databaseId'); do
+                  concl="$(gh run view "$rid" --repo "${{ github.repository }}" --json jobs --jq '[.jobs[] | select(.name == "bench-publish")][0].conclusion // ""' 2>/dev/null || echo "")"
+                  if [[ "$concl" == "success" ]]; then
+                    ts="$(gh run view "$rid" --repo "${{ github.repository }}" --json jobs --jq '[.jobs[] | select(.name == "bench-publish")][0].completedAt // ""' 2>/dev/null || echo "")"
+                    ep="$(date -u -d "$ts" +%s 2>/dev/null || echo 0)"
+                    printf '%s' "$ep"
+                    return 0
+                  fi
+                done
+                printf '0'
+              }
+              if ! last_publish_epoch="$(gh_retry find_last_publish_epoch)"; then
+                last_publish_epoch=0
+              fi
+              now_epoch="$(date -u +%s)"
+              data_is_fresh=true
+              if ! [[ "$last_publish_epoch" =~ ^[0-9]+$ ]] || [[ "$last_publish_epoch" -le 0 ]]; then
+                data_is_fresh=false
+              elif [[ $(((now_epoch - last_publish_epoch) / 60)) -ge "$publish_stale_minutes" ]]; then
+                data_is_fresh=false
+              fi
+              if [[ "$data_is_fresh" != "true" ]]; then
+                echo "Published benchmark data is stale (no successful bench-publish within ${publish_stale_minutes}m); publishing despite an older active run to break streaming starvation."
+                active_runs=""
+              fi
+            fi
             if [[ -n "$active_runs" ]]; then
               # Defer only to STRICTLY-OLDER active runs (databaseId < run_id, set
               # in list_other_active_runs). Run ids are a strict total order, so
