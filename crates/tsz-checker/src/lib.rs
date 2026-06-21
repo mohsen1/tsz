@@ -409,6 +409,9 @@ mod override_incompatibility_elaboration_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
+mod private_field_no_spelling_suggestion_tests;
+#[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
 #[cfg(test)]
@@ -429,6 +432,9 @@ mod spread_rest_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
+#[cfg(test)]
+#[path = "tests/spurious_suggestion_suppression_tests.rs"]
+mod spurious_suggestion_suppression_tests;
 #[cfg(test)]
 #[path = "../tests/stability_validation_tests.rs"]
 mod stability_validation_tests;
