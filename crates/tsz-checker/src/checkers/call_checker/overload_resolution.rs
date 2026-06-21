@@ -75,6 +75,33 @@ impl<'a> CheckerState<'a> {
             .count();
         let has_multiple_arity_compatible_signatures = arity_compatible_signature_count > 1;
 
+        // When the call contains an open-ended (non-tuple) array/iterable spread
+        // — `...arr` where `arr: T[]` — only an overload with an effective rest
+        // parameter can absorb it (tsc's `hasEffectiveRestParameter` precondition
+        // in `chooseOverload`). A fixed-arity overload would otherwise win on the
+        // collapsed single-`any` argument count and then emit a spurious TS2556.
+        // Skipping non-rest candidates here lets the spread bind to the rest
+        // overload, matching tsc.
+        //
+        // The skip is gated on a *reachable* rest overload: one whose trailing
+        // rest parameter sits at or before the position the spread occupies
+        // (`rest index <= leading positional argument count`). Without that
+        // gate, a spread that lands on a fixed parameter of every overload
+        // (e.g. a rest overload `(a, b, c, ...rest)` called as `f(x, ...arr)`,
+        // where the spread hits `b`) would have its non-rest siblings skipped
+        // yet the rest overload also rejected on arity, suppressing the
+        // diagnostic the spread genuinely deserves. When no rest overload is
+        // reachable, the loops run unchanged.
+        let call_has_open_ended_spread = self.call_has_open_ended_array_spread_argument(args);
+        let leading_positional_arg_count = self.positional_arg_count_before_open_ended_spread(args);
+        let any_reachable_rest_overload = signatures.iter().any(|sig| {
+            sig.params
+                .iter()
+                .position(|param| param.rest)
+                .is_some_and(|rest_index| rest_index <= leading_positional_arg_count)
+        });
+        let skip_non_rest_for_spread = call_has_open_ended_spread && any_reachable_rest_overload;
+
         // Overload contextual typing baseline.
         // First pass collects argument types once using a union of overload signatures.
         // If that fails to find a match, we run a second pass that re-collects arguments
@@ -272,6 +299,12 @@ impl<'a> CheckerState<'a> {
         let arg_readonly_markers =
             self.call_arg_source_readonly_annotation_markers(args, arg_types.len());
         for (idx, original_sig) in signatures.iter().enumerate() {
+            // An open-ended array/iterable spread can only land on an effective
+            // rest parameter; a fixed-arity overload is not applicable (see
+            // `skip_non_rest_for_spread`).
+            if skip_non_rest_for_spread && !original_sig.params.iter().any(|param| param.rest) {
+                continue;
+            }
             let sig = self.overload_signature_for_inference(
                 original_sig,
                 idx,
@@ -996,6 +1029,11 @@ impl<'a> CheckerState<'a> {
         // this candidate and surface its diagnostics instead of silently recovering.
         let mut callback_body_only_success: Option<BestTypeMismatch> = None;
         for (idx, original_sig) in signatures.iter().enumerate() {
+            // See the first-pass loop: an open-ended spread requires an effective
+            // rest parameter, so fixed-arity overloads are skipped here too.
+            if skip_non_rest_for_spread && !original_sig.params.iter().any(|param| param.rest) {
+                continue;
+            }
             let sig = self.overload_signature_for_inference(
                 original_sig,
                 idx,

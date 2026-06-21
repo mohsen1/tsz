@@ -1919,6 +1919,136 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the call's arguments contain an open-ended (non-tuple)
+    /// array/iterable spread — `...arr` where `arr: T[]` or a custom iterable,
+    /// whose runtime length is unknown at the call site.
+    ///
+    /// Such a spread can only be satisfied by an effective rest parameter, so it
+    /// mirrors tsc's `hasEffectiveRestParameter` precondition during overload
+    /// resolution: a candidate signature with a fixed parameter list (no rest)
+    /// is not applicable to a spread call. Tuple-typed spreads, array-literal
+    /// spreads (expanded element-by-element), and type-parameter spreads whose
+    /// constraint is array/tuple-like are *not* open-ended — they advance the
+    /// argument list by a known count and bind positionally, so they are
+    /// excluded here, exactly as in
+    /// [`CheckerState::validate_non_tuple_spreads_for_signature`].
+    pub(super) fn call_has_open_ended_array_spread_argument(&mut self, args: &[NodeIndex]) -> bool {
+        for &arg_idx in args {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_spread(arg_node) else {
+                continue;
+            };
+            let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+            // Tuple-typed spread (fixed positional expansion): not open-ended.
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
+            {
+                continue;
+            }
+            // Array-literal spread (`...['a', 'b']`) is expanded element-by-element.
+            if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
+                && self.ctx.arena.get_literal_expr(expr_node).is_some()
+            {
+                continue;
+            }
+            // Type-parameter spread whose constraint is array/tuple-like binds
+            // as a single positional unit, not an open-ended overflow.
+            if is_type_parameter_type(self.ctx.types, spread_type)
+                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    spread_type,
+                )
+                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
+                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+            {
+                continue;
+            }
+            let is_open_ended_spread = array_element_type_for_type(self.ctx.types, spread_type)
+                .is_some()
+                || self.is_iterable_type(spread_type);
+            if is_open_ended_spread {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The number of positional argument slots that precede the first open-ended
+    /// (non-tuple) array/iterable spread, expanding earlier tuple/array-literal
+    /// spreads by their known element count. This is the parameter index the
+    /// spread occupies, used to decide whether a rest overload's trailing rest
+    /// parameter actually sits at or before that index (and so can absorb the
+    /// spread). Returns the total positional count when there is no open-ended
+    /// spread.
+    pub(super) fn positional_arg_count_before_open_ended_spread(
+        &mut self,
+        args: &[NodeIndex],
+    ) -> usize {
+        let mut effective_index = 0usize;
+        for &arg_idx in args {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                effective_index += 1;
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+                effective_index += 1;
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_spread(arg_node) else {
+                effective_index += 1;
+                continue;
+            };
+            let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+            // Tuple-typed spread expands by its element count.
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
+                && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
+            {
+                effective_index += elems.len();
+                continue;
+            }
+            // Array-literal spread expands by its literal element count.
+            if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
+                && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+            {
+                effective_index += literal.elements.nodes.len();
+                continue;
+            }
+            // Type-parameter spread with array/tuple-like constraint occupies one slot.
+            if is_type_parameter_type(self.ctx.types, spread_type)
+                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    spread_type,
+                )
+                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
+                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+            {
+                effective_index += 1;
+                continue;
+            }
+            let is_open_ended_spread = array_element_type_for_type(self.ctx.types, spread_type)
+                .is_some()
+                || self.is_iterable_type(spread_type);
+            if is_open_ended_spread {
+                return effective_index;
+            }
+            effective_index += 1;
+        }
+        effective_index
+    }
+
     pub(super) fn find_prior_non_tuple_spread_for_mismatch(
         &mut self,
         args: &[NodeIndex],
