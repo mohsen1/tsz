@@ -1771,6 +1771,62 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.evaluate(index_access)
     }
 
+    /// Evaluate `T[K]` for an empty (`never`) key set, mirroring tsc's
+    /// `getIndexedAccessType` over an empty key. `object_type` must already be
+    /// evaluated — the caller passes the evaluated object, and union members are
+    /// constituents of an evaluated union.
+    ///
+    /// `never` is assignable to every index key, so tsc reads `T`'s index
+    /// *sources*: the number index first (an array's element type, a tuple's
+    /// element union, or a numeric index signature), then the string and symbol
+    /// index signatures. The access collapses to `never` only when `T` exposes no
+    /// index source (e.g. a plain object type with named properties only, or a
+    /// primitive). Probing the concrete `number`/`string`/`symbol` keys reuses the
+    /// full per-shape index machinery (`readonly` unwrapping, `Lazy` resolution,
+    /// numeric-to-string index fallback); a missing index source surfaces as
+    /// `error`/`undefined`, which is treated as "no contribution".
+    fn evaluate_empty_key_index_access(&mut self, object_type: TypeId) -> TypeId {
+        if object_type == TypeId::NEVER {
+            return TypeId::NEVER;
+        }
+
+        // `(A | B)[never]` distributes to `A[never] | B[never]`, dropping members
+        // that contribute no index source (`union` of an empty set is `never`).
+        if let Some(members_id) = union_list_id(self.interner(), object_type) {
+            let members = self.interner().type_list(members_id);
+            let mut results = Vec::new();
+            for &member in members.iter() {
+                let contribution = self.evaluate_empty_key_index_access(member);
+                if contribution != TypeId::NEVER {
+                    results.push(contribution);
+                }
+            }
+            return self.interner().union(results);
+        }
+
+        // tsc priority: the number index (array/tuple element, numeric signature)
+        // first, then the string and symbol index signatures.
+        for key in [TypeId::NUMBER, TypeId::STRING, TypeId::SYMBOL] {
+            let value = self.recurse_index_access(object_type, key);
+            if value == TypeId::ERROR || value == TypeId::UNDEFINED || value == TypeId::NEVER {
+                continue;
+            }
+            // A deferred access that indexes straight back onto `object_type` made
+            // no progress for this key (e.g. a mapped type whose constraint does
+            // not admit `number`); skip it so a later key can still resolve the
+            // real index source (the mapped constraint `string`/`symbol`).
+            if matches!(
+                self.interner().lookup(value),
+                Some(TypeData::IndexAccess(obj, _)) if obj == object_type
+            ) {
+                continue;
+            }
+            return value;
+        }
+
+        TypeId::NEVER
+    }
+
     /// Evaluate an index access type: T[K]
     ///
     /// This resolves property access on object types.
@@ -1841,10 +1897,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ERROR;
         }
 
-        // `T[never]` and `T[keyof T]` where the key set is empty index over no
-        // properties, so they evaluate to `never`. Keep this narrower than all
-        // indexes that simplify to `never`, because some mapped/utility-type
-        // paths rely on the existing concrete lookup fallback behavior.
+        // `T[never]` and `T[keyof T]` over an empty key set index over no named
+        // properties. `never` is assignable to every index key, so tsc resolves
+        // such an access to `T`'s *index source* — the number index (array/tuple
+        // element, numeric signature), then the string/symbol index signatures —
+        // collapsing to `never` only when `T` exposes no index source. Keep this
+        // narrower than all indexes that simplify to `never`, because some
+        // mapped/utility-type paths rely on the existing concrete lookup fallback
+        // behavior for deferred keys that happen to reduce to `never`.
         let is_empty_index_access = evaluated_index == TypeId::NEVER
             && (index_type == TypeId::NEVER
                 || matches!(
@@ -1856,7 +1916,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             || self.evaluate(inner) == evaluated_object
                 ));
         if is_empty_index_access {
-            return TypeId::NEVER;
+            return self.evaluate_empty_key_index_access(evaluated_object);
         }
 
         // Rule #38: Distribute over index union at the top level (Cartesian product expansion)
