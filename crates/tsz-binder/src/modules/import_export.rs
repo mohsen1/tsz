@@ -543,8 +543,7 @@ impl BinderState {
                                         Arc::make_mut(&mut self.node_symbols)
                                             .insert(spec_idx.0, export_sym_id);
 
-                                        // Add alias to file_locals so it appears in
-                                        // module_exports for cross-file import resolution.
+                                        // Publish the export under its public name.
                                         //
                                         // For type-only exports from a value-bearing local symbol,
                                         // clone the symbol when this specifier introduces the export
@@ -555,7 +554,7 @@ impl BinderState {
                                         let should_clone_type_only_export = spec_type_only
                                             && !orig_is_type_only
                                             && (orig != exp || !orig_was_exported);
-                                        if should_clone_type_only_export {
+                                        let exported_target = if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
                                                     self.symbols.get(sym_id).cloned().expect(
@@ -588,15 +587,38 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
-                                            if let Some(table) = self.current_scope_mut() {
-                                                table.set(exp.to_string(), clone_id);
-                                            }
-                                            self.file_locals.set(exp.to_string(), clone_id);
+                                            Some(clone_id)
                                         } else if orig != exp {
-                                            if let Some(table) = self.current_scope_mut() {
-                                                table.set(exp.to_string(), sym_id);
+                                            Some(sym_id)
+                                        } else {
+                                            None
+                                        };
+
+                                        if let Some(target_id) = exported_target {
+                                            if orig == exp {
+                                                // Non-renamed export (`export { A }` /
+                                                // `export type { A }`): `A` is a real in-module
+                                                // local that gains export visibility (here a
+                                                // type-only clone). Keep its lexical/type binding.
+                                                if let Some(table) = self.current_scope_mut() {
+                                                    table.set(exp.to_string(), target_id);
+                                                }
+                                                self.file_locals.set(exp.to_string(), target_id);
+                                            } else {
+                                                // Renamed export (`export { Orig as Exp }`):
+                                                // tsc records `Exp` only on the module's public
+                                                // export surface, never as an in-module
+                                                // lexical/type binding. Creating a local binding
+                                                // would shadow a global or compiler intrinsic of
+                                                // the same name (e.g.
+                                                // `export { Local as Capitalize }` masking the
+                                                // string-mapping intrinsic). Publish it straight
+                                                // into `module_exports` so cross-file consumers
+                                                // and the export surface still see it, while
+                                                // in-module references to `Exp` keep their
+                                                // outer/global/intrinsic meaning.
+                                                self.publish_module_export(exp, target_id);
                                             }
-                                            self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }
                                 }
@@ -800,11 +822,7 @@ impl BinderState {
                         }
                     } else {
                         // Regular namespace re-export — add to module exports
-                        let current_file = self.debugger.current_file.clone();
-                        Arc::make_mut(&mut self.module_exports)
-                            .entry(current_file)
-                            .or_default()
-                            .set(name.to_string(), sym_id);
+                        self.publish_module_export(name, sym_id);
                     }
                 }
             }
@@ -832,6 +850,21 @@ impl BinderState {
                 }
             }
         }
+    }
+
+    /// Publish `sym_id` onto the current file's public export surface under
+    /// `name`, without creating an in-module lexical/type binding.
+    ///
+    /// Used by export paths whose exported name must live only on the module's
+    /// export surface — `export * as ns from "./mod"` and renamed local exports
+    /// `export { Orig as Exp }` — so in-module references to that name keep their
+    /// outer/global/intrinsic meaning instead of resolving to the export.
+    fn publish_module_export(&mut self, name: &str, sym_id: crate::SymbolId) {
+        let current_file = self.debugger.current_file.clone();
+        Arc::make_mut(&mut self.module_exports)
+            .entry(current_file)
+            .or_default()
+            .set(name.to_string(), sym_id);
     }
 
     /// Existing re-export alias for `name` in the current scope, if any.
