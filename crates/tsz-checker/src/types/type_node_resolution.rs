@@ -306,6 +306,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
                         .or_else(|| target_binder.file_locals.get(segment))
                         .inspect(|sym_id| self.ctx.register_symbol_file_target(*sym_id, target_idx))
+                })
+                .or_else(|| {
+                    // Named import bound to an `export * as NS from '<m>'`
+                    // namespace re-export: the member lives in the re-exported
+                    // module `<m>`, not in the importing module's own export
+                    // surface, so every branch above misses. Resolve `segment`
+                    // through the namespace's backing module.
+                    self.ctx
+                        .resolve_member_via_namespace_reexport(current_sym, segment)
                 })?;
         }
 

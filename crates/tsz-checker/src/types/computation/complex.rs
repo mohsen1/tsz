@@ -1341,6 +1341,20 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.evaluate_type_with_env(instantiated)
                             };
+                            // Mirror the generic-call path: any type parameter that
+                            // round-1 inference could not fix (it stays a bare type
+                            // parameter or an `__infer_*` placeholder) is
+                            // back-substituted to its default/constraint/`unknown`
+                            // before the contextual parameter type is pushed into a
+                            // sensitive callback argument, so reading that parameter
+                            // out does not surface a leaked placeholder.
+                            let is_sensitive = sensitive_args.get(i).copied().unwrap_or(false);
+                            let contextual = self.default_unfixed_sensitive_contextual_type_params(
+                                is_sensitive,
+                                contextual,
+                                &shape.type_params,
+                                &round2_substitution,
+                            );
                             trace!(
                                 arg_index = i,
                                 param_type_display = %self.format_type(param_type),

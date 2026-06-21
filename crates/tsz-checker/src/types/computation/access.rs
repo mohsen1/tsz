@@ -1337,12 +1337,18 @@ impl<'a> CheckerState<'a> {
         {
             let property_name = format!("__unique_{}", sym_ref.0);
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            // Resolve receiver index-signature key aliases so symbol fallback
+            // sees `PropertyKey` / symbol-bearing signatures (#14315).
+            let resolved_type = self.resolve_receiver_index_signature_keys(resolved_type);
+            let union_member_missing_symbol =
+                self.union_member_missing_symbol_key(object_type_for_access, index_type);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,
                 ..
             } = result
+                && !union_member_missing_symbol
             {
                 use_index_signature_check = false;
                 result_type = Some(effective_write_result(type_id, write_type));
@@ -1368,11 +1374,24 @@ impl<'a> CheckerState<'a> {
                             write_type,
                             ..
                         } = result
+                            && !union_member_missing_symbol
                         {
                             use_index_signature_check = false;
                             result_type = Some(effective_write_result(type_id, write_type));
                         }
                     }
+                }
+            }
+
+            // A unique-symbol key with no concrete member still resolves through
+            // a symbol-bearing index signature (`symbol`, `PropertyKey`, etc.).
+            if result_type.is_none() && !union_member_missing_symbol {
+                let symbol_index_result =
+                    self.get_element_access_type(object_type_for_access, index_type, None);
+                if symbol_index_result != TypeId::UNDEFINED && symbol_index_result != TypeId::ERROR
+                {
+                    use_index_signature_check = false;
+                    result_type = Some(symbol_index_result);
                 }
             }
         }

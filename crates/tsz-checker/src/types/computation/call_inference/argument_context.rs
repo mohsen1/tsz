@@ -467,19 +467,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.evaluate_type_with_env(instantiated)
                 };
-                let evaluated = if is_sensitive
-                    && (common::contains_type_parameters(self.ctx.types, evaluated)
-                        || common::contains_infer_types(self.ctx.types, evaluated))
-                {
-                    crate::query_boundaries::inference::instantiate_remaining_contextual_type_params(
-                        self.ctx.types,
-                        evaluated,
-                        &shape.type_params,
-                        &contextual_substitution,
-                    )
-                } else {
-                    evaluated
-                };
+                let evaluated = self.default_unfixed_sensitive_contextual_type_params(
+                    is_sensitive,
+                    evaluated,
+                    &shape.type_params,
+                    &contextual_substitution,
+                );
                 Some(if is_rest_param {
                     self.rest_argument_element_type_with_env(evaluated)
                 } else {
