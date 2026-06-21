@@ -1,3 +1,4 @@
+mod class_extends_flow_narrowed_base;
 mod const_initializer_widening;
 mod cross_module_unique_symbol;
 mod defaults;

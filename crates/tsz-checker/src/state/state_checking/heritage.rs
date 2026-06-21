@@ -658,8 +658,25 @@ impl<'a> CheckerState<'a> {
                             }
 
                             if !skip_constructor_check {
+                                // A `class extends <value>` whose base is a plain
+                                // parameter/variable (not a class/interface, and not a
+                                // merged class+value with its own handling above) is
+                                // typed by its FLOW-NARROWED type at the heritage
+                                // location — tsc uses `checkExpression`, so
+                                // `klass ? class extends klass {} : …` sees the narrowed
+                                // `Ctor`, not the declared `Ctor | undefined` (false
+                                // TS2507, effect). (#14260)
+                                let base_is_flow_narrowable_value =
+                                    self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
+                                        s.has_any_flags(symbol_flags::VARIABLE)
+                                            && !s.has_any_flags(
+                                                symbol_flags::CLASS | symbol_flags::INTERFACE,
+                                            )
+                                    });
                                 let symbol_type = if is_being_resolved {
                                     TypeId::ERROR
+                                } else if base_is_flow_narrowable_value {
+                                    self.get_type_of_node(expr_idx)
                                 } else {
                                     self.get_type_of_symbol(sym_to_check)
                                 };
