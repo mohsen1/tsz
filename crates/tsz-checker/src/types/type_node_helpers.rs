@@ -320,8 +320,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .arena
             .get(idx)
-            .map(|n| (self.full_start_of(n.pos), n.end))
-            .unwrap_or((0, 0));
+            .map_or((0, 0), |n| (self.full_start_of(n.pos), n.end));
         let length = end.saturating_sub(full_start);
 
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
@@ -387,8 +386,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .arena
             .get(idx)
-            .map(|n| (self.full_start_of(n.pos), n.end))
-            .unwrap_or((0, 0));
+            .map_or((0, 0), |n| (self.full_start_of(n.pos), n.end));
         let length = end.saturating_sub(full_start);
 
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
