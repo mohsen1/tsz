@@ -368,6 +368,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: b_name,
@@ -383,6 +384,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 

@@ -1766,7 +1766,7 @@ fn test_constructor_with_static_properties() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         }],
         string_index: None,
         number_index: None,

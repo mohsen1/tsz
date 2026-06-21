@@ -1048,6 +1048,30 @@ pub struct PropertyInfo {
     /// are semantically identical in TypeScript and must intern to the same
     /// `TypeId`.
     pub single_quoted_name: bool,
+    /// Whether this property's literal type is a *non-widening* (regular)
+    /// literal that must be preserved through later widening passes.
+    ///
+    /// This mirrors tsc's fresh-vs-regular literal-type duality at the property
+    /// level. tsc widens a fresh object literal's properties via
+    /// `getWidenedTypeOfObjectLiteral`, but each property only widens when its
+    /// own type carries `ContainsWideningType` (a *fresh* literal). A property
+    /// whose value came from a non-widening source — an `as const` assertion, a
+    /// plain `as T` / `<T>expr` type assertion, an identifier with a
+    /// non-widening declared type, or a literal index access — holds a *regular*
+    /// literal that `getWidenedType` leaves untouched.
+    ///
+    /// tsz has no fresh/regular split on the literal type itself (one interned
+    /// `true`), so the checker records the decision here when it preserves such
+    /// a property at object-literal construction. The solver's widening passes
+    /// honour it so an inferred `{ single: true }` from
+    /// `{ single: true as const }` is not re-widened to `{ single: boolean }`.
+    ///
+    /// Identity-bearing: a preserved-because-`as const` `{ a: 1 }` and a
+    /// preserved-because-deferred `{ a: 1 }` (a plain literal awaiting widening
+    /// under an object-typed contextual parameter) are otherwise structurally
+    /// identical and would intern to the same `TypeId`; the first must not widen
+    /// while the second must. See `crates/tsz-solver/src/types/shape_identity.rs`.
+    pub non_widening: bool,
 }
 
 impl PropertyInfo {
@@ -1068,6 +1092,7 @@ impl PropertyInfo {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }
     }
 

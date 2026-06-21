@@ -151,6 +151,7 @@ fn mapped_surface_with_optional_undefined_inner(
                 is_string_named: false,
                 is_symbol_named: true,
                 single_quoted_name: false,
+                non_widening: false,
             });
             changed = true;
         }

@@ -228,6 +228,7 @@ fn query_cache_caches_object_spread_properties() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let second_obj = db.object_with_flags(
@@ -245,6 +246,7 @@ fn query_cache_caches_object_spread_properties() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

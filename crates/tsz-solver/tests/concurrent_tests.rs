@@ -85,6 +85,7 @@ fn test_concurrent_object_creation() {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 },
             ];
             interner.object(props)
@@ -214,6 +215,7 @@ fn test_concurrent_property_map_building() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         })
         .collect();
 

@@ -219,6 +219,7 @@ impl<'a> TypeLowering<'a> {
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
+                                non_widening: false,
                             }));
                         }
                     }
@@ -257,6 +258,7 @@ impl<'a> TypeLowering<'a> {
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
+                                non_widening: false,
                             }));
                         }
                     }
@@ -403,6 +405,7 @@ impl<'a> TypeLowering<'a> {
                     is_string_named: methods.is_string_named,
                     is_symbol_named: methods.is_symbol_named,
                     single_quoted_name: methods.single_quoted_name,
+                    non_widening: false,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
                 if let Some(order) = forward_order {
@@ -790,6 +793,7 @@ impl<'a> TypeLowering<'a> {
                 is_string_named,
                 is_symbol_named,
                 single_quoted_name,
+                non_widening: false,
             })
         } else {
             None

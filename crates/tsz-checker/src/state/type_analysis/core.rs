@@ -1335,6 +1335,36 @@ impl CheckerState<'_> {
             result
         };
 
+        // Fold cross-block / cross-file `declare global { interface X }`
+        // declarations into a user-declared global interface's materialized body
+        // at this same canonical resolution point, so `keyof X`, `X[K]`,
+        // assignability, and display all observe the merged shape regardless of
+        // declaration/file order — matching the value-position member-access
+        // path that already reunites the partial symbols through
+        // `global_augmentations`. Cheap guards first: the program-wide
+        // global-augmentation map, then the interface-flag test, and only then
+        // the per-`TypeId` `classify_for_augmentation` lookup.
+        let result = if self.ctx.program_has_global_augmentations()
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+                .is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::INTERFACE)
+                        && !symbol.has_any_flags(symbol_flags::CLASS)
+                })
+            && matches!(
+                crate::query_boundaries::common::classify_for_augmentation(self.ctx.types, result),
+                crate::query_boundaries::common::AugmentationTargetKind::Object(_)
+                    | crate::query_boundaries::common::AugmentationTargetKind::ObjectWithIndex(_)
+                    | crate::query_boundaries::common::AugmentationTargetKind::Callable(_)
+            ) {
+            self.apply_self_global_augmentations(sym_id, result)
+        } else {
+            result
+        };
+
         // Pop from resolution stack
         if use_local_symbol_state {
             self.ctx.symbol_resolution_stack.pop();

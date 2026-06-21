@@ -168,6 +168,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: false,
                     });
                 }
                 self.ctx
@@ -359,6 +360,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: acc_str_named || existing.is_string_named,
                     is_symbol_named: acc_sym_named || existing.is_symbol_named,
                     single_quoted_name: acc_single_quoted || existing.single_quoted_name,
+                    non_widening: false,
                 };
                 properties.insert(name_atom, prop_info.clone());
                 self.record_partial_object_literal_property(
@@ -390,6 +392,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: acc_str_named,
                     is_symbol_named: acc_sym_named,
                     single_quoted_name: acc_single_quoted,
+                    non_widening: false,
                 };
                 properties.insert(name_atom, prop_info.clone());
                 self.record_partial_object_literal_property(

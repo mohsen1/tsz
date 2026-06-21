@@ -17,7 +17,7 @@ fn test_object_keyword_accepts_non_primitives() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     assert!(checker.is_assignable(obj, TypeId::OBJECT));
 
@@ -104,7 +104,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -120,7 +120,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -145,7 +145,7 @@ fn test_split_accessor_allows_wider_setter_in_target() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -161,7 +161,7 @@ fn test_split_accessor_allows_wider_setter_in_target() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // PARITY: tsc relates properties through their *read* types only; a
@@ -241,7 +241,7 @@ fn test_function_type_rejects_non_callables() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     assert!(!checker.is_assignable(obj, function_top));
 }
@@ -771,7 +771,7 @@ fn test_optional_property_allows_undefined() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -786,7 +786,7 @@ fn test_optional_property_allows_undefined() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -811,7 +811,7 @@ fn test_optional_property_rejects_required_target() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -826,7 +826,7 @@ fn test_optional_property_rejects_required_target() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -851,7 +851,7 @@ fn test_optional_property_rejects_string_index_signature() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -929,7 +929,7 @@ fn test_exact_optional_property_rejects_undefined() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -944,7 +944,7 @@ fn test_exact_optional_property_rejects_undefined() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -970,7 +970,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -1661,7 +1661,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let union = interner.union(vec![weak_type, non_weak_type]);
@@ -1680,7 +1680,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Should be accepted since source matches the non-weak member

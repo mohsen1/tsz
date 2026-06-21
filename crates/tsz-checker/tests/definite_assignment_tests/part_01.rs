@@ -437,3 +437,103 @@ class C {
         "Expected no diagnostics when constructor assigns [s] and [N.s], got: {diags:?}"
     );
 }
+
+/// Regression for #14215: an assignment that is unconditionally evaluated in a
+/// short-circuit condition branch proves definite assignment. Here the right
+/// operand of `&&` (`(e = next()).done`) is reached only when the left operand
+/// was truthy, so on the loop body / true branch the assignment to `e` has
+/// already run. tsc accepts the use of `e`; tsz used to emit TS2454.
+#[test]
+fn test_ts2454_assignment_in_short_circuit_and_right_operand_of_while() {
+    let source = r"
+        declare function next(): { value: number; done: boolean };
+        export function f(): number {
+            let e: { value: number; done: boolean };
+            let found = false;
+            while (!found && !(e = next()).done) {
+                found = e.value > 0;
+            }
+            return found ? 1 : 0;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Assignment in the evaluated `&&` right operand should prove definite assignment, got: {diags:?}"
+    );
+}
+
+/// Renamed-binder variant of #14215: the structural rule is name-independent.
+#[test]
+fn test_ts2454_assignment_in_short_circuit_and_right_operand_renamed_binder() {
+    let source = r"
+        declare function step(): { v: number; stop: boolean };
+        export function g(): number {
+            let cursor: { v: number; stop: boolean };
+            let halt = false;
+            while (!halt && !(cursor = step()).stop) {
+                halt = cursor.v > 0;
+            }
+            return halt ? 1 : 0;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Renamed binders should behave identically, got: {diags:?}"
+    );
+}
+
+/// Negative control for #14215: the right operand of `??` is NOT guaranteed
+/// evaluated (it runs only when the left operand is nullish), so an assignment
+/// there does not prove definite assignment and TS2454 must still fire on the
+/// later use.
+#[test]
+fn test_ts2454_assignment_in_nullish_coalescing_right_operand_still_reported() {
+    let source = r"
+        declare function pick(): { tag: number };
+        declare const seed: { tag: number } | null;
+        export function h(): number {
+            let chosen: { tag: number };
+            if (seed ?? (chosen = pick())) {
+                return chosen.tag;
+            }
+            return 0;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        1,
+        "`??` right-operand assignment is not guaranteed evaluated, so TS2454 must still fire, got: {diags:?}"
+    );
+}

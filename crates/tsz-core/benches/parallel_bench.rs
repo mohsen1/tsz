@@ -84,6 +84,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
+                                non_widening: false,
                             }]);
                         });
                     });
@@ -210,6 +211,7 @@ fn bench_property_lookup(c: &mut Criterion) {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                non_widening: false,
             })
             .collect::<Vec<_>>();
 
@@ -247,6 +249,7 @@ fn bench_property_lookup(c: &mut Criterion) {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
+                non_widening: false,
             })
             .collect::<Vec<_>>();
 

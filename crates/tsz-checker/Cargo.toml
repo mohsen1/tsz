@@ -33,8 +33,8 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
-name = "function_type_predicate_typeof_param_tests"
-path = "tests/function_type_predicate_typeof_param_tests.rs"
+name = "as_const_object_property_inference_tests"
+path = "tests/as_const_object_property_inference_tests.rs"
 [[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
@@ -470,6 +470,9 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_type_indexed_access_receiver_tests"
+path = "tests/this_type_indexed_access_receiver_tests.rs"
+[[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
@@ -586,6 +589,9 @@ path = "tests/hkt_self_augmentation_keyof_repro.rs"
 [[test]]
 name = "hkt_cross_file_augmentation_13653_repro"
 path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
+[[test]]
+name = "declare_global_interface_keyof_merge_tests"
+path = "tests/declare_global_interface_keyof_merge_tests.rs"
 [[test]]
 name = "hkt_typeof_uri_instance_assignability_13930_repro"
 path = "tests/hkt_typeof_uri_instance_assignability_13930_repro.rs"
@@ -1961,3 +1967,6 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+[[test]]
+name = "function_type_predicate_typeof_param_tests"
+path = "tests/function_type_predicate_typeof_param_tests.rs"

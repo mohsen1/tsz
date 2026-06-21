@@ -438,6 +438,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named,
                             is_symbol_named,
                             single_quoted_name,
+                            non_widening: false,
                         });
                     }
                 }
@@ -688,6 +689,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: entry.is_string_named,
                 is_symbol_named: entry.is_symbol_named,
                 single_quoted_name: entry.single_quoted_name,
+                non_widening: false,
             });
         }
 
@@ -719,6 +721,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: accessor.is_string_named,
                 is_symbol_named: accessor.is_symbol_named,
                 single_quoted_name: accessor.single_quoted_name,
+                non_widening: false,
             });
         }
 

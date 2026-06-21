@@ -1279,6 +1279,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
+                                non_widening: false,
                             });
                         }
                     }
@@ -1476,6 +1477,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_string_named,
                             is_symbol_named,
                             single_quoted_name,
+                            non_widening: false,
                         });
                     }
                 } else {
@@ -1509,6 +1511,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_string_named,
                             is_symbol_named,
                             single_quoted_name,
+                            non_widening: false,
                         });
                     }
                 }
@@ -1566,6 +1569,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         is_string_named: key.is_string_named,
                         is_symbol_named,
                         single_quoted_name: key.single_quoted_name,
+                        non_widening: false,
                     });
                 }
             }
