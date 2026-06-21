@@ -6,7 +6,7 @@ use crate::visitor::union_list_id;
 
 use super::super::evaluate::TypeEvaluator;
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// True for the narrow `T[never]` / empty `T[keyof T]` path.
     pub(crate) fn is_empty_key_index_access(
         &mut self,
