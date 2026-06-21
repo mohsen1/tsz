@@ -41,9 +41,10 @@
 //! distinct-shape sets use [`DashSet`] and the scalar totals a small
 //! [`Mutex`]-guarded struct, matching the existing perf-counter conventions.
 
+use crate::caches::db::{QueryDatabase, TypeDatabase};
 use crate::types::{TypeData, TypeId};
 use dashmap::{DashMap, DashSet};
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -181,9 +182,56 @@ struct ProbeState {
     /// kind. Detects the hash-cons gap in #2 above.
     result_structural_hash: [DashMap<u64, u32, FxBuildHasher>; PROBE_KIND_COUNT],
     application_cache: ApplicationCacheTotals,
+    canon_headroom: CanonHeadroomTotals,
+}
+
+/// State for the instantiation-identity dedup ceiling probe (#14101 / #13242
+/// OPEN-2). Measures how many distinct result `TypeId`s the evaluator
+/// materializes would COLLAPSE if the nominal `symbol` brand (`ObjectShape.symbol`
+/// and per-property `PropertyInfo.parent_id`) were ignored when computing
+/// instantiation identity. The `N - Fr` per kind (distinct results sampled
+/// minus distinct symbol-stripped fingerprints) is the raw headroom — the count
+/// of results that are structurally identical once the symbol brand is dropped.
+struct CanonHeadroomTotals {
+    /// Distinct result `TypeId.0` already fingerprinted, per kind. First-sight
+    /// gate so each result is structurally hashed at most once.
+    canon_seen_results: [DashSet<u32, FxBuildHasher>; PROBE_KIND_COUNT],
+    /// Distinct symbol-stripped fingerprints of the raw `result`, per kind. Its
+    /// size is `Fr`; `N - Fr` is the raw dedup headroom.
+    symbol_stripped_forms_raw: [DashSet<u64, FxBuildHasher>; PROBE_KIND_COUNT],
+    /// Distinct symbol-stripped fingerprints of `canonical_id(result)`, per
+    /// kind. Only populated when a `QueryDatabase` is available; its size is
+    /// `Fc`. `C - Fc` isolates the symbol-only collapse beyond what
+    /// `canonical_id` already merges.
+    symbol_stripped_forms_canon: [DashSet<u64, FxBuildHasher>; PROBE_KIND_COUNT],
+    /// Distinct `canonical_id(result).0`, per kind (symbol-PRESERVING baseline).
+    /// Only populated when a `QueryDatabase` is available; its size is `C`.
+    canonical_ids_seen: [DashSet<u32, FxBuildHasher>; PROBE_KIND_COUNT],
+    /// Samples for which a `QueryDatabase` was available (so the canon-seeded
+    /// forms cover them).
+    canon_samples_with_query_db: AtomicU64,
+    /// Total first-sight result samples (covers the raw forms).
+    canon_samples_total: AtomicU64,
+}
+
+impl CanonHeadroomTotals {
+    fn new() -> Self {
+        Self {
+            canon_seen_results: [new_dashset(), new_dashset(), new_dashset()],
+            symbol_stripped_forms_raw: [new_dashset_u64(), new_dashset_u64(), new_dashset_u64()],
+            symbol_stripped_forms_canon: [new_dashset_u64(), new_dashset_u64(), new_dashset_u64()],
+            canonical_ids_seen: [new_dashset(), new_dashset(), new_dashset()],
+            canon_samples_with_query_db: AtomicU64::new(0),
+            canon_samples_total: AtomicU64::new(0),
+        }
+    }
 }
 
 fn new_dashset() -> DashSet<u32, FxBuildHasher> {
+    DashSet::with_hasher(FxBuildHasher)
+}
+
+fn new_dashset_u64() -> DashSet<u64, FxBuildHasher> {
     DashSet::with_hasher(FxBuildHasher)
 }
 
@@ -202,6 +250,7 @@ fn state() -> &'static ProbeState {
         eager_conditional_computes: AtomicU64::new(0),
         result_structural_hash: [new_dashmap(), new_dashmap(), new_dashmap()],
         application_cache: ApplicationCacheTotals::new(),
+        canon_headroom: CanonHeadroomTotals::new(),
     })
 }
 
@@ -427,6 +476,404 @@ pub(crate) fn record_compute(
         // Conditional that resolved eagerly to a concrete branch.
         s.eager_conditional_computes.fetch_add(1, Ordering::Relaxed);
         s.eager_conditional_inputs.insert(type_id.0);
+    }
+}
+
+/// Depth ceiling for [`symbol_stripped_fingerprint`]. Beyond this the
+/// fingerprint hashes a sentinel and stops recursing, so a pathologically deep
+/// type does not blow the stack. The probe is fully gated, so this only runs
+/// under `TSZ_PERF_COUNTERS`.
+const MAX_FP_DEPTH: u32 = 96;
+
+/// Record one materialized result for the instantiation-identity dedup ceiling
+/// probe (#14101 / #13242 OPEN-2). First-sight per distinct result `TypeId`
+/// (so each result is fingerprinted at most once), classified by the input
+/// `key`'s eval-engine kind.
+///
+/// Fingerprints `result` with [`symbol_stripped_fingerprint`] (which drops the
+/// nominal `symbol` brand on `ObjectShape.symbol` and `PropertyInfo.parent_id`)
+/// and folds it into the per-kind raw form set. When a [`QueryDatabase`] is
+/// available it also records `canonical_id(result)` (the symbol-PRESERVING
+/// baseline) and the symbol-stripped fingerprint of the canonical id.
+///
+/// No-op (single branch) unless the probe gate is on.
+pub(crate) fn record_canon_headroom(
+    key: &TypeData,
+    result: TypeId,
+    db: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+) {
+    if !gate_enabled() {
+        return;
+    }
+    let Some(kind) = probe_kind(key) else {
+        return;
+    };
+    let idx = kind as usize;
+    let c = &state().canon_headroom;
+    // First-sight gate: only fingerprint each distinct result id once.
+    if !c.canon_seen_results[idx].insert(result.0) {
+        return;
+    }
+    c.canon_samples_total.fetch_add(1, Ordering::Relaxed);
+
+    let fp_raw = symbol_stripped_fingerprint(db, result);
+    c.symbol_stripped_forms_raw[idx].insert(fp_raw);
+
+    if let Some(qdb) = query_db {
+        c.canon_samples_with_query_db
+            .fetch_add(1, Ordering::Relaxed);
+        let canon = qdb.canonical_id(result);
+        c.canonical_ids_seen[idx].insert(canon.0);
+        let fp_c = symbol_stripped_fingerprint(db, canon);
+        c.symbol_stripped_forms_canon[idx].insert(fp_c);
+    }
+}
+
+/// Deterministic, recursive, **symbol-stripped** structural fingerprint of a
+/// type, used only by the #14101 dedup-ceiling probe.
+///
+/// The fingerprint hashes the structural shape of `root` while deliberately
+/// IGNORING the nominal `symbol` brand: `ObjectShape.symbol`,
+/// `PropertyInfo.parent_id`, and the `symbol` field of function/callable
+/// shapes. Two types that differ ONLY in that brand therefore hash equal, so
+/// the count of distinct fingerprints among the materialized results is the
+/// dedup ceiling if instantiation identity were canonicalized to ignore the
+/// brand.
+///
+/// ## Variant coverage (ceiling exactness)
+///
+/// The ceiling is EXACT (precise structural hash, symbol stripped) for
+/// `Object` / `ObjectWithIndex`, `Tuple`, `Function` / `Callable`, `Enum`,
+/// `StringIntrinsic`, and the leaves (`Intrinsic`, `Literal`, `ThisType`,
+/// `Lazy`, `BoundParameter`, `Recursive`, `TypeQuery`, `UniqueSymbol`,
+/// `ModuleNamespace`). For every OTHER composite variant (`Union`,
+/// `Intersection`, `Array`, `KeyOf`, `ReadonlyType`, `NoInfer`, `IndexAccess`,
+/// `Conditional`, `Mapped`, `Application`, `TemplateLiteral`, `TypeParameter`,
+/// `Infer`, ...) the fingerprint hashes only the variant discriminant plus the
+/// recursed children via [`for_each_child`](crate::visitors::visitor::for_each_child).
+/// Modifier-level scalar metadata (mapped `+?`/`-readonly` modifiers,
+/// conditional distributivity, template literal string parts) is NOT captured,
+/// so two such types that differ only in that metadata collapse — making the
+/// reported ceiling a conservative UPPER bound for those exotic variants and
+/// exact for the object/tuple/function symbol-stripping the probe targets.
+///
+/// ## Cycle / depth handling
+///
+/// A path-scoped map records the De Bruijn depth of each `TypeId` currently on
+/// the recursion path. Re-encountering an id already on the path hashes a
+/// back-reference marker (`relative depth`) and returns without recursing; the
+/// entry is removed on exit (path-scoped, NOT a global visited set, so shared
+/// sub-shapes are still hashed structurally). Depth is capped at
+/// [`MAX_FP_DEPTH`].
+fn symbol_stripped_fingerprint(db: &dyn TypeDatabase, root: TypeId) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    let mut path: FxHashMap<u32, u32> = FxHashMap::default();
+    fp_recurse(db, root, 0, &mut path, &mut hasher);
+    hasher.finish()
+}
+
+/// Hash one structural marker tag into `hasher`.
+#[inline]
+fn fp_tag(hasher: &mut rustc_hash::FxHasher, tag: u16) {
+    tag.hash(hasher);
+}
+
+fn fp_recurse(
+    db: &dyn TypeDatabase,
+    id: TypeId,
+    depth: u32,
+    path: &mut FxHashMap<u32, u32>,
+    hasher: &mut rustc_hash::FxHasher,
+) {
+    // Back-reference: this id is already on the current path => emit a relative
+    // De Bruijn marker and stop (path-scoped cycle break).
+    if let Some(&prior) = path.get(&id.0) {
+        fp_tag(hasher, 0xBACE);
+        depth.saturating_sub(prior).hash(hasher);
+        return;
+    }
+    if depth >= MAX_FP_DEPTH {
+        fp_tag(hasher, 0xDEEF);
+        return;
+    }
+
+    let Some(key) = db.lookup(id) else {
+        fp_tag(hasher, 0x4E4F);
+        id.0.hash(hasher);
+        return;
+    };
+
+    path.insert(id.0, depth);
+    let child_depth = depth + 1;
+
+    match &key {
+        TypeData::Object(s) | TypeData::ObjectWithIndex(s) => {
+            // Distinct discriminant for the two object encodings.
+            fp_tag(
+                hasher,
+                if matches!(key, TypeData::Object(_)) {
+                    0x0B10
+                } else {
+                    0x0B11
+                },
+            );
+            let shape = db.object_shape(*s);
+            // Identity-bearing structural flags only: index-signature optionality.
+            // Cosmetic flags (FRESH_LITERAL, PRESERVE_DECLARATION_ORDER, display
+            // aliasing, INTERSECTION_MERGED) are NOT hashed — they do not change
+            // the structural shape and would split otherwise-equal results.
+            shape.string_index_is_optional().hash(hasher);
+            shape.number_index_is_optional().hash(hasher);
+            // Properties IN ORDER. Skip parent_id (the symbol brand),
+            // declaration_order, is_class_prototype, single_quoted_name.
+            for prop in &shape.properties {
+                prop.name.0.hash(hasher);
+                prop.optional.hash(hasher);
+                prop.readonly.hash(hasher);
+                prop.is_method.hash(hasher);
+                std::mem::discriminant(&prop.visibility).hash(hasher);
+                prop.is_string_named.hash(hasher);
+                prop.is_symbol_named.hash(hasher);
+                fp_recurse(db, prop.type_id, child_depth, path, hasher);
+                fp_recurse(db, prop.write_type, child_depth, path, hasher);
+            }
+            fp_index_signature(
+                db,
+                shape.string_index.as_ref(),
+                0x1D00,
+                child_depth,
+                path,
+                hasher,
+            );
+            fp_index_signature(
+                db,
+                shape.number_index.as_ref(),
+                0x1D01,
+                child_depth,
+                path,
+                hasher,
+            );
+            // shape.symbol deliberately NOT hashed (the nominal brand).
+        }
+        TypeData::Tuple(l) => {
+            fp_tag(hasher, 0x70B1);
+            let elems = db.tuple_list(*l);
+            (elems.len() as u32).hash(hasher);
+            for el in elems.iter() {
+                el.name.map(|a| a.0).hash(hasher);
+                el.optional.hash(hasher);
+                el.rest.hash(hasher);
+                fp_recurse(db, el.type_id, child_depth, path, hasher);
+            }
+        }
+        TypeData::Function(f) => {
+            fp_tag(hasher, 0xF000);
+            let shape = db.function_shape(*f);
+            shape.is_constructor.hash(hasher);
+            shape.is_method.hash(hasher);
+            fp_signature(
+                db,
+                &shape.params,
+                shape.this_type,
+                Some(shape.return_type),
+                child_depth,
+                path,
+                hasher,
+            );
+            // shape.symbol does not exist on FunctionShape; nothing to strip.
+        }
+        TypeData::Callable(c) => {
+            fp_tag(hasher, 0xCA11);
+            let shape = db.callable_shape(*c);
+            shape.is_abstract.hash(hasher);
+            (shape.call_signatures.len() as u32).hash(hasher);
+            (shape.construct_signatures.len() as u32).hash(hasher);
+            for sig in &shape.call_signatures {
+                fp_tag(hasher, 0xC5A1);
+                sig.is_method.hash(hasher);
+                fp_signature(
+                    db,
+                    &sig.params,
+                    sig.this_type,
+                    Some(sig.return_type),
+                    child_depth,
+                    path,
+                    hasher,
+                );
+            }
+            for sig in &shape.construct_signatures {
+                fp_tag(hasher, 0xC5A2);
+                sig.is_method.hash(hasher);
+                fp_signature(
+                    db,
+                    &sig.params,
+                    sig.this_type,
+                    Some(sig.return_type),
+                    child_depth,
+                    path,
+                    hasher,
+                );
+            }
+            // Callable properties (e.g. statics) in order, symbol stripped.
+            for prop in &shape.properties {
+                prop.name.0.hash(hasher);
+                prop.optional.hash(hasher);
+                prop.readonly.hash(hasher);
+                fp_recurse(db, prop.type_id, child_depth, path, hasher);
+                fp_recurse(db, prop.write_type, child_depth, path, hasher);
+            }
+            fp_index_signature(
+                db,
+                shape.string_index.as_ref(),
+                0x1D02,
+                child_depth,
+                path,
+                hasher,
+            );
+            fp_index_signature(
+                db,
+                shape.number_index.as_ref(),
+                0x1D03,
+                child_depth,
+                path,
+                hasher,
+            );
+            // shape.symbol deliberately NOT hashed (the nominal brand).
+        }
+        TypeData::Enum(def_id, t) => {
+            fp_tag(hasher, 0xE10E);
+            def_id.0.hash(hasher);
+            fp_recurse(db, *t, child_depth, path, hasher);
+        }
+        TypeData::StringIntrinsic { kind, type_arg } => {
+            fp_tag(hasher, 0x5141);
+            std::mem::discriminant(kind).hash(hasher);
+            fp_recurse(db, *type_arg, child_depth, path, hasher);
+        }
+        // Nominal / alias leaves: keep identity, do NOT resolve.
+        TypeData::Lazy(def_id) => {
+            fp_tag(hasher, 0x1A2E);
+            def_id.0.hash(hasher);
+        }
+        TypeData::BoundParameter(n) => {
+            fp_tag(hasher, 0xB0A0);
+            n.hash(hasher);
+        }
+        TypeData::Recursive(n) => {
+            fp_tag(hasher, 0x2EC0);
+            n.hash(hasher);
+        }
+        TypeData::TypeQuery(s) => {
+            fp_tag(hasher, 0x70F0);
+            s.0.hash(hasher);
+        }
+        TypeData::UniqueSymbol(s) => {
+            fp_tag(hasher, 0x0501);
+            s.0.hash(hasher);
+        }
+        TypeData::ModuleNamespace(s) => {
+            fp_tag(hasher, 0x0502);
+            s.0.hash(hasher);
+        }
+        TypeData::Intrinsic(k) => {
+            fp_tag(hasher, 0x1417);
+            std::mem::discriminant(k).hash(hasher);
+        }
+        TypeData::Literal(v) => {
+            fp_tag(hasher, 0x1117);
+            v.hash(hasher);
+        }
+        TypeData::ThisType => {
+            fp_tag(hasher, 0x7415);
+        }
+        // Order-independent composite variants: fingerprint children into a
+        // sorted vec so a raw (non-canonicalized) union/intersection result
+        // hashes independent of `for_each_child` member order.
+        TypeData::Union(_) | TypeData::Intersection(_) => {
+            fp_tag(
+                hasher,
+                if matches!(key, TypeData::Union(_)) {
+                    0x0410
+                } else {
+                    0x0411
+                },
+            );
+            let mut child_fps: Vec<u64> = Vec::new();
+            crate::visitors::visitor::for_each_child(db, &key, |child| {
+                let mut sub = rustc_hash::FxHasher::default();
+                // Children are hashed with a fresh sub-hasher under the SAME
+                // path map so cycles through a union member are still broken.
+                fp_recurse(db, child, child_depth, path, &mut sub);
+                child_fps.push(sub.finish());
+            });
+            child_fps.sort_unstable();
+            for fp in child_fps {
+                fp.hash(hasher);
+            }
+        }
+        // All remaining composite variants: discriminant + recursed children.
+        // Modifier-level scalar metadata is captured only at this granularity
+        // (a conservative upper bound on collapse for these exotic shapes).
+        _ => {
+            std::mem::discriminant(&key).hash(hasher);
+            crate::visitors::visitor::for_each_child(db, &key, |child| {
+                fp_recurse(db, child, child_depth, path, hasher);
+            });
+        }
+    }
+
+    path.remove(&id.0);
+}
+
+/// Hash an optional index signature, symbol-/cosmetic-stripped.
+fn fp_index_signature(
+    db: &dyn TypeDatabase,
+    sig: Option<&crate::types::IndexSignature>,
+    tag: u16,
+    depth: u32,
+    path: &mut FxHashMap<u32, u32>,
+    hasher: &mut rustc_hash::FxHasher,
+) {
+    fp_tag(hasher, tag);
+    match sig {
+        None => false.hash(hasher),
+        Some(s) => {
+            true.hash(hasher);
+            s.readonly.hash(hasher);
+            // param_name is cosmetic; skip.
+            fp_recurse(db, s.key_type, depth, path, hasher);
+            fp_recurse(db, s.value_type, depth, path, hasher);
+        }
+    }
+}
+
+/// Hash a call/function signature: arity + per-parameter optional/rest/name-
+/// presence, return-type presence, then recurse parameter and return types.
+#[allow(clippy::too_many_arguments)]
+fn fp_signature(
+    db: &dyn TypeDatabase,
+    params: &[crate::types::ParamInfo],
+    this_type: Option<TypeId>,
+    return_type: Option<TypeId>,
+    depth: u32,
+    path: &mut FxHashMap<u32, u32>,
+    hasher: &mut rustc_hash::FxHasher,
+) {
+    (params.len() as u32).hash(hasher);
+    this_type.is_some().hash(hasher);
+    if let Some(t) = this_type {
+        fp_recurse(db, t, depth, path, hasher);
+    }
+    for p in params {
+        p.optional.hash(hasher);
+        p.rest.hash(hasher);
+        p.name.is_some().hash(hasher);
+        fp_recurse(db, p.type_id, depth, path, hasher);
+    }
+    return_type.is_some().hash(hasher);
+    if let Some(r) = return_type {
+        fp_recurse(db, r, depth, path, hasher);
     }
 }
 
@@ -673,6 +1120,9 @@ pub fn dump_report() -> String {
         "[totals] computes {total_computes} -> distinct results {total_distinct_results} \
          (overall fan-out {overall_fanout:.1}%)"
     );
+
+    append_canon_headroom_report(&mut out);
+
     let reentries = DEF_REENTRIES.load(Ordering::Relaxed);
     if reentries > 0 {
         let _ = writeln!(
@@ -691,6 +1141,51 @@ pub fn dump_report() -> String {
         );
     }
     out
+}
+
+/// Append the instantiation-identity dedup-ceiling section (#14101 / #13242
+/// OPEN-2). Printed only when at least one result sample was recorded. The
+/// decisive number is `N - Fr` per kind: distinct materialized results that
+/// COLLAPSE once the nominal `symbol` brand is ignored — the headroom for a
+/// future canonicalize-instantiation-identity change. `C - Fc` isolates the
+/// symbol-only collapse beyond what `canonical_id` already merges.
+fn append_canon_headroom_report(out: &mut String) {
+    let c = &state().canon_headroom;
+    let total = c.canon_samples_total.load(Ordering::Relaxed);
+    if total == 0 {
+        return;
+    }
+    let with_db = c.canon_samples_with_query_db.load(Ordering::Relaxed);
+    let _ = writeln!(out, "[instantiation-identity dedup ceiling (#14101)]");
+    let _ = writeln!(
+        out,
+        "  query_db coverage           {with_db}/{total}  \
+         (canonical_id-seeded forms only cover the {with_db} samples)"
+    );
+    let _ = writeln!(
+        out,
+        "  per kind: results sampled (N), canonical_id forms (C, symbol-preserving),"
+    );
+    let _ = writeln!(
+        out,
+        "            symbol-stripped raw (Fr), symbol-stripped canon-seeded (Fc)"
+    );
+    for (idx, &name) in PROBE_KIND_NAMES.iter().enumerate() {
+        let n = c.canon_seen_results[idx].len() as u64;
+        let canon_c = c.canonical_ids_seen[idx].len() as u64;
+        let fr = c.symbol_stripped_forms_raw[idx].len() as u64;
+        let fc = c.symbol_stripped_forms_canon[idx].len() as u64;
+        let raw_headroom = n.saturating_sub(fr);
+        let raw_pct = pct(raw_headroom, n.max(1));
+        let canon_headroom = canon_c.saturating_sub(fc);
+        let canon_pct = pct(canon_headroom, canon_c.max(1));
+        let _ = writeln!(
+            out,
+            "  [{name}]  N={n} C={canon_c} Fr={fr} Fc={fc}   \
+             raw headroom N-Fr={raw_headroom} ({raw_pct:.1}%)   \
+             canon headroom C-Fc={canon_headroom} ({canon_pct:.1}%)"
+        );
+    }
 }
 
 #[inline]
@@ -719,6 +1214,19 @@ fn kind_snapshot_for_tests(idx: usize) -> (u64, u64, u64, u64) {
 #[cfg(test)]
 fn application_cache_snapshot_for_tests() -> ApplicationCacheRow {
     snapshot_application_cache()
+}
+
+/// Test-only read of `(canon_seen_results.len(), symbol_stripped_forms_raw.len(),
+/// canon_samples_total)` for one kind index, for asserting the canon-headroom
+/// recorder's first-sight dedup behavior on deltas.
+#[cfg(test)]
+fn canon_headroom_snapshot_for_tests(idx: usize) -> (u64, u64, u64) {
+    let c = &state().canon_headroom;
+    (
+        c.canon_seen_results[idx].len() as u64,
+        c.symbol_stripped_forms_raw[idx].len() as u64,
+        c.canon_samples_total.load(Ordering::Relaxed),
+    )
 }
 
 #[cfg(test)]
@@ -878,5 +1386,128 @@ mod tests {
             after.cache_insert_eligible - before.cache_insert_eligible,
             1
         );
+    }
+
+    use crate::TypeInterner;
+    use crate::types::{ObjectFlags, PropertyInfo};
+    use tsz_binder::SymbolId;
+
+    /// Build an object `{ a: string; b: number }` with the given nominal
+    /// `symbol` brand. Every property is also branded with `parent_id = symbol`
+    /// so both symbol-strip targets vary together.
+    fn branded_object(interner: &TypeInterner, brand: Option<SymbolId>) -> TypeId {
+        let a = interner.intern_string("a");
+        let b = interner.intern_string("b");
+        let mut p_a = PropertyInfo::new(a, TypeId::STRING);
+        p_a.parent_id = brand;
+        let mut p_b = PropertyInfo::new(b, TypeId::NUMBER);
+        p_b.parent_id = brand;
+        interner.object_with_flags_and_symbol(vec![p_a, p_b], ObjectFlags::empty(), brand)
+    }
+
+    /// The fingerprint ignores the nominal `symbol` brand: two objects with
+    /// identical structure but different `ObjectShape.symbol` (and different
+    /// per-property `parent_id`) must hash EQUAL.
+    #[test]
+    fn symbol_stripped_fingerprint_ignores_object_symbol() {
+        let interner = TypeInterner::new();
+        let o1 = branded_object(&interner, Some(SymbolId(11)));
+        let o2 = branded_object(&interner, Some(SymbolId(22)));
+        // Different brands => distinct interned TypeIds (nominal identity).
+        assert_ne!(o1, o2, "branded objects must intern distinctly");
+        let db: &dyn TypeDatabase = &interner;
+        assert_eq!(
+            symbol_stripped_fingerprint(db, o1),
+            symbol_stripped_fingerprint(db, o2),
+            "symbol/parent_id brand must not affect the fingerprint"
+        );
+    }
+
+    /// The fingerprint distinguishes a real structural difference (a property
+    /// type change) even when the brand is identical.
+    #[test]
+    fn symbol_stripped_fingerprint_distinguishes_structure() {
+        let interner = TypeInterner::new();
+        let a = interner.intern_string("a");
+        let b = interner.intern_string("b");
+        let brand = Some(SymbolId(7));
+        let o1 = {
+            let mut p_a = PropertyInfo::new(a, TypeId::STRING);
+            p_a.parent_id = brand;
+            let mut p_b = PropertyInfo::new(b, TypeId::NUMBER);
+            p_b.parent_id = brand;
+            interner.object_with_flags_and_symbol(vec![p_a, p_b], ObjectFlags::empty(), brand)
+        };
+        // Same brand, but `b: boolean` instead of `b: number`.
+        let o2 = {
+            let mut p_a = PropertyInfo::new(a, TypeId::STRING);
+            p_a.parent_id = brand;
+            let mut p_b = PropertyInfo::new(b, TypeId::BOOLEAN);
+            p_b.parent_id = brand;
+            interner.object_with_flags_and_symbol(vec![p_a, p_b], ObjectFlags::empty(), brand)
+        };
+        let db: &dyn TypeDatabase = &interner;
+        assert_ne!(
+            symbol_stripped_fingerprint(db, o1),
+            symbol_stripped_fingerprint(db, o2),
+            "a property type difference must change the fingerprint"
+        );
+    }
+
+    /// Recursion strips the symbol brand at depth: wrapping each of two
+    /// symbol-distinct objects in an `Array` produces EQUAL fingerprints.
+    #[test]
+    fn symbol_stripped_fingerprint_strips_symbol_at_depth() {
+        let interner = TypeInterner::new();
+        let o1 = branded_object(&interner, Some(SymbolId(33)));
+        let o2 = branded_object(&interner, Some(SymbolId(44)));
+        let a1 = interner.array(o1);
+        let a2 = interner.array(o2);
+        assert_ne!(a1, a2, "arrays of branded objects intern distinctly");
+        let db: &dyn TypeDatabase = &interner;
+        assert_eq!(
+            symbol_stripped_fingerprint(db, a1),
+            symbol_stripped_fingerprint(db, a2),
+            "symbol brand must be stripped through the array element"
+        );
+    }
+
+    /// `record_canon_headroom` is first-sight per distinct result id: a repeat
+    /// of the same result does not re-sample, and a distinct structural result
+    /// adds one raw form. `query_db = None` is exercised.
+    #[test]
+    fn record_canon_headroom_dedups_and_counts() {
+        FORCE_PROBE_FOR_TESTS.store(true, Ordering::Relaxed);
+        let interner = TypeInterner::new();
+        let db: &dyn TypeDatabase = &interner;
+        let idx = ProbeKind::Application as usize;
+        let key = TypeData::Application(TypeApplicationId(101));
+
+        let before = canon_headroom_snapshot_for_tests(idx);
+        let o1 = branded_object(&interner, Some(SymbolId(101)));
+        // First sight of o1 => one new sampled result and one raw form.
+        record_canon_headroom(&key, o1, db, None);
+        // Repeat of o1 => first-sight gate rejects, no new sample.
+        record_canon_headroom(&key, o1, db, None);
+        // A structurally distinct result => one more sample + one more raw form.
+        let o3 = {
+            let c = interner.intern_string("c");
+            interner.object(vec![PropertyInfo::new(c, TypeId::STRING)])
+        };
+        record_canon_headroom(&key, o3, db, None);
+        let after = canon_headroom_snapshot_for_tests(idx);
+
+        assert_eq!(
+            after.0 - before.0,
+            2,
+            "two distinct result ids sampled (o1, o3); the repeat of o1 is gated"
+        );
+        // o1 and o3 are structurally distinct => two distinct raw fingerprints.
+        assert_eq!(
+            after.1 - before.1,
+            2,
+            "two distinct raw symbol-stripped forms"
+        );
+        assert_eq!(after.2 - before.2, 2, "two first-sight samples counted");
     }
 }
