@@ -797,7 +797,12 @@ impl CheckerState<'_> {
         // value-declaration via cross-file delegation so the call-site
         // sees the value-side type instead of the interface type that
         // `compute_type_of_symbol` returns by default.
-        let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize)> =
+        // `(target_sym_id, value_decl, file_idx, is_plain_value_type_alias)`.
+        // The final flag marks a name-merged plain `TYPE_ALIAS` (no `INTERFACE`,
+        // no `CLASS`) over a value, the only shape allowed to fall back to the
+        // symbol's own type when its value declaration lowers to a
+        // non-instantiable value-position type.
+        let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize, bool)> =
             ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
                 .then(|| {
                     let mut target_sym_id =
@@ -851,16 +856,55 @@ impl CheckerState<'_> {
                         && target.import_module().is_none()
                         && target.value_declaration.is_some()
                     {
-                        let target_value_decl = target.value_declaration;
                         let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id)?;
-                        Some((target_sym_id, target_value_decl, target_file_idx))
+                        // The value-position type must come from the *value*
+                        // declaration, not whichever declaration the binder
+                        // recorded as `value_declaration`. When a `TYPE_ALIAS` is
+                        // declared before its name-merged const/var (e.g.
+                        // `type Foo = ...; const Foo: any;`), the binder records
+                        // the type-alias node as `value_declaration`; typing that
+                        // type-alias node as a value yields a possibly-undefined
+                        // type and produces false TS18048/TS2722 on
+                        // `new Foo()` / `Foo()`. Prefer a declaration node whose
+                        // kind is not a type-alias so the const's declared value
+                        // type is used.
+                        //
+                        // Restrict this correction to a name-merged plain
+                        // `TYPE_ALIAS` (no `INTERFACE`, no `CLASS`) over a value.
+                        // `INTERFACE`+value (constructor companion) and `CLASS`
+                        // merges keep the recorded `value_declaration` untouched:
+                        // their value side is the companion declaration the
+                        // binder already records correctly.
+                        let is_plain_value_type_alias = (tflags
+                            & (tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::CLASS))
+                            == 0;
+                        let target_value_decl = if is_plain_value_type_alias {
+                            self.value_declaration_skipping_type_alias(target, target_file_idx)
+                                .unwrap_or(target.value_declaration)
+                        } else {
+                            target.value_declaration
+                        };
+                        Some((
+                            target_sym_id,
+                            target_value_decl,
+                            target_file_idx,
+                            is_plain_value_type_alias,
+                        ))
                     } else if (tflags
                         & (tsz_binder::symbol_flags::INTERFACE
                             | tsz_binder::symbol_flags::TYPE_ALIAS))
                         != 0
                         && (tflags & tsz_binder::symbol_flags::VALUE) == 0
                     {
+                        // `TYPE_ALIAS`/`INTERFACE` without a merged value: the
+                        // value side is a separate same-file symbol whose value
+                        // declaration models it correctly, so no symbol-type
+                        // fallback is needed.
                         self.same_file_value_symbol_for_type_symbol(target_sym_id)
+                            .map(|(value_sym_id, value_decl, value_file_idx)| {
+                                (value_sym_id, value_decl, value_file_idx, false)
+                            })
                     } else {
                         None
                     }
@@ -911,14 +955,43 @@ impl CheckerState<'_> {
             };
             let mut value_type = if let Some(constructor_type) = lib_constructor_companion {
                 constructor_type
-            } else if let Some((target_sym_id, target_value_decl, target_file_idx)) =
-                alias_target_merged_value_info
+            } else if let Some((
+                target_sym_id,
+                target_value_decl,
+                target_file_idx,
+                is_plain_value_type_alias,
+            )) = alias_target_merged_value_info
             {
-                self.type_of_value_declaration_for_cross_file_symbol(
+                let from_value_decl = self.type_of_value_declaration_for_cross_file_symbol(
                     target_sym_id,
                     target_value_decl,
                     target_file_idx,
-                )
+                );
+                // For a name-merged plain `TYPE_ALIAS` + value, the value
+                // declaration can still lower to a non-instantiable
+                // value-position type (e.g. `void`/`undefined` when a generic
+                // type-alias side shadows the const). Such a type is never a
+                // valid `new`/call target for a merged value symbol and yields
+                // false TS18048/TS2722. Fall back to the symbol's own type,
+                // which carries the const's declared value type. A usable value
+                // declaration is still preferred (e.g. `const matcher: symbol`
+                // keeps its `symbol` identity). `INTERFACE`/`CLASS` merges never
+                // take this fallback: their symbol type is the instance side.
+                if is_plain_value_type_alias
+                    && matches!(
+                        from_value_decl,
+                        TypeId::VOID | TypeId::UNDEFINED | TypeId::UNKNOWN | TypeId::ERROR
+                    )
+                {
+                    let from_symbol = self.get_type_of_symbol(target_sym_id);
+                    if matches!(from_symbol, TypeId::UNKNOWN | TypeId::ERROR) {
+                        from_value_decl
+                    } else {
+                        from_symbol
+                    }
+                } else {
+                    from_value_decl
+                }
             } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
                 && file_idx != self.ctx.current_file_idx
             {
