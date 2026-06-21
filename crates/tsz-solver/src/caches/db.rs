@@ -654,6 +654,7 @@ pub trait TypeDatabase:
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId;
     fn this_type(&self) -> TypeId;
     fn no_infer(&self, inner: TypeId) -> TypeId;
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId;
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
@@ -1293,6 +1294,10 @@ impl TypeDatabase for TypeInterner {
 
     fn no_infer(&self, inner: TypeId) -> TypeId {
         Self::no_infer(self, inner)
+    }
+
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        Self::substitution(self, base_type, constraint)
     }
 
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {

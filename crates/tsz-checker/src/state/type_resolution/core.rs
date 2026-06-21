@@ -1863,7 +1863,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
                     );
                 }
-                return type_param;
+                return self.apply_conditional_flow_substitution(idx, type_param);
             }
 
             // TS1212/TS1213/TS1214: Strict-mode reserved word used as type reference

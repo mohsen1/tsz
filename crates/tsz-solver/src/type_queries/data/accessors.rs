@@ -15,6 +15,30 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_common::Atom;
 
+/// Decompose a substitution type into its `(base_type, constraint)` pair.
+///
+/// Returns `None` when `type_id` is not a `TypeData::Substitution`.
+pub fn substitution_components(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => Some((base_type, constraint)),
+        _ => None,
+    }
+}
+
+/// The underlying base type of a substitution type, or `type_id` unchanged when
+/// it is not a substitution. Used wherever a substitution must present its
+/// surface identity (printing, inference, narrowing) rather than its narrowed
+/// form.
+pub fn substitution_base_or_self(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    substitution_components(db, type_id).map_or(type_id, |(base, _)| base)
+}
+
 pub enum AssignmentNumericDisplayChildren {
     Application { base: TypeId, args: Vec<TypeId> },
     Members(Vec<TypeId>),

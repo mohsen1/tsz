@@ -17,6 +17,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
 
+        // Substitution types (tsc `isRelatedTo` handling): a *source* substitution
+        // relates through its substitution intersection `base & constraint`; a
+        // *target* substitution relates through its base type. Unwrap and re-dispatch.
+        if let Some((base, constraint)) =
+            crate::type_queries::substitution_components(self.interner, source)
+        {
+            let intersection = self.interner.intersection2(base, constraint);
+            return self.check_subtype(intersection, target);
+        }
+        if let Some((base, _)) = crate::type_queries::substitution_components(self.interner, target)
+        {
+            return self.check_subtype(source, base);
+        }
+
         if let Some(inner) = self.readonly_application_or_display_alias_inner(source)
             && array_element_type(self.interner, target).is_none()
             && tuple_list_id(self.interner, target).is_none()

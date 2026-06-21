@@ -92,6 +92,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Decide substitution arguments (conditional-flow narrowing) by
+                // the relation before the composite-deferral heuristics below.
+                if self.substitution_type_arg_constraint_handled(
+                    type_arg,
+                    constraint,
+                    &type_arg_subst,
+                    type_args_list.nodes.get(i).copied(),
+                ) {
+                    continue;
+                }
+
                 if let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     if constraint_resolved == TypeId::ANY {
@@ -142,8 +153,17 @@ impl<'a> CheckerState<'a> {
                                 evaluated_original,
                                 TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                             )
-                            && !query::contains_type_parameters(self.ctx.types, evaluated_original)
                         {
+                            // Trust the relation on the evaluated form. With
+                            // conditional-flow substitution narrowing the check
+                            // variable, a generic argument like `CamelCase<T>`
+                            // inside a `T extends string ? …` true branch
+                            // evaluates to a string-shaped form (e.g. a template
+                            // literal `` `c${T}` ``) that genuinely satisfies the
+                            // constraint even though it still mentions `T`. The
+                            // relation already accounts for the narrowing, so a
+                            // related evaluated form is accepted regardless of
+                            // residual type parameters.
                             if self
                                 .type_arg_constraint_relation_outcome(
                                     evaluated_original,
@@ -165,12 +185,19 @@ impl<'a> CheckerState<'a> {
                                 }
                                 continue;
                             }
-                            self.error_type_constraint_not_satisfied(
-                                evaluated_original,
-                                constraint_resolved,
-                                arg_idx,
-                            );
-                            continue;
+                            // A fully concrete evaluated form that is not related
+                            // is a definite violation. When the evaluated form
+                            // still contains type parameters, fall through to the
+                            // concrete-substitution probe below.
+                            if !query::contains_type_parameters(self.ctx.types, evaluated_original)
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    evaluated_original,
+                                    constraint_resolved,
+                                    arg_idx,
+                                );
+                                continue;
+                            }
                         }
                         let concrete_arg = self.scoped_type_param_substituted_form(type_arg);
                         if self.type_arg_evaluates_to_infer_result_conditional(concrete_arg) {

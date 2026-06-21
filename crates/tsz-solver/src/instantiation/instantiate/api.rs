@@ -58,6 +58,7 @@ fn can_skip_concrete_instantiation_inner(
     match key {
         TypeData::TypeParameter(_)
         | TypeData::Infer(_)
+        | TypeData::Substitution { .. }
         | TypeData::Conditional(_)
         | TypeData::Mapped(_)
         | TypeData::IndexAccess(_, _)
@@ -298,6 +299,20 @@ fn alpha_canonicalize_type(
                 type_id
             } else {
                 interner.no_infer(next)
+            })
+        }
+        TypeData::Substitution {
+            base_type,
+            constraint,
+        } => {
+            let next_base =
+                alpha_canonicalize_type(interner, base_type, binders, bindings, changed, visited)?;
+            let next_constraint =
+                alpha_canonicalize_type(interner, constraint, binders, bindings, changed, visited)?;
+            Some(if next_base == base_type && next_constraint == constraint {
+                type_id
+            } else {
+                interner.substitution(next_base, next_constraint)
             })
         }
         TypeData::Tuple(tuple_id) => {

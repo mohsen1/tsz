@@ -1221,6 +1221,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.no_infer(inner)
     }
 
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        self.interner.substitution(base_type, constraint)
+    }
+
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
         self.interner.unique_symbol(symbol)
     }

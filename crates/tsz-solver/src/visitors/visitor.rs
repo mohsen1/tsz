@@ -238,6 +238,13 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a substitution type (`base_type` narrowed by `constraint`).
+    /// Substitution is transparent for traversal; visitors that care about the
+    /// surface identity look through to `base_type`.
+    fn visit_substitution(&mut self, _base_type: TypeId, _constraint: TypeId) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a module namespace type (import * as ns).
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
         Self::default_output()
@@ -294,6 +301,10 @@ pub trait TypeVisitor: Sized {
             }
             TypeData::ModuleNamespace(sym_ref) => self.visit_module_namespace(sym_ref.0),
             TypeData::NoInfer(inner) => self.visit_no_infer(*inner),
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => self.visit_substitution(*base_type, *constraint),
             TypeData::UnresolvedTypeName(_) | TypeData::Error => self.visit_error(),
         }
     }
@@ -803,6 +814,10 @@ impl TypeKindVisitor {
             TypeData::NoInfer(_inner) => {
                 // NoInfer doesn't change the kind - look through it
                 TypeKind::Other
+            }
+            TypeData::Substitution { .. } => {
+                // Substitution presents its base type-variable surface.
+                TypeKind::TypeParameter
             }
             TypeData::ThisType => TypeKind::TypeParameter, // this is type-parameter-like
             TypeData::Error | TypeData::UnresolvedTypeName(_) => TypeKind::Error,

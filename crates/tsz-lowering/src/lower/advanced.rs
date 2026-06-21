@@ -99,6 +99,102 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Apply `tsc`'s `getConditionalFlowTypeOfType`: when a type-variable
+    /// reference appears inside the true branch of one or more enclosing
+    /// conditional types whose check operand is that same variable, narrow it to
+    /// `type_param & extends_1 & … & extends_n`, returning a substitution type.
+    ///
+    /// This is what lets a check variable used inside the true branch satisfy a
+    /// dependent constraint (e.g. `T extends string ? Capitalize<T> : never`):
+    /// inside the true branch `T` carries `T & string`, so `Capitalize<T>` is
+    /// well-formed. It generalises to nested applications such as
+    /// `Capitalize<CamelCase<T>>` because the wrapping happens at the leaf `T`
+    /// reference regardless of how it is nested.
+    fn apply_conditional_flow_substitution(
+        &self,
+        node_idx: NodeIndex,
+        type_param: TypeId,
+    ) -> TypeId {
+        let mut constraint = type_param;
+        let mut found = false;
+
+        let mut child = node_idx;
+        let mut parent = self
+            .arena
+            .get_extended(child)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+        let mut iterations = 0;
+        while parent.is_some() {
+            iterations += 1;
+            if iterations > tsz_common::limits::MAX_TREE_WALK_ITERATIONS {
+                break;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                && let Some(cond) = self.arena.get_conditional_type(parent_node)
+                && cond.true_type == child
+                && self.naked_type_param_id_of(cond.check_type) == Some(type_param)
+            {
+                // The reference sits in this conditional's true branch and the
+                // conditional checks the same variable: fold in the extends type.
+                let extends = self.lower_type(cond.extends_type);
+                constraint = self.interner.intersection2(constraint, extends);
+                found = true;
+            }
+            child = parent;
+            parent = self
+                .arena
+                .get_extended(parent)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+
+        if found {
+            self.interner.substitution(type_param, constraint)
+        } else {
+            type_param
+        }
+    }
+
+    /// Resolve a type node to the `TypeId` of the naked type parameter it
+    /// references, if it is a parenthesised / type-reference / identifier form
+    /// that names an in-scope type parameter (no type arguments). Mirrors the
+    /// shape accepted by [`is_naked_type_param`] but returns the parameter id so
+    /// callers can compare check operands by identity.
+    fn naked_type_param_id_of(&self, node_idx: NodeIndex) -> Option<TypeId> {
+        let mut current = node_idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > tsz_common::limits::MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let node = self.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                    current = self.arena.get_wrapped_type(node)?.type_node;
+                }
+                k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                    let data = self.arena.get_type_ref(node)?;
+                    if let Some(args) = &data.type_arguments
+                        && !args.nodes.is_empty()
+                    {
+                        return None;
+                    }
+                    let name_node = self.arena.get(data.type_name)?;
+                    let ident = self.arena.get_identifier(name_node)?;
+                    return self.lookup_type_param(&ident.escaped_text);
+                }
+                k if k == SyntaxKind::Identifier as u16 => {
+                    let ident = self.arena.get_identifier(node)?;
+                    return self.lookup_type_param(&ident.escaped_text);
+                }
+                _ => return None,
+            }
+        }
+    }
+
     /// Lower a mapped type ({ [K in Keys]: `ValueType` })
     pub(super) fn lower_mapped_type(&self, node_idx: NodeIndex) -> TypeId {
         let data = lower_node_data!(self, node_idx, get_mapped_type, TypeId::ERROR);
@@ -432,7 +528,7 @@ impl<'a> TypeLowering<'a> {
                     .is_none_or(|args| args.nodes.is_empty())
                     && let Some(type_param) = self.lookup_type_param(name)
                 {
-                    return type_param;
+                    return self.apply_conditional_flow_substitution(node_idx, type_param);
                 }
 
                 // Handle string manipulation intrinsic types.
@@ -703,7 +799,7 @@ impl<'a> TypeLowering<'a> {
             let name = &data.escaped_text;
 
             if let Some(type_param) = self.lookup_type_param(name) {
-                return type_param;
+                return self.apply_conditional_flow_substitution(node_idx, type_param);
             }
 
             if name == "BuiltinIteratorReturn"

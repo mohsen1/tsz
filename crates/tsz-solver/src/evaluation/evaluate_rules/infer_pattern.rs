@@ -420,6 +420,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.type_contains_infer_inner(inner, visited)
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.type_contains_infer_inner(base_type, visited)
+                    || self.type_contains_infer_inner(constraint, visited)
+            }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);
                 spans.iter().any(|span| match span {
@@ -953,6 +960,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.for_each_infer(inner, f, visited)
+            }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.for_each_infer(base_type, f, visited)
+                    && self.for_each_infer(constraint, f, visited)
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);

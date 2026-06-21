@@ -958,6 +958,22 @@ impl<'a> TypeInstantiator<'a> {
                 }
             }
 
+            // Substitution: instantiate the base and the constraint, then
+            // re-derive through the simplifying constructor. Once the base is
+            // concrete the narrowing is fully determined and collapses to base.
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                let inst_base = self.instantiate(*base_type);
+                let inst_constraint = self.instantiate(*constraint);
+                if inst_base == *base_type && inst_constraint == *constraint {
+                    type_id
+                } else {
+                    self.interner.substitution(inst_base, inst_constraint)
+                }
+            }
+
             // Template literal: instantiate embedded types
             // After substitution, if any type span becomes a union of string literals,
             // we trigger evaluation to expand the template literal into a union of strings.

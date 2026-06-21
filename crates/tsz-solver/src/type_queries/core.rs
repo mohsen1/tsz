@@ -1300,6 +1300,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             ConstructorTypeKind::Inner(inner)
         }
+        TypeData::Substitution { base_type, .. } => ConstructorTypeKind::Inner(base_type),
         TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             ConstructorTypeKind::Constraint(info.constraint)
         }
@@ -1490,6 +1491,9 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
             SignatureTypeKind::ReadonlyType(inner)
         }
 
+        // Substitution presents its base variable's signatures.
+        TypeData::Substitution { base_type, .. } => SignatureTypeKind::ReadonlyType(base_type),
+
         // Type parameter - may have constraint with signatures
         TypeData::TypeParameter(info) | TypeData::Infer(info) => SignatureTypeKind::TypeParameter {
             constraint: info.constraint,
@@ -1596,6 +1600,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             EvaluationNeeded::Readonly(inner)
         }
+        TypeData::Substitution { base_type, .. } => EvaluationNeeded::Readonly(base_type),
         // Already resolved types (Lazy needs special handling when DefId lookup is implemented)
         TypeData::BoundParameter(_)
         | TypeData::Intrinsic(_)
