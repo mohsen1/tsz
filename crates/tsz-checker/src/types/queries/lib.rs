@@ -677,6 +677,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For merged TYPE_ALIAS + value symbols (`export const X = ...` paired
+        // with `export type X = typeof X`), `get_type_of_symbol` enters the
+        // TYPE_ALIAS branch and returns the type-alias body. In namespace
+        // member access (value position — e.g. a computed property key
+        // `[ns.X]`), the VALUE side is required so the key resolves to the
+        // const's literal type instead of an unevaluated `typeof X`, which
+        // would otherwise raise a spurious TS2464 (and a follow-on TS2722 once
+        // the key fails to register as a member) (#14130). Mirrors the
+        // `is_merged_interface_value` branch above and the same-file identifier
+        // path in `resolved_identifier_flow_result`; the value side is resolved
+        // through the same helpers `reexported_merged_alias_value_type` uses,
+        // reusing the `value_decl` already fetched above.
+        if (flags & symbol_flags::TYPE_ALIAS) != 0
+            && (flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION)) != 0
+            && (flags & symbol_flags::INTERFACE) == 0
+            && (flags & symbol_flags::CLASS) == 0
+            && (flags & symbol_flags::ENUM) == 0
+            && let Some(value_type) = self
+                .compute_value_type_for_merged_alias(resolved_member_id)
+                .or_else(|| self.cross_file_merged_alias_value_type(resolved_member_id, value_decl))
+        {
+            return Some(value_type);
+        }
+
         Some(self.get_type_of_symbol(resolved_member_id))
     }
 
