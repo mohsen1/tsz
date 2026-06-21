@@ -1,4 +1,4 @@
-//! Cross-binder re-export meaning preservation (issue #14168).
+//! Cross-binder re-export meaning preservation (issues #14168, #14358).
 //!
 //! A symbol re-exported across binder/module boundaries must preserve **all**
 //! of its meanings (value, type, namespace). These CLI tests run the real
@@ -15,6 +15,10 @@
 //! * A re-exported `enum` referenced in a value position is typed as
 //!   `typeof Enum`, so `Enum.Member` resolves instead of reporting `TS2339`,
 //!   even across several re-export hops where the local symbol is an alias.
+//! * A re-exported `declare class` referenced in **type** position (e.g. a
+//!   `readonly C[]` element) keeps its instance meaning across 2+ hops, instead
+//!   of falling back to the value (`typeof C`) side and reporting a false
+//!   `TS2339` on instance members.
 //!
 //! Binder names and file names are varied across cases so the behaviour follows
 //! structure, not identifier text.
@@ -209,5 +213,114 @@ fn reexported_enum_missing_member_still_errors() {
     assert!(
         out.contains("TS2339"),
         "a genuinely absent enum member must still report TS2339, got:\n{out}"
+    );
+}
+
+/// Repro C (issue #14358): a `declare class` re-exported through 2+ plain named
+/// hops, referenced in a `readonly C[]` element position, must keep its TYPE
+/// meaning so the element is the instance type `C` (not the value/`typeof C`
+/// constructor side). `resolve_import_with_reexports_type_only` chases
+/// re-exports inside a single binder's tables only, so a 2-hop chain landed on a
+/// re-export alias stub and fell back to the constructor meaning -> false
+/// TS2339 on instance members. The in-repo witness is type-graphql's
+/// `readonly GraphQLError[]`.
+#[test]
+fn reexported_declare_class_two_hop_readonly_array_keeps_instance_meaning() {
+    let out = run_tsz(
+        &[
+            ("a.ts", "export declare class Widget { m: string; }\n"),
+            ("b.ts", "export { Widget } from './a';\n"),
+            ("c.ts", "export { Widget } from './b';\n"),
+            (
+                "use.ts",
+                "import { Widget } from './c';\nexport function f(d: readonly Widget[]) {\n  return d[0].m;\n}\n",
+            ),
+        ],
+        "use.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        !out.contains("TS2339"),
+        "re-exported declare class in readonly array element must keep its instance meaning (no TS2339), got:\n{out}"
+    );
+}
+
+/// Same defect through a readonly **tuple** element and a longer (3-hop) chain,
+/// with renamed binders and a `.d.ts` declaring file so the fix is structural.
+#[test]
+fn reexported_declare_class_three_hop_readonly_tuple_keeps_instance_meaning() {
+    let out = run_tsz(
+        &[
+            ("decl.d.ts", "export declare class Node { kind: number; }\n"),
+            ("hop1.d.ts", "export { Node } from './decl';\n"),
+            ("hop2.d.ts", "export { Node } from './hop1';\n"),
+            ("hop3.d.ts", "export { Node } from './hop2';\n"),
+            (
+                "consumer.ts",
+                "import { Node } from './hop3';\nexport function f(d: readonly [Node]) {\n  return d[0].kind;\n}\n",
+            ),
+        ],
+        "consumer.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        !out.contains("TS2339"),
+        "re-exported declare class in readonly tuple element must keep its instance meaning (no TS2339), got:\n{out}"
+    );
+}
+
+/// The same chain at the type level: `(readonly C[])[number]` must equal the
+/// instance type `C`, so assigning it to a `C` is clean (a `typeof C` element
+/// would report TS2741).
+#[test]
+fn reexported_declare_class_two_hop_indexed_access_element_is_instance() {
+    let out = run_tsz(
+        &[
+            ("one.ts", "export declare class Box { value: number; }\n"),
+            ("two.ts", "export { Box } from './one';\n"),
+            ("three.ts", "export { Box } from './two';\n"),
+            (
+                "app.ts",
+                "import { Box } from './three';\ntype Elem = (readonly Box[])[number];\ndeclare const e: Elem;\nexport const ok: Box = e;\n",
+            ),
+        ],
+        "app.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        !out.contains("TS2741") && !out.contains("TS2322"),
+        "(readonly Box[])[number] must equal the instance type Box, got:\n{out}"
+    );
+}
+
+/// Parity guard: a re-exported **value-only** binding used in type position is
+/// still an error (TS2749) — the fix must not start treating value aliases as
+/// types.
+#[test]
+fn reexported_value_only_in_type_position_still_errors() {
+    let out = run_tsz(
+        &[
+            ("v0.ts", "export const Token = 5;\n"),
+            ("v1.ts", "export { Token } from './v0';\n"),
+            ("v2.ts", "export { Token } from './v1';\n"),
+            (
+                "client.ts",
+                "import { Token } from './v2';\nexport function f(d: readonly Token[]) {\n  return d[0];\n}\n",
+            ),
+        ],
+        "client.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        out.contains("TS2749"),
+        "a re-exported value used as a type must still report TS2749, got:\n{out}"
     );
 }
