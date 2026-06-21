@@ -908,6 +908,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        // tsc computes call arity against the ERASED signature (its type
+        // parameters mapped to `any`, `getErasedSignature`). When a rest
+        // parameter is a conditional whose check still references a free type
+        // parameter — e.g. `...[opts]: [s] extends [PropertyKey] ? [opts?] :
+        // [opts]` — evaluating it with `s` unresolved collapses the conditional
+        // to its (false) required branch and over-counts required arguments,
+        // producing a spurious TS2554 (#14326). Erase the free type parameters
+        // of such a rest type to `any` for arity counting so the conditional
+        // resolves the branch tsc's erased-signature precheck picks. Gated to
+        // conditional-bearing rest types so bare type-parameter / `T[]` rests
+        // keep their existing arity treatment.
+        let rest_param_type = self.erase_conditional_rest_type_params_for_arity(rest_param_type);
         // Evaluate Application/Conditional/Mapped types (e.g. Parameters<Fn>) to
         // their concrete Tuple form so arity checking works correctly.
         let rest_param_type = self.evaluate_rest_param_type(rest_param_type);
@@ -923,6 +935,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => (required, None),
         }
+    }
+
+    /// Erase the free type parameters of a conditional-bearing rest-parameter
+    /// type to `any` for arity counting only (tsc `getErasedSignature` parity,
+    /// #14326). Returns the type unchanged when it carries no conditional or no
+    /// free type parameter, so non-generic and `T[]`/bare-`T` rests are
+    /// untouched. This is used only for argument-count bounds, never for the
+    /// real type of the rest parameter.
+    fn erase_conditional_rest_type_params_for_arity(&self, type_id: TypeId) -> TypeId {
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        if !crate::type_queries::contains_conditional_type(self.interner, type_id) {
+            return type_id;
+        }
+        let free = crate::visitors::visitor_predicates::free_type_parameter_ids_in(
+            self.interner,
+            [type_id],
+        );
+        if free.is_empty() {
+            return type_id;
+        }
+        let mut sub = TypeSubstitution::new();
+        for id in free {
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(id) {
+                sub.insert(info.name, TypeId::ANY);
+            }
+        }
+        if sub.is_empty() {
+            return type_id;
+        }
+        instantiate_type(self.interner, type_id, &sub)
     }
 
     /// Look up the `ParamInfo` for a given argument index (non-rest only).
