@@ -637,33 +637,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Use `in_intersection_member_check` instead of modifying `enforce_weak_types`
             // directly to avoid polluting the subtype cache with results computed under
             // different weak-type-enforcement policies.
-            //
-            // Also clear `in_property_check` for the duration of the per-member
-            // checks. Decomposing a target intersection into independent
-            // `source <: member` queries is NOT a nested object-property
-            // comparison: each member is a constituent of the intersection, so
-            // weak-type generosity must apply to it the same way it does at the
-            // top level. If `in_property_check` leaked in (because we reached
-            // this intersection target while comparing a property type, e.g.
-            // `{ lazy: Fn } <: { lazy: Meta & Call }`), the weak gate in
-            // `check_object_subtype` would spuriously fire for the all-optional
-            // object member (`Fn <: Meta`) and reject an otherwise-valid
-            // relation. The combined-intersection weak check still runs through
-            // `CompatChecker::violates_weak_type` when the whole intersection is
-            // weak, so genuinely-weak intersection targets remain rejected.
             let saved = self.in_intersection_member_check;
-            let saved_property_check = self.in_property_check;
             self.in_intersection_member_check = true;
-            self.in_property_check = false;
             for &member in member_list.iter() {
                 if !self.check_subtype(source, member).is_true() {
                     self.in_intersection_member_check = saved;
-                    self.in_property_check = saved_property_check;
                     return SubtypeResult::False;
                 }
             }
             self.in_intersection_member_check = saved;
-            self.in_property_check = saved_property_check;
             return SubtypeResult::True;
         }
 

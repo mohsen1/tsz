@@ -18,8 +18,8 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::{
-    application_id, lazy_def_id, object_shape_id, object_with_index_shape_id, template_literal_id,
-    union_list_id,
+    application_id, callable_shape_id, function_shape_id, lazy_def_id, object_shape_id,
+    object_with_index_shape_id, template_literal_id, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -390,8 +390,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
         {
             crate::relations::subtype::cache::note_weak_type_sensitivity();
+            let source_is_function_like = source_receiver.is_some_and(|id| {
+                function_shape_id(self.interner, id).is_some()
+                    || callable_shape_id(self.interner, id).is_some()
+            });
             if self.enforce_weak_types
                 && (!self.in_intersection_member_check || self.in_property_check)
+                && !(self.in_intersection_member_check && source_is_function_like)
             {
                 return SubtypeResult::False;
             }

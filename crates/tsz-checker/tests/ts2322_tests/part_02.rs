@@ -1367,10 +1367,9 @@ fn nested_weak_type_in_intersection_target_emits_ts2322() {
 
     let diagnostics = get_all_diagnostics(source);
     let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
-    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
-        has_ts2322 || has_ts2559,
-        "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {diagnostics:?}"
+        has_ts2322,
+        "Expected TS2322 for nested weak type mismatch in intersection target. Got: {diagnostics:?}"
     );
 }
 

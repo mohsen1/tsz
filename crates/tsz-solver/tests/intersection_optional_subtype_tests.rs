@@ -401,13 +401,11 @@ fn test_intersection_literal_property_mismatch_with_primitive_member() {
 /// to each constituent independently. A function value is assignable to an
 /// all-optional object type vacuously, and to the call-signature constituent by
 /// the usual function-subtype rules. Previously, when the intersection target
-/// was reached while comparing a nested property type, `in_property_check`
-/// leaked into the per-member decomposition; the weak-type gate
-/// (`enforce_weak_types && (!in_intersection_member_check || in_property_check)`)
-/// then spuriously fired against the all-optional object member and rejected the
-/// whole relation. Decomposing a target intersection is not a nested object
-/// property comparison, so `in_property_check` must be cleared for the per-member
-/// checks.
+/// was reached while comparing a nested property type, the weak-type gate fired
+/// against the all-optional object member and rejected the whole relation. A
+/// direct intersection-member check against a function-like source must allow
+/// that all-optional object constituent, while ordinary nested object-property
+/// comparisons still enforce weak-type overlap.
 ///
 /// Binder names are varied (no reliance on the issue's `lazy`/`single` names) to
 /// keep the test structural rather than identifier-driven.
