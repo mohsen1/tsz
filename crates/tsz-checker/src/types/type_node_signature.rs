@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+impl TypeNodeChecker<'_, '_> {
     /// Extract parameter information from a signature.
     pub(super) fn extract_params_from_signature(
         &mut self,
