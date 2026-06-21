@@ -262,6 +262,57 @@ pub fn widen_type_for_mutable_binding(
     widen_type_cached(db, type_id, &mut cache, true, true, true, false, false)
 }
 
+/// Widen a `const` declaration's fresh initializer type the way tsc does.
+///
+/// `const` preserves a *top-level* primitive literal — `const c = "x"` is `"x"`,
+/// and `const c = cond ? "x" : "y"` is `"x" | "y"` — but array, tuple, and
+/// object-literal element positions are mutable, so their literal members still
+/// widen: `const c = cond ? ["x"] : []` is `string[]`, not `("x")[]` (#14165,
+/// remeda `errors.push(...)`). The plain [`widen_type_for_mutable_binding`]
+/// (used for `let`/`var`) would over-widen the top-level literal union to
+/// `string`, which is wrong for `const`.
+///
+/// Strategy: preserve a top-level literal / unique symbol; map a union member by
+/// member (literal members preserved, compound members widened); and widen a
+/// fresh array/tuple/object compound's members via the mutable-binding widener
+/// (which respects object freshness). Reached only for fresh compound
+/// initializers — the checker gates on `is_fresh_literal_expression`, so a
+/// non-fresh initializer keeps its declared type.
+pub fn widen_const_initializer(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    match db.lookup(type_id) {
+        // Distribute over a union: literal members are preserved, array/object
+        // members widen. `cond ? "x" : ["y"]` → `"x" | string[]`.
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&m| widen_const_initializer(db, m))
+                .collect();
+            if mapped.iter().zip(members.iter()).all(|(a, b)| a == b) {
+                type_id
+            } else {
+                db.union(mapped)
+            }
+        }
+        // Mutable compounds: widen element / property literals (freshness-respecting).
+        Some(
+            TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_),
+        ) => widen_type_for_mutable_binding(db, type_id),
+        // A top-level primitive literal / unique symbol (`const` preserves it) and
+        // everything else (functions, type parameters, applications, …) unchanged.
+        _ => type_id,
+    }
+}
+
 /// Deep-widen a type including inside function/callable signatures.
 ///
 /// Unlike `widen_type` which skips Function/Callable types for performance

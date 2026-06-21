@@ -95,6 +95,19 @@ impl<'a> FlowAnalyzer<'a> {
             return self.fallback_binary_expression_type(bin.left, bin.right, bin.operator_token);
         }
 
+        // Array/object literal right-hand sides have no dedicated branch above and
+        // are commonly uncached during return-type inference, where the inference
+        // pass evaluates only return expressions (not the assignment statements in
+        // sibling branches such as `if (!value) { value = ["a"]; }`). Route them
+        // through the general syntax resolver so assignment-based flow narrowing of
+        // a `let` binding produces the widened literal element type (matching the
+        // cached read pass), instead of silently keeping the declared union type.
+        if rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            return self.fallback_expression_type_from_syntax(rhs);
+        }
+
         None
     }
 

@@ -736,8 +736,6 @@ impl ModuleResolver {
             .filter(|stripped| !stripped.is_empty());
         let ambient_match = is_ordinary_bare
             && (is_ambient_module(specifier) || node_builtin.is_some_and(&is_ambient_module));
-        let containing_is_declaration =
-            ModuleExtension::from_path(containing_file).is_declaration();
         if self.trace_resolution {
             println!(
                 "======== Resolving module '{}' from '{}'. ========",
@@ -764,12 +762,18 @@ impl ModuleResolver {
             }
         }
 
-        // Declaration files frequently stitch together sibling `declare module "..."`
-        // blocks with bare imports (for example, react16.d.ts declares both
-        // `"react"` and `"prop-types"` in the same file). If the ambient module is
-        // already known project-wide, prefer that over re-running filesystem-based
-        // bare-specifier resolution for each import inside the declaration layer.
-        if containing_is_declaration && ambient_match {
+        // An in-program ambient `declare module "X"` shadows on-disk resolution
+        // of the bare specifier `X`, mirroring tsc's `tryFindAmbientModule`,
+        // which is consulted before filesystem module resolution for any
+        // non-relative name (`ambient_match` already gates on `is_ordinary_bare`,
+        // so relative/rooted imports never reach here). This holds regardless of
+        // whether the importer is a `.ts` or a `.d.ts` and regardless of whether
+        // an on-disk package of the same name exists — including an *untyped*
+        // `node_modules/X` runtime package, which must NOT surface TS7016 when an
+        // ambient declaration provides the types (issue #14169; witnesses: rxjs
+        // node-builtin shims, msw events/punycode/string_decoder). Wildcard
+        // ambient patterns are matched separately by the driver before `lookup`.
+        if ambient_match {
             return ModuleLookupResult::ambient();
         }
 

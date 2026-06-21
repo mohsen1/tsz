@@ -1023,6 +1023,18 @@ impl<'a> CheckerState<'a> {
                 literal
             } else if self.is_bare_object_literal_expression(var_decl.initializer) {
                 self.widen_mutable_object_literal_property_types(init_type)
+            } else if self.is_fresh_literal_expression(var_decl.initializer) {
+                // A fresh compound initializer (array / tuple / conditional over
+                // them) widens its mutable element literals while preserving any
+                // top-level primitive literal: `const c = cond ? ["x"] : []` is
+                // `string[]`; `const c = cond ? "x" : "y"` stays `"x" | "y"`. The
+                // bare array-literal case already widens via expression typing, so
+                // this is a no-op there; the conditional/union case is the fix.
+                // (#14165)
+                crate::query_boundaries::widening::widen_const_initializer(
+                    self.ctx.types,
+                    init_type,
+                )
             } else {
                 init_type
             }
