@@ -739,6 +739,9 @@ mod conditional_break_narrowing_tests;
 #[path = "tests/conditional_constraint_relation_routing_arch_tests.rs"]
 mod conditional_constraint_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/conditional_flow_substitution_ts2344_tests.rs"]
+mod conditional_flow_substitution_ts2344_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
@@ -1485,6 +1488,9 @@ mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
 mod variadic_tuple_readonly_relation_tests;
+#[cfg(test)]
+#[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
+mod variadic_tuple_spread_element_inference_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_tail_arity_inference_tests.rs"]
 mod variadic_tuple_tail_arity_inference_tests;

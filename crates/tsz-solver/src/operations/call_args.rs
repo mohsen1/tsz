@@ -1202,13 +1202,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        if type_id.is_intrinsic() {
-            return type_id;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Array(elem)) => elem,
-            _ => type_id,
-        }
+        crate::type_queries::rest_spread_element_type(self.interner, type_id)
     }
 
     /// Element type of a tuple rest element when inferring against a plain array
@@ -1799,6 +1793,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::ReadonlyType(operand)
             | TypeData::NoInfer(operand) => {
                 self.type_contains_placeholder(operand, var_map, visited)
+            }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.type_contains_placeholder(base_type, var_map, visited)
+                    || self.type_contains_placeholder(constraint, var_map, visited)
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);

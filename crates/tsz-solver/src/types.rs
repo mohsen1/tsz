@@ -895,6 +895,19 @@ pub enum TypeData {
     /// it evaluates to the inner type (transparent).
     NoInfer(TypeId),
 
+    /// Substitution type: a type variable narrowed by an implied constraint.
+    ///
+    /// Mirrors `tsc`'s `SubstitutionType`. `base_type` is the underlying type
+    /// variable (the surface identity used by printing and inference);
+    /// `constraint` is the implied constraint from an enclosing conditional's
+    /// `extends` type. The substitution intersection `base_type & constraint` is
+    /// what relations and base-constraint computation observe. See
+    /// `getConditionalFlowTypeOfType` / `getSubstitutionType` in `tsc`.
+    Substitution {
+        base_type: TypeId,
+        constraint: TypeId,
+    },
+
     /// Error type for recovery
     Error,
 

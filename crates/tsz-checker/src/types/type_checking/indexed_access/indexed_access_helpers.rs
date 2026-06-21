@@ -1114,6 +1114,14 @@ impl<'a> CheckerState<'a> {
                     && value >= 0.0
                     && (has_rest || (value as usize) < len);
             }
+            // A string-literal key that spells a canonical array index (`'0'`,
+            // `'1'`, …) indexes a tuple/array element exactly like its numeric
+            // form. Accept it within the same numeric domain so a generic index
+            // constrained to `'0' | '1'` stays a tuple element access rather than
+            // spuriously escaping to `TS2536`.
+            if let Some(index) = self.string_literal_numeric_index(member) {
+                return has_rest || index < len;
+            }
             false
         })
     }
@@ -1343,18 +1351,24 @@ impl<'a> CheckerState<'a> {
             .error(pos as u32, len as u32, message.to_string(), code);
     }
 
+    /// The canonical array-index a string-literal *type* spells (`'0'` -> `0`,
+    /// `'42'` -> `42`), or `None` when `index_type` is not a string-literal type
+    /// or its text is not a canonical unsigned-integer index string (`'01'`,
+    /// `'foo'`, `'+1'` are property names, not indices). `tsc` treats
+    /// `Base['0']` and `Base[0]` identically for tuple/array element lookup.
+    pub(super) fn string_literal_numeric_index(&self, index_type: TypeId) -> Option<usize> {
+        let prop_atom =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)?;
+        let property_name = self.ctx.types.resolve_atom_ref(prop_atom);
+        self.get_numeric_index_from_string(&property_name)
+    }
+
     pub(super) fn canonical_numeric_string_literal_valid_for_object(
         &self,
         index_type: TypeId,
         object_type: TypeId,
     ) -> bool {
-        let Some(prop_atom) =
-            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
-        else {
-            return false;
-        };
-        let property_name = self.ctx.types.resolve_atom(prop_atom);
-        self.get_numeric_index_from_string(&property_name)
+        self.string_literal_numeric_index(index_type)
             .is_some_and(|_| self.is_element_indexable(object_type, false, true))
     }
 

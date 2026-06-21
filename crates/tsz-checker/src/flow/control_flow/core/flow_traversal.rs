@@ -741,6 +741,36 @@ impl<'a> FlowAnalyzer<'a> {
                                         declared_type,
                                         true,
                                     )
+                                } else if self.is_killing_definition_with_non_nullish_rhs(
+                                    flow.node, reference,
+                                ) {
+                                    // `target = <object/array literal | new | fn>` always
+                                    // writes a definitely non-nullish value, even when the
+                                    // RHS type could not be resolved (deferred closure typing
+                                    // plus an unreconstructable structural fallback). Drop
+                                    // `null`/`undefined` from the declared union so the killing
+                                    // definition matches tsc's `getAssignmentReducedType`
+                                    // instead of leaving a false TS18048 on a later read.
+                                    let declared_type =
+                                        symbol_id
+                                            .and_then(|sid| self.binder.get_symbol(sid))
+                                            .filter(|sym| sym.value_declaration.is_some())
+                                            .and_then(|sym| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    self.node_types.and_then(|nt| {
+                                                        nt.get(&sym.value_declaration.0).copied()
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or(initial_type);
+                                    flow_boundary::narrow_destructuring_default(
+                                        self.interner.as_type_database(),
+                                        declared_type,
+                                        true,
+                                    )
                                 } else {
                                     current_type
                                 }

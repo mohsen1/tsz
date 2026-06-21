@@ -80,9 +80,10 @@ pub fn type_id_ts_flags(types: &dyn TypeStore, type_id: TypeId) -> u32 {
         },
         TypeData::Union(_) => flags::UNION,
         TypeData::Intersection(_) => flags::INTERSECTION,
-        TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::BoundParameter(_) => {
-            flags::TYPE_PARAMETER
-        }
+        TypeData::TypeParameter(_)
+        | TypeData::Infer(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::Substitution { .. } => flags::TYPE_PARAMETER,
         TypeData::Conditional(_) => flags::CONDITIONAL,
         TypeData::IndexAccess(_, _) => flags::INDEXED_ACCESS,
         TypeData::KeyOf(_) => flags::INDEX,

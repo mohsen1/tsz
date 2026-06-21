@@ -918,6 +918,24 @@ impl<'a> CheckerState<'a> {
             .get_flow_type(receiver_idx, read_type, flow_node)
     }
 
+    pub(crate) fn receiver_has_definite_assignment_error(
+        &self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+    ) -> bool {
+        let (receiver_start, receiver_end) = self
+            .ctx
+            .arena
+            .get(receiver_idx)
+            .map(|node| (node.pos, node.end))
+            .unwrap_or((u32::MAX, u32::MAX));
+        self.ctx.daa_error_nodes.contains(&receiver_idx.0)
+            || self.ctx.daa_error_nodes.contains(&property_access_idx.0)
+            || self.ctx.diagnostics.iter().any(|diag| {
+                diag.code == 2454 && diag.start >= receiver_start && diag.start < receiver_end
+            })
+    }
+
     pub(crate) fn write_receiver_type_for_property_access(
         &mut self,
         property_access_idx: NodeIndex,
