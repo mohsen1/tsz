@@ -50,6 +50,9 @@ mod fs_tests;
 #[path = "../tests/generic_interface_bivariant_param_relation_tests.rs"]
 mod generic_interface_bivariant_param_relation_tests;
 #[cfg(test)]
+#[path = "../tests/interface_extends_cross_module_class_cli_tests.rs"]
+mod interface_extends_cross_module_class_cli_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_generic_alias_cli_tests.rs"]
 mod interface_extends_generic_alias_cli_tests;
 #[cfg(test)]
@@ -70,6 +73,9 @@ mod symbol_keyed_member_cross_arena_cli_tests;
 #[cfg(test)]
 #[path = "../tests/tsc_compat_tests.rs"]
 mod tsc_compat_tests;
+#[cfg(test)]
+#[path = "../tests/tuple_interface_extends_array_numeric_member_cli_tests.rs"]
+mod tuple_interface_extends_array_numeric_member_cli_tests;
 #[cfg(test)]
 #[path = "../tests/watch_tests.rs"]
 mod watch_tests;

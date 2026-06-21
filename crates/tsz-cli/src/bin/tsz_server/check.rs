@@ -909,6 +909,7 @@ impl Server {
             no_lib: options.no_lib,
             no_types_and_symbols: false,
             types_explicitly_set: false,
+            types_has_wildcard: false,
             target: checker_target,
             module: Self::parse_module(&options.module),
             es_module_interop: options.es_module_interop,

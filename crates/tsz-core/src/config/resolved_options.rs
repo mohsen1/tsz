@@ -461,6 +461,7 @@ pub fn resolve_compiler_options(
             .iter()
             .filter_map(|value| trimmed_non_empty(value).map(String::from))
             .collect();
+        resolved.checker.types_has_wildcard = list.iter().any(|entry| entry == "*");
         resolved.types = Some(list);
         resolved.checker.types_explicitly_set = true;
     }

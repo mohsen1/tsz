@@ -501,6 +501,67 @@ withTempDir((dir) => {
 console.log("✅ --require-application-compat accepts complete compile-only app rows");
 
 // ---------------------------------------------------------------------------
+// Test: complete gray application compatibility is still authoritative data.
+// Fixture-invalid/reference-failed app rows should not block publishing green
+// timed app rows; only missing or partial compatibility metadata should.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
+    makeRow(name, "gray", {
+      errorStatus: "tsc fixture error",
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+    }),
+  );
+  for (const row of applicationRows) {
+    row.compatibility.exit_class = "fixture invalid";
+    row.compatibility.phase = "fixture setup";
+    row.compatibility.last_successful_phase = null;
+    row.compatibility.diagnostic_status = "tsc fixture failed";
+  }
+  writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+  const result = run(file, ["--json", "--require-application-compat"]);
+  assert.equal(result.status, 0, `complete gray application compatibility rows should pass:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.application_compatibility.present, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.complete, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.missing, 0);
+  assert.equal(parsed.application_compatibility.incomplete, 0);
+});
+console.log("✅ --require-application-compat accepts complete gray app rows");
+
+// ---------------------------------------------------------------------------
+// Test: a gray application row with partial metadata is still incomplete.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
+    makeRow(name, "green", {
+      errorStatus: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+    }),
+  );
+  delete applicationRows[0].compatibility.phase;
+  writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+  const result = run(file, ["--json", "--require-application-compat"]);
+  assert.equal(result.status, 1, "partial application compatibility should fail readiness");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.application_compatibility.present, APPLICATION_PROJECT_ROWS.length);
+  assert.equal(parsed.application_compatibility.complete, APPLICATION_PROJECT_ROWS.length - 1);
+  assert.equal(parsed.application_compatibility.incomplete, 1);
+  assert.deepEqual(parsed.application_compatibility.incomplete_rows, [
+    { name: APPLICATION_PROJECT_ROWS[0], state: "gray" },
+  ]);
+});
+console.log("✅ --require-application-compat rejects partial app rows");
+
+// ---------------------------------------------------------------------------
 // Test: --require-green fails when any present required row is red.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {

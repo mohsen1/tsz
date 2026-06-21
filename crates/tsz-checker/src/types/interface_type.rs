@@ -10,6 +10,7 @@
 //! - Type parameter instantiation for generic bases
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -154,6 +155,40 @@ impl<'a> CheckerState<'a> {
             // declaring file is checked through cross-arena delegation,
             // making results depend on root-file order.
             .or_else(|| self.ctx.binder.program_global_type(normalized))
+    }
+
+    /// Resolve an interface-heritage base symbol to the underlying `class`
+    /// symbol — directly, through an import alias, or through a cross-file
+    /// re-export — or `None` when the base is not a class. Used to route a
+    /// class base through the class-instance resolver (so instance members are
+    /// inherited) instead of the symbol's constructor type.
+    fn heritage_base_class_symbol(
+        &mut self,
+        base_sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
+        let symbol_is_class = |this: &Self, sym: tsz_binder::SymbolId| {
+            this.get_cross_file_symbol(sym)
+                .or_else(|| this.ctx.binder.get_symbol(sym))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
+        };
+
+        if symbol_is_class(self, base_sym_id) {
+            return Some(base_sym_id);
+        }
+
+        let mut visited_aliases = AliasCycleTracker::new();
+        if let Some(target) = self
+            .resolve_alias_symbol(base_sym_id, &mut visited_aliases)
+            .filter(|&t| t != base_sym_id)
+            && symbol_is_class(self, target)
+        {
+            return Some(target);
+        }
+
+        self.resolve_import_alias_cross_file(base_sym_id)
+            .filter(|&t| t != base_sym_id && symbol_is_class(self, t))
     }
 
     /// Get the type of an interface declaration.
@@ -919,6 +954,34 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // Cross-module class base: the base class declaration lives in
+                    // another file's arena, so the local-arena lookups above cannot
+                    // see it (NodeIndex is per-arena). For a class base — including one
+                    // reached through an import alias or cross-file re-export — resolve
+                    // the class *instance* type from the class symbol (the same resolver
+                    // class heritage uses), rather than falling through to
+                    // `get_type_of_symbol`, which for a class symbol yields its
+                    // *constructor* (static) type. Merging a constructor type would
+                    // contribute only static/construct members, dropping every inherited
+                    // instance member (TS2339). This makes the interface-extends-class
+                    // direction symmetric with the class-extends-class direction in
+                    // `instance_merge.rs`.
+                    //
+                    // The returned instance type embeds the base class's own type
+                    // parameter `TypeId`s, so its params (not the alias symbol's) drive
+                    // the generic-base instantiation below.
+                    let mut base_class_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
+                    if base_type.is_none()
+                        && let Some(class_sym) = self.heritage_base_class_symbol(base_sym_id)
+                        && let Some((instance_type, instance_params)) =
+                            self.class_instance_type_with_params_from_symbol(class_sym)
+                        && instance_type != TypeId::ERROR
+                        && instance_type != TypeId::UNKNOWN
+                    {
+                        base_type = Some(instance_type);
+                        base_class_params = Some(instance_params);
+                    }
+
                     // For interfaces/type aliases, resolve through symbol type
                     if base_type.is_none() {
                         let resolved = self.get_type_of_symbol(base_sym_id);
@@ -947,7 +1010,13 @@ impl<'a> CheckerState<'a> {
                     // TypeIds that match the ones in base_type's member signatures.
                     // Previously we used push_type_parameters which creates NEW
                     // TypeIds that don't match, causing substitution to be a no-op.
-                    let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+                    //
+                    // A class base resolves through `class_instance_type_with_params_from_symbol`,
+                    // which returns the base class's own type parameters matching the
+                    // `TypeId`s embedded in the (uninstantiated) instance type; use those
+                    // so the substitution below applies the heritage arguments correctly.
+                    let base_type_params = base_class_params
+                        .unwrap_or_else(|| self.get_type_params_for_symbol(base_sym_id));
 
                     if type_args.len() < base_type_params.len() {
                         for (param_index, param) in

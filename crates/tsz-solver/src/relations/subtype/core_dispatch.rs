@@ -1727,7 +1727,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // implicit string index signatures. They cannot be assigned to
                     // types with a string index signature requirement, e.g.
                     // `number[] <: { [x: string]: unknown }` is false.
-                    if t_shape.string_index.is_some() {
+                    //
+                    // The one exception is an `any`-valued string index
+                    // (`{ [x: string]: any }`, or its `{ [P in any]: any }`
+                    // mapped form): `tsc` waives the missing-string-index
+                    // requirement when the index value type is `any`. This is the
+                    // same `any`-propagation (Lawyer) quirk applied to object
+                    // sources in `check_string_index_compatibility`, not a
+                    // structural Judge invariant — a concrete value type
+                    // (`unknown`, `boolean | number`, …) still rejects.
+                    if let Some(ref str_idx) = t_shape.string_index
+                        && !self.target_string_index_any_waives_missing_index(str_idx.value_type)
+                    {
                         return SubtypeResult::False;
                     }
                     if let Some(ref num_idx) = t_shape.number_index {

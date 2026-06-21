@@ -355,6 +355,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_lib: false,
             no_types_and_symbols: false,
             types_explicitly_set: false,
+            types_has_wildcard: false,
             no_property_access_from_index_signature: false,
             target: crate::checker::context::ScriptTarget::ESNext,
             module: crate::common::ModuleKind::ESNext,
