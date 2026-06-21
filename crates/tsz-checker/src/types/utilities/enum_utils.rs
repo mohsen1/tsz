@@ -1025,6 +1025,30 @@ impl<'a> CheckerState<'a> {
             return !self.is_type_comparable_to(left, right);
         }
 
+        // A deferred conditional operand (e.g. `Exclude<S, true>` /
+        // `Extract<S, boolean>` over an instantiable check type) overlaps with
+        // the other operand when its apparent type — the conditional's default
+        // constraint (the union of its branch types) — is comparable to it. tsc
+        // relates through that constraint; treating the unresolved conditional as
+        // having no overlap wrongly fires TS2367 (#14253). Gated on a non-intrinsic
+        // operand so the common literal/primitive comparisons skip the evaluation.
+        if !left.is_intrinsic() || !right.is_intrinsic() {
+            let left_default = crate::query_boundaries::common::conditional_default_constraint(
+                self.ctx.types,
+                self.evaluate_type_with_env(left),
+            );
+            let right_default = crate::query_boundaries::common::conditional_default_constraint(
+                self.ctx.types,
+                self.evaluate_type_with_env(right),
+            );
+            if left_default.is_some() || right_default.is_some() {
+                return !self.is_type_comparable_to(
+                    left_default.unwrap_or(left),
+                    right_default.unwrap_or(right),
+                );
+            }
+        }
+
         let effective_left = left;
         let effective_right = right;
 
