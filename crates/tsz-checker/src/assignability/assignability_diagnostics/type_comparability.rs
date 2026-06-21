@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
     /// not perturb assignment narrowing / constraint validation). Non-indexed
     /// and type-parameter operands pass through unchanged.
     fn reduce_instantiable_indexed_access(&mut self, type_id: TypeId) -> TypeId {
-        crate::query_boundaries::common::reduce_index_access_to_base_constraint(
+        crate::query_boundaries::comparability::reduce_index_access_to_base_constraint(
             self.ctx.types,
             type_id,
         )
