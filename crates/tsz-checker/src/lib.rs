@@ -937,6 +937,9 @@ mod identifier_relation_routing_arch_tests;
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/import_shadows_global_ctor_tests.rs"]
+mod import_shadows_global_ctor_tests;
+#[cfg(test)]
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;
 #[cfg(test)]
