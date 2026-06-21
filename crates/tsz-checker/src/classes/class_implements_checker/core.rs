@@ -248,6 +248,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 };
                 if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
                     if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE

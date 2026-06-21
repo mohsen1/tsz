@@ -145,3 +145,117 @@ fn assertion_into_deferred_conditional_is_valid() {
                export const g = <T,>(b: Box<T>) => (b as { a: string });";
     assert_eq!(count(src, 2352), 0, "no TS2352 expected: {:?}", codes(src));
 }
+
+// ── #14159: indexed access / rest-spread of a conditional property whose
+//    branch values are an inferred tuple tail (remeda `TupleParts`) ──
+//
+// `...infer Tail` in a tuple rest position has the inferred constraint
+// `unknown[]` (tsc `getInferredTypeParameterConstraint`). When that captured
+// tail is re-extracted through `Parts<T>["rest"]`, the constraint must survive
+// so `["length"]`, numeric indexing, and rest-spread see an array. Without the
+// constraint, `Tail` looked unconstrained and the apparent type `Tail | []`
+// was flagged non-array (false TS2536/TS2574).
+
+fn codes_nuia(source: &str) -> Vec<u32> {
+    let options = CheckerOptions {
+        strict: true,
+        no_unchecked_indexed_access: true,
+        ..CheckerOptions::default()
+    };
+    diagnostic_codes(&check_source(source, "test.ts", options))
+}
+
+const PARTS: &str = "type Parts<T> = T extends readonly [infer _H, ...infer Tail] ? { rest: Tail } : { rest: [] };\n";
+
+#[test]
+fn conditional_tail_property_length_index_is_valid() {
+    let src = format!("{PARTS}export type Len<T> = Parts<T>[\"rest\"][\"length\"];");
+    let c = codes_nuia(&src);
+    assert!(!c.contains(&2536), "TS2536 should not fire: {c:?}");
+}
+
+#[test]
+fn conditional_tail_property_numeric_index_is_valid() {
+    let src = format!("{PARTS}export type Elem<T> = Parts<T>[\"rest\"][number];");
+    let c = codes_nuia(&src);
+    assert!(
+        !c.contains(&2536),
+        "TS2536 should not fire for numeric index: {c:?}"
+    );
+}
+
+#[test]
+fn conditional_tail_property_rest_spread_is_valid() {
+    let src = format!("{PARTS}export type Rebuilt<T> = [...Parts<T>[\"rest\"]];");
+    let c = codes_nuia(&src);
+    assert!(!c.contains(&2574), "TS2574 should not fire: {c:?}");
+}
+
+#[test]
+fn conditional_tail_property_rest_spread_between_fixed_elements_is_valid() {
+    // `[...A, ...Cond[K], ...B]` — the inferred-tail spread sits between other
+    // spreads and must still be array-like.
+    let src = format!("{PARTS}export type Wrap<T> = [boolean, ...Parts<T>[\"rest\"], string];");
+    let c = codes_nuia(&src);
+    assert!(!c.contains(&2574), "TS2574 should not fire: {c:?}");
+}
+
+#[test]
+fn conditional_tail_property_renamed_binders_is_valid() {
+    // Anti-hardcoding: vary every binder/property name; the rule is structural.
+    let src = "type Split<Elems> = Elems extends readonly [infer Head, ...infer Body] ? { tail: Body } : { tail: [] };\n\
+               export type A<Elems> = [...Split<Elems>[\"tail\"]];\n\
+               export type B<Elems> = Split<Elems>[\"tail\"][\"length\"];";
+    let c = codes_nuia(src);
+    assert!(
+        !c.contains(&2574) && !c.contains(&2536),
+        "no TS2574/TS2536 expected: {c:?}"
+    );
+}
+
+#[test]
+fn conditional_tail_property_named_rest_member_is_valid() {
+    // `...rest: infer Tail` (named tuple member rest) gets the same constraint.
+    let src = "type P<T> = T extends readonly [infer _H, ...rest: infer Tail] ? { rest: Tail } : { rest: [] };\n\
+               export type R<T> = [...P<T>[\"rest\"]];";
+    let c = codes_nuia(src);
+    assert!(!c.contains(&2574), "TS2574 should not fire: {c:?}");
+}
+
+#[test]
+fn conditional_tail_property_value_index_access_is_valid() {
+    // The value-position read was already accepted; keep it green as a guard.
+    let src =
+        format!("{PARTS}export function idx<T>(p: Parts<T>[\"rest\"]): unknown {{ return p[0]; }}");
+    let c = codes_nuia(&src);
+    assert!(
+        !c.contains(&2536) && !c.contains(&2574),
+        "no error expected: {c:?}"
+    );
+}
+
+#[test]
+fn conditional_non_array_tail_property_still_rejects_rest_spread() {
+    // Negative control: when the conditional's property is NOT array-like in a
+    // branch, the rest-spread must still report TS2574 (no over-acceptance).
+    let src = "type P<T> = T extends string ? { rest: string } : { rest: number };\n\
+               export type R<T> = [...P<T>[\"rest\"]];";
+    let c = codes_nuia(src);
+    assert!(
+        c.contains(&2574),
+        "TS2574 expected for non-array branch: {c:?}"
+    );
+}
+
+#[test]
+fn bare_rest_infer_constraint_does_not_leak_to_fixed_position() {
+    // The `unknown[]` constraint applies only to the rest element, so a fixed
+    // `infer _H` is unaffected and a non-rest `infer` reference is not array-like.
+    let src = "type P<T> = T extends readonly [infer Head, ...infer _Tail] ? { head: Head } : { head: unknown };\n\
+               export type R<T> = [...P<T>[\"head\"]];";
+    let c = codes_nuia(src);
+    assert!(
+        c.contains(&2574),
+        "TS2574 expected for non-array head property: {c:?}"
+    );
+}

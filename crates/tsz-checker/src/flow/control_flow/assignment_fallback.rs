@@ -7,8 +7,8 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
     TypeSubstitution, call_signatures_for_type, construct_signatures_for_type,
-    function_return_type, get_application_info, instantiate_type, is_promise_like_type,
-    literal_value, union_members_for_type, unwrap_promise_type_argument,
+    contains_free_type_parameters, function_return_type, get_application_info, instantiate_type,
+    is_promise_like_type, literal_value, union_members_for_type, unwrap_promise_type_argument,
     widen_literal_to_primitive,
 };
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
@@ -93,6 +93,19 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(bin) = self.arena.get_binary_expr(rhs_node)
         {
             return self.fallback_binary_expression_type(bin.left, bin.right, bin.operator_token);
+        }
+
+        // Array/object literal right-hand sides have no dedicated branch above and
+        // are commonly uncached during return-type inference, where the inference
+        // pass evaluates only return expressions (not the assignment statements in
+        // sibling branches such as `if (!value) { value = ["a"]; }`). Route them
+        // through the general syntax resolver so assignment-based flow narrowing of
+        // a `let` binding produces the widened literal element type (matching the
+        // cached read pass), instead of silently keeping the declared union type.
+        if rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            return self.fallback_expression_type_from_syntax(rhs);
         }
 
         None
@@ -386,7 +399,26 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
+    /// Drop a syntactic-fallback result that still carries a free
+    /// (un-instantiated) type parameter.
+    ///
+    /// The syntactic flow fallback performs no type-argument inference, so a
+    /// generic callee's declared return type still references the signature's own
+    /// type parameters (e.g. `pipe<A, B>(a: A, ab: (a: A) => B): B`). Surfacing
+    /// that bare parameter would leak it into the caller's flow type: a
+    /// self-referential `x = f(x)` loop back-edge then re-checks the call argument
+    /// against the leaked parameter and falsely reports TS2345. Declining keeps
+    /// the caller at its prior/declared flow type so the main inference pipeline
+    /// resolves the call result.
+    fn reject_unresolved_generic_result(&self, ty: Option<TypeId>) -> Option<TypeId> {
+        ty.filter(|&ty| !contains_free_type_parameters(self.interner, ty))
+    }
+
     fn fallback_call_expression_type(&self, call_expr: NodeIndex) -> Option<TypeId> {
+        self.reject_unresolved_generic_result(self.fallback_call_expression_type_inner(call_expr))
+    }
+
+    fn fallback_call_expression_type_inner(&self, call_expr: NodeIndex) -> Option<TypeId> {
         let call_node = self.arena.get(call_expr)?;
         if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -416,6 +448,13 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn fallback_new_expression_type(&self, new_expr: NodeIndex) -> Option<TypeId> {
+        // A generic constructor invoked without explicit type arguments leaves the
+        // signature's own type parameters free in the declared return type; reuse
+        // the same guard as the call fallback rather than leak them.
+        self.reject_unresolved_generic_result(self.fallback_new_expression_type_inner(new_expr))
+    }
+
+    fn fallback_new_expression_type_inner(&self, new_expr: NodeIndex) -> Option<TypeId> {
         let new_node = self.arena.get(new_expr)?;
         if new_node.kind != syntax_kind_ext::NEW_EXPRESSION {
             return None;

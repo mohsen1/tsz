@@ -235,6 +235,7 @@ impl QueryCache<'_> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         }
                     })
                     .collect()

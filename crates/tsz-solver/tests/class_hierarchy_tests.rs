@@ -23,6 +23,7 @@ fn test_merge_properties() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }];
 
     let own_props = vec![
@@ -40,6 +41,7 @@ fn test_merge_properties() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: age_atom, // New
@@ -55,6 +57,7 @@ fn test_merge_properties() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ];
 

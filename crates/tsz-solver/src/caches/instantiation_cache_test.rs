@@ -62,6 +62,7 @@ fn object_with(interner: &TypeInterner, t_id: TypeId) -> TypeId {
         is_string_named: true,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     };
     interner.object(vec![prop])
 }
@@ -84,6 +85,7 @@ fn object_with_pair(interner: &TypeInterner, t_id: TypeId, u_id: TypeId) -> Type
         is_string_named: true,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     };
     let prop_b = PropertyInfo {
         name: b,
@@ -99,6 +101,7 @@ fn object_with_pair(interner: &TypeInterner, t_id: TypeId, u_id: TypeId) -> Type
         is_string_named: true,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     };
     interner.object(vec![prop_a, prop_b])
 }

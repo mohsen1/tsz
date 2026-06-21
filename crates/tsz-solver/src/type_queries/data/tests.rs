@@ -276,6 +276,7 @@ fn test_collect_callable_property_types() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: interner.intern_string("value"),
@@ -291,6 +292,7 @@ fn test_collect_callable_property_types() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -575,6 +577,7 @@ fn test_get_object_symbol() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }],
         string_index: None,
         number_index: None,
@@ -609,6 +612,7 @@ fn test_get_raw_property_type() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: name_y,
@@ -624,6 +628,7 @@ fn test_get_raw_property_type() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -1038,6 +1043,7 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     };
     let obj = interner.object(vec![obj_prop]);
     let pick_base = interner.lazy(crate::def::DefId(7));
@@ -1148,6 +1154,7 @@ fn contains_type_parameters_except_name_ignores_nested_mapped_param_metadata() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let nested_mapped = interner.mapped(MappedType {
         type_param: inner_iter,

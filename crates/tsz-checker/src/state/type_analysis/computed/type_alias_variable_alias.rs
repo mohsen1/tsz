@@ -910,6 +910,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 });
                             }
                             props
@@ -937,6 +938,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 });
                             }
                         }
@@ -1253,6 +1255,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 });
                             }
                             props
@@ -1291,6 +1294,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 });
                             }
                         }
@@ -1322,6 +1326,7 @@ impl<'a> CheckerState<'a> {
                                     is_string_named: false,
                                     is_symbol_named: false,
                                     single_quoted_name: false,
+                                    non_widening: false,
                                 });
                             }
                         }
@@ -1395,6 +1400,7 @@ impl<'a> CheckerState<'a> {
                                         is_string_named: false,
                                         is_symbol_named: false,
                                         single_quoted_name: false,
+                                        non_widening: false,
                                     });
                                 }
                             }
@@ -1804,6 +1810,7 @@ impl<'a> CheckerState<'a> {
                                         is_string_named: false,
                                         is_symbol_named: false,
                                         single_quoted_name: false,
+                                        non_widening: false,
                                     });
                                 }
                                 Self::normalize_namespace_export_declaration_order(&mut props);

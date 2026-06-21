@@ -592,6 +592,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 is_string_named: false,
                 is_symbol_named: key.is_symbol_named,
                 single_quoted_name: false,
+                non_widening: false,
             });
         }
 
@@ -734,6 +735,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         is_string_named: prop.is_string_named,
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
+                        non_widening: false,
                     });
                 }
             }

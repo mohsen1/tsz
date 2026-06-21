@@ -214,3 +214,63 @@ function f(x: { a?: { b: number } }) {
         "IIFE property narrowing must be preserved, got: {codes:?}"
     );
 }
+
+/// Regression (zustand `createJSONStorage`): a `let` local with a *generic
+/// instantiation* declared type, narrowed to non-undefined in the enclosing
+/// scope (a `try` whose `catch` returns), keeps that narrowing inside a nested
+/// closure even when the use is NOT the closure's first statement. The flow
+/// worklist's pass-through branch previously failed to defer to an uncomputed
+/// `START` antecedent, dropping the inherited narrowing only for this
+/// generic-typed shape, producing a false TS18048.
+#[test]
+fn generic_local_narrowing_preserved_across_closure_start() {
+    let codes = check_source_strict_codes(
+        r#"
+interface StateStorage<R = unknown> { getItem: (name: string) => string | null }
+declare function getStorage<R>(): StateStorage<R>
+export function createJSONStorage<R = unknown>() {
+  let storage: StateStorage<R> | undefined
+  try {
+    storage = getStorage<R>()
+  } catch {
+    return
+  }
+  const fn = (name: string) => {
+    const dummy = name.length
+    return storage.getItem(name)
+  }
+  return fn
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&18048),
+        "narrowed generic-typed local must stay narrowed across the closure boundary, got: {codes:?}"
+    );
+}
+
+/// Negative guard: the same generic-typed-local-in-closure shape, but `storage`
+/// is genuinely `| undefined` (assigned a maybe-undefined value, never
+/// narrowed) — TS18048 MUST still fire. The fix preserves real narrowing; it
+/// must not blanket-suppress the diagnostic.
+#[test]
+fn genuinely_optional_generic_local_still_reports_in_closure() {
+    let codes = check_source_strict_codes(
+        r#"
+interface S<R = unknown> { getItem: (n: string) => string | null }
+declare function maybe<R>(): S<R> | undefined
+export function make<R = unknown>() {
+  let storage: S<R> | undefined = maybe<R>()
+  const fn = (name: string) => {
+    const dummy = name.length
+    return storage.getItem(name)
+  }
+  return fn
+}
+"#,
+    );
+    assert!(
+        codes.contains(&18048),
+        "genuinely possibly-undefined local must still report TS18048, got: {codes:?}"
+    );
+}

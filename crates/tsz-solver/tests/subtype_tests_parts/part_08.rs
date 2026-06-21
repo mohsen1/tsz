@@ -321,7 +321,7 @@ fn test_never_is_bottom_type_for_object_types() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // never <: { name: string }
@@ -445,7 +445,7 @@ fn test_unknown_is_top_type_for_object_types() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // { name: string } <: unknown

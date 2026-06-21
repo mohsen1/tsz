@@ -397,6 +397,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             });
         }
 
@@ -420,6 +421,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 });
                 declaration_order += 1;
             }
@@ -483,6 +485,7 @@ impl<'a> CheckerState<'a> {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
         Some(namespace_type)
     }
@@ -644,6 +647,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             });
         }
 

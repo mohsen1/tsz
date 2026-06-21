@@ -51,3 +51,56 @@ function f() {
         "without a branch assignment the value can still be undefined, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn branch_array_literal_assignment_narrows_returned_let_binding() {
+    // deepkit-type repro for issue #14219: an array-literal RHS reassignment in a
+    // guard must kill the `undefined` member of the `let` binding so the inferred
+    // return type is `string[]`, not `string[] | undefined`.
+    let diagnostics = codes(
+        r#"
+declare function maybeLabels(): string[] | undefined;
+
+function getLabels() {
+    let value = maybeLabels();
+    if (!value) {
+        value = ["a"];
+    }
+    return value;
+}
+
+const n: number = getLabels().length;
+"#,
+    );
+
+    assert!(
+        !diagnostics.contains(&TS2322),
+        "array-literal branch assignment should narrow value to string[], got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn branch_object_literal_assignment_narrows_returned_let_binding() {
+    // Object-literal sibling of #14219: the object-literal RHS must also narrow
+    // away `undefined` through the flow fallback resolver.
+    let diagnostics = codes(
+        r#"
+declare function maybeConfig(): { a: number } | undefined;
+
+function getConfig() {
+    let value = maybeConfig();
+    if (!value) {
+        value = { a: 1 };
+    }
+    return value;
+}
+
+const n: number = getConfig().a;
+"#,
+    );
+
+    assert!(
+        !diagnostics.contains(&TS2322),
+        "object-literal branch assignment should narrow value to {{ a: number }}, got {diagnostics:?}"
+    );
+}

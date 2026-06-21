@@ -756,7 +756,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo {
             name: value_name,
@@ -771,7 +771,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 

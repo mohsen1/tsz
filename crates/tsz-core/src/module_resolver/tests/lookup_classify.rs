@@ -244,3 +244,72 @@ fn test_lookup_classify_ambient_no_path_no_error() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Regression for issue #14169: an in-program ambient `declare module "X"`
+/// must shadow an *untyped* on-disk `node_modules/X` runtime package, mirroring
+/// tsc's `tryFindAmbientModule` (consulted before filesystem resolution for any
+/// non-relative specifier). Before the fix, the ambient match was gated on the
+/// importer being a declaration file, so a `.ts` importer resolved to the
+/// untyped `.js` and surfaced TS7016. The binder name is varied here (not
+/// `events`) so the rule cannot be a fixture-name fast path.
+#[test]
+fn test_lookup_ambient_shadows_untyped_ondisk_package_from_ts_importer() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_ambient_shadows_untyped_ondisk_package");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // An untyped runtime package on disk under the *same* bare name as the
+    // ambient declaration. Its presence must NOT win over the ambient module.
+    let pkg = dir.join("node_modules").join("evt-shim-pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(
+        pkg.join("package.json"),
+        r#"{ "name":"evt-shim-pkg","version":"3.0.0","main":"./index.js" }"#,
+    )
+    .unwrap();
+    fs::write(pkg.join("index.js"), "module.exports = {};").unwrap();
+
+    // A plain `.ts` (non-declaration) importer.
+    fs::write(
+        dir.join("main.ts"),
+        "import { EventEmitter } from 'evt-shim-pkg';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "evt-shim-pkg",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(28, 42),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: true,
+        implied_classic_resolution: false,
+    };
+    // The driver reports the program-level ambient declaration through the
+    // `is_ambient_module` closure.
+    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "evt-shim-pkg", None);
+    let outcome = result.classify();
+
+    assert!(
+        outcome.is_resolved,
+        "ambient module must win over untyped on-disk package"
+    );
+    assert!(
+        outcome.resolved_path.is_none(),
+        "ambient resolution has no on-disk path (must not pick the untyped .js)"
+    );
+    assert!(
+        outcome.error.is_none(),
+        "ambient resolution must not surface TS7016 for the untyped package"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -184,7 +184,7 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
             echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
-            echo "  TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR=<factor> Mark green project rows slower than tsgo by this factor as timing failures (default: 8; 0 disables)"
+            echo "  TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR=<factor> Mark green project rows slower than tsgo by this factor as timing failures (default: 1.5; 0 disables)"
             echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
             echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
             echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"

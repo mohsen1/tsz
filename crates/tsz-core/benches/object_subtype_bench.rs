@@ -25,6 +25,7 @@ fn make_object(interner: &TypeInterner, count: usize) -> TypeId {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         });
     }
 

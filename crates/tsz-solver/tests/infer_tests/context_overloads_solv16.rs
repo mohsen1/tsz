@@ -750,6 +750,7 @@ fn test_variance_computation_covariant() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let (covariant, contravariant, invariant, bivariant) = ctx.compute_variance(box_type, t_name);

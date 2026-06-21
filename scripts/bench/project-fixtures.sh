@@ -264,7 +264,7 @@ NODE
 tsz_load_fixture_pins_from_rows
 
 tsz_project_slowdown_failure_factor() {
-  printf '%s\n' "${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR:-8}"
+  printf '%s\n' "${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR:-1.5}"
 }
 
 tsz_project_slowdown_failure_reached() {

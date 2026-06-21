@@ -138,7 +138,7 @@ fn test_satisfies_optional_property_satisfied() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 
@@ -1233,7 +1233,7 @@ fn test_const_object_literal_readonly_properties() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::readonly(interner.intern_string("b"), hello),
     ]);

@@ -90,6 +90,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(self.interner().literal_bigint_with_sign(negative, digits))
     }
 
+    /// Non-string primitive coercions of a captured template segment.
+    ///
+    /// A captured `infer` segment is always a raw string. When the placeholder
+    /// carries an `extends` constraint that admits a non-string primitive, tsc
+    /// re-interprets the segment as that primitive (`"2"` -> the `2` literal,
+    /// `"true"` -> `true`, etc.). The candidates are constraint-agnostic — the
+    /// caller decides which one satisfies the constraint via a structural
+    /// subtype check — so this covers intrinsic, literal, and union-of-literal
+    /// constraints uniformly, e.g. `extends number`, `extends 5`, `extends
+    /// 0 | 1`, or `extends bigint`.
+    fn template_capture_coercions(&self, captured: &str) -> [Option<TypeId>; 5] {
+        [
+            self.parse_template_number_capture(captured),
+            self.parse_template_bigint_capture(captured),
+            match captured {
+                "true" => Some(self.interner().literal_boolean(true)),
+                "false" => Some(self.interner().literal_boolean(false)),
+                _ => None,
+            },
+            (captured == "null").then_some(TypeId::NULL),
+            (captured == "undefined").then_some(TypeId::UNDEFINED),
+        ]
+    }
+
     fn template_capture_for_constraint(
         &self,
         captured: &str,
@@ -101,33 +125,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return Some(captured_type);
         }
 
-        match self.interner().lookup(constraint) {
-            Some(TypeData::Intrinsic(IntrinsicKind::Number)) => self
-                .parse_template_number_capture(captured)
-                .filter(|&ty| checker.is_subtype_of(ty, constraint)),
-            Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => self
-                .parse_template_bigint_capture(captured)
-                .filter(|&ty| checker.is_subtype_of(ty, constraint)),
-            Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => match captured {
-                "true" => Some(self.interner().literal_boolean(true)),
-                "false" => Some(self.interner().literal_boolean(false)),
-                _ => None,
-            },
-            Some(TypeData::Intrinsic(IntrinsicKind::Null)) if captured == "null" => {
-                Some(TypeId::NULL)
-            }
-            Some(TypeData::Intrinsic(IntrinsicKind::Undefined)) if captured == "undefined" => {
-                Some(TypeId::UNDEFINED)
-            }
-            Some(TypeData::Union(members_id)) => {
-                let members = self.interner().type_list(members_id);
-                members.iter().find_map(|&member| {
-                    self.template_capture_for_constraint(captured, captured_type, member, checker)
-                        .filter(|&ty| checker.is_subtype_of(ty, constraint))
-                })
-            }
-            _ => None,
-        }
+        // The captured segment did not satisfy the constraint as a string.
+        // Re-interpret it as each non-string primitive and accept the first
+        // coercion the constraint admits. Matching on the *coerced value*
+        // rather than the constraint's shape keeps the rule structural:
+        // numeric/bigint/boolean/null/undefined literals, their intrinsics,
+        // and any union of them are all handled by the same subtype probe.
+        self.template_capture_coercions(captured)
+            .into_iter()
+            .flatten()
+            .find(|&candidate| checker.is_subtype_of(candidate, constraint))
     }
 
     /// Match a template literal string against a pattern.

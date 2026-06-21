@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "as_const_object_property_inference_tests"
+path = "tests/as_const_object_property_inference_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
@@ -467,6 +470,9 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_type_indexed_access_receiver_tests"
+path = "tests/this_type_indexed_access_receiver_tests.rs"
+[[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
@@ -583,6 +589,9 @@ path = "tests/hkt_self_augmentation_keyof_repro.rs"
 [[test]]
 name = "hkt_cross_file_augmentation_13653_repro"
 path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
+[[test]]
+name = "declare_global_interface_keyof_merge_tests"
+path = "tests/declare_global_interface_keyof_merge_tests.rs"
 [[test]]
 name = "hkt_typeof_uri_instance_assignability_13930_repro"
 path = "tests/hkt_typeof_uri_instance_assignability_13930_repro.rs"
@@ -877,6 +886,9 @@ path = "tests/in_chain_narrows_unconstrained_type_param_tests.rs"
 [[test]]
 name = "in_operator_lhs_key_type_tests"
 path = "tests/in_operator_lhs_key_type_tests.rs"
+[[test]]
+name = "in_operator_narrows_alias_union_member_tests"
+path = "tests/in_operator_narrows_alias_union_member_tests.rs"
 [[test]]
 name = "no_lib_async_promise_tests"
 path = "tests/no_lib_async_promise_tests.rs"
@@ -1804,6 +1816,9 @@ path = "tests/optional_property_required_elaboration_tests.rs"
 [[test]]
 name = "variadic_tuple_arity_inference_tests"
 path = "tests/variadic_tuple_arity_inference_tests.rs"
+[[test]]
+name = "variadic_infer_element_tests"
+path = "tests/variadic_infer_element_tests.rs"
 [[test]]
 name = "diagnostic_index_suppression_tests"
 path = "tests/diagnostic_index_suppression_tests.rs"

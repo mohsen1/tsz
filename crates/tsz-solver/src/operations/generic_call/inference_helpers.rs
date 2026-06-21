@@ -634,6 +634,141 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    /// Collect the inference placeholder vars that round-1 *direct argument*
+    /// inference will actually constrain for `arg_type` against `target_type`.
+    ///
+    /// Unlike [`Self::collect_placeholder_vars_in_type`], which returns every
+    /// placeholder structurally present in the parameter type, this walks the
+    /// argument and parameter in parallel so placeholders reachable only through
+    /// parameter members the argument never supplies (e.g. an omitted optional
+    /// property's callback parameter) are not counted as covered. Over-counting
+    /// them wrongly marked a return-type var as "already covered" and skipped
+    /// contextual-return seeding, leaving that type parameter at `unknown`
+    /// (see #14171).
+    ///
+    /// Shapes this walker does not decompose precisely (functions, mismatched
+    /// constructs, index-signature objects, etc.) fall back to the structural
+    /// over-approximation so existing behaviour is preserved.
+    pub(super) fn collect_round1_reachable_placeholder_vars(
+        &self,
+        arg_type: TypeId,
+        target_type: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        out: &mut FxHashSet<InferenceVar>,
+    ) {
+        if var_map.is_empty() {
+            return;
+        }
+        if !visited.insert((arg_type, target_type)) {
+            return;
+        }
+
+        // The target is itself a placeholder: the argument constrains it directly.
+        if let Some(&var) = var_map.get(&target_type) {
+            out.insert(var);
+            return;
+        }
+
+        // Targets with no placeholder vars contribute nothing.
+        if target_type.is_intrinsic() {
+            return;
+        }
+
+        let db = self.interner.as_type_database();
+
+        // Plain object / object: only properties the argument actually supplies
+        // can carry inference into the parameter's placeholder vars. Parameter-
+        // only members (omitted optionals) are left for the contextual return
+        // type to seed. Index-signature objects fall through to the
+        // over-approximation below.
+        if let (Some(TypeData::Object(arg_shape_id)), Some(TypeData::Object(target_shape_id))) = (
+            self.interner.lookup(arg_type),
+            self.interner.lookup(target_type),
+        ) {
+            let arg_shape = self.interner.object_shape(arg_shape_id);
+            let target_shape = self.interner.object_shape(target_shape_id);
+            for target_prop in &target_shape.properties {
+                if let Some(arg_prop) = arg_shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == target_prop.name)
+                {
+                    self.collect_round1_reachable_placeholder_vars(
+                        arg_prop.type_id,
+                        target_prop.type_id,
+                        var_map,
+                        visited,
+                        out,
+                    );
+                }
+            }
+            return;
+        }
+
+        // Array element / array element.
+        if let (Some(arg_elem), Some(target_elem)) = (
+            crate::type_queries::get_array_element_type(db, arg_type),
+            crate::type_queries::get_array_element_type(db, target_type),
+        ) {
+            self.collect_round1_reachable_placeholder_vars(
+                arg_elem,
+                target_elem,
+                var_map,
+                visited,
+                out,
+            );
+            return;
+        }
+
+        // Tuple / tuple: align element types positionally.
+        if let (Some(TypeData::Tuple(arg_list)), Some(TypeData::Tuple(target_list))) = (
+            self.interner.lookup(arg_type),
+            self.interner.lookup(target_type),
+        ) {
+            let arg_elems = self.interner.tuple_list(arg_list);
+            let target_elems = self.interner.tuple_list(target_list);
+            for (arg_elem, target_elem) in arg_elems.iter().zip(target_elems.iter()) {
+                self.collect_round1_reachable_placeholder_vars(
+                    arg_elem.type_id,
+                    target_elem.type_id,
+                    var_map,
+                    visited,
+                    out,
+                );
+            }
+            return;
+        }
+
+        // Same-base application: align type arguments positionally.
+        if let (Some((arg_base, arg_args)), Some((target_base, target_args))) = (
+            crate::type_queries::get_application_info(db, arg_type),
+            crate::type_queries::get_application_info(db, target_type),
+        ) && arg_base == target_base
+            && arg_args.len() == target_args.len()
+        {
+            for (arg_arg, target_arg) in arg_args.iter().zip(target_args.iter()) {
+                self.collect_round1_reachable_placeholder_vars(
+                    *arg_arg,
+                    *target_arg,
+                    var_map,
+                    visited,
+                    out,
+                );
+            }
+            return;
+        }
+
+        // Shapes we do not decompose precisely fall back to the structural
+        // over-approximation, preserving prior behaviour.
+        out.extend(self.collect_placeholder_vars_in_type(
+            target_type,
+            var_map,
+            &mut FxHashMap::default(),
+            &mut FxHashSet::default(),
+        ));
+    }
+
     pub(super) fn collect_noinfer_placeholder_vars_in_type(
         &mut self,
         ty: TypeId,

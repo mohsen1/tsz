@@ -133,24 +133,36 @@ pub fn matches_global_object_interface_shape(db: &dyn TypeDatabase, type_id: Typ
     })
 }
 
+/// Shape-level structural fallback for the global `Function` interface.
+///
+/// `true` when the shape has at most
+/// [`GLOBAL_FUNCTION_INTERFACE_MAX_PROPERTIES`] properties and declares
+/// `apply`, `call`, and `bind`. This is the single shared copy of the
+/// historical sniff; prefer [`is_global_function_interface`] which tries
+/// identity first.
+pub fn object_shape_matches_global_function_interface(
+    db: &dyn TypeDatabase,
+    shape: &ObjectShape,
+) -> bool {
+    if shape.properties.len() > GLOBAL_FUNCTION_INTERFACE_MAX_PROPERTIES {
+        return false;
+    }
+    let apply = db.intern_string("apply");
+    let call = db.intern_string("call");
+    let bind = db.intern_string("bind");
+    shape.properties.iter().any(|p| p.name == apply)
+        && shape.properties.iter().any(|p| p.name == call)
+        && shape.properties.iter().any(|p| p.name == bind)
+}
+
 /// Structural fallback for the global `Function` interface on a `TypeId`.
 ///
-/// `true` when the type is an object shape with at most
-/// [`GLOBAL_FUNCTION_INTERFACE_MAX_PROPERTIES`] properties declaring `apply`,
-/// `call`, and `bind`. This is the single shared copy of the historical
-/// sniff; prefer [`is_global_function_interface`] which tries identity first.
+/// See [`object_shape_matches_global_function_interface`]. Returns `false` for
+/// intrinsics and non-object types.
 pub fn matches_global_function_interface_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     object_like_shape_id(db, type_id).is_some_and(|shape_id| {
         let shape = db.object_shape(shape_id);
-        if shape.properties.len() > GLOBAL_FUNCTION_INTERFACE_MAX_PROPERTIES {
-            return false;
-        }
-        let apply = db.intern_string("apply");
-        let call = db.intern_string("call");
-        let bind = db.intern_string("bind");
-        shape.properties.iter().any(|p| p.name == apply)
-            && shape.properties.iter().any(|p| p.name == call)
-            && shape.properties.iter().any(|p| p.name == bind)
+        object_shape_matches_global_function_interface(db, &shape)
     })
 }
 
