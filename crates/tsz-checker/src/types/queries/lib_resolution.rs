@@ -837,6 +837,43 @@ impl<'a> CheckerState<'a> {
                     &lib_contexts,
                     Some(self.ctx.arena),
                 );
+                let interface_canonical_sym_id = canonical_interface_symbol_id(
+                    &self.ctx,
+                    name,
+                    sym_id,
+                    selected_from_lib_context,
+                );
+                // Structural guard: a NON-lib (user/program-file) interface that
+                // declares `extends` heritage must not have its heritage-LESS
+                // lowering published here as the canonical body. `resolve_lib_type_
+                // by_name` lowers only the interface's own members; the
+                // class/interface-inherited members are merged later by the
+                // interface-type path. Publishing the bare body shadows that merged
+                // form for a merged interface+value symbol that is `export default`-
+                // ed (the value-side path re-enters this resolution mid-merge),
+                // dropping class-inherited members (false TS2339). Real lib
+                // interfaces (`Array extends ReadonlyArray`) keep the existing path:
+                // their heritage is reconciled through `merge_lib_interface_heritage`
+                // on both sides. For the guarded case, hand back the symbol's lazy
+                // reference so consumers resolve to the heritage-complete body once
+                // the interface-type path computes it. The lazy ref is captured here
+                // under a mutable borrow that ends before the lowering closures
+                // below (which hold an immutable `self.ctx` borrow).
+                let user_interface_has_heritage = !selected_from_lib_context
+                    && !self.ctx.symbol_is_from_lib(sym_id)
+                    && !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    && decls_with_arenas.iter().any(|&(decl_idx, decl_arena)| {
+                        decl_arena
+                            .get(decl_idx)
+                            .and_then(|node| decl_arena.get_interface(node))
+                            .and_then(|iface| iface.heritage_clauses.as_ref())
+                            .is_some_and(|clauses| !clauses.nodes.is_empty())
+                    });
+                let user_interface_heritage_lazy_ref = if user_interface_has_heritage {
+                    Some(self.ctx.create_lazy_type_ref(interface_canonical_sym_id))
+                } else {
+                    None
+                };
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
                 for (decl_idx, decl_arena) in &decls_with_arenas {
                     let mut stack = vec![*decl_idx];
@@ -949,36 +986,39 @@ impl<'a> CheckerState<'a> {
 
                     if !is_type_alias {
                         let deduped = dedup_decl_arenas(&decls_with_arenas);
-                        let interface_sym_id = canonical_interface_symbol_id(
-                            &self.ctx,
-                            name,
-                            sym_id,
-                            selected_from_lib_context,
-                        );
 
-                        // Use lower_merged_interface_declarations for proper multi-arena support.
-                        // Pass sym_id so the resulting Object type gets stamped with the
-                        // interface's symbol — this allows the formatter to display the
-                        // named form (e.g., "Num") instead of the structural expansion.
-                        let (ty, params) = lowering
-                            .lower_merged_interface_declarations_with_symbol(
-                                &deduped,
-                                Some(interface_sym_id),
-                            );
+                        // Skip publishing the heritage-LESS body for a user interface
+                        // with `extends` heritage; push its lazy reference (captured
+                        // above, see `user_interface_heritage_lazy_ref`) so consumers
+                        // resolve the heritage-complete body computed by the
+                        // interface-type path instead.
+                        if let Some(lazy_ref) = user_interface_heritage_lazy_ref {
+                            lib_types.push(lazy_ref);
+                        } else {
+                            // Use lower_merged_interface_declarations for proper multi-arena support.
+                            // Pass sym_id so the resulting Object type gets stamped with the
+                            // interface's symbol — this allows the formatter to display the
+                            // named form (e.g., "Num") instead of the structural expansion.
+                            let (ty, params) = lowering
+                                .lower_merged_interface_declarations_with_symbol(
+                                    &deduped,
+                                    Some(interface_canonical_sym_id),
+                                );
 
-                        // If lowering succeeded (not ERROR), use the result
-                        if ty != TypeId::ERROR {
-                            // Register DefId, type params, and body in one step.
-                            register_selected_lib_def_resolved(
-                                &self.ctx,
-                                name,
-                                sym_id,
-                                selected_from_lib_context,
-                                ty,
-                                params,
-                            );
+                            // If lowering succeeded (not ERROR), use the result
+                            if ty != TypeId::ERROR {
+                                // Register DefId, type params, and body in one step.
+                                register_selected_lib_def_resolved(
+                                    &self.ctx,
+                                    name,
+                                    sym_id,
+                                    selected_from_lib_context,
+                                    ty,
+                                    params,
+                                );
 
-                            lib_types.push(ty);
+                                lib_types.push(ty);
+                            }
                         }
                     }
 
