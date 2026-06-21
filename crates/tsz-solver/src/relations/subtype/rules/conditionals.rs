@@ -448,13 +448,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
                 if instantiated != cond_type_id {
                     let evaluated = self.evaluate_type(instantiated);
-                    // Mirror tsc's `!(instantiated.flags & Never)` guard: a `never`
-                    // distributive constraint is not used (it would make the relation
-                    // vacuously succeed); fall through to the default-constraint and
-                    // both-branches strategies instead.
-                    if evaluated != cond_type_id
-                        && evaluated != TypeId::NEVER
-                        && self.check_subtype(evaluated, target).is_true()
+                    // A `never` distributive constraint (e.g. `ZeroOf<{}>`, where
+                    // no branch matches) is legitimately assignable to any target,
+                    // so it is kept here rather than guarded out — `never <: T`
+                    // holds and matches tsc's acceptance of such relations.
+                    if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
                     {
                         return SubtypeResult::True;
                     }
