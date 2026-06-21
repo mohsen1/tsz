@@ -511,6 +511,36 @@ pub trait TypeWidenCache {
     fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
 }
 
+/// Construction hook for conditional-flow substitution wrapper types.
+///
+/// Kept separate from [`TypeDatabase`] so the broad storage/query trait stays
+/// within its method cap (#8205). `TypeDatabase` inherits this capability, so
+/// existing `&dyn TypeDatabase` callers can still construct substitution
+/// wrappers without depending on concrete interners.
+pub trait TypeSubstitutionConstruction {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId;
+}
+
+/// Cache for the `extract_type_params_from_type` result keyed by `TypeId`.
+///
+/// The reachable type-parameter set of a type is a pure function of the
+/// immutable interned structure, so it can be memoized project-wide and reused
+/// across the many fresh evaluators created during instantiation. Kept separate
+/// from [`TypeDatabase`] so the broad query trait stays under its method cap
+/// (#8205); `TypeDatabase` re-exposes these via the supertrait bound, so
+/// `&dyn TypeDatabase` callers are unaffected.
+pub trait TypeExtractParamsCache {
+    /// Look up the memoized `extract_type_params_from_type` result for
+    /// `type_id`. Default `None` (no caching).
+    fn extract_type_params_memo(&self, _type_id: TypeId) -> Option<Arc<[TypeParamInfo]>> {
+        None
+    }
+
+    /// Record the `extract_type_params_from_type` result for `type_id`.
+    /// Default no-op.
+    fn set_extract_type_params_memo(&self, _type_id: TypeId, _params: Arc<[TypeParamInfo]>) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -522,6 +552,8 @@ pub trait TypeDatabase:
     + TypeCompilerOptions
     + TypeApplicationEvalCache
     + TypeWidenCache
+    + TypeSubstitutionConstruction
+    + TypeExtractParamsCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -1018,6 +1050,22 @@ impl TypeWidenCache for TypeInterner {
 
     fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
         Self::set_widen_type_memo(self, type_id, result);
+    }
+}
+
+impl TypeSubstitutionConstruction for TypeInterner {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        Self::substitution(self, base_type, constraint)
+    }
+}
+
+impl TypeExtractParamsCache for TypeInterner {
+    fn extract_type_params_memo(&self, type_id: TypeId) -> Option<Arc<[TypeParamInfo]>> {
+        Self::extract_type_params_memo(self, type_id)
+    }
+
+    fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
+        Self::set_extract_type_params_memo(self, type_id, params);
     }
 }
 

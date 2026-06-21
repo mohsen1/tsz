@@ -59,6 +59,213 @@ impl<'a> CheckerState<'a> {
         self.resolve_qualified_symbol_inner_in_type_position(idx, &mut visited_aliases, 0)
     }
 
+    /// Whether `sym_id` carries meaning that lets it anchor the left-hand side
+    /// of a qualified type name `X.Member` — a namespace/module, class, or enum,
+    /// or a namespace import alias (`import * as X`) that navigates into another
+    /// module. A bare `type X = ...` alias or interface does not. Aliases are
+    /// followed to their target before the flag check; a namespace import alias
+    /// resolves to itself, so it is recognized by its `*` import name.
+    pub(crate) fn symbol_anchors_qualified_type_member(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        let mut visited = AliasCycleTracker::new();
+        let resolved = self
+            .resolve_alias_symbol(sym_id, &mut visited)
+            .unwrap_or(sym_id);
+        self.get_cross_file_symbol(resolved)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(resolved, lib_binders))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(
+                    symbol_flags::MODULE
+                        | symbol_flags::CLASS
+                        | symbol_flags::REGULAR_ENUM
+                        | symbol_flags::CONST_ENUM,
+                ) || (symbol.has_any_flags(symbol_flags::ALIAS)
+                    && symbol.import_name() == Some("*"))
+            })
+    }
+
+    /// Whether `sym_id` is an import alias that targets another module by name —
+    /// i.e. has an `import_module` specifier. Namespace imports (`import * as X`),
+    /// named imports (`import { X }`), and default imports all qualify; the
+    /// distinction between them is made by the caller via `import_name`.
+    fn symbol_is_module_import_alias(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module().is_some()
+            })
+    }
+
+    /// Resolve the namespace anchor for a qualified-type-name LHS whose type-space
+    /// resolution cannot itself anchor member access.
+    ///
+    /// tsc resolves the LHS of a qualified type name with *namespace* meaning, so
+    /// neither a shadowing local `type`/`interface` declaration nor the surface
+    /// `import { X }` binding may hide the namespace that the import ultimately
+    /// targets. The import alias carrying that meaning is either:
+    /// - `sym_id` itself, when it is a named/default import whose target module
+    ///   re-exports a namespace (the local-declaration merge can leave the import
+    ///   alias as the resolved type-space symbol); or
+    /// - `sym_id`'s `alias_partner`, when `sym_id` is a same-named local
+    ///   `type`/`interface` declaration that shadows the import.
+    ///
+    /// In both cases the alias is resolved through the same cross-file machinery
+    /// the unshadowed case uses; the result is returned only when it genuinely
+    /// anchors qualified member access (namespace/module, class, enum, or a
+    /// namespace import). Returns `None` when the type-space symbol already
+    /// anchors, when no import alias is involved, or when the alias does not
+    /// resolve to a usable anchor — so a real "not a namespace" diagnostic still
+    /// surfaces.
+    pub(crate) fn namespace_anchor_alias_partner(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<SymbolId> {
+        // Bound the re-export walk; chains this long are pathological.
+        const MAX_REEXPORT_HOPS: usize = 32;
+
+        if self.symbol_anchors_qualified_type_member(sym_id, lib_binders) {
+            return None;
+        }
+        // The import alias that carries the namespace meaning: the symbol itself
+        // when it is a module import, otherwise its same-named alias partner.
+        let alias = if self.symbol_is_module_import_alias(sym_id, lib_binders) {
+            sym_id
+        } else {
+            let partner = self
+                .ctx
+                .alias_partner_for(self.ctx.binder, sym_id)
+                .or_else(|| self.ctx.alias_partner_reverse(self.ctx.binder, sym_id))
+                .filter(|&partner| partner != sym_id)?;
+            if !self.symbol_is_module_import_alias(partner, lib_binders) {
+                return None;
+            }
+            partner
+        };
+        // Follow the import alias through any re-export chain to its terminal
+        // target. Each `resolve_alias_type_position_result` hop advances one
+        // module boundary (`export { X } from "./m"`); a namespace import or a
+        // module/class/enum is the terminal anchor. A target that is neither an
+        // anchor nor a further module import (e.g. a plain `type` alias) stops
+        // the walk with no anchor, so a real "not a namespace" diagnostic still
+        // surfaces.
+        let mut current = alias;
+        for _ in 0..MAX_REEXPORT_HOPS {
+            let Some(TypeSymbolResolution::Type(resolved)) =
+                self.resolve_alias_type_position_result(current, lib_binders)
+            else {
+                return None;
+            };
+            if resolved == current {
+                return None;
+            }
+            if self.symbol_anchors_qualified_type_member(resolved, lib_binders) {
+                return (resolved != sym_id).then_some(resolved);
+            }
+            if !self.symbol_is_module_import_alias(resolved, lib_binders) {
+                return None;
+            }
+            current = resolved;
+        }
+        None
+    }
+
+    /// Resolve a member of the synthetic `globalThis` namespace in **type**
+    /// position to its global type symbol.
+    ///
+    /// `globalThis.X` exposes the ambient global scope, so this resolves `X`
+    /// through actual lib globals first, then `declare global` augmentations.
+    /// Ordinary module-local type aliases must not leak into the synthetic
+    /// global namespace, but script-file globals remain valid fallback members.
+    /// Returns `None` when no global type of that name exists, so the caller can
+    /// route the missing member through the normal "no exported member"
+    /// diagnostic.
+    pub(crate) fn resolve_global_this_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.ctx.actual_lib_global_type_symbol_id(name) {
+            return Some(sym_id);
+        }
+
+        if let Some(sym_id) = self.resolve_global_augmentation_type_member_symbol(name) {
+            return Some(sym_id);
+        }
+
+        if self.ctx.binder.is_external_module() {
+            return self.ctx.binder.program_global_type(name);
+        }
+
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+            .or_else(|| self.ctx.binder.program_global_type(name))
+    }
+
+    fn resolve_global_augmentation_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if self.ctx.binder.global_augmentations.contains_key(name)
+            && let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS)
+            })
+        {
+            return Some(sym_id);
+        }
+
+        let (Some(all_binders), Some(entries)) = (
+            self.ctx.all_binders.as_ref(),
+            self.ctx
+                .global_file_locals_index
+                .as_ref()
+                .and_then(|idx| idx.get(name)),
+        ) else {
+            return None;
+        };
+
+        for &(file_idx, sym_id) in entries {
+            let Some(binder) = all_binders.get(file_idx) else {
+                continue;
+            };
+            if !binder.global_augmentations.contains_key(name) {
+                continue;
+            }
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if !symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS) {
+                continue;
+            }
+            if !self.ctx.has_symbol_file_index(sym_id) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+            }
+            return Some(sym_id);
+        }
+
+        None
+    }
+
+    /// Whether a resolved member symbol carries only value meaning (and so
+    /// cannot stand in for a type) under the given member `name`. Centralizes
+    /// the value-only-vs-type decision used when a type-position resolver has
+    /// already located a member symbol and must choose between
+    /// [`TypeSymbolResolution::Type`] and [`TypeSymbolResolution::ValueOnly`]
+    /// (or a "value used as type" diagnostic).
+    pub(crate) fn member_symbol_is_value_only_in_type_position(
+        &self,
+        member_sym: SymbolId,
+        name: &str,
+    ) -> bool {
+        (self.alias_resolves_to_value_only(member_sym, Some(name))
+            || self.symbol_is_value_only(member_sym, Some(name)))
+            && !self.symbol_is_type_only(member_sym, Some(name))
+    }
+
     /// Inner implementation of qualified symbol resolution for type positions.
     pub(crate) fn resolve_qualified_symbol_inner_in_type_position(
         &self,
@@ -92,13 +299,19 @@ impl<'a> CheckerState<'a> {
                     if self.is_import_equals_type_anchor(sym_id, &lib_binders) {
                         return TypeSymbolResolution::Type(sym_id);
                     }
+                    // A qualified-type-name LHS resolves with namespace meaning:
+                    // when a local `type`/`interface` shadows a same-named import
+                    // alias whose target is a namespace, anchor on the import.
+                    let anchor_src = self
+                        .namespace_anchor_alias_partner(sym_id, &lib_binders)
+                        .unwrap_or(sym_id);
                     // Preserve unresolved alias symbols in type position.
                     // `import X = require("...")` aliases may not resolve to a concrete
                     // target symbol, but `X` is still a valid namespace-like type query
                     // anchor (e.g., `typeof X.Member`).
                     let resolved = self
-                        .resolve_alias_symbol(sym_id, visited_aliases)
-                        .unwrap_or(sym_id);
+                        .resolve_alias_symbol(anchor_src, visited_aliases)
+                        .unwrap_or(anchor_src);
                     TypeSymbolResolution::Type(resolved)
                 }
                 TypeSymbolResolution::ValueOnly(sym_id)
@@ -282,6 +495,35 @@ impl<'a> CheckerState<'a> {
             Some(qn) => qn,
             None => return TypeSymbolResolution::NotFound,
         };
+
+        // `globalThis.X` in type position: `globalThis` is the synthetic global
+        // namespace whose members are the ambient global scope. Resolve `X` to
+        // the global type of that name (e.g. `globalThis.RegExp` -> the global
+        // `RegExp` interface). `globalThis` has no user symbol carrying an
+        // exports table to navigate, so this must run before the normal
+        // left-anchor resolution; otherwise the left resolves to NotFound and
+        // the member is dropped to `TypeId::ERROR`, collapsing whatever the
+        // qualified name fed (e.g. a type-predicate false branch). The
+        // `is_global_this_expression` guard fails when a same-file local
+        // declaration shadows `globalThis`, so a user namespace/value named
+        // `globalThis` still resolves through its own exports below.
+        if self.is_global_this_expression(qn.left)
+            && let Some(right_name) = self
+                .ctx
+                .arena
+                .get(qn.right)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.as_str())
+        {
+            if let Some(member_sym) = self.resolve_global_this_type_member_symbol(right_name) {
+                if self.member_symbol_is_value_only_in_type_position(member_sym, right_name) {
+                    return TypeSymbolResolution::ValueOnly(member_sym);
+                }
+                return TypeSymbolResolution::Type(member_sym);
+            }
+            return TypeSymbolResolution::NotFound;
+        }
+
         let mut left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
             qn.left,
             visited_aliases,
@@ -500,6 +742,38 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::ValueOnly(augmented_sym);
             }
             return TypeSymbolResolution::Type(augmented_sym);
+        }
+
+        // Named import bound to an `export * as NS from '<m>'` namespace
+        // re-export: the member lives in the re-exported module `<m>`, not in the
+        // importing module's own export surface, so every lookup above misses.
+        // Resolve the member through the namespace's backing module here, on the
+        // symbol-resolution path, so its type materializes the same way a
+        // whole-namespace import (`import * as NS`) does — rather than letting
+        // the caller fall back to the raw-`SymbolId`-sensitive
+        // `resolve_qualified_name` path, which mis-resolves cross-file members
+        // whose ids collide with the local import alias.
+        if !left_has_local_namespace_conflict
+            && let Some(member_sym) = self
+                .ctx
+                .resolve_member_via_namespace_reexport(original_left_sym, right_name)
+                .or_else(|| {
+                    self.ctx
+                        .resolve_member_via_namespace_reexport(left_sym, right_name)
+                })
+        {
+            let member_sym =
+                self.propagate_cross_file_member_target(left_sym, member_sym, right_name);
+            let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
+                || self.symbol_is_value_only(member_sym, Some(right_name)))
+                && !self.symbol_is_type_only(member_sym, Some(right_name));
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(member_sym);
+            }
+            return TypeSymbolResolution::Type(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
         }
 
         TypeSymbolResolution::NotFound

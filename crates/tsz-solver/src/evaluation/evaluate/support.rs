@@ -137,11 +137,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
+    ///
+    /// The reachable type-parameter set is a pure function of the immutable
+    /// interned structure of `type_id` (the walk never consults the resolver or
+    /// the substitution environment), so the result is memoized per `TypeId` on
+    /// the shared interner. The conditional evaluator extracts the params of
+    /// both the check and extends operands on every deferred-conditional
+    /// reduction; a recursive conditional re-applied over an alias `Application`
+    /// drives that re-walk thousands of times because each unwrap step mints a
+    /// fresh `TypeId`. The memo collapses the repeats to O(1) and is shared
+    /// across the many fresh evaluators created during instantiation (#14330).
     pub(crate) fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
+        // Bare intrinsics carry no type parameters; skip the memo round-trip.
+        if type_id.is_intrinsic() {
+            return Vec::new();
+        }
+        if let Some(cached) = self.interner.extract_type_params_memo(type_id) {
+            return cached.to_vec();
+        }
         let mut seen_params = FxHashSet::default();
         let mut visited = FxHashSet::default();
         let mut params = Vec::new();
         self.collect_type_params(type_id, &mut visited, &mut seen_params, &mut params);
+        self.interner
+            .set_extract_type_params_memo(type_id, std::sync::Arc::from(params.as_slice()));
         params
     }
 
@@ -1295,6 +1314,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
                 self.evaluate(*inner)
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                // Evaluate the base and constraint (resolving any Lazy aliases),
+                // then re-derive: a now-concrete base collapses the narrowing.
+                let base = self.evaluate(*base_type);
+                let constraint = self.evaluate(*constraint);
+                self.interner.substitution(base, constraint)
+            }
             // All other types pass through unchanged (default behavior)
             _ => type_id,
         }
@@ -1827,5 +1856,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             self.interner.array(evaluated)
         }
+    }
+}
+
+#[cfg(test)]
+mod extract_type_params_memo_tests {
+    use super::TypeEvaluator;
+    use crate::intern::TypeInterner;
+    use crate::types::{TypeId, TypeParamInfo, TypeParamOrigin};
+
+    #[test]
+    fn memoizes_extract_type_params_per_type_id() {
+        let interner = TypeInterner::new();
+        let t_atom = interner.intern_string("T");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        });
+        // `T[]` forces the walk to descend one structural level before
+        // collecting the parameter, so the memo covers a non-leaf type.
+        let arr = interner.array(t_param);
+
+        // Nothing cached before the first extraction.
+        assert!(interner.extract_type_params_memo(arr).is_none());
+
+        let ev = TypeEvaluator::new(&interner);
+        let first = ev.extract_type_params_from_type(arr);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].name, t_atom);
+
+        // The first extraction populated the shared interner memo.
+        let cached = interner
+            .extract_type_params_memo(arr)
+            .expect("memo populated after first extraction");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].name, t_atom);
+
+        // A second extraction (served from the memo) is identical.
+        let second = ev.extract_type_params_from_type(arr);
+        assert_eq!(second.len(), first.len());
+        assert_eq!(second[0].name, first[0].name);
+    }
+
+    #[test]
+    fn intrinsic_types_bypass_the_memo() {
+        let interner = TypeInterner::new();
+        let ev = TypeEvaluator::new(&interner);
+        assert!(ev.extract_type_params_from_type(TypeId::NUMBER).is_empty());
+        // Intrinsics short-circuit before touching the cache.
+        assert!(interner.extract_type_params_memo(TypeId::NUMBER).is_none());
     }
 }

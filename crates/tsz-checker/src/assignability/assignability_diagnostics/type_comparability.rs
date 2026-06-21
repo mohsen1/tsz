@@ -294,6 +294,34 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Apparent type used by the comparable relation, mirroring tsc's
+    /// `getApparentType` for instantiable operands.
+    ///
+    /// A bare type parameter resolves to its constraint (or `unknown`). A deferred
+    /// conditional (`T extends U ? X : Y`) resolves to its default constraint
+    /// (`getDefaultConstraintOfConditionalType`, the union of the inferred branch
+    /// results); if that constraint is itself a bare type parameter — as in
+    /// `Exclude<T, U>` whose constraint reduces to `T` — it is resolved one further
+    /// step to the parameter's apparent type so the comparable relation sees a
+    /// concrete value-space. Non-instantiable types are returned unchanged.
+    fn comparable_apparent_type(&mut self, ty: TypeId, is_type_param: bool) -> TypeId {
+        let apparent = if is_type_param {
+            self.get_type_param_apparent_type(ty)
+        } else {
+            match crate::query_boundaries::common::conditional_default_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                Some(constraint) if is_type_parameter_like(self.ctx.types, constraint) => {
+                    self.get_type_param_apparent_type(constraint)
+                }
+                Some(constraint) => constraint,
+                None => ty,
+            }
+        };
+        self.reduce_instantiable_indexed_access(apparent)
+    }
+
     /// Check if two types are comparable (overlap).
     ///
     /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
@@ -326,23 +354,16 @@ impl<'a> CheckerState<'a> {
             return self.type_params_are_comparable(source, target);
         }
 
-        // Resolve type parameter to apparent type (constraint or `unknown`).
-        // An operand that is not a type parameter but is an instantiable indexed
-        // access (`Obj[Idx]`, e.g. `Parameters<F>["length"]`) is reduced to its
-        // base constraint, mirroring tsc's `getReducedApparentType` /
-        // `getBaseConstraintOfType`: `Parameters<F>["length"]` collapses through
-        // `F`'s constraint to `any[]["length"]` = `number`, so a numeric-literal
-        // `case`/`===` operand can overlap it (no false TS2678/TS2367).
-        let source_apparent = if source_is_tp {
-            self.get_type_param_apparent_type(source)
-        } else {
-            self.reduce_instantiable_indexed_access(source)
-        };
-        let target_apparent = if target_is_tp {
-            self.get_type_param_apparent_type(target)
-        } else {
-            self.reduce_instantiable_indexed_access(target)
-        };
+        // Resolve type parameter to apparent type (constraint or `unknown`), and a
+        // deferred conditional to its default constraint. tsc's `getApparentType`
+        // resolves instantiable types (type parameters and conditionals alike)
+        // before the comparable relation runs, so `Exclude<T, U>` overlaps with a
+        // literal exactly when its branch constraint does. Instantiable indexed
+        // accesses are then reduced through the comparability-only reducer so
+        // `Parameters<F>["length"]` can overlap numeric literals without leaking
+        // that reduction into assignment diagnostics or constraint validation.
+        let source_apparent = self.comparable_apparent_type(source, source_is_tp);
+        let target_apparent = self.comparable_apparent_type(target, target_is_tp);
 
         let skip_signature_only_fast_path =
             self.are_pure_signature_objects(source_apparent, target_apparent);

@@ -777,7 +777,23 @@ tsz_write_valibot_config() {
 }
 
 tsz_write_msw_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # msw's source imports its package-internal core via `#core` / `#core/*`
+  # subpath specifiers. Its real tsconfig.base.json resolves those through a
+  # TypeScript `paths` mapping (`"#core/*": ["./src/core/*"]`), NOT through the
+  # package.json `imports` field. The fixture clone runs no npm install, and the
+  # package.json `imports` targets are extensionless (`"./src/core/*"`), which
+  # `moduleResolution: bundler` does not probe with a `.ts` extension -- bundled
+  # tsc emits the same TS2307 on those specifiers without the `paths` mapping.
+  # Mirror upstream's `paths` so the fixture replicates msw's actual resolution
+  # setup; both tsc and tsz then bind `#core/...` to src/core sources. (External
+  # dependency specifiers such as `outvariant`/`@mswjs/interceptors` remain
+  # unresolved because the clone installs nothing, matching tsc.)
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "paths": {
+      "#core": ["./src/core"],
+      "#core/*": ["./src/core/*"]
+    },
+'
 }
 
 tsz_write_comlink_config() {

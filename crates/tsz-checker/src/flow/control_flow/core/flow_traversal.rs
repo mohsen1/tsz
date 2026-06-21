@@ -21,6 +21,13 @@ struct PassthroughGate {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    /// Fuel cap for the conditional-expression-merge arm walk
+    /// ([`Self::is_conditional_expression_merge`]). Bounds the combined
+    /// per-arm passthrough chase and nested-merge recursion so a pathological or
+    /// cyclic flow graph cannot loop. Generous relative to real expression
+    /// nesting; normal ternary/logical merges resolve in a handful of steps.
+    const CONDITIONAL_MERGE_WALK_FUEL: u32 = 256;
+
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
@@ -736,6 +743,36 @@ impl<'a> FlowAnalyzer<'a> {
                                             })
                                         })
                                         .unwrap_or(initial_type);
+                                    flow_boundary::narrow_destructuring_default(
+                                        self.interner.as_type_database(),
+                                        declared_type,
+                                        true,
+                                    )
+                                } else if self.is_killing_definition_with_non_nullish_rhs(
+                                    flow.node, reference,
+                                ) {
+                                    // `target = <object/array literal | new | fn>` always
+                                    // writes a definitely non-nullish value, even when the
+                                    // RHS type could not be resolved (deferred closure typing
+                                    // plus an unreconstructable structural fallback). Drop
+                                    // `null`/`undefined` from the declared union so the killing
+                                    // definition matches tsc's `getAssignmentReducedType`
+                                    // instead of leaving a false TS18048 on a later read.
+                                    let declared_type =
+                                        symbol_id
+                                            .and_then(|sid| self.binder.get_symbol(sid))
+                                            .filter(|sym| sym.value_declaration.is_some())
+                                            .and_then(|sym| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    self.node_types.and_then(|nt| {
+                                                        nt.get(&sym.value_declaration.0).copied()
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or(initial_type);
                                     flow_boundary::narrow_destructuring_default(
                                         self.interner.as_type_database(),
                                         declared_type,
@@ -1497,26 +1534,78 @@ impl<'a> FlowAnalyzer<'a> {
     /// Statement merges are deliberately excluded: deferring through them
     /// re-routes resolution order for targeting-assignment chains inside
     /// `try`/`catch` and over-narrows (e.g. `controlFlowForCatchAndFinally`).
+    ///
+    /// An arm is not always a *bare* CONDITION: any expression evaluated inside
+    /// an arm adds its own flow nodes, so the merge's antecedent can be a `CALL`
+    /// (`a ? f() : g()`), an `ASSIGNMENT` (`a ? (x = 1) : 0`), an array mutation,
+    /// an `await`/`yield`, or a nested conditional-expression merge
+    /// (`a ? (b ? x : y) : z`) instead. Each arm is therefore walked backward
+    /// through such pure value-passthrough flow nodes to the CONDITION that
+    /// controls it before checking that the condition is an expression operand.
+    /// Requiring a bare CONDITION antecedent (the previous behavior) silently
+    /// failed for every arm that called a function or otherwise produced a flow
+    /// node, dropping unrelated narrowing across the following guard (e.g.
+    /// `const t = c ? x : getKeys(x); if (!t) return;`).
     fn is_conditional_expression_merge(&self, label: FlowNodeId) -> bool {
+        self.is_conditional_expression_merge_fueled(label, Self::CONDITIONAL_MERGE_WALK_FUEL)
+    }
+
+    /// Fuel-bounded core of [`Self::is_conditional_expression_merge`]. The fuel
+    /// bounds the combined arm walk plus nested-merge recursion so a pathological
+    /// or cyclic flow graph cannot loop; it is decremented on every step and
+    /// every recursion.
+    fn is_conditional_expression_merge_fueled(&self, label: FlowNodeId, fuel: u32) -> bool {
+        if fuel == 0 {
+            return false;
+        }
         let Some(flow) = self.binder.flow_nodes.get(label) else {
             return false;
         };
         if !flow.has_any_flags(flow_flags::BRANCH_LABEL) || flow.antecedent.is_empty() {
             return false;
         }
-        // Every antecedent must be a CONDITION arm whose recorded condition
-        // expression is a sub-expression of a conditional or logical-binary
-        // expression. A statement merge fails this because at least one arm is a
-        // non-condition block flow or its condition parents to a statement.
-        flow.antecedent.iter().all(|&ant| {
-            let Some(ant_flow) = self.binder.flow_nodes.get(ant) else {
-                return false;
-            };
-            if !ant_flow.has_any_flags(flow_flags::CONDITION) {
+        flow.antecedent
+            .iter()
+            .all(|&ant| self.arm_reaches_expression_condition(ant, fuel - 1))
+    }
+
+    /// Walk a conditional/short-circuit merge arm backward through pure value-
+    /// passthrough flow nodes (`CALL`, `ASSIGNMENT`, `ARRAY_MUTATION`,
+    /// `AWAIT`/`YIELD`, each with a single antecedent) to the CONDITION node that
+    /// controls it, returning whether that condition is a conditional or
+    /// logical-binary expression operand. A nested `BRANCH_LABEL` arm recurses
+    /// into [`Self::is_conditional_expression_merge_fueled`]. Statement-level
+    /// structures (`LOOP_LABEL`, `SWITCH_CLAUSE`, `START`), joins with multiple
+    /// antecedents, and dead ends are rejected, which is what keeps statement
+    /// merges (`if`/`switch`/`try`/loops) excluded.
+    fn arm_reaches_expression_condition(&self, arm: FlowNodeId, fuel: u32) -> bool {
+        let mut current = arm;
+        let mut fuel = fuel;
+        loop {
+            if fuel == 0 {
                 return false;
             }
-            self.condition_node_is_expression_operand(ant_flow.node)
-        })
+            fuel -= 1;
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                return false;
+            };
+            if flow.has_any_flags(flow_flags::CONDITION) {
+                return self.condition_node_is_expression_operand(flow.node);
+            }
+            if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
+                return self.is_conditional_expression_merge_fueled(current, fuel);
+            }
+            if flow.has_any_flags(
+                flow_flags::LOOP_LABEL | flow_flags::SWITCH_CLAUSE | flow_flags::START,
+            ) {
+                return false;
+            }
+            // Pure value-passthrough node: chase its single antecedent.
+            let [ant] = flow.antecedent.as_slice() else {
+                return false;
+            };
+            current = *ant;
+        }
     }
 
     /// Whether `condition` (a CONDITION flow node's recorded AST node) is the
