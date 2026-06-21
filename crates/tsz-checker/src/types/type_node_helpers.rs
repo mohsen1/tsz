@@ -884,6 +884,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         type_id: tsz_solver::TypeId,
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common as q;
+        use crate::query_boundaries::conditional_constraints as conditional_query;
         let (base, index) = q::index_access_types(self.ctx.types, type_id)?;
         // Concrete indexed accesses already reduce through `evaluate_type` above;
         // here the base is still generic. Expand a generic alias/interface
@@ -904,8 +905,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // constraint (`getConstraintOfIndexedAccessType`); an object/mapped/
         // interface body is its own apparent type, so it is indexed directly.
         let apparent_base = if q::is_conditional_type(self.ctx.types, resolved_base) {
-            let base_constraint =
-                q::conditional_branch_union_constraint(self.ctx.types, resolved_base)?;
+            let base_constraint = conditional_query::conditional_branch_union_constraint(
+                self.ctx.types,
+                resolved_base,
+            )?;
             // The branch-union collapsed to `error` — a branch references an
             // unresolved import (already flagged TS2307), so its apparent type is
             // `error`, which tsc treats as `any` (assignable to `readonly any[]`).
@@ -998,6 +1001,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// further reduces.
     fn fully_expand_apparent_base(&self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
         use crate::query_boundaries::common as q;
+        use crate::query_boundaries::conditional_constraints as conditional_query;
         let expand_once = |ty: tsz_solver::TypeId| -> tsz_solver::TypeId {
             let env = self.ctx.type_environment.borrow();
             let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
@@ -1012,8 +1016,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // tsc's `getBaseConstraintOfType` of a conditional — so the property
             // it contributes becomes readable. Leave non-conditionals untouched.
             if q::is_conditional_type(self.ctx.types, evaluated)
-                && let Some(constraint) =
-                    q::conditional_branch_union_constraint(self.ctx.types, evaluated)
+                && let Some(constraint) = conditional_query::conditional_branch_union_constraint(
+                    self.ctx.types,
+                    evaluated,
+                )
                 && !q::is_conditional_type(self.ctx.types, constraint)
                 && !q::is_index_access_type(self.ctx.types, constraint)
             {

@@ -69,7 +69,7 @@ fn constraint_is_array_or_tuple_like(
     }
     // A deferred conditional stays deferred after evaluation; use its apparent
     // base constraint (union of branches) for the array/tuple probe.
-    crate::query_boundaries::common::conditional_default_constraint(db, evaluated)
+    crate::query_boundaries::conditional_constraints::conditional_default_constraint(db, evaluated)
         .is_some_and(is_array_or_tuple)
 }
 

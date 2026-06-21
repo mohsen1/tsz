@@ -959,17 +959,6 @@ pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::is_conditional_type(db, type_id)
 }
 
-/// Base constraint of a deferred conditional, computed as the union of its two
-/// branch results (tsc's `getBaseConstraintOfType` of a conditional). Used to
-/// validate an index-access key / assertion source against a deferred
-/// conditional without forcing the conditional itself.
-pub(crate) fn conditional_branch_union_constraint(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::conditional_branch_union_constraint(db, type_id)
-}
-
 pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_conditional_type(db, type_id)
         || is_index_access_type(db, type_id)
@@ -1557,19 +1546,6 @@ pub(crate) fn get_conditional_type_id(
     type_id: TypeId,
 ) -> Option<tsz_solver::ConditionalTypeId> {
     tsz_solver::type_queries::get_conditional_type_id(db, type_id)
-}
-
-/// Apparent base constraint of a deferred conditional type (tsc's
-/// `getDefaultConstraintOfConditionalType`): the union of its inferred
-/// true-branch and false-branch result types. `None` when `type_id` is not a
-/// deferred conditional. Used to validate an indexed-access key / assertion
-/// source against the conditional's key space (tsc resolves the object/source
-/// through `getApparentType`, which uses this constraint).
-pub(crate) fn conditional_default_constraint(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::get_conditional_default_constraint(db, type_id)
 }
 
 pub(crate) fn collect_lazy_def_ids(
