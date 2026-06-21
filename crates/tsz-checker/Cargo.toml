@@ -1817,6 +1817,9 @@ path = "tests/optional_property_required_elaboration_tests.rs"
 name = "variadic_tuple_arity_inference_tests"
 path = "tests/variadic_tuple_arity_inference_tests.rs"
 [[test]]
+name = "variadic_infer_element_tests"
+path = "tests/variadic_infer_element_tests.rs"
+[[test]]
 name = "diagnostic_index_suppression_tests"
 path = "tests/diagnostic_index_suppression_tests.rs"
 [[test]]
