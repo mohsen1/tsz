@@ -220,6 +220,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
+    fn generic_extends_can_use_permissive_false_branch(&self, extends_type: TypeId) -> bool {
+        crate::visitors::visitor_predicates::is_tuple_type(self.interner(), extends_type)
+    }
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -1092,14 +1096,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // permissive instantiation (every extends type parameter -> `any`,
                 // tsc's `getPermissiveInstantiation` gate). e.g.
                 // `[] extends [T, ...T[]] ? "yes" : "no"` is `"no"` because `[]`
-                // is not a `[any, ...any[]]` regardless of `T`. Only defer when
-                // that permissive relation is indeterminate — or during the
-                // TS2589 depth-detection pass, which keeps deferring so
-                // unconditionally-recursive aliases drive their recursive branch
-                // and surface the depth error. Never short-circuit when the
-                // extends type carries `infer` patterns: those are resolved by
-                // infer-matching, not by a permissive false-branch judgment.
-                && (extends_has_infer
+                // is not a `[any, ...any[]]` regardless of `T`. Keep the exception
+                // to tuple-like extends operands: richer generic extends operands,
+                // such as React's `ElementType extends T` component-props
+                // conditionals, must remain deferred so contextual JSX typing can
+                // infer `T` before the conditional chooses a branch.
+                && (!self.generic_extends_can_use_permissive_false_branch(extends_type)
+                    || extends_has_infer
                     || self.is_depth_detection_pass()
                     || !self.permissive_false_branch_is_definitive(check_type, extends_type)))
                 // tsc parity (`getConditionalType`): a conditional whose
