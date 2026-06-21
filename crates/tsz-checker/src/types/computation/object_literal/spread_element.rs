@@ -260,14 +260,18 @@ impl<'a> CheckerState<'a> {
                 // existing branches, and the post-union assembly only folds
                 // in props written after the LAST union spread — so without
                 // this snapshot they would vanish from every distributed
-                // branch. Capture them once (sorted by declaration order for
-                // determinism) and fold them into each existing branch below.
-                let intervening_props: Vec<PropertyInfo> = if union_spread_branches.is_empty() {
+                // branch. Capture their names once (sorted by declaration
+                // order for determinism) and fold them into each existing
+                // branch below.
+                let intervening_prop_names: Vec<Atom> = if union_spread_branches.is_empty() {
                     Vec::new()
                 } else {
-                    let mut props: Vec<PropertyInfo> = properties.values().cloned().collect();
-                    props.sort_by_key(|p| p.declaration_order);
-                    props
+                    let mut props: Vec<(u32, Atom)> = properties
+                        .values()
+                        .map(|prop| (prop.declaration_order, prop.name))
+                        .collect();
+                    props.sort_by_key(|(declaration_order, _)| *declaration_order);
+                    props.into_iter().map(|(_, name)| name).collect()
                 };
 
                 // Collect properties from each union member for TS2783
@@ -343,8 +347,10 @@ impl<'a> CheckerState<'a> {
                             let mut branch = existing.clone();
                             // Fold in named props written since the previous
                             // union spread so they survive this distribution.
-                            for prop in &intervening_props {
-                                self.merge_spread_property(&mut branch, prop);
+                            for name in &intervening_prop_names {
+                                if let Some(prop) = properties.get(name) {
+                                    self.merge_spread_property(&mut branch, prop);
+                                }
                             }
                             for prop in &member_props {
                                 self.merge_spread_property(&mut branch, prop);
