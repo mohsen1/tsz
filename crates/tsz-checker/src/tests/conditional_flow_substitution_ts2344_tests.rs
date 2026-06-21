@@ -69,6 +69,51 @@ fn nested_conditional_true_branch_composes_constraints() {
     );
 }
 
+#[test]
+fn tuple_rest_sees_array_constraint_from_true_branch_substitution() {
+    let codes = check_source_codes(
+        "type Spread<Items> = Items extends unknown[] ? [head: 0, ...Items] : never;\n\
+         type Concrete = Spread<[1, 2]>;\n\
+         export {};",
+    );
+    assert!(
+        !codes.contains(&2574),
+        "tuple rest must see the substitution constraint as array-like. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn mapped_tuple_sees_array_constraint_from_true_branch_substitution() {
+    let codes = check_source_codes(
+        "type MustBeArray<T extends any[]> = T;\n\
+         type MapArray<T extends any[]> = T extends number[] ? MustBeArray<{ [I in keyof T]: 1 }> : never;\n\
+         type Concrete = MapArray<[3, 4, 5]>;\n\
+         export {};",
+    );
+    assert!(
+        !codes.contains(&2344),
+        "mapped tuple must keep the substitution constraint array-like. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn inferred_tail_satisfies_tuple_rest_helper_constraint() {
+    let codes = check_source_codes(
+        "type PascalCapitalizer<Type, Tuple extends readonly any[] = []> = Type extends [infer Head, ...infer Tail]\n\
+         ? Head extends string\n\
+           ? PascalCapitalizer<Tail, [...Tuple, Capitalize<Head>]>\n\
+           : PascalCapitalizer<Tail, Tuple>\n\
+         : Tuple;\n\
+         type CamelCapitalizer<Type> = Type extends [infer First, ...infer Tail] ? PascalCapitalizer<Tail, [First]> : [];\n\
+         type Concrete = CamelCapitalizer<[\"foo\", \"bar\"]>;\n\
+         export {};",
+    );
+    assert!(
+        !codes.contains(&2574),
+        "inferred tuple tail must satisfy rest-element array-like grammar. Got: {codes:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Negative cases: the narrowing must not over-accept.
 // ---------------------------------------------------------------------------

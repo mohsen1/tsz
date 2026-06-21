@@ -197,7 +197,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Get the constraint - this tells us what keys to iterate over
         let constraint = mapped.constraint;
-
         if let Some(name_type) = mapped.name_type
             && (crate::type_queries::contains_type_parameters_db(self.interner(), constraint)
                 || crate::type_queries::contains_type_parameters_except_name_db(
@@ -1131,6 +1130,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
         match self.interner().lookup(source) {
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+            Some(TypeData::Substitution { base_type, .. }) => matches!(
+                self.interner().lookup(base_type),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ),
             Some(TypeData::Mapped(inner_mapped_id)) => {
                 let inner_mapped = self.interner().get_mapped(inner_mapped_id);
                 self.constraint_has_keyof_type_param(inner_mapped.constraint)
@@ -1153,10 +1156,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let TypeData::KeyOf(source) = self.interner().lookup(mapped.constraint)? else {
             return None;
         };
-        let TypeData::TypeParameter(param) = self.interner().lookup(source)? else {
-            return None;
+        let constraint = match self.interner().lookup(source)? {
+            TypeData::TypeParameter(param) | TypeData::Infer(param) => param.constraint?,
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } if matches!(
+                self.interner().lookup(base_type),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) =>
+            {
+                constraint
+            }
+            _ => return None,
         };
-        let constraint = param.constraint?;
 
         // Only preserve array shape for identity name mappings (no `as` clause
         // or `as K` where K is the iteration variable)
@@ -1357,6 +1370,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // preserving deferred `T[K]` element types. Passing
                 // `resolved` keeps the helper signature uniform.
                 Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, resolved, false))
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
+                let mut mapped_members = Vec::new();
+                for member in members {
+                    let resolved_member = self.evaluate(member);
+                    if let Some(mapped_member) =
+                        self.try_evaluate_mapped_over_array_like(mapped, resolved_member)
+                    {
+                        mapped_members.push(mapped_member);
+                    }
+                }
+                (!mapped_members.is_empty()).then(|| self.interner().intersection(mapped_members))
             }
             // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
             Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {

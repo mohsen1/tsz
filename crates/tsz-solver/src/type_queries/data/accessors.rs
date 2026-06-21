@@ -892,6 +892,9 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => {
+            get_array_applicable_type(db, constraint)
+        }
         Some(
             TypeData::Application(_)
             | TypeData::Mapped(_)
@@ -1145,6 +1148,7 @@ pub fn get_object_shape_id(
     }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape_id(db, constraint),
         _ => None,
     }
 }
@@ -1163,6 +1167,7 @@ pub fn get_object_shape(
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
         }
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape(db, constraint),
         Some(TypeData::TypeParameter(info)) => {
             // For type parameters with constraints, look through to the constraint.
             info.constraint.and_then(|c| get_object_shape(db, c))
@@ -1250,6 +1255,7 @@ pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => is_tuple_like_type(db, constraint),
         Some(TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()

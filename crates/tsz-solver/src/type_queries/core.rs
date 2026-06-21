@@ -92,6 +92,13 @@ pub fn is_generic_conditional_check_type(db: &dyn TypeDatabase, type_id: TypeId)
                 ) => {
                     stack.push(elem);
                 }
+                Some(TypeData::Substitution {
+                    base_type,
+                    constraint,
+                }) => {
+                    stack.push(base_type);
+                    stack.push(constraint);
+                }
                 Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
                     stack.extend(db.type_list(list).iter().copied());
                 }
@@ -350,6 +357,9 @@ pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         if elements.iter().all(|e| !e.rest) {
             return Some(elements.len());
         }
+    }
+    if let Some(TypeData::Substitution { constraint, .. }) = db.lookup(type_id) {
+        return get_fixed_tuple_length(db, constraint);
     }
     None
 }
