@@ -275,19 +275,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // over-wide key and a downstream TS2339 (radash `lowerize`).
             //
             // Guarded on the target actually carrying an inference placeholder
-            // so a fully concrete structured target stays a no-op, and on the
-            // constraint differing from the source; the `constraint_pairs`
-            // visited set and recursion-depth bound own termination. A
-            // bare-placeholder target is handled earlier (lower-bound
-            // candidate), and a naked parameter inside a union/conditional
-            // target keeps its direct inference through the dedicated arms, so
-            // neither is reached here.
+            // so a fully concrete structured target stays a no-op, on the
+            // constraint differing from the source, and on the constraint not
+            // being a nullable union whose nullish member must still be checked.
+            // The `constraint_pairs` visited set and recursion-depth bound own
+            // termination. A bare-placeholder target is handled earlier
+            // (lower-bound candidate), and a naked parameter inside a
+            // union/conditional target keeps its direct inference through the
+            // dedicated arms, so neither is reached here.
             (
                 Some(TypeData::TypeParameter(ref param_info)),
                 Some(TypeData::Application(_) | TypeData::Mapped(_)),
             ) => {
                 if let Some(constraint) = param_info.constraint
                     && constraint != source
+                    && !self.constraint_is_nullable_union(constraint)
                     && with_placeholder_visited(|visited| {
                         self.type_contains_placeholder(target, var_map, visited)
                     })
@@ -2147,5 +2149,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => {}
         }
+    }
+
+    fn constraint_is_nullable_union(&self, constraint: TypeId) -> bool {
+        let Some(TypeData::Union(members)) = self.interner.lookup(constraint) else {
+            return false;
+        };
+        self.interner
+            .type_list(members)
+            .iter()
+            .any(|&member| member.is_nullable())
     }
 }

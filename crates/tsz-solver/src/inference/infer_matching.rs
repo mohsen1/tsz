@@ -423,13 +423,16 @@ impl<'a> InferenceContext<'a> {
             // When a non-inferred source type parameter faces a structured
             // generic target (`Record<K, V>`/mapped type), infer from the
             // source's apparent type (its constraint) so target placeholders
-            // get the constraint's components instead of their defaults.
+            // get the constraint's components instead of their defaults. Do
+            // not lift nullable union constraints: their nullish constituent
+            // must remain visible to the final argument check.
             (
                 Some(TypeData::TypeParameter(ref param_info)),
                 Some(TypeData::Application(_) | TypeData::Mapped(_)),
             ) => {
                 if let Some(constraint) = param_info.constraint
                     && constraint != source
+                    && !self.constraint_is_nullable_union(constraint)
                     && self.target_contains_inference_param(target)
                 {
                     self.infer_from_types(constraint, target, priority)?;
@@ -1633,6 +1636,16 @@ impl<'a> InferenceContext<'a> {
     /// instead of structurally matching `Foo<V>`.
     fn target_contains_inference_param(&self, target: TypeId) -> bool {
         self.target_contains_inference_param_inner(target, &mut std::collections::HashSet::new())
+    }
+
+    fn constraint_is_nullable_union(&self, constraint: TypeId) -> bool {
+        let Some(TypeData::Union(members)) = self.interner.lookup(constraint) else {
+            return false;
+        };
+        self.interner
+            .type_list(members)
+            .iter()
+            .any(|&member| member.is_nullable())
     }
 
     fn target_contains_inference_param_inner(

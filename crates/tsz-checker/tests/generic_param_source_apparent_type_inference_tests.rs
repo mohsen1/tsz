@@ -16,11 +16,19 @@
 
 use tsz_checker::test_utils::check_source_code_messages as compile_and_get_diagnostics;
 
-fn ts2322_count(source: &str) -> usize {
+fn diagnostic_count(source: &str, expected_code: u32) -> usize {
     compile_and_get_diagnostics(source)
         .iter()
-        .filter(|(code, _)| *code == 2322)
+        .filter(|(code, _)| *code == expected_code)
         .count()
+}
+
+fn ts2322_count(source: &str) -> usize {
+    diagnostic_count(source, 2322)
+}
+
+fn ts2345_count(source: &str) -> usize {
+    diagnostic_count(source, 2345)
 }
 
 // Self-contained `Record`/`PropertyKey` so the test runs without lib contexts.
@@ -107,6 +115,39 @@ function f<Src extends Rec<PKey, unknown>>(obj: Src) {{
         ts2322_count(&source),
         1,
         "a PropertyKey-constrained source must not be narrowed to `string`"
+    );
+}
+
+#[test]
+fn nullable_union_constraint_does_not_hide_narrowed_undefined() {
+    // `x` is narrowed to `undefined` in both error branches. Apparent-type
+    // inference must not mine `Box<T>` out of the declared nullable union
+    // constraint and make `unbox(x)` appear valid.
+    let source = "
+interface Box<T> {
+    item: T;
+}
+
+declare function isBox(x: unknown): x is Box<unknown>;
+declare function isUndefined(x: unknown): x is undefined;
+declare function unbox<T>(x: Box<T>): T;
+
+function g3<T extends Box<T> | undefined>(x: T) {
+    if (!isBox(x)) {
+        unbox(x);
+    }
+}
+
+function g4<T extends Box<T> | undefined>(x: T) {
+    if (isUndefined(x)) {
+        unbox(x);
+    }
+}
+";
+    assert_eq!(
+        ts2345_count(source),
+        2,
+        "narrowed undefined branches must still reject calls to unbox"
     );
 }
 
