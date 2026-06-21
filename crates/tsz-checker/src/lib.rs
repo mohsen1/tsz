@@ -1504,6 +1504,9 @@ mod variadic_tuple_tail_arity_inference_tests;
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
 #[cfg(test)]
+#[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
+mod void_undefined_discriminant_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;
 
