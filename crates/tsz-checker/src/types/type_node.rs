@@ -1003,6 +1003,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             };
             (predicate_type, param.type_id)
         };
+        // Resolve type aliases on both sides before any further analysis. A
+        // function-type-node predicate whose asserted or parameter type goes
+        // through a type alias (`A = string`, or a generic-alias `Application`
+        // like `Alias<T> = keyof T` / `To<T> = T`) must be compared on the
+        // resolved bodies — the relation query below runs with a non-resolving
+        // resolver, and resolving here (rather than after the type-parameter
+        // normalization) keeps both sides symmetric so an alias that resolves to
+        // a type parameter is normalized the same way the bare parameter is
+        // (#14231).
+        let predicate_type = self.resolve_predicate_alias(predicate_type);
+        let param_type = self.resolve_predicate_alias(param_type);
         // Skip the check when the predicate type is an unevaluable Application
         // (e.g., NonNullable<T> where T is a free type parameter). Our evaluator
         // can't resolve all lib.d.ts type aliases yet, so the Application stays
@@ -1045,6 +1056,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             param_type
         };
 
+        // Resolve type aliases (`Lazy(DefId)` heads and generic-alias
+        // `Application`s like `Alias<T> = keyof T`) to their bodies before the
+        // relation. The predicate-relation query runs with a non-resolving
+        // resolver, so an alias-typed asserted or parameter type would otherwise
+        // stay opaque and spuriously fail TS2677 (#14231). tsc compares the
+        // resolved forms.
         let types = self.ctx.types;
         if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
             types,
@@ -1061,6 +1078,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 2677,
             );
         }
+    }
+
+    /// Resolve a type alias (`Lazy(DefId)` head or generic-alias `Application`
+    /// like `Alias<T> = keyof T`) to its body before the type-predicate relation.
+    /// The relation query runs with a non-resolving resolver, so an alias-typed
+    /// asserted/parameter type would otherwise stay opaque and spuriously fail
+    /// TS2677 (#14231). Uses the env-aware evaluator so registered `DefId`s
+    /// resolve; intrinsics/errors are returned as-is.
+    fn resolve_predicate_alias(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() || type_id == TypeId::ERROR {
+            return type_id;
+        }
+        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &*self.ctx,
+            type_id,
+            std::iter::empty(),
+            false,
+            crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+                expand_application_display_alias_args: false,
+                query_db: Some(self.ctx.types),
+                authoritative: true,
+                cache_entry_collection:
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+            },
+        )
+        .result
     }
 
     /// Check if a type contains an Application that can't be evaluated (e.g., `NonNullable<T>`
