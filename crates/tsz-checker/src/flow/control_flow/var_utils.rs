@@ -534,6 +534,28 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
+        // An assignment to the reference that is *unconditionally evaluated* in
+        // this condition branch proves the variable is assigned. Reaching the
+        // TRUE_CONDITION of `a && (e = next())` (or any truthy/falsy branch that
+        // required evaluating `e = next()`) means the assignment already ran.
+        //
+        // tsc threads the loop-body / if-body antecedent through the right
+        // operand's true-target label, so the body sees the assignment. tsz
+        // reconstructs true/false branches by wrapping the whole condition value
+        // in a CONDITION node whose antecedent is the `&&` value-merge label,
+        // which conflates the short-circuit (left-falsy) exit path and therefore
+        // loses the right-operand assignment. Detecting the assignment in the
+        // evaluated portion of the branch restores parity without depending on
+        // the merge topology.
+        if self.branch_evaluates_assignment(
+            condition,
+            is_true_condition,
+            is_false_condition,
+            reference,
+        ) {
+            return true;
+        }
+
         // Prefix unary `!` inverts the sense: `!(expr)` in TRUE_CONDITION means
         // expr is false, and in FALSE_CONDITION means expr is true.
         // For example: `!(typeof x === "string")` + FALSE_CONDITION → inner is true → proves assignment.
@@ -708,6 +730,179 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    /// Determine whether the given condition branch *unconditionally evaluates*
+    /// an assignment to `reference`.
+    ///
+    /// "Unconditionally evaluated in this branch" means: given that control flow
+    /// reached the `TRUE_CONDITION` (resp. `FALSE_CONDITION`) of `condition`, the
+    /// sub-expression that assigns `reference` is guaranteed to have executed.
+    ///
+    /// Short-circuit operators are the only constructs where a sub-expression
+    /// may be skipped, so they are handled per-sense:
+    /// - `a && b` in `TRUE_CONDITION`: both `a` and `b` were evaluated.
+    /// - `a && b` in `FALSE_CONDITION`: only `a` was evaluated (`b` may be skipped).
+    /// - `a || b` in `FALSE_CONDITION`: both `a` and `b` were evaluated.
+    /// - `a || b` in `TRUE_CONDITION`: only `a` was evaluated (`b` may be skipped).
+    /// - `a ?? b`: only `a` is guaranteed; `b` may be skipped.
+    ///
+    /// `!expr` flips the sense. Parenthesized expressions are transparent.
+    fn branch_evaluates_assignment(
+        &self,
+        condition: NodeIndex,
+        is_true_condition: bool,
+        is_false_condition: bool,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(condition) else {
+            return false;
+        };
+
+        // `!expr` inverts the branch sense for the operand.
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(node)
+            && unary.operator == SyntaxKind::ExclamationToken as u16
+        {
+            return self.branch_evaluates_assignment(
+                unary.operand,
+                is_false_condition,
+                is_true_condition,
+                reference,
+            );
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.branch_evaluates_assignment(
+                paren.expression,
+                is_true_condition,
+                is_false_condition,
+                reference,
+            );
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+        {
+            // `&&`: left always evaluated; right evaluated unless we are in the
+            // short-circuit (left-falsy) FALSE_CONDITION-only sense.
+            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                let right_evaluated = is_true_condition;
+                return self.branch_evaluates_assignment(
+                    bin.left,
+                    is_true_condition,
+                    is_false_condition,
+                    reference,
+                ) || (right_evaluated
+                    && self.branch_evaluates_assignment(
+                        bin.right,
+                        is_true_condition,
+                        is_false_condition,
+                        reference,
+                    ));
+            }
+
+            // `||`: left always evaluated; right evaluated unless we are in the
+            // short-circuit (left-truthy) TRUE_CONDITION-only sense.
+            if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                let right_evaluated = is_false_condition;
+                return self.branch_evaluates_assignment(
+                    bin.left,
+                    is_true_condition,
+                    is_false_condition,
+                    reference,
+                ) || (right_evaluated
+                    && self.branch_evaluates_assignment(
+                        bin.right,
+                        is_true_condition,
+                        is_false_condition,
+                        reference,
+                    ));
+            }
+
+            // `??`: right may be skipped when left is non-nullish; only left is
+            // guaranteed evaluated in every sense.
+            if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16 {
+                return self.branch_evaluates_assignment(
+                    bin.left,
+                    is_true_condition,
+                    is_false_condition,
+                    reference,
+                );
+            }
+        }
+
+        // No short-circuit boundary here: the whole sub-expression is
+        // unconditionally evaluated in this branch. A nested assignment to
+        // `reference` (`e = ...`, `e += ...`, `++e`, etc.) therefore proves it.
+        self.subexpression_assigns_reference(condition, reference)
+    }
+
+    /// Recursively scan an *unconditionally evaluated* expression for a direct
+    /// assignment to `reference`. Does not descend into short-circuit operands
+    /// (callers handle short-circuit boundaries); descends through eagerly
+    /// evaluated structure (assignment RHS, comparison/arithmetic operands,
+    /// property/element access bases, call arguments, unary operands).
+    fn subexpression_assigns_reference(&self, expr: NodeIndex, reference: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+
+        // A direct assignment / compound assignment targeting the reference.
+        if (node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            || node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && self.assignment_targets_reference(expr, reference)
+        {
+            return true;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(node)
+                .is_some_and(|p| self.subexpression_assigns_reference(p.expression, reference)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(node).is_some_and(|bin| {
+                    // Short-circuit operands are not unconditionally evaluated.
+                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                        || bin.operator_token == SyntaxKind::BarBarToken as u16
+                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                    {
+                        return false;
+                    }
+                    self.subexpression_assigns_reference(bin.left, reference)
+                        || self.subexpression_assigns_reference(bin.right, reference)
+                })
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+            {
+                self.arena
+                    .get_unary_expr(node)
+                    .is_some_and(|u| self.subexpression_assigns_reference(u.operand, reference))
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|a| {
+                    !a.question_dot_token
+                        && self.subexpression_assigns_reference(a.expression, reference)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.arena.get_call_expr(node).is_some_and(|call| {
+                    call.arguments.as_ref().is_some_and(|args| {
+                        args.nodes
+                            .iter()
+                            .any(|&arg| self.subexpression_assigns_reference(arg, reference))
+                    })
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Check if an expression accesses the reference variable via a property
