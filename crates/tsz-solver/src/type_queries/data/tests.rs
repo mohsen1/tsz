@@ -897,6 +897,106 @@ fn deeply_any_for_nested_array_of_any() {
     assert!(is_type_deeply_any(&interner, outer));
 }
 
+fn make_array_constrained_param(interner: &TypeInterner, name: &str, element: TypeId) -> TypeId {
+    let constraint = interner.array(element);
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    })
+}
+
+fn rest_elem(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        optional: false,
+        rest: true,
+        name: None,
+    }
+}
+
+fn fixed_elem(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        optional: false,
+        rest: false,
+        name: None,
+    }
+}
+
+#[test]
+fn rest_spread_element_of_plain_array_is_its_element() {
+    let interner = TypeInterner::new();
+    let arr = interner.array(TypeId::STRING);
+    assert_eq!(rest_spread_element_type(&interner, arr), TypeId::STRING);
+}
+
+#[test]
+fn rest_spread_element_of_array_constrained_param_is_constraint_element() {
+    // `...End` where `End extends string[]` contributes `string`, not `End`/`string[]`.
+    // Binder name is varied to prove the rule is structural, not name-driven.
+    let interner = TypeInterner::new();
+    for name in ["End", "Rest", "TItems", "_p0"] {
+        let param = make_array_constrained_param(&interner, name, TypeId::STRING);
+        assert_eq!(
+            rest_spread_element_type(&interner, param),
+            TypeId::STRING,
+            "spread of {name} extends string[] should contribute string"
+        );
+    }
+}
+
+#[test]
+fn rest_spread_element_of_tuple_constrained_param_unions_elements() {
+    // `...End` where `End extends [number, boolean]` contributes `number | boolean`.
+    let interner = TypeInterner::new();
+    let constraint = interner.tuple(vec![
+        fixed_elem(TypeId::NUMBER),
+        fixed_elem(TypeId::BOOLEAN),
+    ]);
+    let param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("Pair"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    assert_eq!(rest_spread_element_type(&interner, param), expected);
+}
+
+#[test]
+fn rest_spread_element_of_nested_tuple_recurses_into_rest() {
+    // `...[A, ...B[]]` contributes `A | B`: the nested rest is unwrapped, not left
+    // as the inner array type.
+    let interner = TypeInterner::new();
+    let inner_array = interner.array(TypeId::NUMBER);
+    let tuple = interner.tuple(vec![fixed_elem(TypeId::STRING), rest_elem(inner_array)]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(rest_spread_element_type(&interner, tuple), expected);
+}
+
+#[test]
+fn rest_spread_element_of_array_constrained_param_via_nested_rest() {
+    // The original bug witness: a single variadic spread `[...End]` of an
+    // array-constrained parameter, indexed for its element type, yields `string`.
+    let interner = TypeInterner::new();
+    let end = make_array_constrained_param(&interner, "End", TypeId::STRING);
+    let tuple = interner.tuple(vec![rest_elem(end)]);
+    assert_eq!(rest_spread_element_type(&interner, tuple), TypeId::STRING);
+}
+
+#[test]
+fn rest_spread_element_of_non_array_like_is_unchanged() {
+    let interner = TypeInterner::new();
+    assert_eq!(
+        rest_spread_element_type(&interner, TypeId::STRING),
+        TypeId::STRING
+    );
+}
+
 // =========================================================================
 // contains_application_in_structure
 // =========================================================================

@@ -555,6 +555,7 @@ impl BinderState {
                                         let should_clone_type_only_export = spec_type_only
                                             && !orig_is_type_only
                                             && (orig != exp || !orig_was_exported);
+                                        let mut exported_sym_id = sym_id;
                                         if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
@@ -598,12 +599,21 @@ impl BinderState {
                                             } else {
                                                 self.set_scope_and_file_local(exp, clone_id);
                                             }
+                                            exported_sym_id = clone_id;
                                         } else if orig != exp {
                                             if current_namespace_sym_id.is_none() {
                                                 self.seed_module_export(exp, sym_id);
                                             } else {
                                                 self.set_scope_and_file_local(exp, sym_id);
                                             }
+                                        }
+                                        if self.in_global_augmentation {
+                                            self.record_global_value_augmentation(
+                                                exp,
+                                                exported_sym_id,
+                                                spec_idx,
+                                                symbol_flags::ALIAS,
+                                            );
                                         }
                                     }
                                 }

@@ -158,9 +158,85 @@ type Nested<D1 extends 0 | 1> = Table[D1]["a"];
     );
 }
 
+/// #14254 (hkt-toolbelt): an inner/outer index constrained to *string-literal*
+/// numerals (`'0' | '1'`) addresses tuple elements exactly like the numeric
+/// form — `tsc` treats `Base['0']` and `Base[0]` identically for the element
+/// lookup, so the chain `T[A][B]` must not emit TS2536. Varied alias/param
+/// spellings prove the rule is structural.
+#[test]
+fn string_literal_numeral_constrained_chain_is_accepted() {
+    for (alias, a, b) in [("T", "A", "B"), ("Pairs", "Row", "Col"), ("Grid", "I", "J")] {
+        let src = format!(
+            r#"
+type {alias} = [['a', 'b'], ['c', 'd']];
+type Index<{a} extends '0' | '1', {b} extends '0' | '1'> = {alias}[{a}][{b}];
+"#
+        );
+        let diags = check(&src);
+        assert!(
+            !has_code(&diags, 2536),
+            "string-literal numeral chain (alias {alias}) must not emit TS2536, got: {:?}",
+            codes(&diags)
+        );
+    }
+}
+
+/// Mixed forms: an inner string-literal numeral with an outer numeric literal
+/// (and vice versa) resolve to the same element value — accepted.
+#[test]
+fn mixed_string_and_numeric_literal_chain_is_accepted() {
+    let diags = check(
+        r#"
+type T = [['a', 'b'], ['c', 'd']];
+type InnerStr<A extends '0' | '1', B extends 0 | 1> = T[A][B];
+type InnerNum<A extends 0 | 1, B extends '0' | '1'> = T[A][B];
+"#,
+    );
+    assert!(
+        !has_code(&diags, 2536),
+        "mixed string/numeric literal chain must not emit TS2536, got: {:?}",
+        codes(&diags)
+    );
+}
+
 // -------------------------------------------------------------------------
 // Negative controls: genuine TS2536 must still fire (no over-suppression).
 // -------------------------------------------------------------------------
+
+/// An inner string-literal numeral constraint with an out-of-range member
+/// (`'0' | '5'` over a 2-tuple) genuinely escapes the element-index domain —
+/// `tsc` emits TS2536, matching the numeric-literal control.
+#[test]
+fn out_of_range_inner_string_literal_still_errors() {
+    let diags = check(
+        r#"
+type T = [['a', 'b'], ['c', 'd']];
+type Bad<A extends '0' | '5', B extends '0' | '1'> = T[A][B];
+"#,
+    );
+    assert!(
+        has_code(&diags, 2536),
+        "out-of-range inner string literal must still emit TS2536, got: {:?}",
+        codes(&diags)
+    );
+}
+
+/// A non-canonical string key (`'foo'`, not a numeric index string) is not a
+/// tuple element index — `tsc` emits TS2536.
+#[test]
+fn non_canonical_string_key_inner_index_still_errors() {
+    let diags = check(
+        r#"
+type T = [['a', 'b'], ['c', 'd']];
+type Bad<A extends 'foo', B extends '0' | '1'> = T[A][B];
+"#,
+    );
+    assert!(
+        has_code(&diags, 2536),
+        "non-canonical string key must still emit TS2536, got: {:?}",
+        codes(&diags)
+    );
+}
 
 /// An inner index constraint with an out-of-range literal (`0 | 1 | 2` over a
 /// 2-tuple) genuinely escapes the element-index domain — `tsc` emits TS2536.
