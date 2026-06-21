@@ -1576,3 +1576,55 @@ fn apply_suppression_real_syntax_error_codes_are_never_suppressed() {
         );
     }
 }
+
+#[test]
+fn directive_suppresses_code_after_continuation_comment() {
+    // `@ts-expect-error` on line 1, an explanatory comment on line 2, then the
+    // erroring code on line 3. tsc suppresses the line-3 error and the directive
+    // stays "used" (no TS2578). Previously tsz targeted line 2 (the comment),
+    // failing to suppress and emitting a spurious TS2578.
+    let source = "// @ts-expect-error\n// explanatory continuation\ncode_here;\n";
+    let line_starts = line_starts_of(source);
+    let mut diagnostics = vec![Diagnostic::error(
+        "test.ts".to_string(),
+        line_starts[2],
+        1,
+        "diag 2304".to_string(),
+        2304,
+    )];
+    apply_ts_directive_suppression("test.ts", source, &mut diagnostics, false);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2304),
+        "the directive must suppress the error on the code line after a continuation comment; got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2578),
+        "the directive is used (it suppressed a real error), so no TS2578; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn directive_does_not_skip_a_real_code_line() {
+    // `@ts-expect-error` on line 1, a real (non-comment) code line on line 2, then
+    // erroring code on line 3. tsc targets line 2 (the first real token) — so the
+    // directive is unused (TS2578) and the line-3 error survives. The skip is for
+    // comment-only/blank lines only.
+    let source = "// @ts-expect-error\nconst ok = 1;\nbad_here;\n";
+    let line_starts = line_starts_of(source);
+    let mut diagnostics = vec![Diagnostic::error(
+        "test.ts".to_string(),
+        line_starts[2],
+        1,
+        "diag 2304".to_string(),
+        2304,
+    )];
+    apply_ts_directive_suppression("test.ts", source, &mut diagnostics, false);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2304),
+        "an error one line below a real code line must NOT be suppressed; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2578),
+        "a directive whose target line has no error is unused (TS2578); got {diagnostics:#?}"
+    );
+}

@@ -1004,19 +1004,28 @@ struct TsDirective {
 fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
     let mut directives = Vec::new();
 
-    for comment in tsz_common::comments::get_comment_ranges(text) {
+    let comments = tsz_common::comments::get_comment_ranges(text);
+    let comment_spans: Vec<(u32, u32)> = comments.iter().map(|c| (c.pos, c.end)).collect();
+
+    for comment in &comments {
         let comment_text = comment.get_text(text);
         let Some((kind, directive_offset)) = find_directive_in_text(comment_text) else {
             continue;
         };
 
-        let suppressed_line = if comment.is_multi_line {
+        let initial_suppressed_line = if comment.is_multi_line {
             let close_line = line_map.line_index(comment.end.saturating_sub(1));
             close_line + 1
         } else {
             let comment_line = line_map.line_index(comment.pos);
             comment_line + 1
         };
+        // tsc applies the directive to the next line that bears a real token,
+        // skipping intervening comment-only and blank lines: a `@ts-expect-error`
+        // whose comment wraps onto further explanatory comment lines still
+        // suppresses the code beneath them (and stays "used").
+        let suppressed_line =
+            first_real_token_line(text, line_map, &comment_spans, initial_suppressed_line);
         let directive_start = comment.pos.saturating_add(directive_offset);
         let directive_line = line_map.line_index(directive_start) as usize;
         let directive_line_start = line_map.line_start(directive_line).unwrap_or(comment.pos);
@@ -1036,6 +1045,42 @@ fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
     }
 
     directives
+}
+
+/// Advance to the first line at or after `from_line` that bears a real token,
+/// skipping comment-only and blank lines. `comment_spans` are `(start, end)`
+/// byte offsets of every comment in the file. tsc applies a `@ts-expect-error` /
+/// `@ts-ignore` directive to that line, so a directive comment followed by
+/// further comment or blank lines still targets the code beneath them rather
+/// than the next physical line.
+fn first_real_token_line(
+    text: &str,
+    line_map: &LineMap,
+    comment_spans: &[(u32, u32)],
+    from_line: u32,
+) -> u32 {
+    let bytes = text.as_bytes();
+    let Some(start) = line_map.line_start(from_line as usize) else {
+        return from_line;
+    };
+    let mut offset = start as usize;
+    while offset < bytes.len() {
+        let c = bytes[offset];
+        if c == b' ' || c == b'\t' || c == b'\r' || c == b'\n' {
+            offset += 1;
+            continue;
+        }
+        let pos = offset as u32;
+        if let Some(&(_, end)) = comment_spans
+            .iter()
+            .find(|&&(start, end)| pos >= start && pos < end)
+        {
+            offset = end as usize;
+            continue;
+        }
+        return line_map.line_index(pos);
+    }
+    from_line
 }
 
 /// Apply `@ts-expect-error` and `@ts-ignore` directive suppression to diagnostics.
