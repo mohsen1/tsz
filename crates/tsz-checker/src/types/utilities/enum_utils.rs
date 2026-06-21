@@ -1493,6 +1493,50 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Final structural-overlap fallback for a `source as Target` assertion
+    /// (`TS2352`), operating on the raw source/target types.
+    ///
+    /// Both sides are deeply evaluated so the comparable check sees concrete
+    /// property types instead of `Lazy(DefId)` references (otherwise nested
+    /// interface properties appear as opaque refs and produce false `TS2352`
+    /// on valid assertions such as `{ mode: "" } as UserSettings`).
+    ///
+    /// When both sides are callable/constructor types, overlap is decided by
+    /// structurally comparing their call/construct signatures (erasing the
+    /// target's generic type parameters) via `both_callable_types_overlap`. The
+    /// generic property-overlap heuristic is too permissive there — shared
+    /// `prototype` properties mask real mismatches between distinct constructor
+    /// instantiations — while skipping the check entirely is too strict. All
+    /// other shapes use the structural comparable-for-assertion relation, which
+    /// legitimate object assertions like `{ a: 1 } as { a: number }` rely on.
+    pub(crate) fn assertion_deep_types_overlap(
+        &mut self,
+        expr_type: TypeId,
+        asserted_type: TypeId,
+    ) -> bool {
+        let evaluated_expr = self.evaluate_type_for_assignability(expr_type);
+        let evaluated_asserted = self.evaluate_type_for_assignability(asserted_type);
+        let deep_expr = self.deep_evaluate_object_properties(evaluated_expr);
+        let deep_asserted = self.deep_evaluate_object_properties(evaluated_asserted);
+
+        let both_callable =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, deep_expr).is_some()
+                && crate::query_boundaries::common::callable_shape_id(
+                    self.ctx.types,
+                    deep_asserted,
+                )
+                .is_some();
+        if both_callable {
+            self.both_callable_types_overlap(deep_expr, deep_asserted)
+        } else {
+            crate::query_boundaries::common::types_are_comparable_for_assertion(
+                self.ctx.types,
+                deep_expr,
+                deep_asserted,
+            )
+        }
+    }
+
     /// Check if both types are callable/function types that overlap.
     ///
     /// Two callable types overlap if there exists at least one (src, tgt) call-

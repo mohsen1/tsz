@@ -1063,55 +1063,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         }
                                     }
 
-                                    // Final fallback: check structural property overlap.
-                                    // Skip the comparable heuristic when both sides are
-                                    // Callable types (constructor/class types) because the
-                                    // property-overlap check is too permissive — shared
-                                    // `prototype` properties mask real mismatches between
-                                    // distinct generic instantiations. tsc uses a full
-                                    // structural relation (isTypeComparableTo) instead.
-                                    // Only skip for Callable; Object types need the check
-                                    // for legitimate assertions like `{a: 1} as {a: number}`.
+                                    // Final fallback: structural overlap of the
+                                    // deeply-evaluated source and target. When both sides
+                                    // are callable/constructor types this compares
+                                    // call/construct signatures (erasing the target's
+                                    // generic type parameters) instead of the too-permissive
+                                    // property-overlap heuristic; see
+                                    // `assertion_deep_types_overlap`.
                                     if !have_overlap {
-                                        let evaluated_expr =
-                                            self.checker.evaluate_type_for_assignability(expr_type);
-                                        let evaluated_asserted = self
-                                            .checker
-                                            .evaluate_type_for_assignability(effective_asserted);
-
-                                        // Deep-evaluate object property types so the
-                                        // solver's comparable check sees concrete types
-                                        // instead of Lazy(DefId) references.  Without
-                                        // this, nested interface properties (e.g.,
-                                        // `automation: Automation` inside `UserSettings`)
-                                        // appear as opaque Lazy refs that the solver
-                                        // cannot structurally compare, causing false
-                                        // TS2352 on valid assertions like
-                                        // `{mode: ""} as UserSettings`.
-                                        let deep_expr = self
-                                            .checker
-                                            .deep_evaluate_object_properties(evaluated_expr);
-                                        let deep_asserted = self
-                                            .checker
-                                            .deep_evaluate_object_properties(evaluated_asserted);
-
-                                        let both_callable = crate::query_boundaries::common::callable_shape_id(
-                                            self.checker.ctx.types,
-                                            deep_expr,
-                                        )
-                                        .is_some()
-                                            && crate::query_boundaries::common::callable_shape_id(
-                                                self.checker.ctx.types,
-                                                deep_asserted,
-                                            )
-                                            .is_some();
-                                        if !both_callable {
-                                            have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
-                                                self.checker.ctx.types,
-                                                deep_expr,
-                                                deep_asserted,
-                                            );
-                                        }
+                                        have_overlap = self.checker.assertion_deep_types_overlap(
+                                            expr_type,
+                                            effective_asserted,
+                                        );
                                     }
                                     // Per-property comparable check: the solver's
                                     // `types_are_comparable_for_assertion` can't resolve
