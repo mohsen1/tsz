@@ -938,6 +938,35 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether `expr_node` is a unary `+`/`-` applied directly to a numeric or bigint
+    /// literal (e.g. `-1`, `+1`, `-1n`, `+0x10n`).
+    ///
+    /// Such a `PrefixUnaryExpression` has a numeric/bigint *literal* type in tsc, so it
+    /// is a valid literal computed-property name. The operand must be the literal itself;
+    /// a non-literal operand like `-x` is not accepted (the caller then falls through to
+    /// the TS1166/TS1169/TS1170 error).
+    fn is_unary_numeric_literal_name(
+        arena: &tsz_parser::parser::NodeArena,
+        expr_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if expr_node.kind != tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::PlusToken as u16
+            && unary.operator != SyntaxKind::MinusToken as u16
+        {
+            return false;
+        }
+        let Some(operand_node) = arena.get(unary.operand) else {
+            return false;
+        };
+        operand_node.kind == SyntaxKind::NumericLiteral as u16
+            || operand_node.kind == SyntaxKind::BigIntLiteral as u16
+    }
+
     /// Check a computed property name requires a simple literal or unique symbol type.
     ///
     /// Used for TS1166 (class properties), TS1169 (interfaces), and TS1170 (type literals).
@@ -978,13 +1007,17 @@ impl<'a> CheckerState<'a> {
 
         let is_entity_name = self.is_entity_name_expression(computed.expression);
 
-        // Literal expressions (string, number, no-substitution template) are always OK
-        // since they inherently have literal types
+        // Literal expressions (string, number, bigint, no-substitution template) are
+        // always OK since they inherently have literal types. A unary `+`/`-` applied
+        // directly to a numeric/bigint literal (e.g. `[-1]`, `[+1]`, `[-1n]`) is also a
+        // literal-typed name in tsc, so accept it via the same structural gate.
         if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
             let kind = expr_node.kind;
             if kind == SyntaxKind::StringLiteral as u16
                 || kind == SyntaxKind::NumericLiteral as u16
+                || kind == SyntaxKind::BigIntLiteral as u16
                 || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || Self::is_unary_numeric_literal_name(self.ctx.arena, expr_node)
             {
                 return false;
             }

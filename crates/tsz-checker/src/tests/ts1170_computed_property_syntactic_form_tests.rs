@@ -113,3 +113,94 @@ type X = {
         "TS1170 must fire for parenthesized access regardless of identifier names. Got: {codes:?}"
     );
 }
+
+/// A negative numeric-literal computed property name is literal-typed in tsc and
+/// must NOT produce TS1170. Source: `ts-arithmetic`.
+#[test]
+fn ts1170_not_emitted_for_negative_numeric_literal() {
+    let codes = diag_codes(
+        r#"
+type M = { [-1]: 0; 0: 1; 1: 2 };
+type X = M[-1];
+"#,
+    );
+    assert!(
+        !codes.contains(&1170),
+        "TS1170 must NOT fire for a negative numeric-literal computed name. Got: {codes:?}"
+    );
+}
+
+/// Unary `+` over a numeric literal is also literal-typed — no TS1170.
+#[test]
+fn ts1170_not_emitted_for_unary_plus_numeric_literal() {
+    let codes = diag_codes(
+        r#"
+type M = { [+1]: 0 };
+"#,
+    );
+    assert!(
+        !codes.contains(&1170),
+        "TS1170 must NOT fire for a unary-plus numeric-literal computed name. Got: {codes:?}"
+    );
+}
+
+/// BigInt literals (plain and negated) are literal-typed computed names — no TS1170.
+#[test]
+fn ts1170_not_emitted_for_bigint_literals() {
+    let codes = diag_codes(
+        r#"
+type M = { [1n]: 0; [-1n]: 1 };
+"#,
+    );
+    assert!(
+        !codes.contains(&1170),
+        "TS1170 must NOT fire for bigint-literal computed names. Got: {codes:?}"
+    );
+}
+
+/// Interfaces and classes share the same gate (TS1169/TS1166) — negative
+/// numeric-literal names are accepted there too.
+#[test]
+fn ts1169_ts1166_not_emitted_for_negative_numeric_literal() {
+    let iface = diag_codes(
+        r#"
+interface I {
+    [-1]: number;
+}
+"#,
+    );
+    assert!(
+        !iface.contains(&1169),
+        "TS1169 must NOT fire for a negative numeric-literal interface member. Got: {iface:?}"
+    );
+    let class = diag_codes(
+        r#"
+class C {
+    [-1]: number = 0;
+}
+"#,
+    );
+    assert!(
+        !class.contains(&1166),
+        "TS1166 must NOT fire for a negative numeric-literal class property. Got: {class:?}"
+    );
+}
+
+/// Negative control: a unary operator over a *non-literal* operand (`-x`) is not
+/// a literal name, so TS1170 still fires. The fix is structural, not a blanket
+/// accept of every `PrefixUnaryExpression`.
+#[test]
+fn ts1170_still_emitted_for_unary_over_non_literal() {
+    let codes = diag_codes(
+        r#"
+declare const x: number;
+type X = {
+    [-x]: number,
+};
+"#,
+    );
+    assert!(
+        codes.contains(&1170),
+        "TS1170 must still fire for a unary operator over a non-literal operand. Got: {codes:?}"
+    );
+}
