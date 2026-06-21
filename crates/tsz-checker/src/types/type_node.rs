@@ -909,6 +909,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         };
 
+        // A signature's value parameters are in scope for *every* type position of
+        // that signature, including a type-predicate's asserted type. Seed
+        // `typeof_param_scope` from the lowered function type's parameters so that
+        // `typeof param` inside the predicate's asserted type (and inside the
+        // parameter annotations re-checked below) resolves to the parameter's
+        // declared type instead of fabricating a TS2304. This mirrors
+        // `resolve_return_type_with_params_in_scope`, which already seeds the scope
+        // when lowering an ordinary return-type annotation; the predicate's asserted
+        // type is just another type position of the same signature.
+        let predicate_param_shape =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, lowered_type);
+        if let Some(shape) = &predicate_param_shape {
+            for param in &shape.params {
+                if let Some(atom) = param.name {
+                    self.ctx
+                        .typeof_param_scope
+                        .insert(self.ctx.types.resolve_atom(atom), param.type_id);
+                }
+            }
+        }
+
         let mut predicate_type = self.check(pred_data.type_node);
 
         // When the predicate type was parsed from `?T` (prefix ?), the parser recovers
@@ -952,13 +973,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        if let Some(shape) = &predicate_param_shape {
+            for param in &shape.params {
+                if let Some(atom) = param.name {
+                    self.ctx
+                        .typeof_param_scope
+                        .remove(&*self.ctx.types.resolve_atom_ref(atom));
+                }
+            }
+        }
+
         let (predicate_type, param_type) = if let Some(param_type) = param_type {
             (predicate_type, param_type)
         } else {
-            let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                self.ctx.types,
-                lowered_type,
-            ) else {
+            let Some(shape) = &predicate_param_shape else {
                 return;
             };
             let Some(ref predicate) = shape.type_predicate else {
