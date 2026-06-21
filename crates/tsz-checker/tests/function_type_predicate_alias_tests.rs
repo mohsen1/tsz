@@ -18,7 +18,9 @@
 //!   1. No spurious TS2677 when the parameter, the asserted type, or both are
 //!      written through an alias.
 //!   2. The rule is structural — renaming the alias/parameter must not change it.
-//!   3. Generic-alias `Application` forms (`keyof`-bodied aliases) resolve too.
+//!   3. Generic-alias `Application` forms (`keyof`-bodied aliases) resolve too,
+//!      including when the alias body mentions the predicate signature's type
+//!      parameter.
 //!   4. Negative controls: a genuinely non-assignable predicate still errors,
 //!      whether or not an alias is involved (no over-broad suppression).
 
@@ -98,7 +100,52 @@ export {};
 }
 
 #[test]
-fn function_type_predicate_generic_alias_application_is_clean() {
+fn function_type_predicate_generic_keyof_alias_application_is_clean() {
+    // The reported repro (#14231): a generic-alias `Application`
+    // (`Alias<T> = keyof T`) resolves to the same body as the asserted type.
+    let source = r#"
+type Alias<T> = keyof T;
+let g: <T>(p: Alias<T>) => p is keyof T;
+export {};
+"#;
+    let diags = check(source);
+    assert!(
+        ts2677(&diags).is_empty(),
+        "A generic keyof alias must resolve before the predicate relation: {diags:?}"
+    );
+}
+
+#[test]
+fn function_type_predicate_generic_keyof_alias_is_binder_name_independent() {
+    let source = r#"
+type KeysOf<U> = keyof U;
+let pick: <U>(key: KeysOf<U>) => key is keyof U;
+export {};
+"#;
+    let diags = check(source);
+    assert!(
+        ts2677(&diags).is_empty(),
+        "Generic alias resolution must be independent of binder names: {diags:?}"
+    );
+}
+
+#[test]
+fn function_type_predicate_identity_generic_alias_is_clean() {
+    // `To<T> = T` resolves to the same type parameter as the asserted type.
+    let source = r#"
+type To<T> = T;
+let g: <T>(p: To<T>) => p is T;
+export {};
+"#;
+    let diags = check(source);
+    assert!(
+        ts2677(&diags).is_empty(),
+        "An identity generic alias must resolve symmetrically: {diags:?}"
+    );
+}
+
+#[test]
+fn function_type_predicate_concrete_keyof_alias_application_is_clean() {
     // A generic-alias `Application` (`keyof`-bodied) on both sides resolves to
     // the same body and relates cleanly.
     let source = r#"
