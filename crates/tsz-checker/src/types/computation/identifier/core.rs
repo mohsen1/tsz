@@ -235,6 +235,40 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Select the value-side declaration of a name-merged `TYPE_ALIAS` + value
+    /// symbol.
+    ///
+    /// When a `TYPE_ALIAS` is declared before its merged value (e.g.
+    /// `type Foo = ...; const Foo: any;`), the binder records the type-alias
+    /// node as `value_declaration`. Typing that type-alias node in value
+    /// position yields a possibly-undefined type. Return the first declaration
+    /// whose kind is not a type-alias declaration so the actual value
+    /// declaration drives value-position typing. Returns `None` when every
+    /// declaration is a type-alias (or none can be read from the target arena),
+    /// leaving the caller to fall back to the recorded `value_declaration`.
+    pub(crate) fn value_declaration_skipping_type_alias(
+        &self,
+        target: &tsz_binder::Symbol,
+        target_file_idx: usize,
+    ) -> Option<NodeIndex> {
+        // If the recorded value declaration is already a non-type-alias node,
+        // it is the value side; keep it (matches the const-first merge order).
+        let arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let is_type_alias_node = |decl: NodeIndex| {
+            arena
+                .get(decl)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+        };
+        if target.value_declaration.is_some() && !is_type_alias_node(target.value_declaration) {
+            return Some(target.value_declaration);
+        }
+        target
+            .declarations
+            .iter()
+            .copied()
+            .find(|&decl| decl.is_some() && !is_type_alias_node(decl))
+    }
+
     pub(crate) fn local_current_file_value_symbol_named(
         &self,
         name: &str,

@@ -114,6 +114,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             TypeTraversalKind::Readonly(inner)
         }
+        TypeData::Substitution { base_type, .. } => TypeTraversalKind::Readonly(base_type),
         TypeData::IndexAccess(object, index) => TypeTraversalKind::IndexAccess { object, index },
         TypeData::KeyOf(inner) => TypeTraversalKind::KeyOf(inner),
         // Template literal - extract types from spans for traversal
