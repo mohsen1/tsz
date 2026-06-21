@@ -1795,3 +1795,90 @@ fn test_mapped_type_over_string_keys() {
         other => panic!("Expected object type, got {other:?}"),
     }
 }
+
+/// A concrete literal-membership conditional `"q" extends keyof T ? … : never`
+/// must DEFER — not commit the false branch — while `keyof T` still hides part
+/// of its key space behind a `keyof` of a `Lazy(DefId)` the resolver cannot
+/// expand. Here `T = { a: string } & Lazy(DefId(99999))` with the `DefId` never
+/// registered, so under the resolver-less evaluator `keyof T` reduces to
+/// `"a" | keyof(Lazy(99999))`; `"q"` is absent from the visible part but may be
+/// a key of the unresolved reference, so a definitive `never` is unsound (refs
+/// #14337). Mirrors `tsc`, which keeps such a conditional pending. This is the
+/// root cause of the ts-rest `Without`/`Pick` key-filter dropping a property and
+/// surfacing a spurious `TS2339` on its destructure.
+#[test]
+fn keyof_unresolvable_lazy_intersection_membership_defers() {
+    let interner = TypeInterner::new();
+
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    // DefId(99999) is never inserted into any environment, so the default
+    // resolver returns `None` for it — `keyof Lazy(99999)` stays opaque.
+    let opaque = interner.lazy(DefId(99999));
+    let t = interner.intersection(vec![obj, opaque]);
+    let keyof_t = interner.keyof(t);
+
+    let q = interner.literal_string("q");
+    let cond = interner.conditional(ConditionalType {
+        check_type: q,
+        extends_type: keyof_t,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let result = evaluate_type(&interner, cond);
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "literal membership against a keyof hiding an unresolvable Lazy must defer, not commit the false branch"
+    );
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Conditional(_))),
+        "expected a deferred Conditional, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// Control: when every intersection member is resolvable (here both are concrete
+/// objects), the same membership check stays definitive. `"q"` is genuinely
+/// absent, so the conditional commits the false branch (`never`); a present key
+/// takes the true branch. The defer rule must not turn determinate verdicts into
+/// deferrals.
+#[test]
+fn keyof_resolvable_intersection_membership_is_definitive() {
+    let interner = TypeInterner::new();
+
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let t = interner.intersection(vec![obj_a, obj_b]);
+    let keyof_t = interner.keyof(t);
+
+    let absent = interner.literal_string("q");
+    let cond_absent = interner.conditional(ConditionalType {
+        check_type: absent,
+        extends_type: keyof_t,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert_eq!(evaluate_type(&interner, cond_absent), TypeId::NEVER);
+
+    let present = interner.literal_string("a");
+    let cond_present = interner.conditional(ConditionalType {
+        check_type: present,
+        extends_type: keyof_t,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert_eq!(evaluate_type(&interner, cond_present), TypeId::STRING);
+}
