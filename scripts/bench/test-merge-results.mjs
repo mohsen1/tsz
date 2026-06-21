@@ -1095,6 +1095,87 @@ withTempDir((dir) => {
   assert.equal(merged.totals.green_tsgo_wins, 1);
 });
 
+// Issue #14398: a failed shard writes an error stub ({results:[], error}) per
+// cloudbuild-bench-shard.yaml. It carries no timing data, so a
+// --require-runner-signature merge must DROP it (with a warning) and keep
+// merging the shards that succeeded — a single transient shard failure must not
+// crash the whole benchmark publish on the signature gate.
+withTempDir((dir) => {
+  const signed = writeInput(dir, "bench-results-projects.json", [projectRow("standalone")], {
+    ...SAMPLE_RUN_METADATA,
+    runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+    shard: { label: "projects", filter: "projects" },
+    filter: "projects",
+  });
+  const stub = path.join(dir, "bench-results-project-hotspots.json");
+  fs.writeFileSync(
+    stub,
+    `${JSON.stringify({ schema_version: 1, results: [], error: "benchmark shard did not write results" })}\n`,
+    "utf8",
+  );
+  const result = runMergeInputs(dir, [signed, stub], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stderr,
+    /::warning::[\s\S]*bench-results-project-hotspots\.json: benchmark shard did not write results/,
+  );
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.ok(merged.results.some((r) => r.name === "standalone"), "the successful shard must survive the merge");
+  assert.deepEqual(
+    merged.merged_from,
+    ["bench-results-projects.json"],
+    "the dropped error stub must not appear in merged_from",
+  );
+  assert.equal(merged.totals.rows, 1, "the dropped stub must not contribute rows");
+  assert.equal(
+    merged.validation.hyperfine_exit_codes_required,
+    true,
+    "a dropped stub must not flip aggregate validation flags",
+  );
+  assert.ok(
+    merged.validation.dropped_empty_shards.some(
+      (s) => s.file === "bench-results-project-hotspots.json"
+        && s.error === "benchmark shard did not write results",
+    ),
+    "the dropped stub must be recorded in validation.dropped_empty_shards",
+  );
+});
+
+// A payload with no result rows is treated as a failed/partial shard and dropped
+// even when it carries no `error` and no signature: it contributes nothing, so it
+// is not subject to the runner-signature gate.
+withTempDir((dir) => {
+  const signed = writeInput(dir, "bench-results-a.json", [projectRow("standalone")], {
+    ...SAMPLE_RUN_METADATA,
+    runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+    shard: { label: "a", filter: "a" },
+    filter: "a",
+  });
+  const empty = path.join(dir, "bench-results-empty.json");
+  fs.writeFileSync(empty, `${JSON.stringify({ schema_version: 1, results: [] })}\n`, "utf8");
+  const result = runMergeInputs(dir, [signed, empty], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.deepEqual(merged.merged_from, ["bench-results-a.json"]);
+  assert.ok(
+    merged.validation.dropped_empty_shards.some((s) => s.file === "bench-results-empty.json" && s.error === null),
+  );
+});
+
+// Security boundary preserved: a shard that DOES contribute result rows but lacks
+// the runner signature must still hard-fail under --require-runner-signature — only
+// genuinely-empty shards are exempt (they carry no timing data to forge).
+withTempDir((dir) => {
+  const unsignedWithResults = writeInput(dir, "bench-results-unsigned.json", [projectRow("standalone")], {
+    ...SAMPLE_RUN_METADATA,
+    shard: { label: "unsigned", filter: "unsigned" },
+    filter: "unsigned",
+  });
+  const result = runMergeInputs(dir, [unsignedWithResults], ["--require-runner-signature"]);
+  assert.equal(result.status, 1, "an unsigned payload that contributes rows must still fail");
+  assert.match(result.stderr, /bench-results-unsigned\.json: missing runner_environment/);
+});
+
 // A perf-timed canary (the bench-canaries shard already measured it) must keep
 // its real tsz_ms/tsgo_ms and must NOT be stamped the "not timed" placeholder
 // status when its compile-guard compat is attached — otherwise isGreen() becomes
