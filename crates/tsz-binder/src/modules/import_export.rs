@@ -659,6 +659,13 @@ impl BinderState {
                             }
                         }
                     } else {
+                        struct ReexportSpec {
+                            exported: String,
+                            original: Option<String>,
+                            spec_idx: NodeIndex,
+                            is_type_only: bool,
+                        }
+
                         // Get the module name from module_specifier
                         let module_name = if export.module_specifier.is_some() {
                             let idx = export.module_specifier;
@@ -678,12 +685,6 @@ impl BinderState {
                             // type-only flag merged with the declaration-level flag so
                             // `export { type Foo, Bar } from "./mod"` keeps `Foo` type-only
                             // and `Bar` value-bearing (matches tsc's TS1361/TS1362).
-                            struct ReexportSpec {
-                                exported: String,
-                                original: Option<String>,
-                                spec_idx: NodeIndex,
-                                is_type_only: bool,
-                            }
                             let mut reexport_specs: Vec<ReexportSpec> =
                                 Vec::with_capacity(named.elements.nodes.len());
                             for &spec_idx in &named.elements.nodes {

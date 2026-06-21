@@ -1350,6 +1350,9 @@ impl BinderState {
         existing_id: Option<SymbolId>,
         incoming_id: SymbolId,
     ) -> bool {
+        const TYPE_ONLY_DECL: u32 =
+            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
+
         let Some(existing_id) = existing_id else {
             return false;
         };
@@ -1369,8 +1372,6 @@ impl BinderState {
             return true;
         }
 
-        const TYPE_ONLY_DECL: u32 =
-            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
         let incoming_is_type_only = incoming.is_type_only
             || (incoming.has_any_flags(TYPE_ONLY_DECL)
                 && !incoming.has_any_flags(symbol_flags::VALUE)

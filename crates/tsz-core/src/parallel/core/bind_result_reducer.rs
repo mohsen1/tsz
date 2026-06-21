@@ -1618,6 +1618,10 @@ fn export_symbol_prefers_incoming_value(
     existing_id: SymbolId,
     incoming_id: SymbolId,
 ) -> bool {
+    const TYPE_ONLY_DECL: u32 = crate::binder::symbol_flags::INTERFACE
+        | crate::binder::symbol_flags::TYPE_ALIAS
+        | crate::binder::symbol_flags::TYPE_PARAMETER;
+
     let Some(existing) = global_symbols.get(existing_id) else {
         return false;
     };
@@ -1634,9 +1638,6 @@ fn export_symbol_prefers_incoming_value(
         return false;
     }
 
-    const TYPE_ONLY_DECL: u32 = crate::binder::symbol_flags::INTERFACE
-        | crate::binder::symbol_flags::TYPE_ALIAS
-        | crate::binder::symbol_flags::TYPE_PARAMETER;
     let existing_is_type_only = existing.is_type_only
         || existing.is_pure_type()
         || (existing.has_any_flags(TYPE_ONLY_DECL)

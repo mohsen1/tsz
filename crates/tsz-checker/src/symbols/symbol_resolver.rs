@@ -339,7 +339,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn module_augmentation_symbol_matches_spec(
-        &self,
         candidate_spec: &str,
         augmentation_spec: &str,
     ) -> bool {
@@ -379,7 +378,7 @@ impl<'a> CheckerState<'a> {
         let module_spec = self.enclosing_string_literal_module_augmentation_spec(idx)?;
 
         for (&sym_id, candidate_spec) in self.ctx.binder.augmentation_target_modules.iter() {
-            if !self.module_augmentation_symbol_matches_spec(candidate_spec, &module_spec) {
+            if !Self::module_augmentation_symbol_matches_spec(candidate_spec, &module_spec) {
                 continue;
             }
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {

@@ -825,6 +825,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        use tsz_lowering::TypeLowering;
+        use tsz_solver::CallableShape;
+
         // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every entry to
         // type-of-symbol computation; attribution uses this against
         // unique-SymbolId estimates to characterize recomputation.
@@ -834,7 +837,6 @@ impl<'a> CheckerState<'a> {
         tsz_common::perf_counters::record_compute_type_of_symbol_call();
 
         let factory = self.ctx.types.factory();
-        use tsz_lowering::TypeLowering;
 
         // Node20/NodeNext CJS-of-ESM `export { X as "module.exports" }` interop:
         // a require-style alias (`import X = require(M)` or `import * as X from M`)
@@ -1479,8 +1481,6 @@ impl<'a> CheckerState<'a> {
                     factory: &factory,
                 });
             }
-
-            use tsz_solver::CallableShape;
 
             // Impl signature is never an externally visible call signature.
             // Body-less decls are the overloads; JSDoc `@overload` substitutes
