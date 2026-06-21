@@ -263,6 +263,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         match (source_key, target_key) {
+            // A source that is a generic type parameter we are NOT inferring
+            // (source placeholders are handled above) cannot match a structured
+            // generic target — a type constructor like `Record<K, V>` or a
+            // mapped type — directly. Mirror tsc and infer from its apparent
+            // type (its constraint), so a target inference variable is seeded
+            // from the constraint's corresponding component: `K` of
+            // `Record<K, any>` is inferred from a `T extends Record<string,
+            // any>` source as `string`, instead of falling back to `K`'s
+            // constraint default (`PropertyKey`), which yields a spurious
+            // over-wide key and a downstream TS2339 (radash `lowerize`).
+            //
+            // Guarded on the target actually carrying an inference placeholder
+            // so a fully concrete structured target stays a no-op, and on the
+            // constraint differing from the source; the `constraint_pairs`
+            // visited set and recursion-depth bound own termination. A
+            // bare-placeholder target is handled earlier (lower-bound
+            // candidate), and a naked parameter inside a union/conditional
+            // target keeps its direct inference through the dedicated arms, so
+            // neither is reached here.
+            (
+                Some(TypeData::TypeParameter(ref param_info)),
+                Some(TypeData::Application(_) | TypeData::Mapped(_)),
+            ) => {
+                if let Some(constraint) = param_info.constraint
+                    && constraint != source
+                    && with_placeholder_visited(|visited| {
+                        self.type_contains_placeholder(target, var_map, visited)
+                    })
+                {
+                    self.constrain_types(ctx, var_map, constraint, target, priority);
+                }
+            }
             (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner))) => {
                 let prev_ro = ctx.in_readonly_source_context;
                 ctx.in_readonly_source_context = true;
@@ -575,6 +607,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 crate::types::InferencePriority::MappedType,
                             );
                             return;
+                        }
+
+                        // Simple mapped target `{ [P in K]: V }` over a source
+                        // carrying index signatures: infer the constraint `K`
+                        // from the index key type(s) (`string`/`number`),
+                        // mirroring tsc inferring `K = string` for a
+                        // `Record<string, …>` / `{ [x: string]: … }` source.
+                        // Guarded on `K` being a bare inference placeholder so
+                        // homomorphic (`keyof T`) mapped types keep their
+                        // reverse-mapped inference path untouched.
+                        if has_index_sigs && var_map.contains_key(&mapped.constraint) {
+                            let key_types: Vec<TypeId> =
+                                [&source_obj.string_index, &source_obj.number_index]
+                                    .into_iter()
+                                    .flatten()
+                                    .map(|idx| idx.key_type)
+                                    .collect();
+                            if !key_types.is_empty() {
+                                let keys_union =
+                                    crate::utils::union_or_single(self.interner, key_types);
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    keys_union,
+                                    mapped.constraint,
+                                    crate::types::InferencePriority::MappedType,
+                                );
+                                return;
+                            }
                         }
                     }
                     if !has_properties

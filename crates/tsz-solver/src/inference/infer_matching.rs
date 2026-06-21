@@ -420,6 +420,36 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_mapped_type_array(source_elem, mapped_id, priority)?;
             }
 
+            // Source is a generic type parameter that is NOT one we're
+            // inferring (Case 2 returns for inference variables) matched
+            // against a structured generic target — a type constructor like
+            // `Record<K, V>` or a mapped type. A bare type parameter cannot
+            // match such a target structurally, so — like tsc — infer from its
+            // apparent type (its constraint): `K` of `Record<K, any>` is then
+            // inferred from the source constraint's key component
+            // (`Record<string, any>` ⇒ `string`) instead of falling back to
+            // `K`'s constraint default (`PropertyKey`), which produces a
+            // spurious over-wide key and downstream TS2339 (radash `lowerize`).
+            //
+            // Guarded on the target actually carrying an inference variable so a
+            // fully concrete structured target stays a no-op, and on the
+            // constraint differing from the source to avoid self-recursion. A
+            // bare-type-parameter target is handled earlier (Case 1: the source
+            // becomes the candidate directly), and a naked parameter inside a
+            // union target keeps its direct `K = T` inference via the union
+            // decomposition arm, so neither is reached here.
+            (
+                Some(TypeData::TypeParameter(ref param_info)),
+                Some(TypeData::Application(_) | TypeData::Mapped(_)),
+            ) => {
+                if let Some(constraint) = param_info.constraint
+                    && constraint != source
+                    && self.target_contains_inference_param(target)
+                {
+                    self.infer_from_types(constraint, target, priority)?;
+                }
+            }
+
             // TypeApplication source: expand type alias and recurse.
             // When a source type is a type alias application (e.g., `Mapper<string, number>`),
             // expand it to its structural form so inference can match structurally against
