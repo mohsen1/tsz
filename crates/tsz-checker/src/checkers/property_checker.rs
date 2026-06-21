@@ -990,6 +990,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A unary `+`/`-` applied directly to a numeric or bigint literal
+        // (`[-1]`, `[+1]`, `[-1n]`) is a numeric-literal-typed computed property
+        // name; tsc accepts it as a literal name. The operand must be the literal
+        // itself, so a non-literal operand like `[-x]` is still rejected. (#14256)
+        if let Some(expr_node) = self.ctx.arena.get(computed.expression)
+            && expr_node.kind == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr(expr_node)
+            && (unary.operator == SyntaxKind::PlusToken as u16
+                || unary.operator == SyntaxKind::MinusToken as u16)
+            && let Some(operand) = self.ctx.arena.get(unary.operand)
+            && (operand.kind == SyntaxKind::NumericLiteral as u16
+                || operand.kind == SyntaxKind::BigIntLiteral as u16)
+        {
+            return false;
+        }
+
         // Entity name expressions (identifiers, property access chains) are always
         // structurally OK for computed property names — skip the TS1166/TS1169 error.
         if is_entity_name {

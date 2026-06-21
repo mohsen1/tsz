@@ -1,3 +1,4 @@
+mod computed_property_names;
 mod const_initializer_widening;
 mod cross_module_unique_symbol;
 mod defaults;
