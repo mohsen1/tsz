@@ -1699,6 +1699,7 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         Some(TypeData::Array(element_type)) => Some(element_type),
         // `readonly T[]` wraps the array in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_element_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => get_array_element_type(db, constraint),
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .and_then(|constraint| get_array_element_type(db, constraint)),
@@ -1726,6 +1727,9 @@ pub fn constraint_allows_mutable_array_like(db: &dyn TypeDatabase, type_id: Type
     match db.lookup(type_id) {
         Some(TypeData::Array(_)) => true,
         Some(TypeData::Tuple(list_id)) => !db.tuple_list(list_id).is_empty(),
+        Some(TypeData::Substitution { constraint, .. }) => {
+            constraint_allows_mutable_array_like(db, constraint)
+        }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .is_some_and(|constraint| constraint_allows_mutable_array_like(db, constraint)),
@@ -1825,6 +1829,7 @@ pub fn get_tuple_elements(
         }
         // `readonly [A, B]` is wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_tuple_elements(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => get_tuple_elements(db, constraint),
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .and_then(|constraint| get_tuple_elements(db, constraint)),

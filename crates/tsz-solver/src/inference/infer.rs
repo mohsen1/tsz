@@ -886,6 +886,13 @@ impl<'a> InferenceContext<'a> {
             TypeData::NoInfer(inner) => {
                 self.collect_type_params(inner, params, visited);
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.collect_type_params(base_type, params, visited);
+                self.collect_type_params(constraint, params, visited);
+            }
         }
     }
 
@@ -1089,6 +1096,13 @@ impl<'a> InferenceContext<'a> {
             | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => false,
             TypeData::NoInfer(inner) => self.type_contains_param(inner, target, visited),
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.type_contains_param(base_type, target, visited)
+                    || self.type_contains_param(constraint, target, visited)
+            }
         }
     }
 
