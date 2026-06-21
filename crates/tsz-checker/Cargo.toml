@@ -611,6 +611,9 @@ path = "tests/ts2303_tests.rs"
 name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
 [[test]]
+name = "namespace_builtin_collision_indexed_access_tests"
+path = "tests/namespace_builtin_collision_indexed_access_tests.rs"
+[[test]]
 name = "class_reserved_word_diagnostics_tests"
 path = "tests/class_reserved_word_diagnostics_tests.rs"
 [[test]]
