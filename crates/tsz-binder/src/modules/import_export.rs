@@ -588,15 +588,22 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
-                                            if let Some(table) = self.current_scope_mut() {
-                                                table.set(exp.to_string(), clone_id);
+                                            // Renamed *top-level* exports go to the public
+                                            // surface only (see `seed_module_export`). Namespace
+                                            // member exports keep the scope/file-local seeding:
+                                            // their cross-references resolve through the
+                                            // namespace's own exports table, not `file_locals`.
+                                            if orig != exp && current_namespace_sym_id.is_none() {
+                                                self.seed_module_export(exp, clone_id);
+                                            } else {
+                                                self.set_scope_and_file_local(exp, clone_id);
                                             }
-                                            self.file_locals.set(exp.to_string(), clone_id);
                                         } else if orig != exp {
-                                            if let Some(table) = self.current_scope_mut() {
-                                                table.set(exp.to_string(), sym_id);
+                                            if current_namespace_sym_id.is_none() {
+                                                self.seed_module_export(exp, sym_id);
+                                            } else {
+                                                self.set_scope_and_file_local(exp, sym_id);
                                             }
-                                            self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }
                                 }
@@ -800,11 +807,7 @@ impl BinderState {
                         }
                     } else {
                         // Regular namespace re-export — add to module exports
-                        let current_file = self.debugger.current_file.clone();
-                        Arc::make_mut(&mut self.module_exports)
-                            .entry(current_file)
-                            .or_default()
-                            .set(name.to_string(), sym_id);
+                        self.seed_module_export(name, sym_id);
                     }
                 }
             }
@@ -832,6 +835,35 @@ impl BinderState {
                 }
             }
         }
+    }
+
+    /// Record a public export `name -> sym_id` directly in the file's
+    /// `module_exports` surface, without creating an in-module lexical binding.
+    ///
+    /// Used by export forms that contribute a public name but must not seed a
+    /// `file_locals`/scope slot: `export * as ns from "mod"` and renamed
+    /// top-level specifiers (`export { orig as exp }`). For the latter, routing
+    /// through `module_exports` is load-bearing — writing the alias target into
+    /// the scope slot would clobber a colliding local declaration named `exp`
+    /// (for example a same-named `class`), producing spurious `TS2749` at
+    /// in-module type sites and `TS2552` at value sites, while cross-file
+    /// `import { exp }` must still resolve to the alias target.
+    fn seed_module_export(&mut self, name: &str, sym_id: crate::SymbolId) {
+        let current_file = self.debugger.current_file.clone();
+        Arc::make_mut(&mut self.module_exports)
+            .entry(current_file)
+            .or_default()
+            .set(name.to_string(), sym_id);
+    }
+
+    /// Seed a same-file lexical binding `name -> sym_id` into both the current
+    /// scope and `file_locals`. Used by export forms that legitimately create an
+    /// in-module name (namespace member exports, type-only export clones).
+    fn set_scope_and_file_local(&mut self, name: &str, sym_id: crate::SymbolId) {
+        if let Some(table) = self.current_scope_mut() {
+            table.set(name.to_string(), sym_id);
+        }
+        self.file_locals.set(name.to_string(), sym_id);
     }
 
     /// Existing re-export alias for `name` in the current scope, if any.
