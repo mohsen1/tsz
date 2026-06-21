@@ -667,6 +667,14 @@ pub struct BinderState {
     /// where non-async, non-generator IIFEs are part of the containing control flow.
     pub(crate) return_targets: Vec<FlowNodeId>,
 
+    /// Finally-entry labels for the enclosing `try` statements that have a
+    /// `finally` block. An abrupt-completion statement (`return`, `throw`,
+    /// `break`, `continue`) inside a `try` adds its flow here so the `finally`
+    /// body is analyzed over the union of every state that can reach it,
+    /// including states that only arise on the abrupt-exit path. This mirrors
+    /// TypeScript's exception/return label seeding in `bindTryStatement`.
+    pub(crate) finally_entry_targets: Vec<FlowNodeId>,
+
     /// Language features detected during binding (generators, decorators, using, etc.).
     /// Populated during `bind_source_file` with zero overhead since the binder already walks every node.
     pub file_features: FileFeatures,
