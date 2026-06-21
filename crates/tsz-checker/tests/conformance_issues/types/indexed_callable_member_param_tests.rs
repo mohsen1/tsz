@@ -117,3 +117,25 @@ export { misuse };
          `number`, not callable) must still error. Actual: {diags:#?}"
     );
 }
+
+/// Union call semantics must stay intact when callable interface members are
+/// initially lazy. Fully evaluating such a union only to discover signatures
+/// must not flatten it into overload-style "any candidate may accept" handling;
+/// `this` compatibility still has to be checked across the union.
+#[test]
+fn lazy_callable_interface_union_preserves_this_diagnostic() {
+    let diags = compile_and_get_diagnostics(
+        r#"
+interface First { (this: void, value?: number): void; }
+interface Second { (this: number, value?: number): void; }
+interface Third { (value: number): void; }
+declare const fn: First | Second | Third;
+fn(0);
+"#,
+    );
+    assert!(
+        has_error(&diags, 2684),
+        "TS2684 expected — a union of callable interfaces with incompatible \
+         `this` parameters must not be flattened into overload-style handling. Actual: {diags:#?}"
+    );
+}

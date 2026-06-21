@@ -587,7 +587,10 @@ impl<'a> CheckerState<'a> {
         // reduction. Only adopt the result when it actually reveals signatures,
         // leaving genuinely uncallable and still-deferred-generic callees
         // untouched (intrinsics can never become callable, so skip them).
+        let original_callee_is_union =
+            common::is_union_type(self.ctx.types, resolved_for_classification);
         if matches!(classification, query::CallSignaturesKind::NoSignatures)
+            && !original_callee_is_union
             && !callee_type_for_resolution.is_intrinsic()
         {
             let fully_evaluated = self.evaluate_type_with_env_uncached(callee_type_for_resolution);
