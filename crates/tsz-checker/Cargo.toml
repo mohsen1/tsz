@@ -1809,6 +1809,9 @@ path = "tests/flow_captured_let_memoization_tests.rs"
 [[test]]
 name = "flow_passthrough_run_narrowing_tests"
 path = "tests/flow_passthrough_run_narrowing_tests.rs"
+[[test]]
+name = "array_mutation_unrelated_narrowing_tests"
+path = "tests/array_mutation_unrelated_narrowing_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
