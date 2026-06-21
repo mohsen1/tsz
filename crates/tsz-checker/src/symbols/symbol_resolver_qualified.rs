@@ -619,6 +619,38 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(augmented_sym);
         }
 
+        // Named import bound to an `export * as NS from '<m>'` namespace
+        // re-export: the member lives in the re-exported module `<m>`, not in the
+        // importing module's own export surface, so every lookup above misses.
+        // Resolve the member through the namespace's backing module here, on the
+        // symbol-resolution path, so its type materializes the same way a
+        // whole-namespace import (`import * as NS`) does — rather than letting
+        // the caller fall back to the raw-`SymbolId`-sensitive
+        // `resolve_qualified_name` path, which mis-resolves cross-file members
+        // whose ids collide with the local import alias.
+        if !left_has_local_namespace_conflict
+            && let Some(member_sym) = self
+                .ctx
+                .resolve_member_via_namespace_reexport(original_left_sym, right_name)
+                .or_else(|| {
+                    self.ctx
+                        .resolve_member_via_namespace_reexport(left_sym, right_name)
+                })
+        {
+            let member_sym =
+                self.propagate_cross_file_member_target(left_sym, member_sym, right_name);
+            let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
+                || self.symbol_is_value_only(member_sym, Some(right_name)))
+                && !self.symbol_is_type_only(member_sym, Some(right_name));
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(member_sym);
+            }
+            return TypeSymbolResolution::Type(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
+        }
+
         TypeSymbolResolution::NotFound
     }
 

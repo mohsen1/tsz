@@ -209,6 +209,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // ECMAScript private fields (`#foo`) are never reachable through a public
+        // member access, so tsc never offers one as a "did you mean?" candidate.
+        // Without this, an external `c.events` on a class with a `#event` field
+        // wrongly becomes TS2551 ("Did you mean '#event'?") instead of plain
+        // TS2339 (witness: msw).
+        property_names.retain(|name| !name.starts_with('#'));
+
         property_names
     }
 

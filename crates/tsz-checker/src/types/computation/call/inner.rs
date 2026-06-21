@@ -265,12 +265,14 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                     );
                     }
-                    // Resolve type arguments even though the call is untyped. Without
+                    // Validate type arguments even though the call is untyped. Without
                     // this, unresolved type names in arguments (e.g.
                     // `g<InvalidReference>()`) silently succeed — tsc still emits
-                    // TS2304 for them. Mirrors the matching block in generic_checker.
+                    // TS2304 for them. Use the type-node checker (not the value-context
+                    // `get_type_of_node`, which wrongly reports a keyword type such as
+                    // `void` as a value via TS2693): tsc emits only TS2347 here.
                     for &type_arg_idx in &type_args_list.nodes {
-                        self.get_type_of_node(type_arg_idx);
+                        self.check_type_node(type_arg_idx);
                     }
                 }
                 // Untyped calls accept ordinary args; callbacks still get their own context for TS7006.

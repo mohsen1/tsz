@@ -412,7 +412,11 @@ pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
-    matches!(types.lookup(type_id), Some(TypeData::Array(_)))
+    match types.lookup(type_id) {
+        Some(TypeData::Array(_)) => true,
+        Some(TypeData::Substitution { constraint, .. }) => is_array_type(types, constraint),
+        _ => false,
+    }
 }
 
 /// Check if a type is a tuple type (including readonly tuples wrapped in `ReadonlyType`).
@@ -423,6 +427,7 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
         Some(TypeData::Tuple(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_type(types, inner),
+        Some(TypeData::Substitution { constraint, .. }) => is_tuple_type(types, constraint),
         _ => false,
     }
 }

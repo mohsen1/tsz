@@ -1792,3 +1792,72 @@ type Bad<K1 extends keyof T> = T[K1]["nope"];
          the concrete base.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+// `T[never]` indexes an empty key set. `never` is assignable to every index
+// key, so `tsc` resolves the access to `T`'s index source — an array/tuple
+// element type or an index-signature value type — not `never`. Collapsing
+// `T[never]` to `never` made it the parameter type below, so a real argument
+// (a `string`/`number`/`boolean`) was rejected with a false TS2345. Mined from
+// arktype. Adjacent cases cover array, tuple, and index-signature bases with
+// varied binders.
+#[test]
+fn never_key_index_resolves_to_index_source_no_ts2345() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type ElemOfArray = (readonly string[])[never];
+declare function takeElem(value: ElemOfArray): void;
+takeElem("hello");
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "(readonly string[])[never] must resolve to the element type string.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type ElemOfTuple = [string, number][never];
+declare function takeTuple(slot: ElemOfTuple): void;
+takeTuple(42);
+takeTuple("world");
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "[string, number][never] must resolve to string | number.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    // Inline index-signature object (lib-independent stand-in for
+    // `Record<string, boolean>`): `T[never]` reads the string index value type.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type ValueOfRecord = { [k: string]: boolean }[never];
+declare function takeRecord(flag: ValueOfRecord): void;
+takeRecord(true);
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "{{ [k: string]: boolean }}[never] must resolve to the index value boolean.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+// Negative control: a plain object type with named properties only has no index
+// source, so `T[never]` stays `never`. Assigning a `string` to it must still
+// fail, exactly as `tsc` does — the fix must not over-broaden to a non-`never`
+// value type when there is no array element or index signature.
+#[test]
+fn never_key_index_on_plain_object_stays_never() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type NoIndexSource = { a: string; b: number }[never];
+const bad: NoIndexSource = "not never";
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "A plain object with named properties only has no index source, so T[never] is \
+         never and a string is not assignable.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

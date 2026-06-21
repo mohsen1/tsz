@@ -10,7 +10,7 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Keep the lowered generic base/defaults and ordinary argument identity,
     /// but replace checker-owned explicit type-argument slots when needed so
     /// inline type literals preserve computed property names and related facts.

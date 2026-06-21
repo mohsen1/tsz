@@ -321,6 +321,16 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
             f(*inner)
         }
 
+        // Substitution: traverse both the underlying variable and its implied
+        // constraint so generic-content predicates observe the narrowing.
+        TypeData::Substitution {
+            base_type,
+            constraint,
+        } => {
+            f(*base_type)?;
+            f(*constraint)
+        }
+
         TypeData::KeyOf(inner) => {
             if policy.deferred_operations {
                 f(*inner)?;

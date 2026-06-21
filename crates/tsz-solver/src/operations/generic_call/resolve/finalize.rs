@@ -1,6 +1,6 @@
 use crate::inference::infer::{InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::generic_call::inference_helpers::{
+use crate::operations::generic_call::foreign_param_shapes::{
     is_bare_foreign_type_param, is_substantive_inference_candidate,
 };
 use crate::operations::generic_call::readonly_direct_inference;
@@ -186,8 +186,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 pre_adjusted = ?ty,
                                 "Adjusting resolved inference type"
                             );
+                            // A union argument whose members are naked outer type
+                            // parameters (e.g. `T | T[]`) distributes into direct
+                            // inference as bare-foreign-type-param-shaped lower bounds
+                            // (`T`, `T[]`). When the inferred BCT is the union of only
+                            // such shapes, tsc keeps the distributed union as the
+                            // inferred type for a naked-type-parameter target rather
+                            // than collapsing to the first candidate; collapsing here
+                            // turns the post-inference assignability re-check into a
+                            // hard failure (false TS2769). Concrete candidates (e.g.
+                            // `string` in `string | T[]`) are NOT bare-foreign shapes,
+                            // so heterogeneous unions still collapse and surface the
+                            // genuine mismatch.
+                            let preserve_distributed_foreign_union = matches!(
+                                self.interner.lookup(ty),
+                                Some(TypeData::Union(_))
+                            ) && lower_bounds.len() > 1
+                                && lower_bounds.iter().all(|&bound| {
+                                    crate::operations::generic_call::foreign_param_shapes::is_bare_foreign_type_param_shape(
+                                        self.interner.as_type_database(),
+                                        bound,
+                                        local_type_param_names,
+                                        type_param_placeholder_atoms,
+                                    )
+                                });
                             let mut ty = if all_return_type {
                                 self.resolve_return_position_inference_type(&lower_bounds, ty)
+                            } else if preserve_distributed_foreign_union {
+                                ty
                             } else if direct_param_vars.contains(&var)
                                 && !has_index_signature_candidates
                             {

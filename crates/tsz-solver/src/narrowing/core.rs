@@ -1772,7 +1772,7 @@ impl<'a> NarrowingContext<'a> {
                             .narrow_excluding_type(member, excluded_type)
                             .non_never();
                     }
-                    if self.is_assignable_to(member, excluded_type) {
+                    if self.member_excluded_by(member, excluded_type) {
                         None
                     } else {
                         Some(member)
@@ -1846,11 +1846,29 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // If source is assignable to excluded, return never
-        if self.is_assignable_to(source_type, excluded_type) {
+        if self.member_excluded_by(source_type, excluded_type) {
             TypeId::NEVER
         } else {
             source_type
         }
+    }
+
+    /// Whether `member` is removed when narrowing `source` by excluding
+    /// `excluded_type` (e.g. the true branch of `x !== undefined`).
+    ///
+    /// Beyond ordinary assignability, `void`'s sole inhabitant is `undefined`,
+    /// so excluding `undefined` removes a `void` member. This mirrors tsc's
+    /// `NEUndefined`/`EQUndefined` type facts, where `void` carries
+    /// `EQUndefined` but not `NEUndefined`: a `void` value can equal
+    /// `undefined`, so `x !== undefined` (and `typeof x !== "undefined"`, plus
+    /// the symmetric `=== undefined` false branch) discards it. Without this,
+    /// `boolean | void` stays `boolean | void` after `x !== undefined`,
+    /// producing a spurious TS2322 against a `boolean` target.
+    fn member_excluded_by(&self, member: TypeId, excluded_type: TypeId) -> bool {
+        if excluded_type == TypeId::UNDEFINED && member == TypeId::VOID {
+            return true;
+        }
+        self.is_assignable_to(member, excluded_type)
     }
 
     /// Narrow a type by excluding multiple types at once (batched version).
@@ -1917,9 +1935,10 @@ impl<'a> NarrowingContext<'a> {
 
                     // Slow path: check assignability for complex cases
                     // This handles cases where the member isn't identical to an excluded type
-                    // but might still be assignable to one (e.g., literal subtypes)
+                    // but might still be assignable to one (e.g., literal subtypes), and the
+                    // `void`-vs-`undefined` exclusion (see `member_excluded_by`).
                     for &excluded in &excluded_set {
-                        if self.is_assignable_to(member, excluded) {
+                        if self.member_excluded_by(member, excluded) {
                             return None;
                         }
                     }
@@ -1942,7 +1961,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Check assignability for single type
         for &excluded in &excluded_set {
-            if self.is_assignable_to(source_type, excluded) {
+            if self.member_excluded_by(source_type, excluded) {
                 return TypeId::NEVER;
             }
         }

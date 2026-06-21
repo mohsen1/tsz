@@ -1,6 +1,7 @@
 # DefId Raw-Symbol Fallback Producer Map
 
-**Status**: Updated after #7717, #7756, and #7758
+**Status**: Updated after #7717, #7756, and #7758; solver caller budget guarded
+for the content-canonical identity migration (tsz-org/tsz#14344).
 **Scope**: `Lazy(DefId)` fallback paths that still recover from
 `interner.reference(SymbolRef(N))`-style construction.
 
@@ -28,6 +29,24 @@ No active non-test checker producers remain. The architecture guard
 `test_checker_raw_symbol_reference_construction_budget` allows zero raw
 `.reference(...)` construction calls in checker sources, and focused guards cover
 the previously migrated `instanceof` and `ArrayBuffer.isView` branches.
+
+## Solver Fallback Budget Guard
+
+The solver-side `TypeEnvironment::resolve_lazy` compatibility path reinterprets a
+`DefId` as a `SymbolId` through `raw_symbol_fallback_def`. Previously this surface
+had only a runtime signal (`identity.type_environment_raw_symbol_lazy_fallbacks`)
+and no static budget, so it could grow silently. The architecture guard
+`solver_raw_symbol_fallback_def_budget_does_not_grow` (in
+`crates/tsz-solver/tests/architecture_guards.rs`) now pins the number of
+`raw_symbol_fallback_def` call sites at a non-growing budget (currently **4**:
+`def/resolver.rs:1524,1553,1562,1689`), mirroring the checker's zero
+`.reference(...)` budget.
+
+**Removal condition**: this is migration scaffolding for tsz-org/tsz#14344
+(content-canonical identity). As the canonical-identity work retires these
+callers, ratchet the budget DOWN; the guard and budget are deleted entirely once
+the `DefId`/`SymbolId` spaces no longer collide on a raw `u32`. The budget must
+never be raised.
 
 ## Deprecated API Surface
 
@@ -78,4 +97,6 @@ The following nearby paths should not be counted as remaining producers:
 3. Once runtime hits are understood, narrow or retire the checker/solver
    `resolve_lazy` raw-symbol compatibility paths.
 4. Keep the zero-budget architecture guard in place so new checker code cannot
-   reintroduce raw `SymbolRef` lazy construction.
+   reintroduce raw `SymbolRef` lazy construction, and keep the solver
+   `solver_raw_symbol_fallback_def_budget_does_not_grow` guard pinning the
+   solver-side caller budget. Ratchet both toward 0 under tsz-org/tsz#14344.

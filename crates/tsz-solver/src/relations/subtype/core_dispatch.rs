@@ -17,6 +17,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
 
+        // Substitution types (tsc `isRelatedTo` handling): a *source* substitution
+        // relates through its substitution intersection `base & constraint`; a
+        // *target* substitution relates through its base type. Unwrap and re-dispatch.
+        if let Some((base, constraint)) =
+            crate::type_queries::substitution_components(self.interner, source)
+        {
+            let intersection = self.interner.intersection2(base, constraint);
+            return self.check_subtype(intersection, target);
+        }
+        if let Some((base, _)) = crate::type_queries::substitution_components(self.interner, target)
+        {
+            return self.check_subtype(source, base);
+        }
+
         if let Some(inner) = self.readonly_application_or_display_alias_inner(source)
             && array_element_type(self.interner, target).is_none()
             && tuple_list_id(self.interner, target).is_none()
@@ -87,6 +101,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
+            // A deferred mapped target may be structurally a pure index-signature
+            // object — e.g. `{ [P in any]: V }` (the shape of `Record<any, V>` /
+            // `Record<PropertyKey, V>`) is equivalent to
+            // `{ [k: string]: V; [k: number]: V }`. Such a target is never
+            // expanded eagerly during evaluation (to keep error-message display
+            // stable), so `object_with_index_shape_id` reports `None` for it and
+            // the relation would otherwise fall through to the boxed-wrapper
+            // fallback below, wrongly accepting a primitive against a pure index
+            // signature (a primitive has no index signature; tsc rejects it).
+            // Expand it here so the pure-index guard in the
+            // `object_with_index_shape_id` arm owns the decision, exactly as it
+            // does for the written-out `{ [k: string]: V }` form.
+            let target = mapped_type_id(self.interner, target)
+                .and_then(|mapped_id| self.try_expand_mapped(mapped_id))
+                .filter(|&expanded| {
+                    object_shape_id(self.interner, expanded).is_some()
+                        || object_with_index_shape_id(self.interner, expanded).is_some()
+                })
+                .unwrap_or(target);
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 // Reset `in_intersection_member_check` for apparent primitive structural

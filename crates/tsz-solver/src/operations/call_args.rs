@@ -1794,6 +1794,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::NoInfer(operand) => {
                 self.type_contains_placeholder(operand, var_map, visited)
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.type_contains_placeholder(base_type, var_map, visited)
+                    || self.type_contains_placeholder(constraint, var_map, visited)
+            }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
