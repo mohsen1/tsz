@@ -1460,3 +1460,244 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
 
     assert_eq!(result, TypeId::NEVER);
 }
+
+/// Helper: build `(params...) => return_type` as a `Function` type.
+fn make_fn(interner: &TypeInterner, params: Vec<ParamInfo>, return_type: TypeId) -> TypeId {
+    interner.function(FunctionShape {
+        params,
+        this_type: None,
+        return_type,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
+
+/// Regression (issue #14323, mined from type-zoo): a fixed-arity `infer`
+/// function pattern (no trailing rest) must not match a higher-arity source.
+///
+/// ```ts
+/// type ParamTypes<F> =
+///   F extends (p0: infer P0) => any ? [P0]
+///   : F extends (p0: infer P0, p1: infer P1) => any ? [P0, P1] : never;
+/// // F = (a: string, b: number) => {}  =>  [string, number]
+/// ```
+///
+/// `tsc` fails `(a, b) => {}` against the 1-arg pattern (the source demands
+/// more arguments than the pattern supplies), so the conditional falls through
+/// to the 2-arg pattern. Before the arity gate, tsz truncated the source to the
+/// pattern prefix and wrongly picked `[string]`.
+#[test]
+fn test_conditional_infer_fixed_arity_rejects_higher_arity_source() {
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let (_p0, infer_p0) = test_infer_param(&interner, "P0");
+    let (_p1, infer_p1) = test_infer_param(&interner, "P1");
+
+    // Source: (a: string, b: number) => {}
+    let source = make_fn(
+        &interner,
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::required(b, TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    );
+
+    // Pattern 1: (p0: infer P0) => any  ->  [P0]
+    let pattern1 = make_fn(&interner, vec![ParamInfo::required(a, infer_p0)], TypeId::ANY);
+    let true1 = interner.tuple(vec![TupleElement::fixed(infer_p0)]);
+
+    // Pattern 2: (p0: infer P0, p1: infer P1) => any  ->  [P0, P1]
+    let pattern2 = make_fn(
+        &interner,
+        vec![
+            ParamInfo::required(a, infer_p0),
+            ParamInfo::required(b, infer_p1),
+        ],
+        TypeId::ANY,
+    );
+    let true2 = interner.tuple(vec![
+        TupleElement::fixed(infer_p0),
+        TupleElement::fixed(infer_p1),
+    ]);
+
+    let inner = interner.conditional(ConditionalType {
+        check_type: source,
+        extends_type: pattern2,
+        true_type: true2,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let outer = ConditionalType {
+        check_type: source,
+        extends_type: pattern1,
+        true_type: true1,
+        false_type: inner,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &outer);
+    let expected = interner.tuple(vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement::fixed(TypeId::NUMBER),
+    ]);
+    assert_eq!(result, expected);
+}
+
+/// Adjacent: an exact-arity source still matches the fixed-arity pattern.
+#[test]
+fn test_conditional_infer_fixed_arity_matches_exact_arity_source() {
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let (_p0, infer_p0) = test_infer_param(&interner, "P0");
+
+    // Source: (a: string) => void
+    let source = make_fn(&interner, vec![ParamInfo::required(a, TypeId::STRING)], TypeId::VOID);
+    // Pattern: (p0: infer P0) => any -> P0
+    let pattern = make_fn(&interner, vec![ParamInfo::required(a, infer_p0)], TypeId::ANY);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_p0,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    assert_eq!(evaluate_conditional(&interner, &cond), TypeId::STRING);
+}
+
+/// Adjacent: a fixed-arity source with fewer params than the pattern still
+/// matches (extra positions default to `unknown`), matching `tsc`.
+#[test]
+fn test_conditional_infer_fixed_arity_matches_lower_arity_source() {
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let (_p0, infer_p0) = test_infer_param(&interner, "P0");
+    let (_p1, infer_p1) = test_infer_param(&interner, "P1");
+
+    // Source: (a: string) => void
+    let source = make_fn(&interner, vec![ParamInfo::required(a, TypeId::STRING)], TypeId::VOID);
+    // Pattern: (p0: infer P0, p1: infer P1) => any -> [P0, P1]
+    let pattern = make_fn(
+        &interner,
+        vec![
+            ParamInfo::required(a, infer_p0),
+            ParamInfo::required(b, infer_p1),
+        ],
+        TypeId::ANY,
+    );
+    let true_branch = interner.tuple(vec![
+        TupleElement::fixed(infer_p0),
+        TupleElement::fixed(infer_p1),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: true_branch,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    let expected = interner.tuple(vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement::fixed(TypeId::UNKNOWN),
+    ]);
+    assert_eq!(result, expected);
+}
+
+/// Adjacent: a trailing-rest pattern imposes no arity cap, so a higher-arity
+/// source still matches `(...args: infer P) => any`.
+#[test]
+fn test_conditional_infer_rest_pattern_matches_higher_arity_source() {
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let args = interner.intern_string("args");
+    let (_p, infer_p) = test_infer_param(&interner, "P");
+
+    // Source: (a: string, b: number) => void
+    let source = make_fn(
+        &interner,
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::required(b, TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    );
+    // Pattern: (...args: infer P) => any -> P
+    let pattern = make_fn(
+        &interner,
+        vec![ParamInfo {
+            name: Some(args),
+            type_id: infer_p,
+            optional: false,
+            rest: true,
+        }],
+        TypeId::ANY,
+    );
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_p,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    // The rest pattern absorbs both source params, so the true branch is taken
+    // (`P` binds to the `[string, number]` parameter tuple). The exact tuple
+    // reification (element names/readonly) is not what this case guards — only
+    // that the arity cap does not fire for a trailing-rest pattern.
+    let result = evaluate_conditional(&interner, &cond);
+    assert_ne!(result, TypeId::NEVER);
+    assert!(matches!(interner.lookup(result), Some(TypeData::Tuple(_))));
+}
+
+/// Adjacent: an optional trailing param does not count toward required arity,
+/// so `(a, b?) => {}` still matches the 1-arg pattern.
+#[test]
+fn test_conditional_infer_fixed_arity_optional_trailing_param_matches() {
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let (_p0, infer_p0) = test_infer_param(&interner, "P0");
+
+    // Source: (a: string, b?: number) => void  (1 required param)
+    let source = make_fn(
+        &interner,
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo {
+                name: Some(b),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        TypeId::VOID,
+    );
+    // Pattern: (p0: infer P0) => any -> P0
+    let pattern = make_fn(&interner, vec![ParamInfo::required(a, infer_p0)], TypeId::ANY);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_p0,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    assert_eq!(evaluate_conditional(&interner, &cond), TypeId::STRING);
+}
