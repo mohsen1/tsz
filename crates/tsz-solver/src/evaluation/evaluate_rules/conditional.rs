@@ -1086,7 +1086,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
-            } else if extends_has_type_params
+            } else if (extends_has_type_params
+                // A *concrete* check against a generic extends still resolves to
+                // the false branch when the relation also fails under the
+                // permissive instantiation (every extends type parameter -> `any`,
+                // tsc's `getPermissiveInstantiation` gate). e.g.
+                // `[] extends [T, ...T[]] ? "yes" : "no"` is `"no"` because `[]`
+                // is not a `[any, ...any[]]` regardless of `T`. Only defer when
+                // that permissive relation is indeterminate — or during the
+                // TS2589 depth-detection pass, which keeps deferring so
+                // unconditionally-recursive aliases drive their recursive branch
+                // and surface the depth error. Never short-circuit when the
+                // extends type carries `infer` patterns: those are resolved by
+                // infer-matching, not by a permissive false-branch judgment.
+                && (extends_has_infer
+                    || self.is_depth_detection_pass()
+                    || !self.permissive_false_branch_is_definitive(check_type, extends_type)))
                 // tsc parity (`getConditionalType`): a conditional whose
                 // effective check type is still generic — instantiable flags,
                 // or a type reference/tuple/template whose arguments are
