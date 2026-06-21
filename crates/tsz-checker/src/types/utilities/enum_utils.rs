@@ -1019,8 +1019,17 @@ impl<'a> CheckerState<'a> {
         // - T vs {} → comparable (overlap exists, return false)
         // - T vs U (unrelated) → not comparable (no overlap, return true)
         // - T extends X vs Y → uses constraint resolution
+        //
+        // Deferred conditional operands (e.g. `Exclude<T, U>` = `T extends U ? never
+        // : T`) are instantiable types with no concrete value form until applied, so
+        // a direct assignability probe wrongly reports no overlap. tsc compares them
+        // through their apparent type — the default constraint
+        // (`getDefaultConstraintOfConditionalType`). The comparability gateway owns
+        // that resolution, so route a deferred conditional operand through it too.
         if is_type_parameter_like(self.ctx.types, left)
             || is_type_parameter_like(self.ctx.types, right)
+            || crate::query_boundaries::common::is_conditional_type(self.ctx.types, left)
+            || crate::query_boundaries::common::is_conditional_type(self.ctx.types, right)
         {
             return !self.is_type_comparable_to(left, right);
         }
