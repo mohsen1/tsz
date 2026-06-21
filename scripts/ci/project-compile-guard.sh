@@ -407,14 +407,16 @@ ensure_git_fixture() {
 # Install a real application's dependencies so the type-checker resolves its
 # framework imports (react/next/...) instead of emitting a TS2307 wall. The
 # compile still runs with skipLibCheck, so node_modules only needs to RESOLVE,
-# not deep-check. Best-effort: a failed install is non-fatal (the compile then
-# surfaces the unresolved modules) and bounded by the job timeout.
+# not deep-check. Returns non-zero when the install fails so the caller records the
+# row as "fixture invalid" (gray, advisory) instead of letting a dependency-less
+# compile emit a TS2307 wall that the tsc-oracle delta scores as a tsz-only
+# regression. Bounded by the job timeout.
 install_application_deps() {
   local dir="$1" cmd="$2"
   [ -z "$cmd" ] && return 0
   if [ ! -d "$dir" ]; then
     echo "warn: application install dir missing: $dir" >&2
-    return 0
+    return 1
   fi
   # Make the package manager runnable. `corepack enable` installs yarn/pnpm
   # shims into Node's bin dir, but on the Cloud Run runner that dir is not
@@ -423,8 +425,8 @@ install_application_deps() {
   # cal-com, affine, rocketchat) lost its dep graph. Run the install through
   # `corepack <pm>` when the PM isn't directly on PATH — corepack resolves the
   # version from the app's `packageManager` field and runs it without needing
-  # the global shim. Non-interactive so a missing pin can't hang. Install stays
-  # best-effort: any failure is non-fatal (the compile then surfaces TS2307).
+  # the global shim. Non-interactive so a missing pin can't hang. A failed install
+  # returns non-zero; the caller maps that to a "fixture invalid" (gray) row.
   echo "Installing application deps: (cd $dir && $cmd)"
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
@@ -438,8 +440,10 @@ install_application_deps() {
       ;;
   esac
   if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
-    echo "warn: application dep install failed (continuing; compile will surface unresolved modules): $dir" >&2
+    echo "warn: application dep install failed: $dir" >&2
+    return 1
   fi
+  return 0
 }
 
 # Generic handler for category:"application" canary rows: clone the pinned
@@ -454,8 +458,28 @@ run_application_row() {
     return 0
   fi
   local root="$FIXTURE_ROOT/$fdir"
-  ensure_git_fixture "$fdir" "$repo" "$ref" "$root"
-  install_application_deps "$root/$install_root" "$install_cmd"
+  # Clone/install failures are HARNESS faults, not tsz regressions. Record them as
+  # "fixture invalid" (-> gray, advisory) rather than letting the dependency-less
+  # compile emit a TS2307 wall that the tsc-oracle delta scores as a tsz-only RED.
+  # This is the prerequisite that lets the canary become a blocking no-regression
+  # gate without a flaky network/install producing a false regression.
+  if ! ensure_git_fixture "$fdir" "$repo" "$ref" "$root"; then
+    echo "warn: $name: clone/checkout failed; recording fixture invalid (gray, advisory)" >&2
+    record_project_compatibility "$name" "fixture invalid" "fixture setup" \
+      "application clone failed" "harness: clone/checkout failed for ${repo}@${ref}" \
+      "0" "" "" "$root/$app_tsconfig" "$root/$src_rel"
+    return 0
+  fi
+  if ! install_application_deps "$root/$install_root" "$install_cmd"; then
+    echo "warn: $name: dependency install failed; recording fixture invalid (gray, advisory)" >&2
+    record_project_compatibility "$name" "fixture invalid" "fixture setup" \
+      "application install failed" "harness: dependency install failed in ${install_root} (${install_cmd})" \
+      "0" "" "" "$root/$app_tsconfig" "$root/$src_rel"
+    if [[ "${TSZ_APP_KEEP_NODE_MODULES:-0}" != "1" ]]; then
+      find "$root" -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
+    fi
+    return 0
+  fi
   check_project "$name" "$root/$app_tsconfig" "$root/$src_rel"
   if [[ "${TSZ_APP_KEEP_NODE_MODULES:-0}" != "1" ]]; then
     find "$root" -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
