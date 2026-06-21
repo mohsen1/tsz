@@ -4,16 +4,18 @@
 //! that collects type constraints when inferring generic type parameters from
 //! argument types.
 
+use crate::def::DefId;
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::types::{
     FunctionShape, IntrinsicKind, LiteralValue, ParamInfo, PropertyInfo, TemplateSpan, TypeData,
-    TypeId, TypeParamInfo, TypePredicate,
+    TypeId, TypeListId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 // Reusable scratch `FxHashSet<TypeId>` for the five `type_contains_placeholder`
@@ -83,6 +85,89 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Decrement depth on return
         self.constraint_recursion_depth
             .set(self.constraint_recursion_depth.get() - 1);
+    }
+
+    /// Normalize a union's members for inference partitioning by peeling
+    /// transparent identity-alias applications (`type Some<X> = X`).
+    ///
+    /// A target arm like `Some<A>` is otherwise an opaque `Application` that
+    /// never registers as the naked inference variable `A`, so the single-naked
+    /// variable union strategy (`inferToMultipleTypes`) cannot route unmatched
+    /// source constituents into `A` and it collapses to its default. Peeling the
+    /// arm to its forwarded type fixes that; a peel that yields a union is
+    /// flattened one level so downstream partitioning sees the leaf members.
+    fn normalize_union_members_for_inference(&mut self, members: TypeListId) -> Arc<[TypeId]> {
+        let original = self.interner.type_list(members);
+        // Cheap pre-scan: only a `Lazy`-alias `Application` can be an identity
+        // alias. When the union has none — the overwhelming common case on this
+        // hot constraint path — return the interned list untouched, avoiding
+        // both a fresh allocation and any resolver work.
+        if !original
+            .iter()
+            .any(|&member| self.lazy_alias_application_def_id(member).is_some())
+        {
+            return original;
+        }
+        let mut out = Vec::with_capacity(original.len());
+        for &member in original.iter() {
+            let Some(peeled) = self.try_peel_identity_alias_application(member) else {
+                out.push(member);
+                continue;
+            };
+            if let Some(TypeData::Union(inner)) = self.interner.lookup(peeled) {
+                out.extend(self.interner.type_list(inner).iter().copied());
+            } else {
+                out.push(peeled);
+            }
+        }
+        out.into()
+    }
+
+    /// The alias `DefId` when `member` is an `Application` whose base is a `Lazy`
+    /// alias reference — the only shape `try_peel_identity_alias_application` can
+    /// peel. Resolver-free, so it doubles as the cheap pre-scan gate.
+    fn lazy_alias_application_def_id(&self, member: TypeId) -> Option<DefId> {
+        let TypeData::Application(app_id) = self.interner.lookup(member)? else {
+            return None;
+        };
+        let base = self.interner.type_application(app_id).base;
+        if base.is_intrinsic() {
+            return None;
+        }
+        match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            _ => None,
+        }
+    }
+
+    /// If `member` applies a *transparent identity alias* — a type alias whose
+    /// body is exactly one of its own type parameters, e.g. `type Some<X> = X` —
+    /// expand it to the forwarded type argument.
+    ///
+    /// Returns `None` for any alias whose body adds structure
+    /// (`type Box<X> = { v: X }`, `type Opt<X> = X | undefined`): those must stay
+    /// opaque so structural union inference can still match against the wrapper.
+    fn try_peel_identity_alias_application(&mut self, member: TypeId) -> Option<TypeId> {
+        let def_id = self.lazy_alias_application_def_id(member)?;
+        // The alias body must be a bare type parameter declared by this very
+        // alias. Scope the resolver borrow so `expand_type_alias_application`
+        // (which needs `&mut self.checker`) can run afterwards.
+        let is_identity = {
+            let resolver = self.checker.type_resolver()?;
+            let type_params = resolver.get_lazy_type_params(def_id)?;
+            let body = resolver.resolve_lazy(def_id, self.interner)?;
+            match self.interner.lookup(body)? {
+                TypeData::TypeParameter(body_param) => {
+                    type_params.iter().any(|p| p.name == body_param.name)
+                }
+                _ => false,
+            }
+        };
+        if !is_identity {
+            return None;
+        }
+        let peeled = self.checker.expand_type_alias_application(member)?;
+        (peeled != member).then_some(peeled)
     }
 
     /// Inner implementation of `constrain_types`
@@ -543,8 +628,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // against parameterized members. This implements TypeScript's inference
                 // filtering: for `T | undefined`, `undefined` in the source should match
                 // the fixed `undefined` in the target, not be inferred as T.
-                let s_members = self.interner.type_list(s_members);
-                let t_members_list = self.interner.type_list(t_members);
+                // Peel transparent identity-alias arms (`type Some<X> = X`) on
+                // both sides so an arm like `Some<A>` partitions as the naked
+                // inference variable `A` rather than an opaque application.
+                let s_members = self.normalize_union_members_for_inference(s_members);
+                let t_members_list = self.normalize_union_members_for_inference(t_members);
 
                 // Collect fixed target members (those without placeholders) once per
                 // target union for this inference pass. Fixed members are resolved and
