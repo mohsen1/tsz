@@ -1022,94 +1022,6 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    /// Check if `target` is an intermediate segment in an optional chain `chain_node`.
-    ///
-    /// When a type guard narrows `x?.y?.z`, intermediate segments like `x.y` and `x`
-    /// should also be narrowed by removing null/undefined. This is because if
-    /// `x?.y?.z` is non-nullish, all intermediate accesses must also be non-nullish.
-    ///
-    /// Returns `true` if `target` matches any prefix of the optional chain.
-    pub(crate) fn is_optional_chain_prefix(
-        &self,
-        chain_node: NodeIndex,
-        target: NodeIndex,
-    ) -> bool {
-        let chain_node = self.arena.skip_parenthesized_and_assertions(chain_node);
-        let Some(node) = self.arena.get(chain_node) else {
-            return false;
-        };
-        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && let Some(access) = self.arena.get_access_expr(node)
-        {
-            // Check if the base expression matches target
-            if self.is_matching_reference(access.expression, target) {
-                return true;
-            }
-            // Also check: does the current chain node (e.g. animal?.breed) match
-            // the target (e.g. animal.breed) when ignoring the optional dot?
-            // This handles the case where the chain has `?.` but the target uses `.`.
-            if self.is_matching_optional_access_reference(chain_node, target) {
-                return true;
-            }
-            // Recurse into the base expression
-            return self.is_optional_chain_prefix(access.expression, target);
-        }
-        false
-    }
-
-    /// Match a property/element access reference ignoring `?.` vs `.` differences.
-    ///
-    /// `is_matching_reference` can't match `x?.y` against `x.y` because
-    /// `property_reference` returns `None` for optional chains. This helper
-    /// compares the structure directly: same property name and matching base.
-    fn is_matching_optional_access_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
-        let a = self.arena.skip_parenthesized_and_assertions(a);
-        let b = self.arena.skip_parenthesized_and_assertions(b);
-        let (Some(node_a), Some(node_b)) = (self.arena.get(a), self.arena.get(b)) else {
-            return false;
-        };
-        // Both must be the same kind of access expression
-        if node_a.kind != node_b.kind {
-            return false;
-        }
-        if node_a.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node_a.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return false;
-        }
-        let (Some(access_a), Some(access_b)) = (
-            self.arena.get_access_expr(node_a),
-            self.arena.get_access_expr(node_b),
-        ) else {
-            return false;
-        };
-        // Compare property names
-        if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let ident_a = self
-                .arena
-                .get_identifier_at(access_a.name_or_argument)
-                .map(|i| &i.escaped_text);
-            let ident_b = self
-                .arena
-                .get_identifier_at(access_b.name_or_argument)
-                .map(|i| &i.escaped_text);
-            if ident_a != ident_b || ident_a.is_none() {
-                return false;
-            }
-        } else {
-            // Element access - compare using literal values
-            let atom_a = self.literal_atom_from_node_or_type(access_a.name_or_argument);
-            let atom_b = self.literal_atom_from_node_or_type(access_b.name_or_argument);
-            if atom_a != atom_b || atom_a.is_none() {
-                return false;
-            }
-        }
-        // Base expressions must match (recursively, also ignoring optional dots)
-        self.is_matching_reference(access_a.expression, access_b.expression)
-            || self.is_matching_optional_access_reference(access_a.expression, access_b.expression)
-    }
-
     pub(crate) fn const_condition_initializer(
         &self,
         ident_idx: NodeIndex,
@@ -1239,6 +1151,21 @@ impl<'a> FlowAnalyzer<'a> {
         // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should narrow based on RHS
         // The assignment itself doesn't provide narrowing, but its RHS might
         if operator == SyntaxKind::EqualsToken as u16 {
+            // When the assignment LHS *is* the narrowed reference, `(s = rhs)` used
+            // as a condition observes the truthiness of the value just assigned to
+            // `s`.  tsc narrows the assigned target by truthiness in the branches
+            // (true → strip null/undefined, false → keep falsy), exactly like a
+            // bare reference observation.  Mirror the matching-reference arms.
+            if self.is_matching_reference(bin.left, target) {
+                if is_true_branch {
+                    return flow_query::narrow_to_truthy_in_context(
+                        narrowing,
+                        type_id,
+                        is_true_branch,
+                    );
+                }
+                return self.narrow_to_falsy_via_flow_boundary(type_id);
+            }
             if self.arena.get(bin.right).is_some() {
                 // Recursively narrow based on the RHS expression
                 let mut visited = AliasCycleTracker::new();

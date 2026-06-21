@@ -7,6 +7,46 @@ use tracing::trace;
 
 use super::super::super::evaluate::TypeEvaluator;
 
+/// Outcome of a structural relation probe that decides a conditional branch.
+///
+/// A `false` produced *only* because the structural walk descended into a
+/// `Lazy(DefId)` whose body was not yet registered — re-entrant lib/interface
+/// resolution, signalled by `note_lazy_resolve_failure` — is not a sound
+/// definitive-false witness. tsc treats such a relation as undetermined and
+/// defers the conditional until a later resolved pass, rather than committing
+/// (and caching) the spurious false branch (issue #14238).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum BranchRelation {
+    /// `source <: target` holds — take the true branch.
+    Holds,
+    /// `source <: target` is definitively false — take the false branch.
+    Fails,
+    /// The relation's `false` depended on an unregistered `Lazy` body, so it
+    /// is undetermined — defer the conditional instead of taking false.
+    Undetermined,
+}
+
+/// Run a structural relation probe that chooses a conditional branch and
+/// classify its result, following the thread-local unresolved-`Lazy` sentinel
+/// so a `false` that depended on an unregistered `Lazy` body is reported as
+/// [`BranchRelation::Undetermined`] instead of [`BranchRelation::Fails`].
+///
+/// This mirrors the subtype cache's own poison-sentinel discipline (it never
+/// publishes a `False` that consumed an unresolved `Lazy`); applying the same
+/// rule at conditional branch-selection keeps a cold / re-entrant pass from
+/// committing a spurious false branch that a later resolved pass would not
+/// (issue #14238).
+pub(super) fn classify_branch_relation(relate: impl FnOnce() -> bool) -> BranchRelation {
+    let lazy_before = crate::limits::lazy_resolve_failure_count();
+    if relate() {
+        BranchRelation::Holds
+    } else if crate::limits::lazy_resolve_failure_count() != lazy_before {
+        BranchRelation::Undetermined
+    } else {
+        BranchRelation::Fails
+    }
+}
+
 /// Resolved and pre-computed operands for one conditional evaluation step.
 pub(super) struct ConditionalOperands {
     pub(super) check_type: TypeId,
@@ -336,7 +376,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `check_type`/`extends_type` while preserving its original branches and
     /// distributivity. Shared by the operand-deferral sites in this module so the
     /// five-field reconstruction lives in one place.
-    fn deferred_conditional(
+    pub(super) fn deferred_conditional(
         &self,
         cond: &ConditionalType,
         check_type: TypeId,
@@ -409,18 +449,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         None
     }
 
-    /// Subtype check with cache lookup and thread-local depth guard.
+    /// Structural subtype probe that decides a conditional branch, with cache
+    /// lookup, a thread-local depth guard, and unresolved-`Lazy` classification.
     ///
-    /// Returns `true` if `check_type <: extends_type`, consulting the evaluator's
-    /// `conditional_subtype_cache` first and falling back to a full structural check
+    /// Returns [`BranchRelation::Holds`] when
+    /// `check_type <: extends_type`,
+    /// [`BranchRelation::Fails`] when the relation is definitively false, and
+    /// [`BranchRelation::Undetermined`] when the `false` depended on a
+    /// `Lazy(DefId)` body that was not yet registered (re-entrant resolution) —
+    /// in which case the spurious false is neither cached nor used to take the
+    /// false branch and the conditional defers (issue #14238). The result cache
+    /// consults `conditional_subtype_cache` first; the structural fallback is
     /// guarded by a thread-local recursion counter that caps at depth 50.
-    pub(super) fn check_conditional_subtype(
+    pub(super) fn conditional_subtype_relation(
         &mut self,
         check_type: TypeId,
         extends_type: TypeId,
-    ) -> bool {
+    ) -> BranchRelation {
         if let Some(cached) = self.cached_conditional_subtype(check_type, extends_type) {
-            return cached;
+            return if cached {
+                BranchRelation::Holds
+            } else {
+                BranchRelation::Fails
+            };
         }
 
         // Depth guard: evaluating conditional types can trigger subtype checks
@@ -433,48 +484,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // every exit including a caught panic-unwind, keeping the relation
         // schedule-independent across batch-worker reuse (#13368).
         let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
-        let result = if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
-            // At excessive depth, conservatively assume not a subtype
-            // (takes the false/else branch of the conditional).
-            // This matches tsc's behavior of returning the deferred
-            // conditional when instantiation depth is exceeded.
-            false
-        } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
-            // Fast-path: primitive types (string, number, boolean, bigint,
-            // symbol) are never subtypes of Function. The structural subtype
-            // checker may incorrectly autobox the primitive to its wrapper
-            // type (String, Number, etc.) and find structural compatibility
-            // with the evaluated Function interface. This fast-path prevents
-            // `string extends Function` from incorrectly taking the true
-            // branch, matching tsc's behavior where primitives never extend
-            // Function.
-            false
-        } else if Self::function_intrinsic_extends_callable_target(
-            self.interner(),
-            check_type,
-            extends_type,
-        ) {
-            // In conditional types, tsc treats the global `Function`
-            // intrinsic as satisfying callable targets. Ordinary
-            // assignment intentionally remains stricter.
-            true
-        } else if self.object_literals_have_conflicting_required_property(check_type, extends_type)
-        {
-            // `Extract<Union, { kind: "x" }>` and similar discriminant filters
-            // distribute over every union member. If both sides expose the same
-            // required property with distinct literal values, the relation is
-            // definitively false, so avoid the full structural subtype walk.
-            false
-        } else {
-            let mut strict_checker = self.conditional_subtype_checker();
-            strict_checker.is_subtype_of(check_type, extends_type)
-        };
+        // Classify against the unresolved-`Lazy` sentinel: a `false` produced
+        // only because the structural walk descended into an unregistered
+        // `Lazy` body is reported as `Undetermined` rather than a definitive
+        // false (issue #14238). Shared with the array fast path via
+        // `classify_branch_relation`.
+        let relation = classify_branch_relation(|| {
+            if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
+                // At excessive depth, conservatively assume not a subtype
+                // (takes the false/else branch of the conditional).
+                // This matches tsc's behavior of returning the deferred
+                // conditional when instantiation depth is exceeded.
+                false
+            } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
+                // Fast-path: primitive types (string, number, boolean, bigint,
+                // symbol) are never subtypes of Function. The structural subtype
+                // checker may incorrectly autobox the primitive to its wrapper
+                // type (String, Number, etc.) and find structural compatibility
+                // with the evaluated Function interface. This fast-path prevents
+                // `string extends Function` from incorrectly taking the true
+                // branch, matching tsc's behavior where primitives never extend
+                // Function.
+                false
+            } else if Self::function_intrinsic_extends_callable_target(
+                self.interner(),
+                check_type,
+                extends_type,
+            ) {
+                // In conditional types, tsc treats the global `Function`
+                // intrinsic as satisfying callable targets. Ordinary
+                // assignment intentionally remains stricter.
+                true
+            } else if self
+                .object_literals_have_conflicting_required_property(check_type, extends_type)
+            {
+                // `Extract<Union, { kind: "x" }>` and similar discriminant filters
+                // distribute over every union member. If both sides expose the same
+                // required property with distinct literal values, the relation is
+                // definitively false, so avoid the full structural subtype walk.
+                false
+            } else {
+                let mut strict_checker = self.conditional_subtype_checker();
+                strict_checker.is_subtype_of(check_type, extends_type)
+            }
+        });
         // Restore the depth before the cache write to preserve the original
         // decrement ordering; `Drop` would otherwise run at end of scope, but
         // either way the depth is restored on a panic-unwind exit.
         drop(depth_guard);
-        self.cache_conditional_subtype(check_type, extends_type, result);
-        result
+        // An `Undetermined` false consumed an unregistered `Lazy` body: do not
+        // cache it and do not let it take the false branch — defer so a later
+        // resolved pass decides the conditional (issue #14238). Definitive
+        // verdicts are cached as before.
+        if relation != BranchRelation::Undetermined {
+            self.cache_conditional_subtype(
+                check_type,
+                extends_type,
+                relation == BranchRelation::Holds,
+            );
+        }
+        relation
     }
 
     fn object_literals_have_conflicting_required_property(
@@ -515,6 +584,119 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match (source, target) {
             (Some(TypeData::Literal(source)), Some(TypeData::Literal(target))) => {
                 source.primitive_type_id() == target.primitive_type_id() && source != target
+            }
+            _ => false,
+        }
+    }
+
+    /// Check whether a type is an **intersection** of type parameters/Lazy refs.
+    ///
+    /// TSC defers conditional types when the check type is a naked type parameter.
+    /// An intersection like `T & U` is NOT a naked type parameter (so Step 2 misses it),
+    /// but the subtype relationship `T & U extends X` IS genuinely indeterminate until
+    /// T and U are instantiated. This helper detects that case.
+    ///
+    /// We intentionally limit this to Intersection types. Other compound types like
+    /// `keyof T`, `T[K]`, or `Lowercase<T>` are evaluated eagerly by TSC through
+    /// constraint resolution and should NOT be deferred at this stage.
+    pub(super) fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
+        // Check for compound types containing unresolved type parameter references.
+        // We intentionally skip the `contains_type_parameters` visitor here because
+        // it catches KeyOf(TypeParam), StringIntrinsic(_, TypeParam), etc., which
+        // TSC evaluates eagerly via constraint resolution (not deferral).
+        //
+        // We handle two compound forms that TSC considers "generic" and defers:
+        // - Intersections like `T & U` with type-parameter-like members
+        // - IndexAccess like `T[K]` where object or index is generic
+        //   (TSC's `isGenericType` returns true for IndexedAccessType with
+        //   generic components, causing conditional type deferral)
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                members.iter().any(|&m| {
+                    matches!(
+                        self.interner().lookup(m),
+                        Some(TypeData::Recursive(_) | TypeData::TypeParameter(_))
+                    )
+                })
+            }
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                // IndexAccess types like T[K] where T or K is an unresolved type
+                // parameter are genuinely indeterminate and must be deferred.
+                // Example: Extract<M[K], ArrayLike<any>> stays deferred because
+                // M[K] could resolve to anything once M and K are instantiated.
+                // Named concrete types (Lazy(DefId)) resolve eagerly and do NOT
+                // trigger deferral — Interface["prop"] is always evaluatable.
+                Self::is_generic_ref(self.interner(), obj)
+                    || Self::is_generic_ref(self.interner(), idx)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn type_is_generic_tuple(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let elements = self.interner().tuple_list(list_id);
+        elements
+            .iter()
+            .any(|element| Self::is_generic_ref(self.interner(), element.type_id))
+    }
+
+    pub(super) fn type_contains_never(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::NEVER || type_id.is_intrinsic() {
+            return type_id == TypeId::NEVER;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(list_id)) => self
+                .interner()
+                .tuple_list(list_id)
+                .iter()
+                .any(|element| self.type_contains_never(element.type_id)),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.type_contains_never(member)),
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.type_contains_never(inner)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn type_has_nested_generic_tuple(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        self.interner().tuple_list(list_id).iter().any(|element| {
+            matches!(self.interner().lookup(element.type_id), Some(TypeData::Tuple(inner_id)) if self
+                .interner()
+                .tuple_list(inner_id)
+                .iter()
+                .any(|inner| Self::is_generic_ref(self.interner(), inner.type_id)))
+        })
+    }
+
+    pub(super) fn is_generic_ref(
+        db: &dyn crate::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match db.lookup(type_id) {
+            // Lazy(DefId) is a reference to a concrete named type (interface, class, type
+            // alias). It is always resolvable — evaluate(Lazy(D)) yields the body of D,
+            // which is structural and concrete. Only true unknowns (TypeParameter, Infer)
+            // and self-recursive placeholders (Recursive) should trigger deferral.
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::Recursive(_)) => true,
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
             }
             _ => false,
         }

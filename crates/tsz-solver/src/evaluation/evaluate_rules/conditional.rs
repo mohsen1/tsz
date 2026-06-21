@@ -27,6 +27,9 @@ use super::super::evaluate::TypeEvaluator;
 use super::infer_pattern::InferPatternVisited;
 use crate::type_queries::get_application_base;
 use phases::TailCallStep;
+pub(in crate::evaluation::evaluate_rules::conditional) use phases::{
+    BranchRelation, classify_branch_relation,
+};
 
 /// Maximum number of union members a distributive conditional type
 /// (`Exclude`, `Extract`, `NonNullable`, and any user `T extends U ? X : Y`
@@ -208,7 +211,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return false;
         }
-        !self.check_conditional_subtype(permissive_check, permissive_extends)
+        // Only a definitive `Fails` makes the false branch definitive. `Holds`
+        // relates under the permissive form, and `Undetermined` consumed an
+        // unregistered `Lazy` body — both keep the conditional deferred (#14238).
+        matches!(
+            self.conditional_subtype_relation(permissive_check, permissive_extends),
+            BranchRelation::Fails
+        )
     }
 
     /// Evaluate a conditional type: T extends U ? X : Y
@@ -1048,13 +1057,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
-            let is_sub = self.check_conditional_subtype(check_type, extends_type);
+            let relation = self.conditional_subtype_relation(check_type, extends_type);
             trace!(
                 check = check_type.0,
                 extends = extends_type.0,
-                is_subtype = is_sub,
+                ?relation,
                 "conditional subtype check result"
             );
+
+            // The relation's `false` depended on a `Lazy(DefId)` body that was
+            // not yet registered (re-entrant lib/interface resolution). tsc
+            // treats it as undetermined and defers, rather than committing the
+            // spurious false branch (issue #14238).
+            if relation == BranchRelation::Undetermined {
+                return self.deferred_conditional(cond, check_type, extends_type);
+            }
+            let is_sub = relation == BranchRelation::Holds;
 
             // A conditional whose evaluated CHECK type is an opaque, resolver-less
             // `Application` must defer rather than vacuously take its true branch
@@ -1950,116 +1968,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && (check_app.base == pattern_app.base
                 || (checker.is_subtype_of(check_app.base, pattern_app.base)
                     && checker.is_subtype_of(pattern_app.base, check_app.base)))
-    }
-
-    /// Check whether a type is an **intersection** of type parameters/Lazy refs.
-    ///
-    /// TSC defers conditional types when the check type is a naked type parameter.
-    /// An intersection like `T & U` is NOT a naked type parameter (so Step 2 misses it),
-    /// but the subtype relationship `T & U extends X` IS genuinely indeterminate until
-    /// T and U are instantiated. This helper detects that case.
-    ///
-    /// We intentionally limit this to Intersection types. Other compound types like
-    /// `keyof T`, `T[K]`, or `Lowercase<T>` are evaluated eagerly by TSC through
-    /// constraint resolution and should NOT be deferred at this stage.
-    fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
-        // Check for compound types containing unresolved type parameter references.
-        // We intentionally skip the `contains_type_parameters` visitor here because
-        // it catches KeyOf(TypeParam), StringIntrinsic(_, TypeParam), etc., which
-        // TSC evaluates eagerly via constraint resolution (not deferral).
-        //
-        // We handle two compound forms that TSC considers "generic" and defers:
-        // - Intersections like `T & U` with type-parameter-like members
-        // - IndexAccess like `T[K]` where object or index is generic
-        //   (TSC's `isGenericType` returns true for IndexedAccessType with
-        //   generic components, causing conditional type deferral)
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Intersection(list_id)) => {
-                let members = self.interner().type_list(list_id);
-                members.iter().any(|&m| {
-                    matches!(
-                        self.interner().lookup(m),
-                        Some(TypeData::Recursive(_) | TypeData::TypeParameter(_))
-                    )
-                })
-            }
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                // IndexAccess types like T[K] where T or K is an unresolved type
-                // parameter are genuinely indeterminate and must be deferred.
-                // Example: Extract<M[K], ArrayLike<any>> stays deferred because
-                // M[K] could resolve to anything once M and K are instantiated.
-                // Named concrete types (Lazy(DefId)) resolve eagerly and do NOT
-                // trigger deferral — Interface["prop"] is always evaluatable.
-                Self::is_generic_ref(self.interner(), obj)
-                    || Self::is_generic_ref(self.interner(), idx)
-            }
-            _ => false,
-        }
-    }
-
-    fn type_is_generic_tuple(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
-            return false;
-        };
-        let elements = self.interner().tuple_list(list_id);
-        elements
-            .iter()
-            .any(|element| Self::is_generic_ref(self.interner(), element.type_id))
-    }
-
-    fn type_contains_never(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::NEVER || type_id.is_intrinsic() {
-            return type_id == TypeId::NEVER;
-        }
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Tuple(list_id)) => self
-                .interner()
-                .tuple_list(list_id)
-                .iter()
-                .any(|element| self.type_contains_never(element.type_id)),
-            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
-                .interner()
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_never(member)),
-            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-                self.type_contains_never(inner)
-            }
-            _ => false,
-        }
-    }
-
-    fn type_has_nested_generic_tuple(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
-            return false;
-        };
-        self.interner().tuple_list(list_id).iter().any(|element| {
-            matches!(self.interner().lookup(element.type_id), Some(TypeData::Tuple(inner_id)) if self
-                .interner()
-                .tuple_list(inner_id)
-                .iter()
-                .any(|inner| Self::is_generic_ref(self.interner(), inner.type_id)))
-        })
-    }
-
-    fn is_generic_ref(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        match db.lookup(type_id) {
-            // Lazy(DefId) is a reference to a concrete named type (interface, class, type
-            // alias). It is always resolvable — evaluate(Lazy(D)) yields the body of D,
-            // which is structural and concrete. Only true unknowns (TypeParameter, Infer)
-            // and self-recursive placeholders (Recursive) should trigger deferral.
-            Some(TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::Recursive(_)) => true,
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
-            }
-            _ => false,
-        }
     }
 }
 

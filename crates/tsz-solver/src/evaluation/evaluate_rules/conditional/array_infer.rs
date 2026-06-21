@@ -227,12 +227,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
-        let branch = if checker.is_subtype_of(check_elem, target_elem) {
-            cond.true_type
-        } else {
-            cond.false_type
-        };
-        Some(self.evaluate(branch))
+        match super::classify_branch_relation(|| checker.is_subtype_of(check_elem, target_elem)) {
+            super::BranchRelation::Holds => Some(self.evaluate(cond.true_type)),
+            super::BranchRelation::Fails => Some(self.evaluate(cond.false_type)),
+            // The element relation's `false` depended on an unregistered `Lazy`
+            // body, so it is undetermined. Fall through (`None`) to the full
+            // conditional pipeline, which defers rather than committing the
+            // spurious false branch (issue #14238).
+            super::BranchRelation::Undetermined => None,
+        }
     }
 
     /// Extract the element type from an array-like `check_type`.
