@@ -180,7 +180,7 @@ impl<'a> CheckerContext<'a> {
             })
     }
 
-    fn actual_lib_global_type_symbol_id(&self, name: &str) -> Option<SymbolId> {
+    pub(crate) fn actual_lib_global_type_symbol_id(&self, name: &str) -> Option<SymbolId> {
         if name.contains('.') {
             return None;
         }

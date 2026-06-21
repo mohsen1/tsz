@@ -386,6 +386,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     crate::operations::widening::widen_type(self.interner, reversed_value);
             }
 
+            // tsc's "filter" idiom `{ [K in keyof T]: T[K] extends E ? T[K] : never }`
+            // (e.g. `Narrow`) passes a matching source property straight through the
+            // true branch and keeps it as a *regular* (non-widening) literal rather
+            // than widening it. Mark the reconstructed property so the later
+            // fresh-literal deep-widen preserves the literal — but only when the
+            // source actually satisfies `E`, so the true branch is genuinely
+            // selected (when it fails `E` the `never` branch is taken and tsc
+            // widens the property as usual).
+            let non_widening = self.reverse_mapped_property_preserves_literal(
+                source_prop_type,
+                instantiated_template,
+                target_placeholder,
+            );
+
             // Reverse the mapped type's modifier directives to reconstruct T's modifiers.
             // If the mapped type adds a modifier, the reverse removes it (and vice versa).
             // If the mapped type has no modifier directive (None), it preserves the source's
@@ -423,7 +437,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 is_string_named: prop.is_string_named,
                 is_symbol_named: prop.is_symbol_named,
                 single_quoted_name: prop.single_quoted_name,
-                non_widening: false,
+                non_widening,
             });
         }
 
@@ -640,6 +654,68 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         Some((shape, true))
     }
 
+    /// Whether a reverse-mapped property reconstructed from `source_value`
+    /// through `template` must preserve its source literal instead of widening.
+    ///
+    /// This recognises tsc's "filter" conditional idiom
+    /// `A[K] extends E ? A[K] : never` (used by helpers like `Narrow`): when the
+    /// source property is assignable to `E`, the conditional's true branch — the
+    /// naked indexed access `A[K]` — passes the source straight through, and tsc
+    /// keeps it as a *regular* (non-widening) literal. We mirror that by flagging
+    /// the reconstructed property `non_widening`. The guard is exact:
+    /// - the false branch must be `never` (a genuine filter, not a homomorphic
+    ///   copy like `A[K] extends E ? A[K] : A[K]`, which tsc widens);
+    /// - the true branch must be the naked indexed access of the placeholder
+    ///   (a wrapped branch such as `[A[K]]` does not pass the source through);
+    /// - the concrete source must satisfy `E`, otherwise the `never` branch is
+    ///   taken and tsc widens the property as for a plain homomorphic copy.
+    fn reverse_mapped_property_preserves_literal(
+        &mut self,
+        source_value: TypeId,
+        template: TypeId,
+        target_placeholder: TypeId,
+    ) -> bool {
+        let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(template) else {
+            return false;
+        };
+        let cond = self.interner.get_conditional(cond_id);
+        if cond.false_type != TypeId::NEVER {
+            return false;
+        }
+        // The true branch must be the naked indexed access of the placeholder
+        // (`A[K]`) so it reverses the source straight through — a wrapped branch
+        // such as `[A[K]]` does not pass the literal through.
+        if !self.index_access_targets_placeholder(cond.true_type, target_placeholder) {
+            return false;
+        }
+        self.checker
+            .is_assignable_to(source_value, cond.extends_type)
+    }
+
+    /// Whether `type_id` is an indexed access `A[K]` whose object `A` is the
+    /// reverse-mapped placeholder — directly, as an intersection member
+    /// (`is_placeholder_match`, e.g. `T & {}` from `LowInfer<T>`), or resolved
+    /// to the placeholder's constraint (when `evaluate_type` lowered
+    /// `T_placeholder[P]` to `Constraint[P]`). This is the "naked `T[K]` reverse
+    /// site" recognised by `reverse_infer_through_template`'s Case 1 and by the
+    /// conditional filter-idiom literal-preservation check.
+    fn index_access_targets_placeholder(
+        &self,
+        type_id: TypeId,
+        target_placeholder: TypeId,
+    ) -> bool {
+        let Some(TypeData::IndexAccess(obj, _)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        if self.is_placeholder_match(obj, target_placeholder) {
+            return true;
+        }
+        matches!(
+            self.interner.lookup(target_placeholder),
+            Some(TypeData::TypeParameter(info)) if info.constraint == Some(obj)
+        )
+    }
+
     /// Reverse-infer a single property value through a mapped type template.
     ///
     /// Given `source_value` (e.g., `Box<number>`) and `template` (e.g., `Box<T["a"]>`),
@@ -671,20 +747,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // its constraint (e.g., `T extends object` → IndexAccess(object, P) instead of
         // IndexAccess(T_placeholder, P)), we recognize that the IndexAccess object type
         // is the constraint of the target placeholder and still accept the match.
-        if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template) {
-            if self.is_placeholder_match(obj, target_placeholder) {
-                return Some(source_value);
-            }
-            // Check if obj is the constraint of the target placeholder.
-            // This happens when evaluate_type resolves T_placeholder[P] through T's
-            // constraint, producing constraint[P]. We should still treat this as a
-            // placeholder match for reverse mapped inference.
-            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(target_placeholder)
-                && let Some(constraint) = info.constraint
-                && obj == constraint
-            {
-                return Some(source_value);
-            }
+        if self.index_access_targets_placeholder(template, target_placeholder) {
+            return Some(source_value);
         }
 
         // Case 1b: template is an array/readonly wrapper around the indexed
