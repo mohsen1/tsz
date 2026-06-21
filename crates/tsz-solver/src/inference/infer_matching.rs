@@ -128,20 +128,6 @@ impl<'a> InferenceContext<'a> {
         if let Some(TypeData::TypeParameter(ref param_info)) = source_key
             && let Some(var) = self.find_type_param(param_info.name)
         {
-            // Inferring a type parameter against *itself* yields nothing. The
-            // placeholder rename hides this — the source carries the renamed
-            // placeholder while the target still carries the declared name — so
-            // `target == source` never holds structurally. When the target is the
-            // declared type parameter that this variable represents (recovered via
-            // the original-name registry), mirror tsc's `inferFromTypes`
-            // same-type-parameter early return: add no candidate. Otherwise a
-            // callback parameter contextually typed with the un-instantiated
-            // signature (e.g. `(ev: EventMap[K]) => any`) leaks the bare `K` back
-            // as a contra-candidate for `K`'s own variable, which then overrides a
-            // legitimate covariant inference (e.g. `K = "message"`).
-            if self.type_is_own_original_type_param(var, target) {
-                return Ok(());
-            }
             // When in contra_mode (function parameter inference), add as a contra-candidate
             // instead of an upper bound. This matches tsc's behavior where inference from
             // function parameter types (contravariant position) produces contra-candidates
@@ -149,12 +135,7 @@ impl<'a> InferenceContext<'a> {
             // must each individually be satisfied. Without this, decomposing a union target
             // (e.g., matching {kind: T} against {kind:'a'} | {kind:'b'}) produces separate
             // upper bounds 'a' and 'b', causing false TS2345 errors.
-            if self.in_contra_mode {
-                self.add_contra_candidate(var, target, priority);
-            } else {
-                // T <: target, so target is an UPPER bound
-                self.add_upper_bound(var, target);
-            }
+            self.add_source_type_param_candidate(var, target, priority);
             return Ok(());
         }
 
