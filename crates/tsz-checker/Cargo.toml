@@ -1609,6 +1609,9 @@ path = "tests/class_expression_heritage_ts2416_tests.rs"
 name = "predicate_alias_generic_inference_tests"
 path = "tests/predicate_alias_generic_inference_tests.rs"
 [[test]]
+name = "predicate_bare_target_nested_param_inference_tests"
+path = "tests/predicate_bare_target_nested_param_inference_tests.rs"
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 [[test]]

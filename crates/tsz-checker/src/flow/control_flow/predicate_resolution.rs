@@ -180,36 +180,72 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // Case 2c: Structural inference for a type parameter nested inside the
-        // predicate target. The preceding cases bind a type parameter when it
-        // appears *directly* as a parameter type (`value: T`), as a bare member
-        // of a union parameter (`T | "x"`), or as a callback predicate target.
-        // A predicate target that is itself a bare type parameter (`value is T`)
-        // is also covered by the union-subtraction path (Case 3) below, which
-        // must keep ownership so the false branch narrows correctly — running
-        // general inference there would bind `T` to the whole argument union
-        // rather than the subtracted member.
+        // Case 2c: The predicate target is a bare type parameter whose corresponding
+        // parameter type is a *union* containing that type parameter (a wrapper such
+        // as `Result<T>` rather than just `T`). Case 1 failed because
+        // `param.type_id != pred_type`, and Case 2 failed because `param.type_id` is
+        // not directly a `TypeParameter`.
         //
-        // The remaining gap is a predicate target that is a *compound* type
-        // mentioning the type parameter — a generic application or wrapper such
-        // as `AsyncIterable<T>`, `Box<T>`, `Promise<T>`, or `Map<K, V>`, often
-        // reached through a parameter alias like
-        // `MaybeAsync<T> = T | AsyncIterable<T>`. None of the shortcuts fire for
-        // it, so the predicate is left generic. Narrowing then intersects the
-        // already-narrowed value with the generic target
-        // (`AsyncIterable<string> & AsyncIterable<any>`), over-constraining it.
+        // Handle the common pattern where the parameter type is a union containing
+        // the type parameter:
+        //   `function isSuccess<T>(result: T | "FAILURE"): result is T`
+        //   param type = T | "FAILURE", arg type = number | "FAILURE"
+        //   → infer T = number (subtract fixed union members from arg type)
         //
-        // Recover the bindings the same way call resolution does: structurally
-        // match each declared parameter type against its argument type. This is
-        // a solver concern, so it is answered through the inference query
-        // boundary rather than re-implemented here.
-        let predicate_target_is_bare_type_param =
-            flow_query::type_param_info(self.interner, pred_type).is_some();
-        let predicate_still_generic = !predicate_target_is_bare_type_param
-            && type_params.iter().any(|tp| {
-                substitution.get(tp.name).is_none()
-                    && flow_query::contains_type_parameter_named(self.interner, pred_type, tp.name)
-            });
+        // This union-subtraction path must run *before* the general structural
+        // inference below and keep ownership of the bare-union case: structural
+        // inference would bind `T` to the whole argument union (`number | "FAILURE"`)
+        // rather than the subtracted member (`number`), which would also leave the
+        // false branch narrowing wrong.
+        if let Some(pred_param_info) = flow_query::type_param_info(self.interner, pred_type) {
+            let pred_param_name = pred_param_info.name;
+            if type_params.iter().any(|tp| tp.name == pred_param_name) {
+                for (i, param) in params.iter().enumerate() {
+                    if let Some(&arg_idx) = args.get(i)
+                        && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                        && let Some(inferred) = self.infer_type_param_from_union(
+                            param.type_id,
+                            arg_type,
+                            pred_param_name,
+                        )
+                    {
+                        return TypePredicate {
+                            type_id: Some(inferred),
+                            ..*predicate
+                        };
+                    }
+                }
+            }
+        }
+
+        // Case 2d: Structural inference for a type parameter that none of the earlier
+        // cases could bind. The preceding cases bind a type parameter when it appears
+        // *directly* as a parameter type (`value: T`), as a bare member of a union
+        // parameter (`T | "x"`, handled by Cases 1b/2c above), or as a callback
+        // predicate target.
+        //
+        // The remaining gap is a type parameter mentioned only from a *nested*
+        // parameter position. Two shapes reach here:
+        //   * the predicate target is a *compound* type mentioning the type parameter
+        //     — a generic application or wrapper such as `AsyncIterable<T>`, `Box<T>`,
+        //     `Promise<T>`, or `Map<K, V>`, often via an alias like
+        //     `MaybeAsync<T> = T | AsyncIterable<T>`; or
+        //   * the predicate target is a *bare* type parameter (`value is T`) whose `T`
+        //     is inferable only from another parameter's nested shape
+        //     (`witness: T[]`, `() => T`, a struct field).
+        // None of the shortcuts fire for these, so the predicate would otherwise be
+        // left generic and narrowing would intersect the value with the raw type
+        // parameter. The union-subtraction Case 2c already returned for bare targets
+        // reachable through a union parameter, so it does not preempt this fallback.
+        //
+        // Recover the bindings the same way call resolution does: structurally match
+        // each declared parameter type against its argument type. This is a solver
+        // concern, so it is answered through the inference query boundary rather than
+        // re-implemented here.
+        let predicate_still_generic = type_params.iter().any(|tp| {
+            substitution.get(tp.name).is_none()
+                && flow_query::contains_type_parameter_named(self.interner, pred_type, tp.name)
+        });
         if predicate_still_generic {
             let param_arg_pairs: Vec<(TypeId, TypeId)> = params
                 .iter()
@@ -241,37 +277,6 @@ impl<'a> FlowAnalyzer<'a> {
                     type_id: Some(evaluated),
                     ..*predicate
                 };
-            }
-        }
-
-        // Case 3: The predicate type is a TypeParameter whose corresponding
-        // parameter type is a wrapper (e.g., `Result<T>` instead of just `T`).
-        // Case 1 failed because param.type_id != pred_type, and Case 2 failed
-        // because param.type_id is not directly a TypeParameter.
-        //
-        // Handle the common pattern where the parameter type is a union
-        // containing the type parameter:
-        //   `function isSuccess<T>(result: T | "FAILURE"): result is T`
-        //   param type = T | "FAILURE", arg type = number | "FAILURE"
-        //   → infer T = number (subtract fixed union members from arg type)
-        if let Some(pred_param_info) = flow_query::type_param_info(self.interner, pred_type) {
-            let pred_param_name = pred_param_info.name;
-            if type_params.iter().any(|tp| tp.name == pred_param_name) {
-                for (i, param) in params.iter().enumerate() {
-                    if let Some(&arg_idx) = args.get(i)
-                        && let Some(&arg_type) = node_types.get(&arg_idx.0)
-                        && let Some(inferred) = self.infer_type_param_from_union(
-                            param.type_id,
-                            arg_type,
-                            pred_param_name,
-                        )
-                    {
-                        return TypePredicate {
-                            type_id: Some(inferred),
-                            ..*predicate
-                        };
-                    }
-                }
             }
         }
 
