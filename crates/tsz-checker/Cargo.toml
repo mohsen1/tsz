@@ -1979,3 +1979,6 @@ path = "tests/partial_record_optional_index_assignability_tests.rs"
 [[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
+[[test]]
+name = "object_keyword_any_index_tests"
+path = "tests/object_keyword_any_index_tests.rs"
