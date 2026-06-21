@@ -1856,6 +1856,23 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         func_type: TypeId,
     ) {
+        if let Some(arg_idx) = self.first_non_tuple_spread_rejected_by_signature(args, func_type) {
+            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+        }
+    }
+
+    /// Like [`Self::validate_non_tuple_spreads_for_signature`] but returns the
+    /// first spread argument that `func_type` cannot absorb at a rest (or
+    /// optional-tail) position, without emitting a diagnostic. Overload
+    /// resolution uses this to treat a non-tuple spread that overflows a
+    /// fixed-arity overload as a *soft* mismatch (try the next overload) rather
+    /// than committing TS2556 — a sibling overload with a rest parameter may
+    /// absorb the spread (#14319).
+    pub(super) fn first_non_tuple_spread_rejected_by_signature(
+        &mut self,
+        args: &[NodeIndex],
+        func_type: TypeId,
+    ) -> Option<NodeIndex> {
         let ctx = ContextualTypeContext::with_expected(self.ctx.types, func_type);
         let mut effective_index = 0usize;
         for &arg_idx in args {
@@ -1912,11 +1929,11 @@ impl<'a> CheckerState<'a> {
                 .is_some()
                 || self.is_iterable_type(spread_type);
             if is_non_tuple_spread && !ctx.allows_non_tuple_spread_position(effective_index) {
-                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
-                return;
+                return Some(arg_idx);
             }
             effective_index += 1;
         }
+        None
     }
 
     pub(super) fn find_prior_non_tuple_spread_for_mismatch(
