@@ -999,6 +999,23 @@ struct TsDirective {
     unused_diagnostic_length: u32,
 }
 
+/// Whether `line` (0-based) is blank or a `//` line comment. Mirrors tsc's
+/// `markPrecedingCommentDirectiveLine`, which walks past empty lines and lines
+/// matching `^\s*//` when resolving the line a single-line directive guards. A
+/// block (`/* */`) comment line does not start with `//` and is therefore a
+/// barrier, not skipped.
+fn line_is_blank_or_line_comment(text: &str, line_map: &LineMap, line: usize) -> bool {
+    let Some(start) = line_map.line_start(line) else {
+        return false;
+    };
+    let start = start as usize;
+    let end = line_map
+        .line_start(line + 1)
+        .map_or(text.len(), |next| next as usize);
+    let trimmed = text[start..end].trim();
+    trimmed.is_empty() || trimmed.starts_with("//")
+}
+
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in
 /// comments. `line_map` must be built from the same `text`.
 fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
@@ -1010,13 +1027,29 @@ fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
             continue;
         };
 
-        let suppressed_line = if comment.is_multi_line {
+        let mut suppressed_line = if comment.is_multi_line {
             let close_line = line_map.line_index(comment.end.saturating_sub(1));
             close_line + 1
         } else {
             let comment_line = line_map.line_index(comment.pos);
             comment_line + 1
         };
+        // For single-line (`//`/`///`) directives, tsc's
+        // `markPrecedingCommentDirectiveLine` resolves the guarded line by
+        // walking past blank lines and other `//` comment lines (regex `^\s*//`)
+        // to the next line bearing real code, so a directive followed by `//`
+        // continuation comments still suppresses that code line (rather than
+        // leaking the error and reporting the directive unused -- TS2578).
+        // Block (`/* */`) directives suppress only the line immediately after
+        // the comment, with no skipping: a non-`//` line (including a
+        // block-comment line) is a barrier.
+        if !comment.is_multi_line {
+            while line_map.line_start(suppressed_line as usize + 1).is_some()
+                && line_is_blank_or_line_comment(text, line_map, suppressed_line as usize)
+            {
+                suppressed_line += 1;
+            }
+        }
         let directive_start = comment.pos.saturating_add(directive_offset);
         let directive_line = line_map.line_index(directive_start) as usize;
         let directive_line_start = line_map.line_start(directive_line).unwrap_or(comment.pos);
