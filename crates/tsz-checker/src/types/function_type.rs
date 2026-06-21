@@ -40,16 +40,10 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
-        // An object-literal method shorthand (e.g. `{ m(x, y) { ... } }`) is
-        // contextually typed by the surrounding object literal, exactly like an
-        // arrow / function-expression property initializer. For implicit-any dedup
-        // — and especially the speculative-rollback mark preservation that keeps a
-        // contextually-typed member from re-emitting a spurious TS7006 on an
-        // authoritative re-check — it must be tracked the same way, even though it
-        // is not an `is_closure` node (which also drives narrowing depth and must
-        // stay arrow/function-expression only). Class methods are excluded: they
-        // are checked authoritatively via the class-member pass and do not suffer
-        // the speculative-only re-check.
+        // Track object-literal method shorthand for implicit-any like an
+        // arrow/function-expression member; `is_closure` (which also drives
+        // narrowing depth) stays arrow/function-expression only. Rationale and
+        // class-method exclusion: see `is_object_literal_method`.
         let tracks_implicit_any = is_closure || self.is_object_literal_method(idx);
         // Rule #42: Increment closure depth when entering a function expression or arrow function
         // This causes mutable variables (let/var) to lose narrowing inside the closure
