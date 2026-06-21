@@ -282,6 +282,18 @@ fn any_declaration_matches(
     // declaration was never inspected and `unique symbol` identity queries
     // silently returned `false`.
     let decl_is_current_file = symbol.decl_file_idx as usize == ctx.current_file_idx;
+    // The declaration nodes in `all_declarations` index the *owner file's* arena.
+    // When the owner is a different file and the binder's `declaration_arenas`/
+    // `symbol_arenas` side tables were not populated for `sym_id` (e.g. a plain
+    // cross-file `export const s = Symbol.for(...)` reached through a namespace
+    // import), there was no candidate arena at all, so every declaration query
+    // silently returned `false` — a `unique symbol` const imported from another
+    // module was not recognized as a unique-symbol binding. Resolve the owner
+    // file's arena directly so cross-file declarations are always inspected.
+    // The current-file case is already covered by the `decl_is_current_file`
+    // push of `ctx.arena` below, so only resolve a *cross-file* owner arena.
+    let owner_file_arena = (symbol.decl_file_idx != u32::MAX && !decl_is_current_file)
+        .then(|| ctx.get_arena_for_file(symbol.decl_file_idx));
     symbol.all_declarations().into_iter().any(|decl_idx| {
         let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
         if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
@@ -289,6 +301,9 @@ fn any_declaration_matches(
         }
         if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
             candidate_arenas.push(symbol_arena.as_ref());
+        }
+        if let Some(owner_file_arena) = owner_file_arena {
+            candidate_arenas.push(owner_file_arena);
         }
         if decl_is_current_file || std::ptr::eq(owner_binder, ctx.binder) {
             candidate_arenas.push(ctx.arena);

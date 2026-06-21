@@ -295,9 +295,21 @@ impl<'a> CheckerState<'a> {
             self.symbol_valued_binding_property_name(computed.expression, expr_type)
         {
             Some(name)
-        } else {
+        } else if let Some(sym_ref) =
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
-                .map(|sym_ref| format!("__unique_{}", sym_ref.0))
+        {
+            Some(format!("__unique_{}", sym_ref.0))
+        } else {
+            // Value-position evaluation produced no key. The expression may
+            // still denote a binding with unique-symbol / plain-`symbol`
+            // identity that has no value meaning at this position — notably a
+            // `unique symbol` reached through a type-only namespace import
+            // (`import type * as s; [s.member]`), whose value-position type is
+            // ERROR. Delegate to the canonical computed-name policy, which keys
+            // purely from the resolved binding's identity rather than from its
+            // value-position type, so the member is not dropped.
+            self.computed_property_expression_name_atom(computed.expression)
+                .map(|atom| self.ctx.types.resolve_atom(atom))
         }
     }
 
