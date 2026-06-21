@@ -153,6 +153,22 @@ impl<'a> CheckerState<'a> {
         } else {
             let evaluated = self.evaluate_type_for_assignability(object);
             if evaluated == object {
+                // The object is not a bare type parameter and did not reduce on
+                // its own. For a concrete key, try reducing the whole access:
+                // an inline conditional can expose a callable/hybrid member only
+                // after the index operation is applied.
+                if !query::contains_type_parameters(self.ctx.types, index) {
+                    let evaluated_access = self.evaluate_type_for_assignability(type_id);
+                    let db = self.ctx.types.as_type_database();
+                    let unresolved = query::index_access_components(db, evaluated_access).is_some()
+                        || query::contains_type_parameters(db, evaluated_access);
+                    if !unresolved
+                        && (query::is_callable_type(db, evaluated_access)
+                            || query::callable_shape_for_type(db, evaluated_access).is_some())
+                    {
+                        return true;
+                    }
+                }
                 return false;
             }
             evaluated

@@ -616,6 +616,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Track bare return type placeholder for conditional seeding after Round 1
         let mut return_type_bare_var: Option<(crate::inference::infer::InferenceVar, TypeId)> =
             None;
+        // Name of a bare return type parameter that is also directly pinned by a
+        // concrete value argument (#14262). For such a parameter argument
+        // inference owns the result, so the contextual-return type must stay a
+        // low-priority hint: its return-context substitution is dropped below so
+        // it cannot clamp the argument-pinned callback/return.
+        let mut value_arg_seeded_bare_return_param: Option<tsz_common::Atom> = None;
         let mut round1_direct_seed_vars = FxHashSet::default();
         let mut pair_visited = FxHashSet::default();
 
@@ -689,6 +695,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Without this, `let x: 0|1|2 = invoke(() => 1)` would widen T to
             // `number` because the contextual `0|1|2` upper bound is never set.
             let return_is_bare_var = var_map.contains_key(&return_type_with_placeholders);
+            // When the return type is a bare type parameter `T` that is ALSO
+            // directly seeded by a concrete value argument (some parameter's
+            // type IS `T` and the corresponding argument is not a deferred,
+            // context-sensitive expression), argument inference owns `T`. tsc
+            // treats the contextual-return type — including an outer `as`-cast
+            // target like `as never` — as a low-priority `ReturnType` hint that
+            // cannot override the argument-pinned inference (#14262).
+            //
+            // We detect the *naked* value-parameter position (`init: T`), not
+            // any reachable occurrence, so the literal-widening upper bound is
+            // preserved for callback-return positions like `<T>(f: () => T): T`
+            // (`let x: 0|1|2 = invoke(() => 1)`), where `T` is only seeded
+            // through the callback's return type and the contextual type is the
+            // sole anchor that prevents widening. The matched type parameter's
+            // name is recorded so its return-context substitution is dropped
+            // below (it must not clamp the callback parameters / return type).
+            if let Some(rv) = var_map.get(&return_type_with_placeholders).copied() {
+                let pinned_by_value_arg = arg_types.iter().enumerate().any(|(i, &arg_type)| {
+                    self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+                        .is_some_and(|param_type| var_map.get(&param_type).copied() == Some(rv))
+                        && !self.is_contextually_sensitive(arg_type)
+                });
+                if pinned_by_value_arg {
+                    value_arg_seeded_bare_return_param = func
+                        .type_params
+                        .iter()
+                        .zip(type_param_vars.iter())
+                        .find(|(_, v)| **v == rv)
+                        .map(|(tp, _)| tp.name);
+                }
+            }
+            let bare_return_var_value_arg_seeded = value_arg_seeded_bare_return_param.is_some();
             // When the contextual type is a generic function (has type parameters),
             // always seed from it regardless of coverage. Higher-order generic
             // patterns like `compose(list, box)` need the contextual type's
@@ -743,7 +781,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && func.params.iter().zip(instantiated_params.iter()).all(
                             |(original, instantiated)| original.type_id == instantiated.type_id,
                         );
-                if return_is_union_with_placeholder || constructor_params_lack_type_params {
+                if bare_return_var_value_arg_seeded {
+                    // Argument inference owns `T`: record the contextual type as a
+                    // low-priority `ReturnType` candidate (a hint) rather than an
+                    // upper bound. Argument candidates carry a higher priority
+                    // (`NakedTypeVariable`) and win during candidate filtering, so
+                    // an outer `as never` / `as SomeNarrower` cannot clamp `T`.
+                    if let Some(&var) = var_map.get(&return_type_with_placeholders) {
+                        infer_ctx.add_candidate(
+                            var,
+                            ctx_type,
+                            crate::types::InferencePriority::ReturnType,
+                        );
+                    }
+                } else if return_is_union_with_placeholder || constructor_params_lack_type_params {
                     self.constrain_types(
                         &mut infer_ctx,
                         &var_map,
@@ -885,8 +936,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let structural_return_subst =
+        let mut structural_return_subst =
             self.compute_return_context_substitution(func, self.contextual_type);
+        // Drop the return-context substitution for a bare return type parameter
+        // that a concrete value argument already pins (#14262). Argument
+        // inference owns the parameter, so the contextual-return type (e.g. an
+        // outer `as never`) must remain a low-priority hint and never reach the
+        // callback parameters, return type, or fixed substitution as a clamp.
+        if let Some(name) = value_arg_seeded_bare_return_param {
+            structural_return_subst.remove(name);
+        }
         // Add literal-containing upper bounds from the return context
         // substitution to prevent incorrect widening. When TResult1 has a
         // return context of DooDad = "SOMETHING" | "ELSE", the literal "ELSE"

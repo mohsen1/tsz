@@ -286,6 +286,9 @@ mod global_this_typeof_surface_tests;
 #[path = "tests/heritage_constraint_structural_name_lookup_arch_tests.rs"]
 mod heritage_constraint_structural_name_lookup_arch_tests;
 #[cfg(test)]
+#[path = "tests/heritage_flow_narrowed_base_tests.rs"]
+mod heritage_flow_narrowed_base_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
@@ -1482,6 +1485,9 @@ mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
 mod variadic_tuple_readonly_relation_tests;
+#[cfg(test)]
+#[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
+mod variadic_tuple_spread_element_inference_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_tail_arity_inference_tests.rs"]
 mod variadic_tuple_tail_arity_inference_tests;

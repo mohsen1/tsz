@@ -187,28 +187,34 @@ assert.match(
   "bench-prep-ready artifact should include both the prep manifest and tarball consumed by shard jobs",
 );
 
+// Phase 7: perf is measured per-tip on a schedule cadence. The per-commit
+// workflow_run trigger + defer-to-oldest gate + age/stale/catch-up machinery
+// were removed and replaced by a single per-channel concurrency group
+// (the authoritative single-flight) and a trivial should_run=true gate.
 assert.match(
   workflow,
-  /BENCH_MAX_TARGET_AGE_HOURS: "48"[\s\S]+target_date="\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/commits\/\$\{target_sha\}" --jq '\.commit\.committer\.date' 2>\/dev\/null \|\| true\)"[\s\S]+Benchmark target \$\{target_sha\} is older than \$\{max_target_age_hours\}h/,
-  "bench gate should reject genuinely old targets by age instead of exact-main mismatch",
+  /schedule:\s*\n\s*- cron: '30 \*\/3 \* \* \*'/,
+  "bench should measure perf on a 3h schedule cadence",
 );
-
-assert.match(
+assert.doesNotMatch(
   workflow,
-  /BENCH_CATCH_UP_MIN_INTERVAL_HOURS: "4"/,
-  "benchmark catch-up dispatches should have a configurable cooldown",
+  /workflow_run:\s*\n\s*workflows: \[CI\]/,
+  "bench must no longer trigger on per-CI-completion (workflow_run)",
 );
-
 assert.match(
   workflow,
-  /active_run_id: \$\{\{ steps\.gate\.outputs\.active_run_id \}\}[\s\S]+active_run_sha: \$\{\{ steps\.gate\.outputs\.active_run_sha \}\}[\s\S]+active_run_url: \$\{\{ steps\.gate\.outputs\.active_run_url \}\}/,
-  "bench gate should expose the active benchmark run that caused duplicate automatic runs to skip",
+  /concurrency:\s*\n\s*group: bench-\$\{\{[\s\S]+?\}\}\s*\n\s*cancel-in-progress: false/,
+  "bench should be single-flight via a per-channel concurrency group (cancel-in-progress:false)",
 );
-
 assert.match(
   workflow,
-  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+An older Bench run is already active; deferring to the oldest concurrent run and skipping this newer duplicate\.[\s\S]+echo "active_run_id=\$\{active_run_id\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_sha=\$\{active_run_sha\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_url=\$\{active_run_url\}" >> "\$GITHUB_OUTPUT"/,
-  "bench gate should let active runs finish, skip duplicate automatic runs, and remember the blocker",
+  /BENCH_TARGET_SHA: \$\{\{ github\.sha \}\}/,
+  "bench should target the current main tip (github.sha) under the cadence model",
+);
+assert.doesNotMatch(
+  workflow,
+  /BENCH_MAX_TARGET_AGE_HOURS|BENCH_STALE_ACTIVE_RUN_MINUTES|BENCH_CATCH_UP_MIN_INTERVAL_HOURS|active_run_id|deferring to the oldest/,
+  "the defer/age/stale/catch-up mutex knobs and gate outputs should be gone",
 );
 
 assert.doesNotMatch(
@@ -217,16 +223,10 @@ assert.doesNotMatch(
   "bench gate must not cancel active benchmark runs just because main moved",
 );
 
-assert.match(
+assert.doesNotMatch(
   workflow,
-  /publish_stale_minutes="\$\{BENCH_PUBLISH_STALE_MINUTES:-45\}"[\s\S]+bench-publish[\s\S]+\.conclusion[\s\S]+data_is_fresh[\s\S]+Published benchmark data is stale[\s\S]+publishing despite an older active run to break streaming starvation\.[\s\S]+active_runs=""/,
-  "bench gate should publish despite older active runs when the published data is stale (streaming-starvation breaker)",
-);
-
-assert.match(
-  workflow,
-  /catch-up:[\s\S]+needs: \[bench-gate, bench-prep-artifact, bench, publish\][\s\S]+github\.event_name == 'workflow_run'[\s\S]+needs\.bench-gate\.outputs\.should_run == 'true'[\s\S]+needs\.publish\.result != 'success'/,
-  "benchmark workflow should schedule catch-up only after a publish-capable workflow_run exits without publishing",
+  /\n  catch-up:\n|\n  catch-up-after-active:\n/,
+  "the bench-catch-up and bench-catch-up-after-active jobs should be deleted",
 );
 
 assert.match(
@@ -273,77 +273,6 @@ assert.match(
   "partial or readiness-failing benchmark artifacts should upload for diagnosis but still fail before latest publication",
 );
 
-assert.match(
-  workflow,
-  /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{GITHUB_REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'[\s\S]+if \[\[ "\$\{target_sha\}" == "\$\{main_sha\}" \]\]; then[\s\S]+skipping catch-up dispatch/,
-  "benchmark catch-up should only dispatch when main moved beyond the non-publishing target",
-);
-
-assert.match(
-  workflow,
-  /gh run list --repo "\$\{GITHUB_REPOSITORY\}" --workflow bench\.yml --branch main --status in_progress[\s\S]+select\(\.databaseId != \$\{\{ github\.run_id \}\}\)[\s\S]+gh run list --repo "\$\{GITHUB_REPOSITORY\}" --workflow bench\.yml --branch main --status queued[\s\S]+Another Bench run is already active; skipping catch-up dispatch/,
-  "benchmark catch-up should avoid dispatching when another Bench run is already active",
-);
-
-assert.match(
-  workflow,
-  /catch-up:[\s\S]+min_catch_up_interval_hours="\$\{BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4\}"[\s\S]+\.event == "workflow_dispatch"[\s\S]+A Bench catch-up dispatch ran within the last \$\{min_catch_up_interval_hours\}h; skipping another dispatch\.[\s\S]+Bench target \$\{target_sha\} did not publish and main is now \$\{main_sha\}; dispatching one catch-up Bench run\./,
-  "benchmark catch-up should rate-limit repeated workflow_dispatch recovery runs",
-);
-
-assert.match(
-  workflow,
-  /Bench target \$\{target_sha\} did not publish and main is now \$\{main_sha\}; dispatching one catch-up Bench run\.[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+'{"ref":"main","inputs":\{"publish_latest_pgo":false\}}'/,
-  "benchmark catch-up should dispatch one fresh main benchmark run after a stale non-publish",
-);
-
-assert.match(
-  workflow,
-  /catch-up-after-active:[\s\S]+needs: bench-gate[\s\S]+needs\.bench-gate\.outputs\.should_run != 'true'[\s\S]+needs\.bench-gate\.outputs\.active_run_id != ''/,
-  "gate-only duplicate Bench runs should keep a recovery path after the active run completes",
-);
-
-assert.match(
-  workflow,
-  /max_active_minutes=180[\s\S]+Waiting for active Bench run \$\{ACTIVE_RUN_ID\}[\s\S]+gh run view "\$\{ACTIVE_RUN_ID\}"[\s\S]+--json status,createdAt --jq '\{status,createdAt\}'[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} is still \$\{active_status:-unknown\} after at least \$\{max_active_minutes\} minutes; treating it as stale for catch-up\./,
-  "active-run catch-up should wait for the blocking Bench run to complete or age out as stale",
-);
-
-assert.match(
-  workflow,
-  /active_published="\$\([\s\S]+select\(\.name == "bench-publish" and \.conclusion == "success"\)[\s\S]+if \[\[ "\$\{active_published\}" -gt 0 && "\$\{ACTIVE_RUN_SHA\}" == "\$\{target_sha\}" \]\]; then[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published benchmark data for \$\{target_sha\}; skipping catch-up dispatch\./,
-  "active-run catch-up should stand down when the blocking Bench run published the skipped target",
-);
-
-assert.match(
-  workflow,
-  /if \[\[ "\$\{target_sha\}" != "\$\{main_sha\}" \]\]; then[\s\S]+Skipped Bench target \$\{target_sha\} is behind current main \$\{main_sha\}; a newer main Bench event owns catch-up\./,
-  "active-run catch-up should only dispatch from the skipped duplicate that still represents current main",
-);
-
-assert.match(
-  workflow,
-  /if \[\[ "\$\{active_published\}" -gt 0 \]\]; then[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published \$\{ACTIVE_RUN_SHA\}, but skipped target \$\{target_sha\} is still current main; dispatching catch-up\./,
-  "active-run catch-up should not let an older active publish suppress a current-main catch-up",
-);
-
-assert.match(
-  workflow,
-  /--json databaseId,event,headSha,url[\s\S]+\.event == "workflow_dispatch"[\s\S]+A dispatched Bench catch-up is already active; skipping duplicate dispatch\./,
-  "active-run catch-up should avoid duplicate workflow_dispatch benchmark catch-ups",
-);
-
-assert.match(
-  workflow,
-  /catch-up-after-active:[\s\S]+min_catch_up_interval_hours="\$\{BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4\}"[\s\S]+\.event == "workflow_dispatch"[\s\S]+A Bench catch-up dispatch ran within the last \$\{min_catch_up_interval_hours\}h; skipping another dispatch\.[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} completed without bench-publish; dispatching one fresh main Bench run for \$\{main_sha\}\./,
-  "active-run catch-up should rate-limit repeated workflow_dispatch recovery runs",
-);
-
-assert.match(
-  workflow,
-  /Active Bench run \$\{ACTIVE_RUN_ID\} completed without bench-publish; dispatching one fresh main Bench run for \$\{main_sha\}\.[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+'{"ref":"main","inputs":\{"publish_latest_pgo":false\}}'/,
-  "active-run catch-up should dispatch one fresh main benchmark run when the blocker did not publish",
-);
 
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";
 assert.match(
