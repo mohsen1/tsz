@@ -32,6 +32,22 @@ pub(crate) use crate::limits::{
 };
 pub use crate::limits::{lazy_resolve_failure_count, reset_subtype_thread_local_state};
 
+/// Whether the relation reduces two deferred `Conditional` operands whose check
+/// types are concrete (the branch is decidable) and relates the reduced forms
+/// before falling back to the raw deferred-conditional comparison.
+///
+/// Default-on; `TSZ_DISABLE_RELATION_CONDITIONAL_REDUCTION=1` is the kill switch
+/// that restores the prior behavior, where two `this`-relative conditional
+/// members that only reduce once their receivers are concrete stay divergent
+/// and produce a spurious non-subtype verdict (issue #14385).
+fn relation_conditional_reduction_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_RELATION_CONDITIONAL_REDUCTION").is_ok_and(|v| v == "1")
+    })
+}
+
 /// One recorded `Ternary.Maybe`-style relation outcome awaiting validation by
 /// the outermost frame of its checker instance (tsc `maybeKeys` parity).
 ///
@@ -743,6 +759,53 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 finish_frame!(SubtypeResult::True);
                 leave_global!();
                 return SubtypeResult::True;
+            }
+        }
+
+        // Two deferred conditionals whose CHECK types are concrete (no free type
+        // parameters and no unsubstituted `this`) have a decidable branch, so tsc
+        // reduces each to its concrete branch and relates those. This is the
+        // `this`-relative member case: a member typed
+        // `this[K] extends infer a extends unknown[] ? a : never` is bound to its
+        // source and target receivers by `bind_property_receiver_this`, which
+        // substitutes `this` but leaves the conditional deferred. The two members
+        // then differ only by receiver (distinct `Conditional` ids over different
+        // indexed-access check types) and the raw deferred-conditional path below
+        // reports them unrelated, even though both reduce to the same branch (often
+        // `never`). Reduce both and relate the results; only conclude `True` here —
+        // a non-relating reduction falls through to the existing paths unchanged, so
+        // this can only add tsc-aligned successes, never new rejections. The check
+        // types being concrete keeps the reduction safe from the infer-binding
+        // over-acceptance the raw path below guards against (issue #14385).
+        // Kill switch: `TSZ_DISABLE_RELATION_CONDITIONAL_REDUCTION=1`.
+        if !self.bypass_evaluation
+            && let Some(source_cond_id) = conditional_type_id(self.interner, source)
+            && let Some(target_cond_id) = conditional_type_id(self.interner, target)
+            && relation_conditional_reduction_enabled()
+        {
+            let source_check = self.interner.get_conditional(source_cond_id).check_type;
+            let target_check = self.interner.get_conditional(target_cond_id).check_type;
+            let check_decidable = |check: TypeId| {
+                !crate::visitor::contains_type_parameters(self.interner, check)
+                    && !contains_this_type(self.interner, check)
+            };
+            if check_decidable(source_check) && check_decidable(target_check) {
+                let source_eval = self.evaluate_type(source);
+                let target_eval = self.evaluate_type(target);
+                if source_eval != source
+                    && target_eval != target
+                    && conditional_type_id(self.interner, source_eval).is_none()
+                    && conditional_type_id(self.interner, target_eval).is_none()
+                    && self.check_subtype(source_eval, target_eval).is_true()
+                {
+                    if let Some(dp) = def_entered {
+                        self.def_guard.leave(dp);
+                    }
+                    self.guard.leave(pair);
+                    finish_frame!(SubtypeResult::True);
+                    leave_global!();
+                    return SubtypeResult::True;
+                }
             }
         }
 

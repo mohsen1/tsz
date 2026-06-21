@@ -7,8 +7,9 @@
 //! - Contextual sensitivity analysis (`is_contextually_sensitive`)
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
-use crate::types::{ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId};
+use crate::types::{ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo};
 use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -884,7 +885,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.param_type_contains_void(elem.type_id)
     }
 
-    pub(crate) fn arg_count_bounds(&mut self, params: &[ParamInfo]) -> (usize, Option<usize>) {
+    /// Erase the signature's own type parameters to `any` before arity-time
+    /// evaluation of a rest-parameter type, mirroring tsc's `getErasedSignature`
+    /// / `createTypeEraser`. tsc computes call arity against the
+    /// type-parameters→`any` signature, so a rest parameter whose tuple shape is
+    /// selected by a conditional/mapped type over a still-uninstantiated type
+    /// parameter — e.g. `...[opts]: [s] extends [PropertyKey] ? [opts?: Opts] :
+    /// [opts: Opts]` — takes the permissive (`[any] extends ...`) branch instead
+    /// of collapsing to the false/required branch and over-counting required
+    /// arguments (#14326). Inference then runs and the post-inference
+    /// assignability check reports any genuinely-missing argument.
+    fn erase_sig_type_params_to_any(
+        &self,
+        type_id: TypeId,
+        type_params: &[TypeParamInfo],
+    ) -> TypeId {
+        if type_params.is_empty() {
+            return type_id;
+        }
+        let mut subst = TypeSubstitution::new();
+        for tp in type_params {
+            subst.insert(tp.name, TypeId::ANY);
+        }
+        // Cached variant: arity is computed per call, so memoize the erased
+        // rest-parameter type across repeated calls to the same generic
+        // signature. `instantiate_type_cached` fast-paths intrinsics internally.
+        instantiate_type_cached(
+            self.interner.as_type_database(),
+            Some(self.interner),
+            type_id,
+            &subst,
+        )
+    }
+
+    pub(crate) fn arg_count_bounds(
+        &mut self,
+        params: &[ParamInfo],
+        type_params: &[TypeParamInfo],
+    ) -> (usize, Option<usize>) {
         // Count required parameters, treating trailing `void`-containing params as optional.
         // In TypeScript, a parameter of type `void` (or union containing void like `number | void`)
         // can be omitted at the call site, but only if all subsequent params are also optional/void.
@@ -908,6 +946,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        // Erase the signature's own type parameters to `any` before evaluating
+        // the rest-parameter type, matching tsc's erased-signature arity
+        // precheck so a generic conditional/mapped rest tuple does not collapse
+        // to its required branch before inference (#14326). No-op for
+        // non-generic signatures.
+        let rest_param_type = self.erase_sig_type_params_to_any(rest_param_type, type_params);
         // Evaluate Application/Conditional/Mapped types (e.g. Parameters<Fn>) to
         // their concrete Tuple form so arity checking works correctly.
         let rest_param_type = self.evaluate_rest_param_type(rest_param_type);

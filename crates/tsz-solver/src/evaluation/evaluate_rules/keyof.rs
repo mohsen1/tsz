@@ -40,7 +40,7 @@ fn resolve_index_signature_key_alias(
             return current;
         };
         match resolver.resolve_lazy(def_id, interner) {
-            Some(resolved) if resolved != current => current = resolved,
+            Some(next_key) if next_key != current => current = next_key,
             _ => return current,
         }
     }

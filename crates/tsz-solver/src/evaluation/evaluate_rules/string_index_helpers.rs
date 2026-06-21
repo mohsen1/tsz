@@ -30,7 +30,7 @@ pub(super) fn index_signature_key_includes_symbol(
                     .any(|&m| index_signature_key_includes_symbol(interner, resolver, m));
             }
             Some(TypeData::Lazy(def_id)) => match resolver.resolve_lazy(def_id, interner) {
-                Some(resolved) if resolved != current => current = resolved,
+                Some(next_key) if next_key != current => current = next_key,
                 _ => return false,
             },
             _ => return false,

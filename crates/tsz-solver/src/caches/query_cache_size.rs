@@ -76,6 +76,12 @@ impl QueryCache<'_> {
             }
         }
 
+        // collect_properties_result_cache: TypeId -> bounded (generation, result) slots
+        size += self
+            .collect_properties_result_cache
+            .borrow()
+            .estimated_size_bytes(BUCKET_OVERHEAD);
+
         // subtype_cache
         {
             let map = self.subtype_cache.borrow();
