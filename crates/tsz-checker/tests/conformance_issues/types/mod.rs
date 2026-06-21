@@ -1,4 +1,5 @@
 mod computed_property_names;
+mod conditional_concrete_check_generic_extends_2322;
 mod const_initializer_widening;
 mod cross_module_unique_symbol;
 mod defaults;

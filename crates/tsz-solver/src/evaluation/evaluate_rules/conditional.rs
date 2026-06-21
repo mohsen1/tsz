@@ -1087,6 +1087,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // T <: U -> true branch
                 cond.true_type
             } else if extends_has_type_params
+                && (crate::type_queries::is_generic_conditional_check_type(
+                    self.interner(),
+                    check_type,
+                ) || (!self.is_depth_detection_pass()
+                    && !self.permissive_false_branch_is_definitive(check_type, extends_type)))
                 // tsc parity (`getConditionalType`): a conditional whose
                 // effective check type is still generic — instantiable flags,
                 // or a type reference/tuple/template whose arguments are
