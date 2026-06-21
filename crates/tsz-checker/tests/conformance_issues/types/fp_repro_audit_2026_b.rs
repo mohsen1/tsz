@@ -199,7 +199,7 @@ export { f };
 
 /// Inside the true branch of `CamelCase<V> extends string ? ...`, the operand
 /// `CamelCase<V>` must be seen as narrowed to `string` so `Capitalize<...>`'s
-/// constraint passes. tsz lacks a SubstitutionType model -> false TS2344.
+/// constraint passes. tsz lacks a `SubstitutionType` model -> false TS2344.
 #[test]
 #[ignore = "reproduces #14167: conditional true-branch check operand not constrained (missing SubstitutionType) -> false TS2344"]
 fn issue_14167_conditional_true_branch_constrains_check_operand() {
