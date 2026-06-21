@@ -598,49 +598,33 @@ impl BinderState {
                                             // alias name-agnostic at the module boundary: it
                                             // does NOT introduce a local binding named `exp`.
                                             //
-                                            // When the module already declares a DISTINCT
-                                            // local symbol under `exp` (e.g. `class Box {}`
-                                            // plus `export { box as Box }`), overwriting the
-                                            // scope/file-local slot would re-point every
-                                            // in-module reference to `exp` (type and value
-                                            // positions) at the aliased target, yielding
-                                            // spurious `TS2552`/`TS2749`. Detect that
-                                            // collision and route the export through the
-                                            // file's `module_exports` table directly, leaving
-                                            // local resolution of `exp` (the
-                                            // class/interface/var) intact.
-                                            let colliding_local = self
-                                                .current_scope()
-                                                .get(exp)
-                                                .or_else(|| self.file_locals.get(exp))
-                                                .filter(|&existing| existing != sym_id)
-                                                .filter(|&existing| {
-                                                    self.symbols.get(existing).is_some_and(|s| {
-                                                        !s.declarations.is_empty()
-                                                            && (s.flags & symbol_flags::ALIAS) == 0
-                                                    })
-                                                });
-                                            if colliding_local.is_some() {
-                                                // Seed the file's public export surface so
-                                                // cross-file `import { exp }` still resolves
-                                                // to the alias TARGET (`sym_id`, i.e. `box`),
-                                                // without disturbing the local declaration's
-                                                // scope slot. The export record must map the
-                                                // public name to the alias source symbol, not
-                                                // the local declaration, or the cross-file
-                                                // import would resolve to the wrong binding.
-                                                let current_file =
-                                                    self.debugger.current_file.clone();
-                                                Arc::make_mut(&mut self.module_exports)
-                                                    .entry(current_file)
-                                                    .or_default()
-                                                    .set(exp.to_string(), sym_id);
-                                            } else {
-                                                if let Some(table) = self.current_scope_mut() {
-                                                    table.set(exp.to_string(), sym_id);
-                                                }
-                                                self.file_locals.set(exp.to_string(), sym_id);
-                                            }
+                                            // Introducing a local `exp` binding re-points
+                                            // every in-module reference to `exp` (type and
+                                            // value positions) at the aliased target. That is
+                                            // wrong whenever `exp` also names a distinct local
+                                            // declaration (e.g. `class Box {}` plus
+                                            // `export { box as Box }`, yielding spurious
+                                            // `TS2552`/`TS2749`) or a lib intrinsic (e.g.
+                                            // `export { Local as Capitalize }` shadowing the
+                                            // intrinsic `Capitalize<S>`, yielding spurious
+                                            // `TS2315`). The local declaration may be bound
+                                            // after this export specifier, and lib intrinsics
+                                            // never appear in `file_locals`, so a
+                                            // collision-detection guard cannot reliably catch
+                                            // either case. Route the export through the file's
+                                            // `module_exports` table only, leaving in-module
+                                            // resolution of `exp` to fall through to its local
+                                            // declaration or the lib type.
+                                            //
+                                            // The export record maps the public name to the
+                                            // alias source symbol (`sym_id`, i.e. `box`), so
+                                            // cross-file `import { exp }` still resolves to the
+                                            // alias TARGET.
+                                            let current_file = self.debugger.current_file.clone();
+                                            Arc::make_mut(&mut self.module_exports)
+                                                .entry(current_file)
+                                                .or_default()
+                                                .set(exp.to_string(), sym_id);
                                         }
                                     }
                                 }

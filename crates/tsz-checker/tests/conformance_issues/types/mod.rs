@@ -9,4 +9,5 @@ mod indexed_access;
 mod membership_semantics;
 mod narrowing;
 mod optional_chain;
+mod renamed_export_no_local_binding;
 mod spread_param_constraint_2345;
