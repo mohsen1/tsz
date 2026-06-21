@@ -59,6 +59,94 @@ impl<'a> CheckerState<'a> {
         self.resolve_qualified_symbol_inner_in_type_position(idx, &mut visited_aliases, 0)
     }
 
+    /// Resolve a member of the synthetic `globalThis` namespace in **type**
+    /// position to its global type symbol.
+    ///
+    /// `globalThis.X` exposes the ambient global scope, so this resolves `X`
+    /// through actual lib globals first, then `declare global` augmentations.
+    /// Ordinary module-local type aliases must not leak into the synthetic
+    /// global namespace, but script-file globals remain valid fallback members.
+    /// Returns `None` when no global type of that name exists, so the caller can
+    /// route the missing member through the normal "no exported member"
+    /// diagnostic.
+    pub(crate) fn resolve_global_this_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.ctx.actual_lib_global_type_symbol_id(name) {
+            return Some(sym_id);
+        }
+
+        if let Some(sym_id) = self.resolve_global_augmentation_type_member_symbol(name) {
+            return Some(sym_id);
+        }
+
+        if self.ctx.binder.is_external_module() {
+            return self.ctx.binder.program_global_type(name);
+        }
+
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+            .or_else(|| self.ctx.binder.program_global_type(name))
+    }
+
+    fn resolve_global_augmentation_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if self.ctx.binder.global_augmentations.contains_key(name)
+            && let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS)
+            })
+        {
+            return Some(sym_id);
+        }
+
+        let (Some(all_binders), Some(entries)) = (
+            self.ctx.all_binders.as_ref(),
+            self.ctx
+                .global_file_locals_index
+                .as_ref()
+                .and_then(|idx| idx.get(name)),
+        ) else {
+            return None;
+        };
+
+        for &(file_idx, sym_id) in entries {
+            let Some(binder) = all_binders.get(file_idx) else {
+                continue;
+            };
+            if !binder.global_augmentations.contains_key(name) {
+                continue;
+            }
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if !symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS) {
+                continue;
+            }
+            if !self.ctx.has_symbol_file_index(sym_id) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+            }
+            return Some(sym_id);
+        }
+
+        None
+    }
+
+    /// Whether a resolved member symbol carries only value meaning (and so
+    /// cannot stand in for a type) under the given member `name`. Centralizes
+    /// the value-only-vs-type decision used when a type-position resolver has
+    /// already located a member symbol and must choose between
+    /// [`TypeSymbolResolution::Type`] and [`TypeSymbolResolution::ValueOnly`]
+    /// (or a "value used as type" diagnostic).
+    pub(crate) fn member_symbol_is_value_only_in_type_position(
+        &self,
+        member_sym: SymbolId,
+        name: &str,
+    ) -> bool {
+        (self.alias_resolves_to_value_only(member_sym, Some(name))
+            || self.symbol_is_value_only(member_sym, Some(name)))
+            && !self.symbol_is_type_only(member_sym, Some(name))
+    }
+
     /// Inner implementation of qualified symbol resolution for type positions.
     pub(crate) fn resolve_qualified_symbol_inner_in_type_position(
         &self,
@@ -282,6 +370,35 @@ impl<'a> CheckerState<'a> {
             Some(qn) => qn,
             None => return TypeSymbolResolution::NotFound,
         };
+
+        // `globalThis.X` in type position: `globalThis` is the synthetic global
+        // namespace whose members are the ambient global scope. Resolve `X` to
+        // the global type of that name (e.g. `globalThis.RegExp` -> the global
+        // `RegExp` interface). `globalThis` has no user symbol carrying an
+        // exports table to navigate, so this must run before the normal
+        // left-anchor resolution; otherwise the left resolves to NotFound and
+        // the member is dropped to `TypeId::ERROR`, collapsing whatever the
+        // qualified name fed (e.g. a type-predicate false branch). The
+        // `is_global_this_expression` guard fails when a same-file local
+        // declaration shadows `globalThis`, so a user namespace/value named
+        // `globalThis` still resolves through its own exports below.
+        if self.is_global_this_expression(qn.left)
+            && let Some(right_name) = self
+                .ctx
+                .arena
+                .get(qn.right)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.as_str())
+        {
+            if let Some(member_sym) = self.resolve_global_this_type_member_symbol(right_name) {
+                if self.member_symbol_is_value_only_in_type_position(member_sym, right_name) {
+                    return TypeSymbolResolution::ValueOnly(member_sym);
+                }
+                return TypeSymbolResolution::Type(member_sym);
+            }
+            return TypeSymbolResolution::NotFound;
+        }
+
         let mut left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
             qn.left,
             visited_aliases,

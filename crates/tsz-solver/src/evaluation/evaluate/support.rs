@@ -1295,6 +1295,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
                 self.evaluate(*inner)
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                // Evaluate the base and constraint (resolving any Lazy aliases),
+                // then re-derive: a now-concrete base collapses the narrowing.
+                let base = self.evaluate(*base_type);
+                let constraint = self.evaluate(*constraint);
+                self.interner.substitution(base, constraint)
+            }
             // All other types pass through unchanged (default behavior)
             _ => type_id,
         }
