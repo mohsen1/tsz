@@ -8,6 +8,7 @@ mod fp_repro_audit_2026;
 mod fp_repro_audit_2026_b;
 mod function_intersection_target;
 mod indexed_access;
+mod indexed_callable_member_param_tests;
 mod interface_merge_alias_application_2322;
 mod membership_semantics;
 mod narrowing;
