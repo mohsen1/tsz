@@ -2020,3 +2020,6 @@ path = "tests/function_type_predicate_typeof_param_tests.rs"
 [[test]]
 name = "object_keyword_any_index_tests"
 path = "tests/object_keyword_any_index_tests.rs"
+[[test]]
+name = "conditional_initializer_preserves_narrowing_tests"
+path = "tests/conditional_initializer_preserves_narrowing_tests.rs"
