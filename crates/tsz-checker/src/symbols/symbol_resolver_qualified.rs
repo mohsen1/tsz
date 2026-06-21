@@ -129,6 +129,9 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
     ) -> Option<SymbolId> {
+        // Bound the re-export walk; chains this long are pathological.
+        const MAX_REEXPORT_HOPS: usize = 32;
+
         if self.symbol_anchors_qualified_type_member(sym_id, lib_binders) {
             return None;
         }
@@ -154,13 +157,12 @@ impl<'a> CheckerState<'a> {
         // anchor nor a further module import (e.g. a plain `type` alias) stops
         // the walk with no anchor, so a real "not a namespace" diagnostic still
         // surfaces.
-        // Bound the re-export walk; chains this long are pathological.
-        const MAX_REEXPORT_HOPS: usize = 32;
         let mut current = alias;
         for _ in 0..MAX_REEXPORT_HOPS {
-            let resolved = match self.resolve_alias_type_position_result(current, lib_binders) {
-                Some(TypeSymbolResolution::Type(target)) => target,
-                _ => return None,
+            let Some(TypeSymbolResolution::Type(resolved)) =
+                self.resolve_alias_type_position_result(current, lib_binders)
+            else {
+                return None;
             };
             if resolved == current {
                 return None;
