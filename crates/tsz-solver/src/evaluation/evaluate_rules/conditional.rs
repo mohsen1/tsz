@@ -409,6 +409,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate_preserving_intersection_branch_alias(true_inst);
             }
 
+            // `never` is the bottom type, assignable to every type, so a
+            // non-distributive `never extends T ? X : Y` always selects the true
+            // branch (the distributive case returned `never` above; a bare `infer`
+            // extends was handled above and binds the variable to the check type
+            // itself). When `T` is a structural pattern that contains `infer`
+            // variables, matching the empty `never` source supplies no candidates,
+            // so tsc resolves each `infer` to its default of `unknown`
+            // (`never extends (a: infer P) => void ? P : …` → `unknown`). Without
+            // this, an accumulator-style recursion driven by such a conditional
+            // (the `UnionToTuple`/`LastOf` base case `UnionToIntersection<never>`)
+            // never reaches its base case and trips a spurious TS2589.
+            if check_type == TypeId::NEVER {
+                let mut bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
+                if extends_has_infer {
+                    self.fill_unbound_infer_defaults(extends_type, TypeId::UNKNOWN, &mut bindings);
+                }
+                // `substitute_infer` is a no-op when `bindings` is empty (the
+                // no-`infer` case), so this single path covers both.
+                let true_inst = self.substitute_infer(cond.true_type, &bindings);
+                return self.evaluate(true_inst);
+            }
+
             let extends_unwrapped = match self.interner().lookup(extends_type) {
                 Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => extends_type,
