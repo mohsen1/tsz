@@ -122,8 +122,9 @@ fn build_export_signature_input(
             let mut aug_names: Vec<String> = file
                 .module_augmentations
                 .get(module.as_str())
-                .map(|augs| augs.iter().map(|a| a.name.clone()).collect())
-                .unwrap_or_default();
+                .map_or_else(Vec::new, |augs| {
+                    augs.iter().map(|a| a.name.clone()).collect()
+                });
             aug_names.sort();
             input.module_augmentations.push((module.clone(), aug_names));
         }
@@ -195,9 +196,10 @@ pub(super) fn convert_js_parse_diagnostics_to_ts8xxx(
             let is_method_optional = source_text.is_some_and(|src| {
                 let after_q = (diag.start + diag.length) as usize;
                 // Skip whitespace after `?` and check for `(`
-                src.get(after_q..)
-                    .map(|s| s.trim_start().starts_with('(') || s.trim_start().starts_with('<'))
-                    .unwrap_or(false)
+                src.get(after_q..).is_some_and(|s| {
+                    let s = s.trim_start();
+                    s.starts_with('(') || s.starts_with('<')
+                })
             });
             if is_method_optional {
                 out.push(Diagnostic::error(
@@ -1102,8 +1104,7 @@ fn line_trimmed<'a>(text: &'a str, line_map: &LineMap, line: u32) -> &'a str {
     let start = start as usize;
     let end = line_map
         .line_start(line as usize + 1)
-        .map(|next| next as usize)
-        .unwrap_or(text.len())
+        .map_or(text.len(), |next| next as usize)
         .min(text.len());
     if start >= end {
         return "";
