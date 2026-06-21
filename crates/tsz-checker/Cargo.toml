@@ -307,6 +307,9 @@ path = "tests/new_expression_regression_tests.rs"
 name = "new_generic_construct_signature_type_arg_display_tests"
 path = "tests/new_generic_construct_signature_type_arg_display_tests.rs"
 [[test]]
+name = "new_generic_callback_contextual_infer_tests"
+path = "tests/new_generic_callback_contextual_infer_tests.rs"
+[[test]]
 name = "noinfer_diagnostic_display_tests"
 path = "tests/noinfer_diagnostic_display_tests.rs"
 [[test]]
