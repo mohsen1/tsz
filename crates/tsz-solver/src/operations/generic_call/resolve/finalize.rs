@@ -1,8 +1,7 @@
 use crate::inference::infer::{InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::generic_call::inference_helpers::{
-    is_bare_foreign_type_param, is_substantive_inference_candidate,
-};
+use crate::operations::generic_call::foreign_param_shapes::is_bare_foreign_type_param;
+use crate::operations::generic_call::inference_helpers::is_substantive_inference_candidate;
 use crate::operations::generic_call::readonly_direct_inference;
 use crate::operations::generic_call::{
     constraint_contains_primitive_constrained_type_param,
@@ -203,7 +202,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 Some(TypeData::Union(_))
                             ) && lower_bounds.len() > 1
                                 && lower_bounds.iter().all(|&bound| {
-                                    crate::operations::generic_call::inference_helpers::is_bare_foreign_type_param_shape(
+                                    crate::operations::generic_call::foreign_param_shapes::is_bare_foreign_type_param_shape(
                                         self.interner.as_type_database(),
                                         bound,
                                         local_type_param_names,
