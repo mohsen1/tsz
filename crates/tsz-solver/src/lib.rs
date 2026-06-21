@@ -479,6 +479,9 @@ mod narrowing_discriminant_tests;
 #[path = "../tests/numeric_keyof_tests.rs"]
 mod numeric_keyof_tests;
 #[cfg(test)]
+#[path = "../tests/primitive_mapped_index_subtype_tests.rs"]
+mod primitive_mapped_index_subtype_tests;
+#[cfg(test)]
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
 #[cfg(test)]

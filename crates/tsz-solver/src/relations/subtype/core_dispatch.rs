@@ -87,6 +87,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
+            // A deferred mapped target may be structurally a pure index-signature
+            // object — e.g. `{ [P in any]: V }` (the shape of `Record<any, V>` /
+            // `Record<PropertyKey, V>`) is equivalent to
+            // `{ [k: string]: V; [k: number]: V }`. Such a target is never
+            // expanded eagerly during evaluation (to keep error-message display
+            // stable), so `object_with_index_shape_id` reports `None` for it and
+            // the relation would otherwise fall through to the boxed-wrapper
+            // fallback below, wrongly accepting a primitive against a pure index
+            // signature (a primitive has no index signature; tsc rejects it).
+            // Expand it here so the pure-index guard in the
+            // `object_with_index_shape_id` arm owns the decision, exactly as it
+            // does for the written-out `{ [k: string]: V }` form.
+            let target = mapped_type_id(self.interner, target)
+                .and_then(|mapped_id| self.try_expand_mapped(mapped_id))
+                .filter(|&expanded| {
+                    object_shape_id(self.interner, expanded).is_some()
+                        || object_with_index_shape_id(self.interner, expanded).is_some()
+                })
+                .unwrap_or(target);
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 // Reset `in_intersection_member_check` for apparent primitive structural
