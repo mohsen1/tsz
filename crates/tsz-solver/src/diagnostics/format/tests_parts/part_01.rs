@@ -1045,7 +1045,7 @@ fn format_no_infer_in_union_with_function_member() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let no_infer_obj = db.no_infer(obj);
     let return_no_infer = db.no_infer(obj);

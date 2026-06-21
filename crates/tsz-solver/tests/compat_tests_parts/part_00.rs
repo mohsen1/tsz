@@ -428,7 +428,7 @@ fn test_method_bivariance_even_strict() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -444,7 +444,7 @@ fn test_method_bivariance_even_strict() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -492,7 +492,7 @@ fn test_function_property_stays_strict() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -508,7 +508,7 @@ fn test_function_property_stays_strict() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(!checker.is_assignable(source, target));

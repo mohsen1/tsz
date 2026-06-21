@@ -337,6 +337,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: object,
@@ -352,6 +353,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
     let tp = TypeParamInfo {
@@ -389,6 +391,7 @@ fn spread_keyof_type_param_is_invalid() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let tp = TypeParamInfo {
         name: db.intern_string("T"),
@@ -461,6 +464,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: db.intern_string("#hidden"),
@@ -476,6 +480,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: db.intern_string("method"),
@@ -491,6 +496,7 @@ fn spread_properties_skip_non_public_and_prototype_members() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 
@@ -609,6 +615,7 @@ fn obj_with_prop(db: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }])
 }
 

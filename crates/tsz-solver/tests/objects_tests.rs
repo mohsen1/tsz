@@ -51,6 +51,7 @@ fn test_collect_properties_single_object() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }];
 
     let obj_type = interner.object(props);
@@ -87,6 +88,7 @@ fn test_collect_properties_intersection() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create object { y: number }
@@ -104,6 +106,7 @@ fn test_collect_properties_intersection() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -150,6 +153,7 @@ fn test_collect_properties_any_commutative() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Test: obj & any
@@ -183,6 +187,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create object { x: number }
@@ -200,6 +205,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -239,6 +245,7 @@ fn test_collect_properties_optionality_merging() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create object { x: number }
@@ -256,6 +263,7 @@ fn test_collect_properties_optionality_merging() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -294,6 +302,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create object { readonly x: string }
@@ -311,6 +320,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create intersection obj1 & obj2
@@ -350,6 +360,7 @@ fn test_collect_properties_nested_intersections() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -366,6 +377,7 @@ fn test_collect_properties_nested_intersections() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let obj3 = interner.object(vec![PropertyInfo {
@@ -382,6 +394,7 @@ fn test_collect_properties_nested_intersections() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Create nested intersections: (obj1 & obj2) & obj3
@@ -419,6 +432,7 @@ fn test_collect_properties_deep_intersection_chain_is_iterative() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     for i in 1..4096 {
@@ -437,6 +451,7 @@ fn test_collect_properties_deep_intersection_chain_is_iterative() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
         ty = interner.intersection2(ty, next);
     }

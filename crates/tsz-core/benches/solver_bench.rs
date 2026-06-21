@@ -31,6 +31,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
         PropertyInfo {
             name: name_y,
@@ -46,6 +47,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
     ]);
 
@@ -63,6 +65,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
+        non_widening: false,
     }]);
 
     let extra_required = interner.object(vec![
@@ -80,6 +83,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
         PropertyInfo {
             name: name_z,
@@ -95,6 +99,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
     ]);
 
@@ -113,6 +118,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
         PropertyInfo {
             name: name_y,
@@ -128,6 +134,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         },
     ]);
 
@@ -205,6 +212,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
+            non_widening: false,
         });
     }
 

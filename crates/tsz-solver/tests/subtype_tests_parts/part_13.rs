@@ -1675,7 +1675,7 @@ fn test_overload_constructor_overloads() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo {
             name: interner.intern_string("toISOString"),
@@ -1698,7 +1698,7 @@ fn test_overload_constructor_overloads() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 

@@ -37,6 +37,12 @@ impl PartialEq for PropertyInfo {
             is_symbol_named,
             // Identity-exempt: cosmetic quote style for `.d.ts` output.
             single_quoted_name: _,
+            // Identity-bearing: distinguishes a non-widening (regular) literal
+            // property preserved from `as const`/assertion sources from an
+            // otherwise structurally identical fresh-literal property that must
+            // still widen. tsc encodes this as a fresh-vs-regular literal-type
+            // split; tsz carries it on the property so the two intern apart.
+            non_widening,
         } = self;
         *name == other.name
             && *type_id == other.type_id
@@ -48,6 +54,7 @@ impl PartialEq for PropertyInfo {
             && *parent_id == other.parent_id
             && *is_string_named == other.is_string_named
             && *is_symbol_named == other.is_symbol_named
+            && *non_widening == other.non_widening
     }
 }
 
@@ -75,6 +82,8 @@ impl std::hash::Hash for PropertyInfo {
             is_symbol_named,
             // Identity-exempt: cosmetic quote style for `.d.ts` output.
             single_quoted_name: _,
+            // Identity-bearing: see the `PartialEq` impl above.
+            non_widening,
         } = self;
         name.hash(state);
         type_id.hash(state);
@@ -86,6 +95,7 @@ impl std::hash::Hash for PropertyInfo {
         parent_id.hash(state);
         is_string_named.hash(state);
         is_symbol_named.hash(state);
+        non_widening.hash(state);
     }
 }
 

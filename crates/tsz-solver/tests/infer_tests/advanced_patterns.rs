@@ -701,6 +701,7 @@ fn test_circular_constraint_linked_list_generic() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: interner.intern_string("next"),
@@ -716,6 +717,7 @@ fn test_circular_constraint_linked_list_generic() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 

@@ -259,6 +259,21 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.sym_has_non_widening_declared_value_type(sym_id))
     }
 
+    /// Whether an object-literal property `initializer` yields a *regular*
+    /// (non-widening) literal — from an `as const`/`as T`/`<T>expr` assertion, a
+    /// non-widening identifier, or a literal index access. tsc's `getWidenedType`
+    /// never widens these, so the property is recorded
+    /// [`PropertyInfo::non_widening`](tsz_solver::PropertyInfo) and survives
+    /// later widening unchanged. Not consulted for the object-typed-context
+    /// deferral, where the literal is preserved but inference must still widen.
+    pub(super) fn object_property_value_is_non_widening(&mut self, initializer: NodeIndex) -> bool {
+        self.expression_is_type_assertion(initializer)
+            || self.identifier_refers_to_non_widening_declared_value_type(initializer)
+            || self
+                .object_literal_property_access_literal_type(initializer)
+                .is_some()
+    }
+
     pub(super) fn object_literal_property_access_literal_type(
         &mut self,
         node_idx: NodeIndex,
