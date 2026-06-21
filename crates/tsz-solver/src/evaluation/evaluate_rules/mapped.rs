@@ -274,6 +274,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys: Vec::new(),
                 has_string: true,
                 has_number: true,
+                has_symbol: true,
                 template_literals: Vec::new(),
                 symbol_keys: Vec::new(),
             }
@@ -850,7 +851,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut string_index_optional = false;
         let mut number_index_optional = false;
 
-        let string_index = if key_set.has_string {
+        let string_component = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
@@ -870,6 +871,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         } else {
             None
+        };
+
+        // The broad `symbol` key space (`{ [P in symbol]: V }`,
+        // `Record<PropertyKey, V>`) produces a symbol-keyed index signature. The
+        // `ObjectShape` model carries string- and symbol-keyed signatures in the
+        // single `string_index` slot (discriminated by `key_type`), so a
+        // constraint spanning both stores a `string | symbol` key there. Dropping
+        // the symbol arm here is what produced the spurious `TS2536`/`TS2862` on
+        // symbol-bearing access in #14315.
+        let symbol_component = if key_set.has_symbol {
+            match self.remap_key_type_for_mapped(mapped, TypeId::SYMBOL) {
+                Ok(Some(remapped)) => {
+                    if remapped != TypeId::SYMBOL {
+                        return self.interner().mapped(*mapped);
+                    }
+                    let (sig, optional) = self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::SYMBOL,
+                        is_identity_homomorphic || is_homomorphic,
+                        source_object,
+                    );
+                    string_index_optional |= optional;
+                    Some(sig)
+                }
+                Ok(None) => None,
+                Err(()) => return self.interner().mapped(*mapped),
+            }
+        } else {
+            None
+        };
+
+        // Merge the string and symbol arms into the single non-numeric slot.
+        // When both are present the slot carries a `string | symbol` key whose
+        // value unions the two per-kind templates; otherwise whichever arm
+        // exists is used directly.
+        let string_index = match (string_component, symbol_component) {
+            (Some(string_sig), Some(symbol_sig)) => Some(IndexSignature {
+                key_type: self.interner().union2(TypeId::STRING, TypeId::SYMBOL),
+                value_type: self
+                    .interner()
+                    .union2(string_sig.value_type, symbol_sig.value_type),
+                readonly: string_sig.readonly || symbol_sig.readonly,
+                param_name: None,
+            }),
+            (string_sig, symbol_sig) => string_sig.or(symbol_sig),
         };
 
         let number_index = if key_set.has_number {

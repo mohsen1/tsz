@@ -1337,6 +1337,10 @@ impl<'a> CheckerState<'a> {
         {
             let property_name = format!("__unique_{}", sym_ref.0);
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            // Resolve the receiver's index-signature key aliases (e.g. the lib
+            // global `PropertyKey`) so the symbol-named-property fallback can see
+            // a symbol-bearing index signature (see #14315).
+            let resolved_type = self.resolve_receiver_index_signature_keys(resolved_type);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
@@ -1373,6 +1377,21 @@ impl<'a> CheckerState<'a> {
                             result_type = Some(effective_write_result(type_id, write_type));
                         }
                     }
+                }
+            }
+
+            // A unique-symbol key that names no concrete member still resolves
+            // through a symbol-bearing index signature (`[k: symbol]`,
+            // `[k: PropertyKey]`, `Record<PropertyKey, V>`), since a unique
+            // symbol is a subtype of `symbol`. `get_element_access_type` resolves
+            // the receiver's index-signature key aliases first (see #14315).
+            if result_type.is_none() {
+                let symbol_index_result =
+                    self.get_element_access_type(object_type_for_access, index_type, None);
+                if symbol_index_result != TypeId::UNDEFINED && symbol_index_result != TypeId::ERROR
+                {
+                    use_index_signature_check = false;
+                    result_type = Some(symbol_index_result);
                 }
             }
         }

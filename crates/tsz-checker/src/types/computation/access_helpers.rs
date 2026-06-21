@@ -173,6 +173,33 @@ impl<'a> CheckerState<'a> {
     ///
     /// Computes the type when accessing an element using an index.
     /// Uses `ElementAccessEvaluator` from solver for structured error handling.
+    /// Resolve a receiver object's non-numeric index-signature key aliases
+    /// (e.g. the lib global `PropertyKey` => `string | number | symbol`) so the
+    /// resolver-less element-access evaluator can classify the full key space.
+    /// Returns the input unchanged when there is nothing to resolve (the common
+    /// case: no index signature, or an already-structural key). See #14315.
+    pub(crate) fn resolve_receiver_index_signature_keys(&mut self, object_type: TypeId) -> TypeId {
+        let Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) =
+            self.ctx.types.lookup(object_type)
+        else {
+            return object_type;
+        };
+        let shape = self.ctx.types.object_shape(shape_id);
+        let Some(idx) = shape.string_index.as_ref() else {
+            return object_type;
+        };
+        let resolved_key = self.resolve_lazy_type(idx.key_type);
+        let resolved_key = self.resolve_lazy_members_in_union(resolved_key);
+        if resolved_key == idx.key_type {
+            return object_type;
+        }
+        let mut new_shape = (*shape).clone();
+        if let Some(slot) = new_shape.string_index.as_mut() {
+            slot.key_type = resolved_key;
+        }
+        self.ctx.types.object_with_index(new_shape)
+    }
+
     pub(crate) fn get_element_access_type(
         &mut self,
         object_type: TypeId,
@@ -183,6 +210,13 @@ impl<'a> CheckerState<'a> {
         // application before the resolver-less solver query (see
         // `flatten_tuple_spread_rests`).
         let object_type = self.flatten_tuple_spread_rests(object_type);
+        // Resolve the receiver's index-signature key aliases (e.g. the lib
+        // global `PropertyKey`, only resolvable at use time) so the resolver-less
+        // element-access evaluator below classifies the full key space — notably
+        // the `symbol` arm. Without this, a symbol access into
+        // `{ [k: PropertyKey]: V }` falls through to `undefined`, surfacing as a
+        // false TS7053 (see #14315). Mirrors the index-type resolution below.
+        let object_type = self.resolve_receiver_index_signature_keys(object_type);
         // Normalize index type for enum values
         let solver_index_type = if let Some(index) = literal_index {
             self.ctx.types.literal_number(index as f64)
