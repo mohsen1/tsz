@@ -6,6 +6,7 @@ mod distributive_tuple_union;
 mod r#enum;
 mod function_intersection_target;
 mod indexed_access;
+mod interface_merge_alias_application_2322;
 mod membership_semantics;
 mod narrowing;
 mod optional_chain;
