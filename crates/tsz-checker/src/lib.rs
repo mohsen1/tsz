@@ -175,6 +175,9 @@ mod class_property_typed_const_initializer_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
 mod comlink_row_regression_tests;
 #[cfg(test)]
+#[path = "../tests/comparability_indexed_access_reduce_tests.rs"]
+mod comparability_indexed_access_reduce_tests;
+#[cfg(test)]
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
 #[cfg(test)]
