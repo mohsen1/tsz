@@ -237,8 +237,13 @@ assert.match(
 
 assert.match(
   workflow,
-  /- id: app-compat-source[\s\S]+if \[\[ "\$\{\{ github\.event_name \}\}" == "workflow_run" \]\]; then[\s\S]+run_id="\$\{\{ github\.event\.workflow_run\.id \}\}"[\s\S]+if \[\[ "\$\{candidate_sha\}" == "\$\{target_sha\}" \]\]; then[\s\S]+run_id="\$\{candidate_id\}"[\s\S]+gh run list[\s\S]+--workflow CI[\s\S]+--branch main[\s\S]+--event push[\s\S]+--status success/,
-  "bench publish should resolve application compatibility from the triggering CI or an exact-SHA successful main CI",
+  /- id: app-compat-source[\s\S]+GITHUB_TOKEN: \$\{\{ github\.token \}\}[\s\S]+run_id="\$\{\{ github\.event\.workflow_run\.id \}\}"[\s\S]+run_id="\$\{candidate_id\}"/,
+  "bench publish should resolve application compatibility from the triggering CI or an exact-SHA successful main CI without requiring gh on the publish runner",
+);
+assert.match(
+  workflow,
+  /- id: app-compat-source[\s\S]+node -e[\s\S]+actions\/runs\?branch=main&event=push&status=success&per_page=50[\s\S]+hostname: "api\.github\.com"[\s\S]+run\.name !== "CI"/,
+  "bench publish should query successful main CI runs through the GitHub API instead of shelling out to gh",
 );
 assert.match(
   workflow,
