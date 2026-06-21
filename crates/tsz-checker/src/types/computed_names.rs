@@ -39,6 +39,7 @@ use super::unique_symbol_arena::{
     has_declared_unique_symbol_owner, is_symbol_type_node,
     is_unique_symbol_type_annotation_unwrapped, unwrap_parenthesized_type,
 };
+use super::unique_symbol_construction::synthetic_unique_symbol_ref;
 
 /// Canonical binding-identity key for a symbol-valued computed property name.
 fn unique_symbol_binding_name(sym_id: SymbolId) -> String {
@@ -75,17 +76,22 @@ fn member_access_parts(arena: &NodeArena, expr_idx: NodeIndex) -> Option<MemberA
     }
 
     let node = arena.get(current)?;
-    if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    let (base, name) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
     {
+        let access = arena.get_access_expr(node)?;
+        (access.expression, access.name_or_argument)
+    } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+        let qualified = arena.get_qualified_name(node)?;
+        (qualified.left, qualified.right)
+    } else {
         return None;
-    }
+    };
 
-    let access = arena.get_access_expr(node)?;
-    let base_node = arena.get(access.expression)?;
+    let base_node = arena.get(base)?;
     let base_ident = arena.get_identifier(base_node)?;
 
-    let name_node = arena.get(access.name_or_argument)?;
+    let name_node = arena.get(name)?;
     let member = if let Some(ident) = arena.get_identifier(name_node) {
         Some(ident.escaped_text.clone())
     } else if matches!(
@@ -101,7 +107,7 @@ fn member_access_parts(arena: &NodeArena, expr_idx: NodeIndex) -> Option<MemberA
     };
 
     Some(MemberAccessParts {
-        base: access.expression,
+        base,
         base_text: base_ident.escaped_text.clone(),
         member,
     })
@@ -542,6 +548,63 @@ fn declaration_has_unique_symbol_member(
     })
 }
 
+fn declaration_unique_symbol_member_ref(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+    member_name: &str,
+    file_name: &str,
+) -> Option<SymbolRef> {
+    let mut node = arena.get(decl_idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        let parent_idx = arena.get_extended(decl_idx).map(|ext| ext.parent)?;
+        let parent_node = arena.get(parent_idx)?;
+        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            node = parent_node;
+        }
+    }
+    if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+        return None;
+    }
+    let var_decl = arena.get_variable_declaration(node)?;
+    if !var_decl.type_annotation.is_some() {
+        return None;
+    }
+    let type_node_idx = unwrap_parenthesized_type(arena, var_decl.type_annotation);
+    let type_node = arena.get(type_node_idx)?;
+    if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+        return None;
+    }
+    let type_lit = arena.get_type_literal(type_node)?;
+    for &member_idx in type_lit.members.nodes.iter() {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            continue;
+        }
+        let Some(sig) = arena.get_signature(member_node) else {
+            continue;
+        };
+        let Some(name) = super::queries::core::get_literal_property_name(arena, sig.name) else {
+            continue;
+        };
+        if name != member_name || !sig.type_annotation.is_some() {
+            continue;
+        }
+        let annotation = unwrap_parenthesized_type(arena, sig.type_annotation);
+        if !is_unique_symbol_type_annotation_unwrapped(arena, sig.type_annotation) {
+            continue;
+        }
+        let annotation_node = arena.get(annotation)?;
+        return Some(synthetic_unique_symbol_ref(
+            file_name,
+            annotation_node.pos,
+            annotation_node.end,
+        ));
+    }
+    None
+}
+
 /// Resolve `sym_id` (after import-alias hops) to a `SymbolRef` strictly when
 /// it has unique-symbol identity. Used where a `unique symbol` TYPE is
 /// constructed, so plain `: symbol` binding-identity keys must not qualify.
@@ -606,6 +669,92 @@ pub(crate) fn computed_property_name_atom(
         }
     }
     symbol_binding_property_atom(ctx, resolve_symbol(expr_idx)?)
+}
+
+/// Recover the source-spelled key and precise `unique symbol` identity for a
+/// member access whose base declaration is an object type literal containing a
+/// readonly `unique symbol` member, such as `[Tags.tag]` where
+/// `declare const Tags: { readonly tag: unique symbol }`.
+pub(crate) fn declared_unique_symbol_member_ref_for_expr(
+    ctx: &CheckerContext<'_>,
+    resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
+    expr_idx: NodeIndex,
+) -> Option<(String, SymbolRef)> {
+    let parts = member_access_parts(ctx.arena, expr_idx)?;
+    let member = parts.member.as_deref()?;
+    let base_sym = ctx
+        .binder
+        .file_locals
+        .get(&parts.base_text)
+        .or_else(|| resolve_symbol(parts.base))?;
+    let base_sym = follow_import_aliases(ctx, base_sym);
+    let symbol = symbol_from_any_context(ctx, base_sym)?;
+    let mut declarations = symbol.all_declarations();
+    if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
+        declarations.push(symbol.value_declaration);
+    }
+    if let Some(primary) = symbol.primary_declaration()
+        && !declarations.contains(&primary)
+    {
+        declarations.push(primary);
+    }
+    for decl_idx in declarations {
+        if let Some(symbol_ref) =
+            declaration_unique_symbol_member_ref(ctx.arena, decl_idx, member, &ctx.file_name)
+        {
+            return Some((format!("[{}.{member}]", parts.base_text), symbol_ref));
+        }
+    }
+    if let Some(symbol_ref) =
+        current_file_declared_unique_symbol_member_ref(ctx, &parts.base_text, member)
+    {
+        return Some((format!("[{}.{member}]", parts.base_text), symbol_ref));
+    }
+    None
+}
+
+fn current_file_declared_unique_symbol_member_ref(
+    ctx: &CheckerContext<'_>,
+    base_name: &str,
+    member_name: &str,
+) -> Option<SymbolRef> {
+    let source_file = ctx.arena.source_files.first()?;
+    for &stmt_idx in source_file.statements.nodes.iter() {
+        let Some(stmt_node) = ctx.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(var_data) = ctx.arena.get_variable(stmt_node) else {
+            continue;
+        };
+        for &decl_idx in var_data.declarations.nodes.iter() {
+            let Some(var_decl) = ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| ctx.arena.get_variable_declaration(node))
+            else {
+                continue;
+            };
+            let Some(name_node) = ctx.arena.get(var_decl.name) else {
+                continue;
+            };
+            if !ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == base_name)
+            {
+                continue;
+            }
+            if let Some(symbol_ref) = declaration_unique_symbol_member_ref(
+                ctx.arena,
+                decl_idx,
+                member_name,
+                &ctx.file_name,
+            ) {
+                return Some(symbol_ref);
+            }
+        }
+    }
+    None
 }
 
 /// Is the computed-name expression symbol-valued (well-known or

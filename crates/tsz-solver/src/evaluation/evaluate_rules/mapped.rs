@@ -273,7 +273,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys: Vec::new(),
                 has_string: true,
                 has_number: true,
-                has_symbol: false,
+                has_symbol: true,
                 template_literals: Vec::new(),
                 symbol_keys: Vec::new(),
             }

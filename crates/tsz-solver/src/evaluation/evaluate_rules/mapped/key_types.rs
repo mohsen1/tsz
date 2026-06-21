@@ -21,10 +21,12 @@ pub(crate) struct MappedKeys {
     pub keys: Vec<MappedKey>,
     pub has_string: bool,
     pub has_number: bool,
-    /// The bare `symbol` intrinsic appears in the key constraint (e.g.
-    /// `{ [K in string | number | symbol]: V }` or `Record<PropertyKey, V>`).
-    /// Unlike [`Self::symbol_keys`] (concrete `unique symbol` keys), this is the
-    /// open `symbol` key space and lowers to a `symbol` index signature.
+    /// Whether the constraint's key space includes the broad `symbol` type
+    /// (e.g. `{ [P in symbol]: V }`, `Record<PropertyKey, V>`). This produces a
+    /// symbol-keyed index signature on the result object — distinct from the
+    /// concrete unique-symbol keys tracked by `symbol_keys`. Dropping it makes
+    /// `keyof` and indexed access lose the symbol key space, yielding spurious
+    /// `TS2536`/`TS2862` on any symbol-bearing access (see #14315).
     pub has_symbol: bool,
     /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
     /// When non-empty and `has_string` is false, the object gets a template-literal index

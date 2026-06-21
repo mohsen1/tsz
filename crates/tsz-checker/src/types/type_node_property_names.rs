@@ -22,12 +22,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
     }
 
-    fn register_well_known_symbol_name_mapping(&mut self, name: &str, sym_id: SymbolId) {
+    fn register_well_known_symbol_ref_mapping(&mut self, name: &str, symbol_ref: SymbolRef) {
         if !name.starts_with("[Symbol.") {
             return;
         }
 
-        let symbol_ref = SymbolRef(sym_id.0);
         let name_key = name.to_string();
 
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
@@ -36,6 +35,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
             env.register_well_known_symbol_name(name_key, symbol_ref);
         }
+    }
+
+    fn register_well_known_symbol_name_mapping(&mut self, name: &str, sym_id: SymbolId) {
+        self.register_well_known_symbol_ref_mapping(name, SymbolRef(sym_id.0));
     }
 
     /// Resolve a property name, including computed names backed by unique symbols.
@@ -55,6 +58,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression)
             {
                 self.register_well_known_symbol_name_mapping(&name, sym_id);
+            } else if name.starts_with("[Symbol.")
+                && let Some((declared_name, symbol_ref)) =
+                    computed_names::declared_unique_symbol_member_ref_for_expr(
+                        self.ctx,
+                        |idx| self.resolve_computed_name_value_symbol(idx),
+                        computed.expression,
+                    )
+                && declared_name == name
+            {
+                return Some(format!("__unique_{}", symbol_ref.0));
             }
             return Some(name);
         }
@@ -83,6 +96,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression)
             {
                 self.register_well_known_symbol_name_mapping(&name, sym_id);
+            } else if name.starts_with("[Symbol.")
+                && let Some((declared_name, symbol_ref)) =
+                    computed_names::declared_unique_symbol_member_ref_for_expr(
+                        self.ctx,
+                        |idx| self.resolve_computed_name_value_symbol(idx),
+                        computed.expression,
+                    )
+                && declared_name == name
+            {
+                return Some(format!("__unique_{}", symbol_ref.0));
             }
             return Some(name);
         }

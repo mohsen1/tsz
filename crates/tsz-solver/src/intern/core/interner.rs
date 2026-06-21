@@ -247,6 +247,22 @@ pub struct TypeInterner {
     /// `widen_type_deep`/display variants compute different results for the same
     /// `TypeId` and must not share it.
     pub(super) widen_type_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Result memo for `extract_type_params_from_type`, keyed by `TypeId`.
+    ///
+    /// The set of `TypeParameter`/signature-owned type parameters reachable
+    /// from a type is a pure function of the immutable interned type structure
+    /// — it never consults the resolver or substitution environment. The
+    /// evaluator nonetheless recomputes it on every conditional reduction
+    /// (`permissive_false_branch_is_definitive` extracts the params of both the
+    /// check and extends operands) and on every keyof / application expansion,
+    /// each time allocating two `FxHashSet`s and re-walking the whole subtree.
+    /// A recursive conditional that re-applies itself over an alias
+    /// `Application` (e.g. `DeepUnwrap<AsyncBox<…>>`) drives this walk thousands
+    /// of times per query because every unwrap step mints a fresh, structurally
+    /// distinct `Application` `TypeId`. Memoizing the result per `TypeId`
+    /// collapses the repeats to O(1) and is shared across the many fresh
+    /// `TypeEvaluator` instances created during instantiation (#14330).
+    pub(super) extract_type_params_cache: DashMap<TypeId, Arc<[TypeParamInfo]>, FxBuildHasher>,
     /// Packed per-`TypeId` caches for immutable structural content predicates.
     ///
     /// Each bit records one predicate's known/truthy state. This preserves the
@@ -534,6 +550,7 @@ impl TypeInterner {
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             predicate_cache: DashMap::with_hasher(FxBuildHasher),
             widen_type_cache: DashMap::with_hasher(FxBuildHasher),
+            extract_type_params_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
@@ -790,6 +807,20 @@ impl TypeInterner {
     #[inline]
     pub fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
         self.widen_type_cache.insert(type_id, result);
+    }
+
+    /// Look up the memoized `extract_type_params_from_type` result for `type_id`.
+    #[inline]
+    pub fn extract_type_params_memo(&self, type_id: TypeId) -> Option<Arc<[TypeParamInfo]>> {
+        self.extract_type_params_cache
+            .get(&type_id)
+            .map(|v| Arc::clone(&v))
+    }
+
+    /// Record the `extract_type_params_from_type` result for `type_id`.
+    #[inline]
+    pub fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
+        self.extract_type_params_cache.insert(type_id, params);
     }
 
     /// Intern a string into an Atom.

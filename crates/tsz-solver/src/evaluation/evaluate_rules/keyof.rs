@@ -20,47 +20,48 @@ use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
+use super::string_index_helpers::index_signature_key_includes_symbol;
 
-/// Append the keyof key-types contributed by an object's index signatures.
-///
-/// `ObjectShape.string_index` is reused for both string- and symbol-keyed
-/// signatures (discriminated by `key_type`), so a naive "if `string_index` is
-/// Some -> push string|number" classification mis-reports the keyof for
-/// objects whose only index signature is symbol-keyed. The keyof of
-/// `{ [k: symbol]: V }` is `symbol`, not `string | number`.
-///
-/// - Symbol-keyed signature: contributes `symbol`.
-/// - String-keyed signature: contributes `string | number` (string indexes
-///   are implicitly numeric-key-compatible in TS).
-/// - Number-keyed signature contributes `number` when no string-slot signature
-///   already contributed numeric keyspace, except for enum namespace types
-///   where tsc excludes the implicit `[index: number]: string` from
-///   `keyof typeof E`.
-fn index_signature_key_includes_symbol(interner: &dyn TypeDatabase, key_type: TypeId) -> bool {
-    if key_type == TypeId::SYMBOL {
-        return true;
+/// Structurally resolve an index-signature key type through transparent
+/// `Lazy` alias wrappers (e.g. `PropertyKey` resolves to
+/// `string | number | symbol`) so its key kinds can be classified. Without
+/// this, an unresolved alias falls through key-kind classification and its
+/// `symbol` arm is silently dropped, producing spurious `TS2536`/`TS2862` on
+/// any symbol-bearing index. The bounded peel guards against pathological
+/// alias cycles.
+fn resolve_index_signature_key_alias(
+    interner: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    key_type: TypeId,
+) -> TypeId {
+    let mut current = key_type;
+    for _ in 0..8 {
+        let Some(TypeData::Lazy(def_id)) = interner.lookup(current) else {
+            return current;
+        };
+        match resolver.resolve_lazy(def_id, interner) {
+            Some(resolved) if resolved != current => current = resolved,
+            _ => return current,
+        }
     }
-    match interner.lookup(key_type) {
-        Some(TypeData::Union(members)) => interner
-            .type_list(members)
-            .iter()
-            .any(|&member| index_signature_key_includes_symbol(interner, member)),
-        _ => false,
-    }
+    current
 }
 
 fn extend_keyof_with_index_signature_key_type(
     interner: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
     key_types: &mut Vec<TypeId>,
     key_type: TypeId,
     suppress_string_numeric: bool,
 ) -> bool {
+    let key_type = resolve_index_signature_key_alias(interner, resolver, key_type);
     match interner.lookup(key_type) {
         Some(TypeData::Union(members)) => {
             let mut contributed_number = false;
             for &member in interner.type_list(members).iter() {
                 contributed_number |= extend_keyof_with_index_signature_key_type(
                     interner,
+                    resolver,
                     key_types,
                     member,
                     suppress_string_numeric,
@@ -97,7 +98,7 @@ fn extend_keyof_with_index_signature_key_type(
         _ => {
             key_types.push(TypeId::STRING);
             key_types.push(TypeId::NUMBER);
-            if index_signature_key_includes_symbol(interner, key_type) {
+            if index_signature_key_includes_symbol(interner, resolver, key_type) {
                 key_types.push(TypeId::SYMBOL);
             }
             true
@@ -105,8 +106,24 @@ fn extend_keyof_with_index_signature_key_type(
     }
 }
 
+/// Append the keyof key-types contributed by an object's index signatures.
+///
+/// `ObjectShape.string_index` is reused for both string- and symbol-keyed
+/// signatures (discriminated by `key_type`), so a naive "if `string_index` is
+/// Some -> push string|number" classification mis-reports the keyof for
+/// objects whose only index signature is symbol-keyed. The keyof of
+/// `{ [k: symbol]: V }` is `symbol`, not `string | number`.
+///
+/// - Symbol-keyed signature: contributes `symbol`.
+/// - String-keyed signature: contributes `string | number` (string indexes
+///   are implicitly numeric-key-compatible in TS).
+/// - Number-keyed signature contributes `number` when no string-slot signature
+///   already contributed numeric keyspace, except for enum namespace types
+///   where tsc excludes the implicit `[index: number]: string` from
+///   `keyof typeof E`.
 fn extend_keyof_with_index_signature_keys(
     interner: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
     key_types: &mut Vec<TypeId>,
     string_or_symbol_index: Option<&IndexSignature>,
     number_index: Option<&IndexSignature>,
@@ -117,6 +134,7 @@ fn extend_keyof_with_index_signature_keys(
     let string_slot_contributed_number = if let Some(idx) = string_or_symbol_index {
         extend_keyof_with_index_signature_key_type(
             interner,
+            resolver,
             key_types,
             idx.key_type,
             suppress_string_numeric,
@@ -659,6 +677,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     extend_keyof_with_index_signature_keys(
                         self.interner(),
+                        self.resolver(),
                         &mut key_types,
                         shape.string_index_signature(),
                         shape.number_index.as_ref(),
@@ -688,6 +707,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     extend_keyof_with_index_signature_keys(
                         self.interner(),
+                        self.resolver(),
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
