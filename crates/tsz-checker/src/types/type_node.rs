@@ -1077,40 +1077,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             param_type
         };
 
-        // The asserted type and the parameter type can each be an alias head: a
-        // `Lazy(DefId)` alias reference or an unevaluated `Application` such as
-        // `Alias<T> = keyof T`. Left unresolved, the relation below compares two
-        // opaque heads and fails even when the alias bodies are assignable, which
-        // surfaces as a false `TS2677`. Resolve both through the environment
-        // (lazy-def resolve + application evaluate) before the relation, mirroring
-        // the index-signature-key resolution pattern used elsewhere in this file.
-        let resolved_predicate = {
-            let env = self.ctx.type_environment.borrow();
-            let lazy_resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
-                self.ctx.types,
-                Some(&env),
-                resolved_predicate,
-            );
-            crate::query_boundaries::flow_analysis::evaluate_application_type(
-                self.ctx.types,
-                &env,
-                lazy_resolved,
-            )
-        };
-        let resolved_param = {
-            let env = self.ctx.type_environment.borrow();
-            let lazy_resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
-                self.ctx.types,
-                Some(&env),
-                resolved_param,
-            );
-            crate::query_boundaries::flow_analysis::evaluate_application_type(
-                self.ctx.types,
-                &env,
-                lazy_resolved,
-            )
-        };
-
         let types = self.ctx.types;
         if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
             types,
