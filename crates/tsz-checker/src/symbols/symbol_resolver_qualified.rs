@@ -59,6 +59,125 @@ impl<'a> CheckerState<'a> {
         self.resolve_qualified_symbol_inner_in_type_position(idx, &mut visited_aliases, 0)
     }
 
+    /// Whether `sym_id` carries meaning that lets it anchor the left-hand side
+    /// of a qualified type name `X.Member` — a namespace/module, class, or enum,
+    /// or a namespace import alias (`import * as X`) that navigates into another
+    /// module. A bare `type X = ...` alias or interface does not. Aliases are
+    /// followed to their target before the flag check; a namespace import alias
+    /// resolves to itself, so it is recognized by its `*` import name.
+    pub(crate) fn symbol_anchors_qualified_type_member(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        let mut visited = AliasCycleTracker::new();
+        let resolved = self
+            .resolve_alias_symbol(sym_id, &mut visited)
+            .unwrap_or(sym_id);
+        self.get_cross_file_symbol(resolved)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(resolved, lib_binders))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(
+                    symbol_flags::MODULE
+                        | symbol_flags::CLASS
+                        | symbol_flags::REGULAR_ENUM
+                        | symbol_flags::CONST_ENUM,
+                ) || (symbol.has_any_flags(symbol_flags::ALIAS)
+                    && symbol.import_name() == Some("*"))
+            })
+    }
+
+    /// Whether `sym_id` is an import alias that targets another module by name —
+    /// i.e. has an `import_module` specifier. Namespace imports (`import * as X`),
+    /// named imports (`import { X }`), and default imports all qualify; the
+    /// distinction between them is made by the caller via `import_name`.
+    fn symbol_is_module_import_alias(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module().is_some()
+            })
+    }
+
+    /// Resolve the namespace anchor for a qualified-type-name LHS whose type-space
+    /// resolution cannot itself anchor member access.
+    ///
+    /// tsc resolves the LHS of a qualified type name with *namespace* meaning, so
+    /// neither a shadowing local `type`/`interface` declaration nor the surface
+    /// `import { X }` binding may hide the namespace that the import ultimately
+    /// targets. The import alias carrying that meaning is either:
+    /// - `sym_id` itself, when it is a named/default import whose target module
+    ///   re-exports a namespace (the local-declaration merge can leave the import
+    ///   alias as the resolved type-space symbol); or
+    /// - `sym_id`'s `alias_partner`, when `sym_id` is a same-named local
+    ///   `type`/`interface` declaration that shadows the import.
+    ///
+    /// In both cases the alias is resolved through the same cross-file machinery
+    /// the unshadowed case uses; the result is returned only when it genuinely
+    /// anchors qualified member access (namespace/module, class, enum, or a
+    /// namespace import). Returns `None` when the type-space symbol already
+    /// anchors, when no import alias is involved, or when the alias does not
+    /// resolve to a usable anchor — so a real "not a namespace" diagnostic still
+    /// surfaces.
+    pub(crate) fn namespace_anchor_alias_partner(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<SymbolId> {
+        // Bound the re-export walk; chains this long are pathological.
+        const MAX_REEXPORT_HOPS: usize = 32;
+
+        if self.symbol_anchors_qualified_type_member(sym_id, lib_binders) {
+            return None;
+        }
+        // The import alias that carries the namespace meaning: the symbol itself
+        // when it is a module import, otherwise its same-named alias partner.
+        let alias = if self.symbol_is_module_import_alias(sym_id, lib_binders) {
+            sym_id
+        } else {
+            let partner = self
+                .ctx
+                .alias_partner_for(self.ctx.binder, sym_id)
+                .or_else(|| self.ctx.alias_partner_reverse(self.ctx.binder, sym_id))
+                .filter(|&partner| partner != sym_id)?;
+            if !self.symbol_is_module_import_alias(partner, lib_binders) {
+                return None;
+            }
+            partner
+        };
+        // Follow the import alias through any re-export chain to its terminal
+        // target. Each `resolve_alias_type_position_result` hop advances one
+        // module boundary (`export { X } from "./m"`); a namespace import or a
+        // module/class/enum is the terminal anchor. A target that is neither an
+        // anchor nor a further module import (e.g. a plain `type` alias) stops
+        // the walk with no anchor, so a real "not a namespace" diagnostic still
+        // surfaces.
+        let mut current = alias;
+        for _ in 0..MAX_REEXPORT_HOPS {
+            let Some(TypeSymbolResolution::Type(resolved)) =
+                self.resolve_alias_type_position_result(current, lib_binders)
+            else {
+                return None;
+            };
+            if resolved == current {
+                return None;
+            }
+            if self.symbol_anchors_qualified_type_member(resolved, lib_binders) {
+                return (resolved != sym_id).then_some(resolved);
+            }
+            if !self.symbol_is_module_import_alias(resolved, lib_binders) {
+                return None;
+            }
+            current = resolved;
+        }
+        None
+    }
+
     /// Resolve a member of the synthetic `globalThis` namespace in **type**
     /// position to its global type symbol.
     ///
@@ -180,13 +299,19 @@ impl<'a> CheckerState<'a> {
                     if self.is_import_equals_type_anchor(sym_id, &lib_binders) {
                         return TypeSymbolResolution::Type(sym_id);
                     }
+                    // A qualified-type-name LHS resolves with namespace meaning:
+                    // when a local `type`/`interface` shadows a same-named import
+                    // alias whose target is a namespace, anchor on the import.
+                    let anchor_src = self
+                        .namespace_anchor_alias_partner(sym_id, &lib_binders)
+                        .unwrap_or(sym_id);
                     // Preserve unresolved alias symbols in type position.
                     // `import X = require("...")` aliases may not resolve to a concrete
                     // target symbol, but `X` is still a valid namespace-like type query
                     // anchor (e.g., `typeof X.Member`).
                     let resolved = self
-                        .resolve_alias_symbol(sym_id, visited_aliases)
-                        .unwrap_or(sym_id);
+                        .resolve_alias_symbol(anchor_src, visited_aliases)
+                        .unwrap_or(anchor_src);
                     TypeSymbolResolution::Type(resolved)
                 }
                 TypeSymbolResolution::ValueOnly(sym_id)
