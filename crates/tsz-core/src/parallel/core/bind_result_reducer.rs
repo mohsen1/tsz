@@ -1598,7 +1598,12 @@ fn merge_module_exports_prefer_value_over_type_only(
 ) {
     for (name, &incoming_id) in src.iter() {
         if let Some(existing_id) = dst.get(name) {
-            if export_symbol_prefers_incoming_value(global_symbols, existing_id, incoming_id) {
+            if export_symbol_prefers_incoming_value(
+                global_symbols,
+                name,
+                existing_id,
+                incoming_id,
+            ) {
                 dst.set(name.clone(), incoming_id);
             }
         } else {
@@ -1609,6 +1614,7 @@ fn merge_module_exports_prefer_value_over_type_only(
 
 fn export_symbol_prefers_incoming_value(
     global_symbols: &SymbolArena,
+    export_name: &str,
     existing_id: SymbolId,
     incoming_id: SymbolId,
 ) -> bool {
@@ -1618,6 +1624,15 @@ fn export_symbol_prefers_incoming_value(
     let Some(incoming) = global_symbols.get(incoming_id) else {
         return false;
     };
+
+    if export_name == "default"
+        && existing.has_any_flags(crate::binder::symbol_flags::ALIAS)
+        && existing.import_module().is_some()
+        && incoming.has_any_flags(crate::binder::symbol_flags::ALIAS)
+        && incoming.import_module().is_none()
+    {
+        return false;
+    }
 
     const TYPE_ONLY_DECL: u32 = crate::binder::symbol_flags::INTERFACE
         | crate::binder::symbol_flags::TYPE_ALIAS

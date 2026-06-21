@@ -330,7 +330,19 @@ impl BinderState {
                         clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                             || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     });
-                let default_is_type_only = export_type_only || default_exports_pure_type;
+                let local_name = Self::get_identifier_name(arena, export.export_clause)
+                    .or_else(|| Self::get_declaration_name(arena, export.export_clause));
+                let default_targets_type_only_local = local_name
+                    .and_then(|name| {
+                        self.current_scope()
+                            .get(name)
+                            .or_else(|| self.file_locals.get(name))
+                            .and_then(|sym_id| self.symbols.get(sym_id))
+                    })
+                    .is_some_and(|sym| sym.is_type_only);
+                let default_is_type_only = export_type_only
+                    || default_exports_pure_type
+                    || default_targets_type_only_local;
                 let default_flags = if default_exports_pure_type {
                     symbol_flags::ALIAS
                 } else {
@@ -379,8 +391,6 @@ impl BinderState {
                 // For `export default class Foo`, get_identifier_name returns None
                 // (ClassDeclaration is not an Identifier node), so we also try
                 // looking up the symbol via get_declaration_name.
-                let local_name = Self::get_identifier_name(arena, export.export_clause)
-                    .or_else(|| Self::get_declaration_name(arena, export.export_clause));
                 if let Some(name) = local_name {
                     if let Some(sym_id) = self
                         .current_scope()

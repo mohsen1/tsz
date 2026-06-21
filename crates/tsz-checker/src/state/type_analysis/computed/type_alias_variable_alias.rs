@@ -1222,6 +1222,12 @@ impl<'a> CheckerState<'a> {
                                         name,
                                     )
                                     .or_else(|| {
+                                        self.named_import_alias_namespace_property_type(
+                                            export_sym_id,
+                                            name,
+                                        )
+                                    })
+                                    .or_else(|| {
                                         self.get_validated_member_type(export_sym_id, name)
                                     });
                                 if validated_prop_type.is_none()

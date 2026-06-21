@@ -1217,6 +1217,14 @@ impl<'a> CheckerState<'a> {
                     })
                     .map_or(0, |s| s.flags);
 
+                if let Some(type_partner_id) = self
+                    .ctx
+                    .alias_partner_reverse(self.ctx.binder, effective_target_id)
+                    .filter(|&partner_id| target_symbol_has_declared_type_meaning(partner_id))
+                {
+                    return TypeSymbolResolution::Type(type_partner_id);
+                }
+
                 // Synthetic default-export symbols often exist as bare aliases
                 // with no direct TYPE/VALUE flags. Follow the alias before
                 // deciding whether the import is usable in type position.

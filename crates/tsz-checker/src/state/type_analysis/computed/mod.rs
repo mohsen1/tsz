@@ -307,6 +307,12 @@ impl<'a> CheckerState<'a> {
             return prop_type;
         }
 
+        if let Some(alias_prop_type) =
+            self.named_import_alias_namespace_property_type(export_sym_id, export_name)
+        {
+            return alias_prop_type;
+        }
+
         if let Some(value_type) = self.get_validated_member_type(export_sym_id, export_name) {
             return value_type;
         }
@@ -334,6 +340,34 @@ impl<'a> CheckerState<'a> {
             prop_type = self.get_enum_namespace_type_for_value(prop_type);
         }
         prop_type
+    }
+
+    pub(crate) fn named_import_alias_namespace_property_type(
+        &mut self,
+        export_sym_id: SymbolId,
+        export_name: &str,
+    ) -> Option<TypeId> {
+        let symbol = self
+            .get_cross_file_symbol(export_sym_id)
+            .or_else(|| self.get_symbol_globally(export_sym_id))?;
+        if !symbol.has_any_flags(symbol_flags::ALIAS) || symbol.is_type_only {
+            return None;
+        }
+        let import_module = symbol.import_module()?.to_string();
+        let import_name = symbol.import_name().unwrap_or(export_name).to_string();
+        if import_name == "*" {
+            return None;
+        }
+        let source_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(export_sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            &import_module,
+            &import_name,
+            Some(source_file_idx),
+        )?;
+        self.get_validated_member_type(target_sym_id, &import_name)
     }
 
     pub(crate) fn namespace_default_reexport_property_type(

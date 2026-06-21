@@ -1300,7 +1300,11 @@ impl BinderState {
                     {
                         Arc::make_mut(&mut self.alias_partners).insert(sym_id, existing_id);
                     }
-                    if !self.export_surface_keeps_existing_value(file_exports.get(name), sym_id) {
+                    if !self.export_surface_keeps_existing_value(
+                        name,
+                        file_exports.get(name),
+                        sym_id,
+                    ) {
                         file_exports.set(name.clone(), sym_id);
                     }
                 }
@@ -1342,6 +1346,7 @@ impl BinderState {
 
     fn export_surface_keeps_existing_value(
         &self,
+        export_name: &str,
         existing_id: Option<SymbolId>,
         incoming_id: SymbolId,
     ) -> bool {
@@ -1354,6 +1359,15 @@ impl BinderState {
         let Some(incoming) = self.symbols.get(incoming_id) else {
             return false;
         };
+
+        if export_name == "default"
+            && existing.has_any_flags(symbol_flags::ALIAS)
+            && existing.import_module().is_some()
+            && incoming.has_any_flags(symbol_flags::ALIAS)
+            && incoming.import_module().is_none()
+        {
+            return true;
+        }
 
         const TYPE_ONLY_DECL: u32 =
             symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
