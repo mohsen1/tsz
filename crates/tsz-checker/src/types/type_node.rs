@@ -1078,14 +1078,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let types = self.ctx.types;
-        if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
-            types,
-            resolved_predicate,
-            resolved_param,
-        )
-        .related
-            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
-        {
+        // Run the predicate relation with the checker's `DefId`-resolving resolver
+        // (rather than a `NoopResolver`) so an aliased predicate or parameter type
+        // is resolved to its body during the relation walk. See the boundary's doc
+        // comment (issue #14231).
+        let related =
+            crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
+                types,
+                &*self.ctx,
+                resolved_predicate,
+                resolved_param,
+            )
+            .related;
+        if !related && let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
             self.ctx.error(
                 type_node.pos,
                 type_node.end - type_node.pos,

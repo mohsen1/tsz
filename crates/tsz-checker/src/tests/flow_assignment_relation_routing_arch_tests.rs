@@ -2,8 +2,26 @@ use std::fs;
 
 #[test]
 fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
-    let core_source = fs::read_to_string("src/flow/control_flow/core.rs")
+    // `core.rs` was split into a `core/` submodule (e.g. `core/flow_query.rs`,
+    // `core/flow_traversal.rs`), so the flow-analyzer relation decisions this
+    // test pins now live across that module tree. Read `core.rs` plus every
+    // sibling source under `core/` so the routing contract is checked wherever
+    // the call sites land, not just in the historic single file.
+    let mut core_source = fs::read_to_string("src/flow/control_flow/core.rs")
         .expect("failed to read flow analyzer core source");
+    // Order is irrelevant — every assertion below is a `contains` check — so
+    // concatenate the submodule sources directly without sorting.
+    if let Ok(entries) = fs::read_dir("src/flow/control_flow/core") {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(contents) = fs::read_to_string(&path)
+            {
+                core_source.push('\n');
+                core_source.push_str(&contents);
+            }
+        }
+    }
     let assignment_source = fs::read_to_string("src/flow/control_flow/assignment.rs")
         .expect("failed to read flow assignment source");
     let call_predicate_source =
