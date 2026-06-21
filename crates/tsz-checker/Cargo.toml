@@ -983,6 +983,9 @@ path = "tests/program_context_tests.rs"
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 [[test]]
+name = "generic_param_source_apparent_type_inference_tests"
+path = "tests/generic_param_source_apparent_type_inference_tests.rs"
+[[test]]
 name = "kysely_callback_context_tests"
 path = "tests/kysely_callback_context_tests.rs"
 [[test]]
