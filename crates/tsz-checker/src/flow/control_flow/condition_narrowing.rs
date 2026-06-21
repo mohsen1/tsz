@@ -1239,6 +1239,21 @@ impl<'a> FlowAnalyzer<'a> {
         // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should narrow based on RHS
         // The assignment itself doesn't provide narrowing, but its RHS might
         if operator == SyntaxKind::EqualsToken as u16 {
+            // When the assignment LHS *is* the narrowed reference, `(s = rhs)` used
+            // as a condition observes the truthiness of the value just assigned to
+            // `s`.  tsc narrows the assigned target by truthiness in the branches
+            // (true → strip null/undefined, false → keep falsy), exactly like a
+            // bare reference observation.  Mirror the matching-reference arms.
+            if self.is_matching_reference(bin.left, target) {
+                if is_true_branch {
+                    return flow_query::narrow_to_truthy_in_context(
+                        narrowing,
+                        type_id,
+                        is_true_branch,
+                    );
+                }
+                return self.narrow_to_falsy_via_flow_boundary(type_id);
+            }
             if self.arena.get(bin.right).is_some() {
                 // Recursively narrow based on the RHS expression
                 let mut visited = AliasCycleTracker::new();
