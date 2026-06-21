@@ -144,6 +144,28 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
         } else {
+            // The object is not a bare type parameter: it is a reducible form
+            // (e.g. an inline `Cond extends infer T ? T : …` resolving to a
+            // hybrid interface). Indexing a callable/hybrid member by a concrete
+            // key yields the member's full apparent type, which keeps its call
+            // signatures. Reduce the whole access through the solver and accept
+            // it when it resolves to a concrete callable/function type. Gated on
+            // a *concrete* (type-parameter-free) key so a still-generic `O[K]`
+            // distribution is never eagerly evaluated here — those must stay on
+            // the existing deferral/elaboration paths. A non-callable member
+            // evaluates to a non-callable type and still reports TS2344.
+            if !query::contains_type_parameters(self.ctx.types, index) {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                let db = self.ctx.types.as_type_database();
+                let unresolved = query::index_access_components(db, evaluated).is_some()
+                    || query::contains_type_parameters(db, evaluated);
+                if !unresolved
+                    && (query::is_callable_type(db, evaluated)
+                        || query::callable_shape_for_type(db, evaluated).is_some())
+                {
+                    return true;
+                }
+            }
             return false;
         };
         let db = self.ctx.types.as_type_database();
