@@ -9,6 +9,7 @@
 mod applicability;
 mod candidate_collection;
 mod diagnostics;
+mod non_tuple_spread_signature;
 mod overload_resolution;
 mod spread_arity;
 
