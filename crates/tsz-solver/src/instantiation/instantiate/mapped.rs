@@ -244,25 +244,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Check for Tuple first (tsc: instantiateMappedTupleType)
             // Must also handle ReadonlyType wrapping Tuple
-            let tuple_source = if resolved.is_intrinsic() {
-                None
-            } else {
-                match self.interner.lookup(resolved) {
-                    Some(TypeData::Tuple(tid)) => Some((tid, false)),
-                    Some(TypeData::ReadonlyType(inner)) => {
-                        let ir = self.evaluate_type(inner);
-                        if ir.is_intrinsic() {
-                            None
-                        } else {
-                            match self.interner.lookup(ir) {
-                                Some(TypeData::Tuple(tid)) => Some((tid, true)),
-                                _ => None,
-                            }
-                        }
-                    }
-                    _ => None,
-                }
-            };
+            let tuple_source = Self::extract_tuple_source(self.interner, resolved);
             if let Some((tuple_id, source_readonly)) = tuple_source {
                 use crate::types::MappedModifier;
                 let elements = self.interner.tuple_list(tuple_id);

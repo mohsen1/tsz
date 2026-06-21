@@ -1001,28 +1001,126 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        let resolved_instance = self.resolve_type(instance_type);
+
+        // tsc's `narrowTypeByConstructor` does NOT narrow when the constructor's
+        // prototype/instance type is the global `Object` or `Function` interface
+        // (every value's `.constructor` could legitimately be `Object`/`Function`).
+        // `({} as T).constructor === Object` therefore keeps `T` for every `T`,
+        // including primitives and nominal-class union members.
+        if self.is_global_object_or_function_instance(resolved_instance) {
+            return source_type;
+        }
+
+        // For `any` / `unknown` sources every type is a subtype of the source,
+        // so the result is exactly the constructor's instance type.
         if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
             return instance_type;
         }
-
-        let resolved_instance = self.resolve_type(instance_type);
 
         if let Some(members_list) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members_list);
             let matching: Vec<TypeId> = members
                 .iter()
                 .copied()
-                .filter(|&m| self.types_match_nominally(m, instance_type, resolved_instance))
+                .filter(|&m| self.constructor_member_retained(m, instance_type, resolved_instance))
                 .collect();
             trace!(matched = matching.len(), total = members.len());
             return super::union_or_single_preserve(self.db, matching);
         }
 
-        if self.types_match_nominally(source_type, instance_type, resolved_instance) {
+        if self.constructor_member_retained(source_type, instance_type, resolved_instance) {
             source_type
         } else {
             TypeId::NEVER
         }
+    }
+
+    /// Is `resolved_instance` the global `Object` or `Function` interface?
+    ///
+    /// Mirrors the `candidate === globalObjectType || candidate === globalFunctionType`
+    /// short-circuit in tsc's `narrowTypeByConstructor`, which disables
+    /// constructor-identity narrowing because those constructors match any value.
+    ///
+    /// Uses the **identity** tier of the boxed-type registry exclusively (tsc
+    /// compares `candidate` by reference identity). The structural shape
+    /// fallback is intentionally avoided here: an interface like `Array` carries
+    /// `Object`'s members and could trip a member-name sniff, which would
+    /// wrongly disable `=== Array` narrowing.
+    fn is_global_object_or_function_instance(&self, resolved_instance: TypeId) -> bool {
+        let db = self.db.as_type_database();
+        if let Some(resolver) = self.resolver {
+            crate::type_queries::is_global_interface_by_identity_with_resolver(
+                db,
+                resolver,
+                resolved_instance,
+                crate::types::IntrinsicKind::Object,
+            ) || crate::type_queries::is_global_interface_by_identity_with_resolver(
+                db,
+                resolver,
+                resolved_instance,
+                crate::types::IntrinsicKind::Function,
+            )
+        } else {
+            crate::type_queries::is_global_interface_by_identity(
+                db,
+                resolved_instance,
+                crate::types::IntrinsicKind::Object,
+            ) || crate::type_queries::is_global_interface_by_identity(
+                db,
+                resolved_instance,
+                crate::types::IntrinsicKind::Function,
+            )
+        }
+    }
+
+    /// Decide whether a single source type (or union member) survives a
+    /// `x.constructor === Ctor` true-branch narrowing, mirroring tsc's
+    /// `isConstructedBy`.
+    ///
+    /// - **When either the member or the constructor's instance type is a
+    ///   nominal class** (`class C {}`), `tsc` requires exact constructor
+    ///   identity (`source.symbol === target.symbol`). `Dog.constructor === Animal`
+    ///   is `false` even though `Dog extends Animal`, so we narrow by exact
+    ///   nominal match ([`Self::types_match_nominally`]); a non-match drops the
+    ///   member (the single-source case narrows to `never`).
+    /// - **Otherwise** (object literals, `{}`, `object`, interfaces, and
+    ///   primitives — none of which carry a class-private constructor identity),
+    ///   `tsc` keeps the member iff it is a subtype of the constructor's instance
+    ///   type (e.g. `=== Array` keeps `number[]` but drops `{}` and `number`).
+    ///
+    /// The nominal/structural split is driven purely by binder-backed
+    /// [`Self::get_class_def_id`] (a `DefKind::Class` check), never by names or
+    /// printed shapes.
+    fn constructor_member_retained(
+        &self,
+        member: TypeId,
+        instance_type: TypeId,
+        resolved_instance: TypeId,
+    ) -> bool {
+        // If either side is a nominal class, use exact constructor identity.
+        // This keeps `Dog.constructor === Animal` narrowing to `never` and
+        // discriminates `A | B` unions by the exact constructor.
+        if self.get_class_def_id(member).is_some() || self.get_class_def_id(instance_type).is_some()
+        {
+            return self.types_match_nominally(member, instance_type, resolved_instance);
+        }
+
+        // Exact-identity fast path also covers a structural source whose
+        // instance type happens to be the same interned type.
+        if self.types_match_nominally(member, instance_type, resolved_instance) {
+            return true;
+        }
+
+        // Structural sources (interfaces, `{}`, `object`, anonymous objects,
+        // and primitives) have no private constructor identity. `tsc` keeps the
+        // source iff it is a subtype of the constructor's instance type.
+        let resolved_member = self.resolve_type(member);
+        crate::relations::subtype::is_subtype_of_with_db(
+            self.db,
+            resolved_member,
+            resolved_instance,
+        )
     }
 
     /// Narrow by `x.constructor !== SomeClass` (false branch).

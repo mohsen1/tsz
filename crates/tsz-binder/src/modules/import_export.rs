@@ -555,6 +555,7 @@ impl BinderState {
                                         let should_clone_type_only_export = spec_type_only
                                             && !orig_is_type_only
                                             && (orig != exp || !orig_was_exported);
+                                        let mut exported_sym_id = sym_id;
                                         if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
@@ -592,6 +593,7 @@ impl BinderState {
                                                 table.set(exp.to_string(), clone_id);
                                             }
                                             self.file_locals.set(exp.to_string(), clone_id);
+                                            exported_sym_id = clone_id;
                                         } else if orig != exp {
                                             // `export { orig as exp }` exposes `orig` under
                                             // the public name `exp`. tsc keeps the export
@@ -641,6 +643,14 @@ impl BinderState {
                                                 }
                                                 self.file_locals.set(exp.to_string(), sym_id);
                                             }
+                                        }
+                                        if self.in_global_augmentation {
+                                            self.record_global_value_augmentation(
+                                                exp,
+                                                exported_sym_id,
+                                                spec_idx,
+                                                symbol_flags::ALIAS,
+                                            );
                                         }
                                     }
                                 }

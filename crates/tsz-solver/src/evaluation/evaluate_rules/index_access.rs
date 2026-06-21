@@ -786,6 +786,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
 impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     type Output = Option<TypeId>;
 
+    fn visit_substitution(&mut self, _base_type: TypeId, constraint: TypeId) -> Self::Output {
+        self.visit_type(self.evaluator.interner(), constraint)
+    }
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
         self.evaluate_apparent_primitive(kind)
     }

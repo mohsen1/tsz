@@ -227,6 +227,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         seen_rest: &mut bool,
         grammar_broke: &mut bool,
     ) {
+        if self.rest_type_node_is_unconstrained_infer(type_node) {
+            if *seen_rest && !*grammar_broke {
+                self.ctx.error(
+                    pos,
+                    end.saturating_sub(pos),
+                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
+                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
+                );
+                *grammar_broke = true;
+            }
+            *seen_rest = true;
+            return;
+        }
         if !self.rest_element_type_is_array_like(elem_type) {
             if !*grammar_broke {
                 self.emit_rest_element_type_must_be_array(pos, end);
@@ -768,6 +781,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             };
         }
+        // Conditional true-branch substitutions present their base identity for
+        // display/inference, but rest grammar needs their structural constraint.
+        let base_constraint = q::get_base_constraint_of_type(self.ctx.types, t);
+        if base_constraint != t && base_constraint != TypeId::UNKNOWN {
+            return self.rest_element_type_is_definitely_not_array_like(base_constraint, depth + 1);
+        }
         // Types that remain instantiable *and* still reference free type
         // parameters are deferred generics whose array-like-ness `tsc` decides
         // from the (usually array-like) constraint; tsz frequently cannot
@@ -1138,6 +1157,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             self.check(idx)
         }
+    }
+
+    fn rest_type_node_is_unconstrained_infer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::INFER_TYPE {
+            return false;
+        }
+        let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(infer_data.type_parameter)
+            .and_then(|tp_node| self.ctx.arena.get_type_parameter(tp_node))
+            .is_some_and(|tp_data| tp_data.constraint == NodeIndex::NONE)
     }
 
     pub(super) fn is_this_type_allowed(
