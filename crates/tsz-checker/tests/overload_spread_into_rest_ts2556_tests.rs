@@ -144,3 +144,81 @@ fn plain_function_without_rest_still_emits_ts2556() {
         "plain no-rest function must still emit TS2556: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `Object.assign`-shaped overload set: generic fixed-arity overloads followed
+// by a trailing `(target, ...rest)` overload. The spread collapses to a single
+// argument, so the fixed-arity overload would win on arg count and emit a
+// spurious TS2556 unless non-rest overloads are skipped for an open-ended
+// spread (tsc's `hasEffectiveRestParameter` precondition during overload
+// resolution). The reachable rest overload then absorbs the spread.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn object_assign_shaped_overload_set_with_any_array_spread_is_clean() {
+    // Mirrors `ObjectConstructor.assign`'s overloads: three generic fixed-arity
+    // signatures plus a trailing rest signature. The `any[]` spread must bind to
+    // the rest overload, not the two-param generic one. Binder names varied so
+    // the rule is exercised structurally.
+    let src = r#"
+        interface Merger {
+            blend<A extends {}, B>(target: A, source: B): A & B;
+            blend<A extends {}, B, C>(target: A, s1: B, s2: C): A & B & C;
+            blend<A extends {}, B, C, D>(target: A, s1: B, s2: C, s3: D): A & B & C & D;
+            blend(target: object, ...sources: any[]): any;
+        }
+        declare const merge: Merger;
+        declare const parts: any[];
+        const out = merge.blend({}, ...parts);
+    "#;
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "any[] spread into the trailing rest overload of an Object.assign-shaped set must be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn overload_set_typed_array_spread_into_trailing_rest_is_clean() {
+    // A concretely typed `T[]` spread (not `any[]`) into the trailing rest
+    // overload of a mixed fixed/rest overload set is likewise clean.
+    let src = r#"
+        function combine(first: string, second: number): void;
+        function combine(first: string, ...rest: number[]): void;
+        function combine(...args: any[]): void {}
+        declare const nums: number[];
+        combine("lead", ...nums);
+    "#;
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "typed T[] spread into a trailing rest overload must be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn object_assign_shaped_set_with_unreachable_rest_preserves_diagnostic() {
+    // Negative guard for the reachability gate: the only rest overload places
+    // its rest parameter *after* more fixed parameters than the call provides
+    // before the spread, so the spread lands on a fixed parameter of every
+    // overload. The non-rest siblings must NOT be skipped (no reachable rest),
+    // so a spread diagnostic is still produced rather than silently accepted.
+    let src = r#"
+        interface Picker {
+            grab<A, B>(a: A, b: B): void;
+            grab(a: object, b: object, c: object, ...rest: object[]): void;
+        }
+        declare const p: Picker;
+        declare const xs: number[];
+        p.grab("lead", ...xs);
+    "#;
+    let diags = check_source_diagnostics(src);
+    // The spread reaches only position 1 (`b`), a non-rest slot in both
+    // overloads, so the call must not resolve cleanly: a diagnostic remains.
+    assert!(
+        !diags.is_empty(),
+        "spread that cannot reach any rest parameter must still produce a diagnostic: {diags:?}"
+    );
+}

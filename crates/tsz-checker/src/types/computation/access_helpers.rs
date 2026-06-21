@@ -173,6 +173,32 @@ impl<'a> CheckerState<'a> {
     ///
     /// Computes the type when accessing an element using an index.
     /// Uses `ElementAccessEvaluator` from solver for structured error handling.
+    /// Resolve a receiver object's non-numeric index-signature key aliases
+    /// (e.g. the lib global `PropertyKey` => `string | number | symbol`) so the
+    /// resolver-less element-access evaluator can classify the full key space.
+    /// Returns the input unchanged when there is nothing to resolve (the common
+    /// case: no index signature, or an already-structural key). See #14315.
+    pub(crate) fn resolve_receiver_index_signature_keys(&mut self, object_type: TypeId) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+        else {
+            return object_type;
+        };
+        let Some(idx) = shape.string_index.as_ref() else {
+            return object_type;
+        };
+        let resolved_key = self.resolve_lazy_type(idx.key_type);
+        let resolved_key = self.resolve_lazy_members_in_union(resolved_key);
+        if resolved_key == idx.key_type {
+            return object_type;
+        }
+        let mut new_shape = (*shape).clone();
+        if let Some(slot) = new_shape.string_index.as_mut() {
+            slot.key_type = resolved_key;
+        }
+        self.ctx.types.object_with_index(new_shape)
+    }
+
     pub(crate) fn get_element_access_type(
         &mut self,
         object_type: TypeId,
@@ -183,6 +209,13 @@ impl<'a> CheckerState<'a> {
         // application before the resolver-less solver query (see
         // `flatten_tuple_spread_rests`).
         let object_type = self.flatten_tuple_spread_rests(object_type);
+        // Resolve the receiver's index-signature key aliases (e.g. the lib
+        // global `PropertyKey`, only resolvable at use time) so the resolver-less
+        // element-access evaluator below classifies the full key space — notably
+        // the `symbol` arm. Without this, a symbol access into
+        // `{ [k: PropertyKey]: V }` falls through to `undefined`, surfacing as a
+        // false TS7053 (see #14315). Mirrors the index-type resolution below.
+        let object_type = self.resolve_receiver_index_signature_keys(object_type);
         // Normalize index type for enum values
         let solver_index_type = if let Some(index) = literal_index {
             self.ctx.types.literal_number(index as f64)
@@ -1086,6 +1119,30 @@ impl<'a> CheckerState<'a> {
             current = next;
         }
         Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
+    }
+
+    /// Whether at least one union member lacks the exact symbol member and also
+    /// lacks a symbol-bearing index signature. Receiver index-signature keys are
+    /// normalized before probing so `Record<PropertyKey, V>` still satisfies the
+    /// symbol surface.
+    pub(crate) fn union_member_missing_symbol_key(
+        &mut self,
+        object_type: TypeId,
+        index_type_for_access: TypeId,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        for &member in &members {
+            let member = self.resolve_receiver_index_signature_keys(member);
+            if self.symbol_keyed_access_is_missing(member, index_type_for_access) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Decide whether a wide-`symbol` element access made through a

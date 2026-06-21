@@ -22,6 +22,7 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::infer_matching_helpers::constraint_is_nullable_union;
 use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
 use super::template_segment_prefix::match_template_segment_prefix;
 
@@ -418,6 +419,25 @@ impl<'a> InferenceContext<'a> {
             //   target { [K in keyof Arr]: Wrap<Arr[K]> }
             (Some(TypeData::Array(source_elem)), Some(TypeData::Mapped(mapped_id))) => {
                 self.infer_from_mapped_type_array(source_elem, mapped_id, priority)?;
+            }
+
+            // When a non-inferred source type parameter faces a structured
+            // generic target (`Record<K, V>`/mapped type), infer from the
+            // source's apparent type (its constraint) so target placeholders
+            // get the constraint's components instead of their defaults. Do
+            // not lift nullable union constraints: their nullish constituent
+            // must remain visible to the final argument check.
+            (
+                Some(TypeData::TypeParameter(ref param_info)),
+                Some(TypeData::Application(_) | TypeData::Mapped(_)),
+            ) => {
+                if let Some(constraint) = param_info.constraint
+                    && constraint != source
+                    && !constraint_is_nullable_union(self.interner, constraint)
+                    && self.target_contains_inference_param(target)
+                {
+                    self.infer_from_types(constraint, target, priority)?;
+                }
             }
 
             // TypeApplication source: expand type alias and recurse.

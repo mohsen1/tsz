@@ -503,27 +503,58 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        // Anything assignable to the global `Function` interface that carries no
+        // call/construct signatures of its own is an untyped call returning
+        // `any` (tsc's `isUntypedFunctionCall`). Both witnesses below — the
+        // `bind`-member object probe and the intersection check — only apply
+        // when the callee has no own call signatures, so compute that once.
+        let callee_has_call_sigs = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            callee_type_for_call,
+        )
+        .is_some_and(|sigs| !sigs.is_empty());
+
         // Subtypes of Function (e.g., `interface SubFunc extends Function { prop: number }`)
         // are also callable, returning `any`. tsc's `isFunctionObjectType` checks if the
         // type has a `bind` member (inherited from Function) to identify Function-like types.
-        // Only check this when the type has no call signatures of its own.
-        {
-            let has_call_sigs = crate::query_boundaries::common::call_signatures_for_type(
+        if !callee_has_call_sigs {
+            let callee_resolved = self.resolve_lazy_type(callee_type_for_call);
+            let has_bind = crate::query_boundaries::common::find_property_in_object_by_str(
+                self.ctx.types,
+                callee_resolved,
+                "bind",
+            )
+            .is_some();
+            if has_bind {
+                return TypeId::ANY;
+            }
+        }
+
+        // Intersection containing the global `Function` interface (e.g. the
+        // `V & Function` synthesized when a generic union member is narrowed by
+        // a `value is Function` type guard). An intersection is assignable to
+        // `Function` as soon as one constituent is, so the per-member identity
+        // check is the structural witness for that. The `bind`-member probe
+        // above only inspects a single object shape and misses intersections
+        // (their members are not flattened into one shape), so handle them here.
+        if !callee_has_call_sigs
+            && let Some(members) = crate::query_boundaries::common::intersection_members(
                 self.ctx.types,
                 callee_type_for_call,
             )
-            .is_some_and(|sigs| !sigs.is_empty());
-            if !has_call_sigs {
-                let callee_resolved = self.resolve_lazy_type(callee_type_for_call);
-                let has_bind = crate::query_boundaries::common::find_property_in_object_by_str(
+        {
+            let has_construct_sigs =
+                crate::query_boundaries::common::construct_signatures_for_type(
                     self.ctx.types,
-                    callee_resolved,
-                    "bind",
+                    callee_type_for_call,
                 )
-                .is_some();
-                if has_bind {
-                    return TypeId::ANY;
-                }
+                .is_some_and(|sigs| !sigs.is_empty());
+            if !has_construct_sigs
+                && members
+                    .iter()
+                    .any(|&member| self.is_global_function_type(member))
+            {
+                return TypeId::ANY;
             }
         }
 

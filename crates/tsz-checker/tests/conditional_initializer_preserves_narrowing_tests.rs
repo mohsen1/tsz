@@ -177,6 +177,150 @@ for (const cell of cells) {
 }
 
 // ---------------------------------------------------------------------------
+// Regression (issue #14341): a conditional / short-circuit initializer whose
+// ARM contains a call (or any expression that produces its own flow node) must
+// still preserve an *unrelated* earlier reference's narrowing across a following
+// guard. The arm's merge antecedent is then a `CALL` node rather than a bare
+// `CONDITION`, which the original `is_conditional_expression_merge` failed to
+// recognize — so the next guard read the declared (un-narrowed) union and
+// produced a false `TS2339` on the first variable. `tsc` is clean on all of
+// these. Binder names are varied so coverage stays structural.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ternary_initializer_with_call_arm_preserves_prior_guard() {
+    // Minimal witness from the issue: the first guard narrows `prevList`; a
+    // second const initialized by a ternary whose false arm *calls* a function,
+    // followed by its own guard, must not clobber `prevList`'s narrowing.
+    let diags = codes(
+        r#"
+declare function readKeys(o: object): false | string[];
+function diff(prevList: false | string[], nextRaw: object, flag: boolean) {
+  if (!prevList) return;
+  const nextList = flag ? nextRaw : readKeys(nextRaw);
+  if (!nextList) return;
+  return prevList.length;
+}
+"#,
+    );
+    assert!(
+        !diags.contains(&TS2339),
+        "ternary arm with a call must not clobber the prior guard, got {diags:?}"
+    );
+}
+
+#[test]
+fn logical_and_initializer_with_call_arm_preserves_prior_guard_renamed() {
+    // `&&` short-circuit whose right operand is a call; different binder names.
+    let diags = codes(
+        r#"
+declare function gather(src: object): false | number[];
+function merge(head: false | number[], src: object, ready: boolean) {
+  if (!head) return;
+  const tail = ready && gather(src);
+  if (!tail) return;
+  return head.length;
+}
+"#,
+    );
+    assert!(
+        !diags.contains(&TS2339),
+        "`&&` call arm must not clobber the prior guard, got {diags:?}"
+    );
+}
+
+#[test]
+fn shared_aliased_condition_with_call_arms_preserves_first_guard() {
+    // The originally-reported shape: both conditional initializers share the same
+    // aliased boolean condition and both have a `getKeys(...)` call arm.
+    let diags = codes(
+        r#"
+declare function isArr(value: unknown): value is unknown[];
+declare function getKeys(o: object): false | string[];
+function replaceEqualDeep(prev: any, next: any) {
+  const array = isArr(prev) && isArr(next);
+  const prevItems = array ? prev : getKeys(prev);
+  if (!prevItems) return;
+  const nextItems = array ? next : getKeys(next);
+  if (!nextItems) return;
+  return prevItems.length;
+}
+"#,
+    );
+    assert!(
+        !diags.contains(&TS2339),
+        "shared aliased condition with call arms must keep the first guard, got {diags:?}"
+    );
+}
+
+#[test]
+fn three_chained_call_arm_initializers_preserve_first_guard() {
+    // 3+ chained conditional initializers, each with a call arm and its own
+    // guard, must all leave the first variable's narrowing intact.
+    let diags = codes(
+        r#"
+declare function load(o: object): false | string[];
+function walk(first: false | string[], raw: object, pick: boolean) {
+  if (!first) return;
+  const second = pick ? raw : load(raw);
+  if (!second) return;
+  const third = pick ? raw : load(raw);
+  if (!third) return;
+  return first.length;
+}
+"#,
+    );
+    assert!(
+        !diags.contains(&TS2339),
+        "three chained call-arm initializers must keep the first guard, got {diags:?}"
+    );
+}
+
+#[test]
+fn nested_conditional_call_arm_preserves_prior_guard() {
+    // A ternary whose arm is itself a ternary with a call: the merge antecedent
+    // walk must recurse through the nested conditional-expression merge.
+    let diags = codes(
+        r#"
+declare function keysOf(o: object): false | string[];
+function nest(base: false | string[], raw: object, a: boolean, b: boolean) {
+  if (!base) return;
+  const derived = a ? (b ? raw : keysOf(raw)) : keysOf(raw);
+  if (!derived) return;
+  return base.length;
+}
+"#,
+    );
+    assert!(
+        !diags.contains(&TS2339),
+        "nested conditional call arm must keep the prior guard, got {diags:?}"
+    );
+}
+
+#[test]
+fn reassignment_between_call_arm_initializer_still_kills_narrowing() {
+    // Fallback: when the first variable is *reassigned* before the read, the
+    // defer-through must NOT resurrect the stale guard narrowing — `tsc` reports
+    // `TS2339` here because the reassignment widens it back to the declared union.
+    let diags = codes(
+        r#"
+declare function fetchKeys(o: object): false | string[];
+function reset(slot: false | string[], raw: object, flag: boolean) {
+  if (!slot) return;
+  slot = fetchKeys(raw);
+  const other = flag ? raw : fetchKeys(raw);
+  if (!other) return;
+  return slot.length;
+}
+"#,
+    );
+    assert!(
+        diags.contains(&TS2339),
+        "reassignment must widen the first variable back to its declared union, got {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Negative / fallback: a statement-level merge (try/catch) between a targeting
 // assignment guard must NOT be over-narrowed by the same defer logic. `tsc`
 // accepts the inner `.abort()` call (narrowed to the class type, not `never`).

@@ -7,8 +7,8 @@
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
     QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeDatabase,
-    TypeDisplayProvenance, TypePredicateCache, TypeSubstitutionConstruction, TypeTupleLimitSignal,
-    TypeWidenCache,
+    TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
+    TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -966,6 +966,16 @@ impl TypeWidenCache for QueryCache<'_> {
 impl TypeSubstitutionConstruction for QueryCache<'_> {
     fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
         self.interner.substitution(base_type, constraint)
+    }
+}
+
+impl TypeExtractParamsCache for QueryCache<'_> {
+    fn extract_type_params_memo(&self, type_id: TypeId) -> Option<Arc<[TypeParamInfo]>> {
+        self.interner.extract_type_params_memo(type_id)
+    }
+
+    fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
+        self.interner.set_extract_type_params_memo(type_id, params);
     }
 }
 
