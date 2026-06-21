@@ -861,6 +861,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::KeyOf(inner) => {
                 self.collect_direct_placeholder_vars_in_type_inner(inner, var_map, visited, result);
             }
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    base_type, var_map, visited, result,
+                );
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    constraint, var_map, visited, result,
+                );
+            }
             TypeData::Tuple(elements_id) => {
                 let elements = self.interner.tuple_list(elements_id);
                 for element in elements.iter().filter(|element| !element.rest) {

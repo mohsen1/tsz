@@ -1296,6 +1296,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.evaluate(*inner)
             }
             TypeData::UnresolvedTypeName(atom) => self.visit_unresolved_type_name(*atom, type_id),
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                // Evaluate the base and constraint (resolving any Lazy aliases),
+                // then re-derive: a now-concrete base collapses the narrowing.
+                let base = self.evaluate(*base_type);
+                let constraint = self.evaluate(*constraint);
+                self.interner.substitution(base, constraint)
+            }
             // All other types pass through unchanged (default behavior)
             _ => type_id,
         }

@@ -15,6 +15,30 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_common::Atom;
 
+/// Decompose a substitution type into its `(base_type, constraint)` pair.
+///
+/// Returns `None` when `type_id` is not a `TypeData::Substitution`.
+pub fn substitution_components(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => Some((base_type, constraint)),
+        _ => None,
+    }
+}
+
+/// The underlying base type of a substitution type, or `type_id` unchanged when
+/// it is not a substitution. Used wherever a substitution must present its
+/// surface identity (printing, inference, narrowing) rather than its narrowed
+/// form.
+pub fn substitution_base_or_self(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    substitution_components(db, type_id).map_or(type_id, |(base, _)| base)
+}
+
 pub enum AssignmentNumericDisplayChildren {
     Application { base: TypeId, args: Vec<TypeId> },
     Members(Vec<TypeId>),
@@ -931,6 +955,9 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => {
+            get_array_applicable_type(db, constraint)
+        }
         Some(
             TypeData::Application(_)
             | TypeData::Mapped(_)
@@ -1184,6 +1211,7 @@ pub fn get_object_shape_id(
     }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape_id(db, constraint),
         _ => None,
     }
 }
@@ -1202,6 +1230,7 @@ pub fn get_object_shape(
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
         }
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape(db, constraint),
         Some(TypeData::TypeParameter(info)) => {
             // For type parameters with constraints, look through to the constraint.
             info.constraint.and_then(|c| get_object_shape(db, c))
@@ -1289,6 +1318,7 @@ pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => is_tuple_like_type(db, constraint),
         Some(TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()

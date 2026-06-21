@@ -1,5 +1,6 @@
 mod array_heritage;
 mod computed_property_names;
+mod conditional_flow;
 pub(crate) mod constructors;
 #[cfg(test)]
 mod constructors_tests;

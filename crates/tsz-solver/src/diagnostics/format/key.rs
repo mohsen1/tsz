@@ -810,6 +810,9 @@ impl<'a> TypeFormatter<'a> {
                 format!("typeof import(\"{name}\")").into()
             }
             TypeData::Error => Cow::Borrowed("error"),
+            // A substitution type displays as its underlying variable (tsc
+            // prints `T`, not the narrowed `T & C`).
+            TypeData::Substitution { base_type, .. } => self.format(*base_type),
         }
     }
 

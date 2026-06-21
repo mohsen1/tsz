@@ -1114,6 +1114,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ) -> bool {
         let (source, target) = self.normalize_assignability_operands(source, target);
 
+        // Substitution types (tsc `isRelatedTo`): a source substitution relates
+        // through its substitution intersection `base & constraint`; a target
+        // substitution relates through its base type. Mirror the subtype engine.
+        if let Some((base, constraint)) =
+            crate::type_queries::substitution_components(self.interner, source)
+        {
+            let intersection = self.interner.intersection2(base, constraint);
+            return self.is_assignable_impl(intersection, target, strict_function_types);
+        }
+        if let Some((base, _)) = crate::type_queries::substitution_components(self.interner, target)
+        {
+            return self.is_assignable_impl(source, base, strict_function_types);
+        }
+
         // Fast path checks
         if let Some(result) = self.check_assignable_fast_path(source, target) {
             return result;

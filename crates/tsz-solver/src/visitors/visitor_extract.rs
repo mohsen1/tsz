@@ -1090,6 +1090,13 @@ fn collect_infer_bindings_inner(
         TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             collect_infer_bindings_inner(types, inner, result, visited);
         }
+        TypeData::Substitution {
+            base_type,
+            constraint,
+        } => {
+            collect_infer_bindings_inner(types, base_type, result, visited);
+            collect_infer_bindings_inner(types, constraint, result, visited);
+        }
         TypeData::TemplateLiteral(spans) => {
             let spans = types.template_list(spans);
             for span in spans.iter() {
