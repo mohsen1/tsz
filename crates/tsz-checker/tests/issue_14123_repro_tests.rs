@@ -81,3 +81,104 @@ const bad: { id: 1 } = value;
         "mismatched target must report exactly one TS2322. Got: {c:?}"
     );
 }
+
+/// Reopened witness #1 (issue comment, 2026-06-20): a recursive conditional that
+/// unwraps `infer` through *nested generic-alias containers* — `Box<T> =
+/// Promise<Set<T>>` — used to SIGABRT because the `infer V` extraction from the
+/// alias-`Application` source minted a fresh `Application` each step and never
+/// recognized convergence. It must converge to `{ id: 0 }`. Binders renamed so
+/// the guard is structural.
+#[test]
+fn issue_14123_nested_alias_container_infer_converges() {
+    let c = codes(
+        r#"
+type Peel<K> =
+    K extends Promise<infer M> ? Peel<M> :
+    K extends Set<infer N> ? Peel<N> :
+    K;
+type Nested<W> = Promise<Set<W>>;
+type Out = Peel<Nested<{ id: 0 }>>;
+declare const out: Out;
+const ok: { id: 0 } = out;
+"#,
+    );
+    assert!(!c.contains(&2589), "must converge, no TS2589. Got: {c:?}");
+    assert!(
+        !c.contains(&2322),
+        "Out must equal {{ id: 0 }} (positive assignment holds). Got: {c:?}"
+    );
+}
+
+/// Reopened witness #2 (issue comment / #14330, 2026-06-21): the still-failing
+/// path was an un-guarded self-recursion in `match_infer_object_pattern` when
+/// matching an object `{ payload: infer P }` pattern against an alias-
+/// `Application` source — a *single* application `DeepUnwrap<AsyncBox<{id:0}>>`
+/// was enough to abort. The object-pattern `Application` arm now re-enters the
+/// guarded `match_infer_pattern`, so it must converge to `{ id: 0 }`.
+#[test]
+fn issue_14123_object_pattern_over_alias_application_converges() {
+    let c = codes(
+        r#"
+type DeepUnwrap<G> =
+    G extends Promise<infer H> ? DeepUnwrap<H> :
+    G extends { payload: infer J } ? DeepUnwrap<J> :
+    G;
+type AsyncBox<V> = Promise<{ payload: V }>;
+type Settled = DeepUnwrap<AsyncBox<{ id: 0 }>>;
+declare const settled: Settled;
+const ok: { id: 0 } = settled;
+"#,
+    );
+    assert!(!c.contains(&2589), "must converge, no TS2589. Got: {c:?}");
+    assert!(
+        !c.contains(&2322),
+        "Settled must equal {{ id: 0 }} (positive assignment holds). Got: {c:?}"
+    );
+}
+
+/// Mutually-recursive deferred conditionals (`A` evaluates to `B`, `B` to `A`)
+/// over an alias source must terminate through the `(source, pattern)` cycle
+/// guard rather than unwinding `A -> B -> A -> ...` until the stack aborts. This
+/// is the cycle the `match_infer_unwrapped_application` re-routing was added to
+/// break; the result resolves to the inner `{ id: 0 }`.
+#[test]
+fn issue_14123_mutually_recursive_alias_conditionals_terminate() {
+    let c = codes(
+        r#"
+type StepA<P> = P extends { a: infer X } ? StepB<X> : P;
+type StepB<Q> = Q extends { b: infer Y } ? StepA<Y> : Q;
+type Wrap<T> = { a: { b: T } };
+type Done = StepA<Wrap<{ id: 0 }>>;
+declare const done: Done;
+const ok: { id: 0 } = done;
+"#,
+    );
+    assert!(!c.contains(&2589), "must terminate, no TS2589. Got: {c:?}");
+    assert!(
+        !c.contains(&2322),
+        "Done must equal {{ id: 0 }} (positive assignment holds). Got: {c:?}"
+    );
+}
+
+/// Safety-net guard (issue #14123, fix direction 2): a genuinely non-convergent
+/// recursive conditional — each step *grows* the type, so no cycle is ever hit —
+/// must degrade to a bounded TS2589 diagnostic, never a process-aborting stack
+/// overflow. This exercises the depth budgets plus the `stacker::maybe_grow`
+/// stack-growth guard on the infer-match recursion: reaching this assertion at
+/// all proves the process did not SIGABRT.
+#[test]
+fn issue_14123_non_convergent_conditional_degrades_to_ts2589() {
+    let c = codes(
+        r#"
+type Grow<T> =
+    T extends (infer E)[] ? Grow<[E, E]> :
+    Grow<T[]>;
+type Y = Grow<{ id: 0 }>;
+declare const y: Y;
+"#,
+    );
+    assert!(
+        c.contains(&2589),
+        "non-convergent recursion must report TS2589 (and not crash). Got: {c:?}"
+    );
+}
