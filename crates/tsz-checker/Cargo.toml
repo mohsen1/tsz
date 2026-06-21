@@ -674,6 +674,9 @@ path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 name = "typeof_const_member_conditional_tests"
 path = "tests/typeof_const_member_conditional_tests.rs"
 [[test]]
+name = "generic_union_function_guard_narrowing_tests"
+path = "tests/generic_union_function_guard_narrowing_tests.rs"
+[[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 [[test]]
