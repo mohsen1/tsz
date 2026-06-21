@@ -884,10 +884,10 @@ impl<'a> CheckerState<'a> {
                 let contextual_members: Vec<_> = evaluated_members
                     .into_iter()
                     .filter_map(|(member, evaluated_member)| {
-                        let target_member = if evaluated_member != member {
-                            evaluated_member
-                        } else {
+                        let target_member = if evaluated_member == member {
                             member
+                        } else {
+                            evaluated_member
                         };
                         if evaluated_member != member {
                             self.contextual_parameter_type_for_call_with_env_from_expected(
