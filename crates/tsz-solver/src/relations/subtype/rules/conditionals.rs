@@ -495,8 +495,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<TypeId> {
         let cond_id = crate::type_queries::get_conditional_type_id(self.interner, type_id)?;
         let cond = self.interner.conditional_type(cond_id);
-        if !crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type)
-            || type_param_info(self.interner, cond.check_type).is_none()
+        // Cheap structural gate first: a non-type-parameter check type can never
+        // profit, so short-circuit before the `contains_infer_types_db` tree walk.
+        if type_param_info(self.interner, cond.check_type).is_none()
+            || !crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type)
         {
             return None;
         }
