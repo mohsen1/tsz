@@ -842,6 +842,9 @@ path = "tests/keyof_array_literal_diagnostic_tests.rs"
 name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
 [[test]]
+name = "override_computed_entity_name_ts4127_tests"
+path = "tests/override_computed_entity_name_ts4127_tests.rs"
+[[test]]
 name = "keyof_well_known_symbol_key_tests"
 path = "tests/keyof_well_known_symbol_key_tests.rs"
 [[test]]

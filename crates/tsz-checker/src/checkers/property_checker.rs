@@ -923,7 +923,7 @@ impl<'a> CheckerState<'a> {
     /// Entity name expressions are simple identifiers or property access chains
     /// (e.g., `a`, `a.b`, `a.b.c`). These are always allowed as computed property
     /// names in class property declarations, regardless of their type.
-    fn is_entity_name_expression(&self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn is_entity_name_expression(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
