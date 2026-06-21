@@ -63,17 +63,72 @@ impl<'a> CheckerState<'a> {
     /// position to its global type symbol.
     ///
     /// `globalThis.X` exposes the ambient global scope, so this resolves `X`
-    /// the same way a bare global type reference would: the merged lib/global
-    /// type table (`get_global_type_with_libs`), then the program-wide global
-    /// table used by cross-file lookup binders (`program_global_type`). Returns
-    /// `None` when no global type of that name exists, so the caller can route
-    /// the missing member through the normal "no exported member" diagnostic.
+    /// through actual lib globals first, then `declare global` augmentations.
+    /// Ordinary module-local type aliases must not leak into the synthetic
+    /// global namespace, but script-file globals remain valid fallback members.
+    /// Returns `None` when no global type of that name exists, so the caller can
+    /// route the missing member through the normal "no exported member"
+    /// diagnostic.
     pub(crate) fn resolve_global_this_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.ctx.actual_lib_global_type_symbol_id(name) {
+            return Some(sym_id);
+        }
+
+        if let Some(sym_id) = self.resolve_global_augmentation_type_member_symbol(name) {
+            return Some(sym_id);
+        }
+
+        if self.ctx.binder.is_external_module() {
+            return self.ctx.binder.program_global_type(name);
+        }
+
         let lib_binders = self.get_lib_binders();
         self.ctx
             .binder
             .get_global_type_with_libs(name, &lib_binders)
             .or_else(|| self.ctx.binder.program_global_type(name))
+    }
+
+    fn resolve_global_augmentation_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
+        if self.ctx.binder.global_augmentations.contains_key(name)
+            && let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS)
+            })
+        {
+            return Some(sym_id);
+        }
+
+        let (Some(all_binders), Some(entries)) = (
+            self.ctx.all_binders.as_ref(),
+            self.ctx
+                .global_file_locals_index
+                .as_ref()
+                .and_then(|idx| idx.get(name)),
+        ) else {
+            return None;
+        };
+
+        for &(file_idx, sym_id) in entries {
+            let Some(binder) = all_binders.get(file_idx) else {
+                continue;
+            };
+            if !binder.global_augmentations.contains_key(name) {
+                continue;
+            }
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if !symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::ALIAS) {
+                continue;
+            }
+            if !self.ctx.has_symbol_file_index(sym_id) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+            }
+            return Some(sym_id);
+        }
+
+        None
     }
 
     /// Whether a resolved member symbol carries only value meaning (and so
