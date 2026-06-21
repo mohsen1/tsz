@@ -1,11 +1,11 @@
 //! Union, intersection, type operator, and keyof type computation.
 //! Also includes class-type helpers for brand property resolution.
 
-use super::super::unique_symbol_arena::has_declared_unique_symbol_owner;
+use super::super::unique_symbol_construction::unique_symbol_type_for_operator;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{SymbolRef, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Get type from a union type node (A | B).
@@ -124,14 +124,8 @@ impl<'a> CheckerState<'a> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                if inner_type == TypeId::SYMBOL
-                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
-                {
-                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
-                        &self.ctx.file_name,
-                        node.pos,
-                        node.end,
-                    ));
+                if inner_type == TypeId::SYMBOL {
+                    return unique_symbol_type_for_operator(&self.ctx, idx, node.pos, node.end);
                 }
                 return inner_type;
             }
@@ -308,17 +302,4 @@ impl<'a> CheckerState<'a> {
         self.get_class_decl_for_display_type(type_id)
             .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
     }
-}
-
-fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
-    let mut hash = 0x811c_9dc5u32;
-    for byte in file_name.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    for value in [pos, end] {
-        hash ^= value;
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    SymbolRef(hash | 0x8000_0000)
 }

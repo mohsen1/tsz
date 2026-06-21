@@ -83,6 +83,50 @@ pub(crate) fn is_symbol_call_initializer(arena: &NodeArena, init_idx: NodeIndex)
         .is_some_and(|ident| ident.escaped_text == "Symbol")
 }
 
+/// Is the immediate owner of this `unique symbol` type-operator node (skipping
+/// enclosing parenthesized types) a `readonly` property signature — an interface
+/// or object-type-literal member?
+///
+/// Per tsc's `isValidESSymbolDeclaration`, such a member is a valid
+/// `unique symbol` owner and gets a `unique symbol` of its own — identically for
+/// interface and object-type-literal members. tsz must construct that unique
+/// symbol at this site rather than widening the member to plain `symbol`,
+/// otherwise `typeof obj.prop` loses the unique-symbol identity for
+/// object-type-literal members (the variable-declaration ancestor would
+/// otherwise make `has_declared_unique_symbol_owner` treat it as a declared
+/// owner and widen it).
+pub(crate) fn is_readonly_unique_symbol_property_signature(
+    arena: &NodeArena,
+    idx: NodeIndex,
+) -> bool {
+    let Some(parent_idx) = parenthesized_type_parent(arena, idx) else {
+        return false;
+    };
+    let Some(parent) = arena.get(parent_idx) else {
+        return false;
+    };
+    parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+        && arena
+            .get_signature(parent)
+            .is_some_and(|sig| arena.has_modifier(&sig.modifiers, SyntaxKind::ReadonlyKeyword))
+}
+
+/// The non-parenthesized owner of `idx`, skipping any enclosing
+/// `(... )` parenthesized type wrappers (matching tsc's
+/// `walkUpParenthesizedTypes(node.parent)`).
+fn parenthesized_type_parent(arena: &NodeArena, idx: NodeIndex) -> Option<NodeIndex> {
+    let mut cursor = idx;
+    loop {
+        let parent_idx = arena.get_extended(cursor)?.parent;
+        let parent = arena.get(parent_idx)?;
+        if parent.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            cursor = parent_idx;
+            continue;
+        }
+        return Some(parent_idx);
+    }
+}
+
 pub(crate) fn has_declared_unique_symbol_owner(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(parent_ext) = arena.get_extended(idx) else {
         return false;
