@@ -390,13 +390,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     && !self.check_subtype(variadic, t_elem).is_true()
                 {
                     // When the variadic is a TypeParameter constrained to an
-                    // array type (e.g., U extends string[]), expand_tuple_rest
-                    // returns the type parameter itself as the variadic. For
-                    // [..U, ..U] <: E[], check the constraint's element type.
+                    // array-like type (e.g., `U extends string[]` or
+                    // `U extends [string, number]`), expand_tuple_rest returns the
+                    // type parameter itself as the variadic. For `[...U] <: E[]`,
+                    // check the constraint's element type — which for a tuple
+                    // constraint is the union of its element types, not the tuple
+                    // itself.
                     let ok = type_param_info(self.interner, variadic).is_some_and(|info| {
                         info.constraint.is_some_and(|c| {
-                            array_element_type(self.interner, c)
-                                .is_some_and(|e| self.check_subtype(e, t_elem).is_true())
+                            let e = crate::type_queries::rest_spread_element_type(self.interner, c);
+                            // `rest_spread_element_type` returns its input unchanged
+                            // for a non-array-like constraint; `e != c` means the
+                            // constraint actually decomposed to an element type.
+                            e != c && self.check_subtype(e, t_elem).is_true()
                         })
                     });
                     if !ok {

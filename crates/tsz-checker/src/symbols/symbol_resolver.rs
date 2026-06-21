@@ -874,10 +874,16 @@ impl<'a> CheckerState<'a> {
                 {
                     return Some(local_namespace_sym_id);
                 }
+                // A qualified-type-name LHS resolves with namespace meaning: when
+                // a local `type`/`interface` shadows a same-named import alias
+                // whose target is a namespace, anchor on the import.
+                let anchor_src = self
+                    .namespace_anchor_alias_partner(sym_id, &lib_binders)
+                    .unwrap_or(sym_id);
                 let mut visited_aliases = AliasCycleTracker::new();
                 Some(
-                    self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                        .unwrap_or(sym_id),
+                    self.resolve_alias_symbol(anchor_src, &mut visited_aliases)
+                        .unwrap_or(anchor_src),
                 )
             }
             TypeSymbolResolution::ValueOnly(sym_id)
@@ -1173,179 +1179,6 @@ impl<'a> CheckerState<'a> {
             true
         };
 
-        let resolve_alias_type_position_result = |sym_id: SymbolId| {
-            let classify_target_resolution = |target_sym_id: SymbolId| {
-                let mut effective_target_id = target_sym_id;
-                let target_symbol_has_declared_type_meaning = |sym_id: SymbolId| {
-                    let Some(symbol) = self
-                        .get_cross_file_symbol(sym_id)
-                        .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
-                    else {
-                        return false;
-                    };
-
-                    if !symbol.has_any_flags(symbol_flags::ALIAS)
-                        && symbol.has_any_flags(symbol_flags::TYPE)
-                    {
-                        return true;
-                    }
-
-                    symbol.declarations.iter().copied().any(|decl_idx| {
-                        let arena = self
-                            .ctx
-                            .resolve_symbol_file_index(sym_id)
-                            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
-                            .and_then(|binder| binder.get_arena_for_declaration(sym_id, decl_idx))
-                            .or_else(|| self.ctx.binder.get_arena_for_declaration(sym_id, decl_idx))
-                            .map_or(self.ctx.arena, |arena| arena.as_ref());
-
-                        arena.get(decl_idx).is_some_and(|node| {
-                            node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                                || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                || node.kind == syntax_kind_ext::ENUM_DECLARATION
-                        })
-                    })
-                };
-                let mut target_flags = self
-                    .get_cross_file_symbol(effective_target_id)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .get_symbol_with_libs(effective_target_id, &lib_binders)
-                    })
-                    .map_or(0, |s| s.flags);
-
-                if let Some(type_partner_id) = self
-                    .ctx
-                    .alias_partner_reverse(self.ctx.binder, effective_target_id)
-                    .filter(|&partner_id| target_symbol_has_declared_type_meaning(partner_id))
-                {
-                    return TypeSymbolResolution::Type(type_partner_id);
-                }
-
-                // Synthetic default-export symbols often exist as bare aliases
-                // with no direct TYPE/VALUE flags. Follow the alias before
-                // deciding whether the import is usable in type position.
-                if (target_flags & symbol_flags::ALIAS) != 0 {
-                    if target_symbol_has_declared_type_meaning(effective_target_id) {
-                        return TypeSymbolResolution::Type(effective_target_id);
-                    }
-                    let mut visited_target_aliases = AliasCycleTracker::new();
-                    if let Some(alias_target_id) =
-                        self.resolve_alias_symbol(effective_target_id, &mut visited_target_aliases)
-                        && alias_target_id != effective_target_id
-                    {
-                        effective_target_id = alias_target_id;
-                        target_flags = self
-                            .get_cross_file_symbol(effective_target_id)
-                            .or_else(|| {
-                                self.ctx
-                                    .binder
-                                    .get_symbol_with_libs(effective_target_id, &lib_binders)
-                            })
-                            .map_or(0, |s| s.flags);
-                    }
-                }
-
-                let target_is_namespace_module = (target_flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::NAMESPACE_MODULE
-                        | symbol_flags::VALUE_MODULE))
-                    != 0;
-                let target_has_type =
-                    (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
-                let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
-                let target_is_value_only =
-                    target_has_value && !target_has_type && !target_is_namespace_module;
-
-                if target_is_value_only {
-                    TypeSymbolResolution::ValueOnly(effective_target_id)
-                } else {
-                    TypeSymbolResolution::Type(effective_target_id)
-                }
-            };
-
-            if let Some(alias_symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                && let Some(module_name) = alias_symbol.import_module()
-                && alias_symbol.import_name().is_some()
-            {
-                let expected_name = alias_symbol
-                    .import_name()
-                    .unwrap_or(alias_symbol.escaped_name.as_str());
-                let source_file_idx = self
-                    .ctx
-                    .resolve_symbol_file_index(sym_id)
-                    .unwrap_or(self.ctx.current_file_idx);
-                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
-                    module_name,
-                    expected_name,
-                    Some(source_file_idx),
-                ) {
-                    let export_surface_meanings = (expected_name != "*")
-                        .then(|| {
-                            self.ctx
-                                .resolve_import_target_from_file(source_file_idx, module_name)
-                        })
-                        .flatten()
-                        .map(|target_file_idx| {
-                            let declarations = self.export_surface_declarations_in_file(
-                                target_file_idx,
-                                expected_name,
-                            );
-                            let has_type_position_meaning =
-                                declarations.iter().any(|(_, flags, _)| {
-                                    (*flags
-                                        & (symbol_flags::TYPE
-                                            | symbol_flags::NAMESPACE_MODULE
-                                            | symbol_flags::VALUE_MODULE))
-                                        != 0
-                                });
-                            let has_runtime_value = declarations
-                                .iter()
-                                .any(|(_, flags, _)| (*flags & symbol_flags::VALUE) != 0);
-                            (has_type_position_meaning, has_runtime_value)
-                        });
-                    if let Some((has_type_position_meaning, has_runtime_value)) =
-                        export_surface_meanings
-                        && !has_type_position_meaning
-                        && has_runtime_value
-                    {
-                        return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
-                    }
-                    // Use get_cross_file_symbol first, then fall back to
-                    // get_symbol_with_libs. When the target comes from a
-                    // different binder (ambient module, cross-file export),
-                    // SymbolId values can collide with the current binder's
-                    // symbols, causing incorrect flag lookups.
-                    self.record_cross_file_symbol_if_needed(
-                        target_sym_id,
-                        expected_name,
-                        module_name,
-                    );
-                    return Some(classify_target_resolution(target_sym_id));
-                }
-            }
-            let mut visited_aliases = AliasCycleTracker::new();
-            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                .map(|target_sym_id| {
-                    if let Some(alias_symbol) =
-                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_name) = alias_symbol.import_module()
-                    {
-                        let expected_name = alias_symbol
-                            .import_name()
-                            .unwrap_or(alias_symbol.escaped_name.as_str());
-                        self.record_cross_file_symbol_if_needed(
-                            target_sym_id,
-                            expected_name,
-                            module_name,
-                        );
-                    }
-                    classify_target_resolution(target_sym_id)
-                })
-        };
-
         let should_preserve_alias_symbol_in_type_position = |sym_id: SymbolId| {
             let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 return false;
@@ -1440,7 +1273,9 @@ impl<'a> CheckerState<'a> {
                     .referenced_symbols
                     .borrow_mut()
                     .insert(local_sym_id);
-                if let Some(resolved) = resolve_alias_type_position_result(local_sym_id) {
+                if let Some(resolved) =
+                    self.resolve_alias_type_position_result(local_sym_id, &lib_binders)
+                {
                     return resolved;
                 }
             }
@@ -1536,7 +1371,9 @@ impl<'a> CheckerState<'a> {
                 // and inserted into referenced_symbols by the caller. Without this,
                 // imports used only in type positions appear unused (false TS6133).
                 self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                if let Some(resolved) = resolve_alias_type_position_result(sym_id) {
+                if let Some(resolved) =
+                    self.resolve_alias_type_position_result(sym_id, &lib_binders)
+                {
                     return resolved;
                 }
             }
@@ -1585,6 +1422,177 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeSymbolResolution::NotFound
+    }
+
+    /// Resolve an import-alias symbol to its type-position target via cross-file
+    /// export resolution.
+    ///
+    /// This mirrors how an unshadowed `import { X } from "./m"` is resolved when
+    /// `X` is used in type position: it follows the alias to the exported target
+    /// in the source module, classifies the target's meaning (namespace/module,
+    /// type, or value-only), and follows synthetic default-export alias chains.
+    /// Returns `None` when `sym_id` is not an import alias or its target cannot
+    /// be resolved.
+    pub(crate) fn resolve_alias_type_position_result(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<tsz_binder::BinderState>],
+    ) -> Option<TypeSymbolResolution> {
+        let classify_target_resolution = |target_sym_id: SymbolId| {
+            let mut effective_target_id = target_sym_id;
+            let target_symbol_has_declared_type_meaning = |sym_id: SymbolId| {
+                let Some(symbol) = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders))
+                else {
+                    return false;
+                };
+
+                if !symbol.has_any_flags(symbol_flags::ALIAS)
+                    && symbol.has_any_flags(symbol_flags::TYPE)
+                {
+                    return true;
+                }
+
+                symbol.declarations.iter().copied().any(|decl_idx| {
+                    let arena = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                        .and_then(|binder| binder.get_arena_for_declaration(sym_id, decl_idx))
+                        .or_else(|| self.ctx.binder.get_arena_for_declaration(sym_id, decl_idx))
+                        .map_or(self.ctx.arena, |arena| arena.as_ref());
+
+                    arena.get(decl_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            || node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    })
+                })
+            };
+            let mut target_flags = self
+                .get_cross_file_symbol(effective_target_id)
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .get_symbol_with_libs(effective_target_id, lib_binders)
+                })
+                .map_or(0, |s| s.flags);
+
+            // Synthetic default-export symbols often exist as bare aliases
+            // with no direct TYPE/VALUE flags. Follow the alias before
+            // deciding whether the import is usable in type position.
+            if (target_flags & symbol_flags::ALIAS) != 0 {
+                if target_symbol_has_declared_type_meaning(effective_target_id) {
+                    return TypeSymbolResolution::Type(effective_target_id);
+                }
+                let mut visited_target_aliases = AliasCycleTracker::new();
+                if let Some(alias_target_id) =
+                    self.resolve_alias_symbol(effective_target_id, &mut visited_target_aliases)
+                    && alias_target_id != effective_target_id
+                {
+                    effective_target_id = alias_target_id;
+                    target_flags = self
+                        .get_cross_file_symbol(effective_target_id)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_symbol_with_libs(effective_target_id, lib_binders)
+                        })
+                        .map_or(0, |s| s.flags);
+                }
+            }
+
+            let target_is_namespace_module = (target_flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0;
+            let target_has_type =
+                (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
+            let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
+            let target_is_value_only =
+                target_has_value && !target_has_type && !target_is_namespace_module;
+
+            if target_is_value_only {
+                TypeSymbolResolution::ValueOnly(effective_target_id)
+            } else {
+                TypeSymbolResolution::Type(effective_target_id)
+            }
+        };
+
+        if let Some(alias_symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders)
+            && let Some(module_name) = alias_symbol.import_module()
+            && alias_symbol.import_name().is_some()
+        {
+            let expected_name = alias_symbol
+                .import_name()
+                .unwrap_or(alias_symbol.escaped_name.as_str());
+            let source_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx);
+            if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                module_name,
+                expected_name,
+                Some(source_file_idx),
+            ) {
+                let export_surface_meanings = (expected_name != "*")
+                    .then(|| {
+                        self.ctx
+                            .resolve_import_target_from_file(source_file_idx, module_name)
+                    })
+                    .flatten()
+                    .map(|target_file_idx| {
+                        let declarations = self
+                            .export_surface_declarations_in_file(target_file_idx, expected_name);
+                        let has_type_position_meaning = declarations.iter().any(|(_, flags, _)| {
+                            (*flags
+                                & (symbol_flags::TYPE
+                                    | symbol_flags::NAMESPACE_MODULE
+                                    | symbol_flags::VALUE_MODULE))
+                                != 0
+                        });
+                        let has_runtime_value = declarations
+                            .iter()
+                            .any(|(_, flags, _)| (*flags & symbol_flags::VALUE) != 0);
+                        (has_type_position_meaning, has_runtime_value)
+                    });
+                if let Some((has_type_position_meaning, has_runtime_value)) =
+                    export_surface_meanings
+                    && !has_type_position_meaning
+                    && has_runtime_value
+                {
+                    return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                }
+                // Use get_cross_file_symbol first, then fall back to
+                // get_symbol_with_libs. When the target comes from a
+                // different binder (ambient module, cross-file export),
+                // SymbolId values can collide with the current binder's
+                // symbols, causing incorrect flag lookups.
+                self.record_cross_file_symbol_if_needed(target_sym_id, expected_name, module_name);
+                return Some(classify_target_resolution(target_sym_id));
+            }
+        }
+        let mut visited_aliases = AliasCycleTracker::new();
+        self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+            .map(|target_sym_id| {
+                if let Some(alias_symbol) =
+                    self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders)
+                    && let Some(module_name) = alias_symbol.import_module()
+                {
+                    let expected_name = alias_symbol
+                        .import_name()
+                        .unwrap_or(alias_symbol.escaped_name.as_str());
+                    self.record_cross_file_symbol_if_needed(
+                        target_sym_id,
+                        expected_name,
+                        module_name,
+                    );
+                }
+                classify_target_resolution(target_sym_id)
+            })
     }
 
     // =========================================================================

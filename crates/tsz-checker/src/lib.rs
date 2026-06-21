@@ -307,6 +307,9 @@ mod index_sig_param_intersection_validity_tests;
 #[path = "tests/index_sig_param_resolved_key_type_tests.rs"]
 mod index_sig_param_resolved_key_type_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_symbol_keyspace_tests.rs"]
+mod index_signature_symbol_keyspace_tests;
+#[cfg(test)]
 #[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
 mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
@@ -409,6 +412,9 @@ mod override_incompatibility_elaboration_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
+mod private_field_no_spelling_suggestion_tests;
+#[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
 #[cfg(test)]
@@ -429,6 +435,9 @@ mod spread_rest_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
+#[cfg(test)]
+#[path = "tests/spurious_suggestion_suppression_tests.rs"]
+mod spurious_suggestion_suppression_tests;
 #[cfg(test)]
 #[path = "../tests/stability_validation_tests.rs"]
 mod stability_validation_tests;
@@ -486,6 +495,9 @@ mod ts2323_tests;
 #[cfg(test)]
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
+#[cfg(test)]
+#[path = "../tests/ts2352_both_callable_overlap_repro_tests.rs"]
+mod ts2352_both_callable_overlap_repro_tests;
 #[cfg(test)]
 #[path = "../tests/ts2352_constrained_type_param_target_tests.rs"]
 mod ts2352_constrained_type_param_target_tests;
@@ -1497,6 +1509,9 @@ mod variadic_tuple_tail_arity_inference_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
+#[cfg(test)]
+#[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
+mod void_undefined_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;

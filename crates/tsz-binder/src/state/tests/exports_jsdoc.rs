@@ -527,6 +527,32 @@ let ns = { a: 1 };
 }
 
 #[test]
+fn renamed_default_export_updates_synthetic_default_slot() {
+    let source = r#"
+export default interface zzz {
+    x: string;
+}
+import zzz from "./b";
+export { zzz as default };
+"#;
+    let (binder, _parser) = parse_and_bind(source);
+
+    let default_id = binder
+        .file_locals
+        .get("default")
+        .expect("expected synthetic default export slot");
+    let default_symbol = binder
+        .symbols
+        .get(default_id)
+        .expect("expected default symbol data");
+
+    assert_ne!(default_symbol.flags & symbol_flags::ALIAS, 0);
+    assert!(!default_symbol.is_type_only);
+    assert_eq!(default_symbol.import_module(), Some("./b"));
+    assert_eq!(default_symbol.import_name(), Some("default"));
+}
+
+#[test]
 fn type_alias_after_namespace_reexport_keeps_alias_partner() {
     let source = r"
 export * as Foo from './mod';

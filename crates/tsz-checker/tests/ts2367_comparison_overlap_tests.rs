@@ -285,3 +285,69 @@ if (a === b) {}
         "Expected NO TS2367 for identical types"
     );
 }
+
+// ── Deferred conditional operands (§ default constraint) ─────────────────────
+//
+// A deferred conditional (`Exclude`/`Extract`, or a bare `T extends U ? X : Y`)
+// has no value form until instantiated; tsc decides overlap through its default
+// constraint (`getDefaultConstraintOfConditionalType`). tsz must do the same and
+// must not treat the unresolved conditional as having empty overlap.
+
+#[test]
+fn test_exclude_conditional_vs_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+function noTrue<T extends boolean>(subject: Exclude<T, false>): void {
+  if (subject === true) throw new TypeError("subject is true");
+}
+"#
+        ),
+        "Expected NO TS2367: Exclude<T, false> constraint (boolean) overlaps with true"
+    );
+}
+
+#[test]
+fn test_extract_conditional_vs_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+function noFalse<U extends boolean>(subject: Extract<U, boolean>): void {
+  if (subject === false) throw new TypeError("subject is false");
+}
+"#
+        ),
+        "Expected NO TS2367: Extract<U, boolean> constraint (boolean) overlaps with false"
+    );
+}
+
+#[test]
+fn test_bare_deferred_conditional_vs_literal_no_ts2367() {
+    // Binder-name variation: type parameter renamed to `Elem`, no utility alias.
+    assert!(
+        !has_ts2367(
+            r#"
+function pick<Elem extends number>(value: Elem extends 0 ? never : Elem): void {
+  if (value === 1) {}
+}
+"#
+        ),
+        "Expected NO TS2367: (Elem extends 0 ? never : Elem) constraint (number) overlaps with 1"
+    );
+}
+
+#[test]
+fn test_deferred_conditional_disjoint_constraint_keeps_ts2367() {
+    // Negative control: the conditional's default constraint (number) is genuinely
+    // disjoint from a string literal, so TS2367 must still fire.
+    assert!(
+        has_ts2367(
+            r#"
+function f<T>(value: T extends string ? number : 1): void {
+  if (value === ("foo" as "foo")) {}
+}
+"#
+        ),
+        "Expected TS2367: number constraint does not overlap with \"foo\""
+    );
+}

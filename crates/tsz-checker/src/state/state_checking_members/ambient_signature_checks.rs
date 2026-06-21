@@ -304,11 +304,31 @@ impl<'a> CheckerState<'a> {
                         })
                     });
                 if !has_es_decorator_on_declare {
-                    self.error_at_node(
-                        prop.initializer,
-                        diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                        diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                    );
+                    // A `readonly` class property (incl. `static readonly`) behaves
+                    // like a `const` in an ambient context: a string/numeric/negated-
+                    // numeric literal initializer is accepted (it is preserved), while
+                    // a non-literal initializer is TS1254. A non-readonly property — or
+                    // a readonly property carrying an explicit type annotation — is
+                    // TS1039. Mirrors the ambient *variable* path in `statement_checks`.
+                    let is_readonly = self
+                        .ctx
+                        .arena
+                        .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword);
+                    if is_readonly && prop.type_annotation.is_none() {
+                        if !self.is_valid_const_initializer(prop.initializer) {
+                            self.error_at_node(
+                                prop.initializer,
+                                diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                            );
+                        }
+                    } else {
+                        self.error_at_node(
+                            prop.initializer,
+                            diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                            diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                        );
+                    }
                 }
             }
         }

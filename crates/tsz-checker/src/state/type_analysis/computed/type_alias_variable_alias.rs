@@ -597,6 +597,22 @@ impl<'a> CheckerState<'a> {
                     // Fall back to inferring from initializer
                     if var_decl.initializer.is_some() {
                         let mut inferred_type = self.get_type_of_node(var_decl.initializer);
+                        // A `const`/`let`/`var` bound to a fully-annotated arrow or
+                        // function expression that references itself in its own body
+                        // cycles through this very initializer node while the body is
+                        // being checked, so `get_type_of_node` returns ERROR. The
+                        // binding's type is its declared signature — computable from
+                        // the parameter and return annotations without analyzing the
+                        // body — so recover it here, mirroring `tsc`, which types a
+                        // fully-annotated function expression from its signature. A
+                        // non-arrow or un-annotated initializer yields `None` and the
+                        // ERROR is left untouched.
+                        if inferred_type == TypeId::ERROR
+                            && let Some(declared) =
+                                self.provisional_circular_variable_function_symbol_type(sym_id)
+                        {
+                            inferred_type = declared;
+                        }
                         // Eagerly evaluate Application types (e.g., merge<A, B>)
                         // to concrete types. Without this, long chains like
                         //   const o50 = merge(merge(merge(...)))
