@@ -9,4 +9,5 @@ mod indexed_access;
 mod membership_semantics;
 mod narrowing;
 mod optional_chain;
+mod predicate_alias_typeof_2677_2304;
 mod spread_param_constraint_2345;
