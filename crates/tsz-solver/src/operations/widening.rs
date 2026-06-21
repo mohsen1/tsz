@@ -470,14 +470,30 @@ fn widen_type_cached(
                 }
             };
             let has_literal = members.iter().any(|&m| is_fresh_member(m));
-            let small_fresh_union = has_literal
-                && members.len() <= 3
+            // A union of only fresh literals (`"a" | "b" | …`, optionally with
+            // pass-through `undefined`/`null`/`void`). `small_fresh_union` caps
+            // this at 3 members for the general/display/argument paths because a
+            // larger literal union there is more likely to come from a type alias
+            // (`type Lang = "fr" | "en" | "es" | "de"`) that must keep its
+            // members. The inference and mutable-binding callers
+            // (`widen_object_union_members == true`) already establish freshness
+            // upstream — they only deep-widen array/tuple/object literals whose
+            // candidate is fresh (not a `type`-annotated source) — so for them
+            // the arity cap is wrong: tsc widens a fresh literal element union to
+            // its primitive regardless of how many distinct literals it has
+            // (`frz(["PATCH","POST","PUT","DELETE"])` → `Readonly<string[]>`).
+            let all_fresh_literal_or_passthrough = has_literal
                 && members
                     .iter()
                     .all(|&m| is_fresh_member(m) || is_passthrough_intrinsic(m));
+            let small_fresh_union = all_fresh_literal_or_passthrough && members.len() <= 3;
+            let fresh_literal_union =
+                widen_object_union_members && all_fresh_literal_or_passthrough;
             let has_fresh_object_or_array_member =
                 members.iter().any(|&m| is_fresh_object_or_array_member(m));
-            if small_fresh_union || (widen_object_union_members && has_fresh_object_or_array_member)
+            if small_fresh_union
+                || fresh_literal_union
+                || (widen_object_union_members && has_fresh_object_or_array_member)
             {
                 let mut members_to_widen = members.to_vec();
                 if widen_object_union_members {
