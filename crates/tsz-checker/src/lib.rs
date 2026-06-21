@@ -760,6 +760,9 @@ mod conditional_keyof_test;
 #[path = "tests/conditional_never_param_inference_tests.rs"]
 mod conditional_never_param_inference_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_rest_arity_erasure_tests.rs"]
+mod conditional_rest_arity_erasure_tests;
+#[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
 #[cfg(test)]
