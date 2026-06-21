@@ -500,6 +500,9 @@ path = "tests/this_type_indexed_access_receiver_tests.rs"
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
+name = "keyless_object_record_inference_tests"
+path = "tests/keyless_object_record_inference_tests.rs"
+[[test]]
 name = "ts2725_tests"
 path = "tests/ts2725_tests.rs"
 [[test]]
