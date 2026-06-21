@@ -321,6 +321,67 @@ fn inert_multiline_block_directive_is_not_a_directive() {
 }
 
 #[test]
+fn ts_directive_walk_up_reports_unused_when_resolved_code_line_is_clean() {
+    let source = "// @ts-expect-error\n// explanatory note\nconst ok = 1;\n";
+    let mut diagnostics = Vec::new();
+
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, 2578);
+    assert_eq!(diagnostics[0].start, 0);
+}
+
+#[test]
+fn stacked_expect_error_reports_earlier_directive_unused() {
+    let source = "// @ts-expect-error\n// @ts-expect-error\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "the closer directive suppresses the error; the earlier one is unused: {diagnostics:?}"
+    );
+    assert_eq!(diagnostics[0].code, 2578);
+    assert_eq!(diagnostics[0].start, 0);
+}
+
+#[test]
+fn ts_directive_walk_up_does_not_skip_block_comment_line() {
+    let source = "// @ts-expect-error\n/* a block note */\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "block-comment line must stop the walk so the original error survives: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2578),
+        "directive targeting the block-comment line must be reported unused: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn first_line_multiline_block_directive_does_not_suppress_following_error() {
+    let source = "/* @ts-ignore\ncontinuing\n that could be multiline*/\n\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![2304],
+        "first-line directive text inside a multi-line block is inert: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts_directive_scan_keeps_template_substitution_directives() {
     let directives =
         find_ts_directives("const value = `${/* @ts-ignore */ 0}`;\nconst x: string = 1;");
