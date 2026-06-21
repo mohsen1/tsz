@@ -854,6 +854,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             } else {
                                 (false, asserted_type)
                             };
+                            // A generic callable/constructable assertion target with its
+                            // OWN bound type parameters (`new <t extends object>(base: t) => t`,
+                            // `<T>(x: T) => T`) has no concrete shape to compare, so the
+                            // structural overlap check spuriously fails and emits TS2352 even
+                            // when the source is itself callable/constructable. tsc's
+                            // `isTypeComparableTo` instantiates the signature's type parameters
+                            // and finds the two callables/constructors overlap. Mirror that:
+                            // when the asserted type is a generic signature (bound — not free —
+                            // type parameters) and both the source and the target are
+                            // callable or constructable, treat them as overlapping (#14325). A
+                            // non-callable source (`"s" as <T>(x: T) => T`) is not
+                            // callable/constructable, so a real TS2352 is still emitted.
+                            let generic_callable_overlap = should_check
+                                && generic_query::contains_type_parameters(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                )
+                                && !generic_query::contains_free_type_parameters(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                )
+                                && (crate::query_boundaries::common::is_callable_type(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                ) || crate::query_boundaries::common::has_construct_signatures(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                ))
+                                && (crate::query_boundaries::common::is_callable_type(
+                                    self.checker.ctx.types,
+                                    expr_type,
+                                ) || crate::query_boundaries::common::has_construct_signatures(
+                                    self.checker.ctx.types,
+                                    expr_type,
+                                ));
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
                                 // (i.e., the types don't "sufficiently overlap").
@@ -944,6 +979,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 if !source_to_target
                                     && !target_to_source
                                     && !generic_indexed_assertion_source
+                                    && !generic_callable_overlap
                                 {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it

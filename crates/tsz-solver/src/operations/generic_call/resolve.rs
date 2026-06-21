@@ -9,7 +9,7 @@ use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, Typ
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::debug;
 
-use super::inference_helpers::is_substantive_inference_candidate;
+use super::foreign_param_shapes::is_substantive_inference_candidate;
 use super::readonly_direct_inference;
 use super::{
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,

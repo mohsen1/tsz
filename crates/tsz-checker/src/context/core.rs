@@ -1431,6 +1431,99 @@ impl<'a> CheckerContext<'a> {
             })
     }
 
+    /// When `alias_id` is a *named* import bound to an `export * as NS from '<m>'`
+    /// namespace re-export, return the file index of the re-exported module `<m>`
+    /// — the backing module whose exports are the anchor's members. Returns
+    /// `None` for any other alias shape.
+    ///
+    /// `tsc` treats such a named import as a type-position namespace anchor whose
+    /// members are the exports of `<m>`. Because the member is not part of the
+    /// *importing* module's own export surface, the ordinary re-export member
+    /// lookup misses it; [`Self::resolve_member_via_namespace_reexport`] resolves
+    /// the member through this backing file instead. The hop is keyed by file
+    /// index + module specifier (never raw `SymbolId`), so cross-binder id
+    /// collisions cannot interfere. This is also the structural predicate behind
+    /// the "missing member is TS2694, not TS2503" diagnostic.
+    pub(crate) fn namespace_reexport_anchor_backing_file(
+        &self,
+        alias_id: tsz_binder::SymbolId,
+    ) -> Option<usize> {
+        let alias = self.binder.get_symbol(alias_id)?;
+        if !alias.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        // A whole-namespace import (`import * as NS`) is handled by the ordinary
+        // re-export path; this targets a *named* binding (`import { NS }` /
+        // `import { NS as X }`) of an `export * as NS` re-export. Check before
+        // allocating below so the common star-import case stays allocation-free.
+        let import_name = alias.import_name()?;
+        if import_name == "*" {
+            return None;
+        }
+        let import_module = alias.import_module()?.to_string();
+        let import_name = import_name.to_string();
+        // The alias's declaring file is the base for resolving the relative
+        // `import_module` specifier. `resolve_symbol_file_index` can be polluted
+        // by an earlier cross-file `register_symbol_file_target` (it pins the
+        // importing alias to the *target* file), and a named import is local to
+        // the current file anyway, so try the current file first and fall back to
+        // the recorded index when it differs.
+        let recorded = self
+            .resolve_symbol_file_index(alias_id)
+            .filter(|&recorded| recorded != self.current_file_idx);
+        std::iter::once(self.current_file_idx)
+            .chain(recorded)
+            .find_map(|source_file_idx| {
+                self.namespace_reexport_anchor_backing_file_from(
+                    source_file_idx,
+                    &import_module,
+                    &import_name,
+                )
+            })
+    }
+
+    /// Resolve `NS.member` to its target `SymbolId` when `NS` (`alias_id`) is a
+    /// named import bound to an `export * as NS` namespace re-export. Returns
+    /// `None` when `alias_id` is not such an anchor or the module has no such
+    /// member. Shared by the qualified-name type resolvers so the
+    /// backing-file + export lookup lives in one place.
+    pub(crate) fn resolve_member_via_namespace_reexport(
+        &self,
+        alias_id: tsz_binder::SymbolId,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let backing_idx = self.namespace_reexport_anchor_backing_file(alias_id)?;
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_export_in_target_file(backing_idx, member_name, &mut visited)
+    }
+
+    /// One attempt of [`Self::namespace_reexport_anchor_backing_file`] using
+    /// `source_file_idx` as the base for the relative `import_module` specifier.
+    fn namespace_reexport_anchor_backing_file_from(
+        &self,
+        source_file_idx: usize,
+        import_module: &str,
+        import_name: &str,
+    ) -> Option<usize> {
+        let target_idx = self.resolve_import_target_from_file(source_file_idx, import_module)?;
+        let target_binder = self.get_binder_for_file(target_idx)?;
+        let target_arena = self.get_arena_for_file(target_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+        let ns_sym_id = self
+            .module_exports_for_module(target_binder, &target_file_name)
+            .and_then(|exports| exports.get(import_name))?;
+        let ns_sym = target_binder.get_symbol(ns_sym_id)?;
+        // Only an `export * as NS` namespace re-export qualifies: it carries an
+        // import module and the wildcard `*` import name.
+        if !ns_sym.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            || ns_sym.import_name() != Some("*")
+        {
+            return None;
+        }
+        let ns_module = ns_sym.import_module()?;
+        self.resolve_import_target_from_file(target_idx, ns_module)
+    }
+
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {

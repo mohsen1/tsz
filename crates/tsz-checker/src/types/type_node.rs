@@ -868,10 +868,42 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // union/intersection contexts) to match tsc's parser-level detection.
         self.check_nested_function_types_in_type(func_data.type_annotation);
 
+        // A signature's value parameters are in scope for every type position of
+        // that signature, including a type-predicate's asserted type. Seed
+        // `typeof_param_scope` from this function type's value parameters so that
+        // `typeof param` inside the asserted type (e.g.
+        // `type Guard = (a: { z: string }) => a is typeof a & { y: boolean }`)
+        // resolves to the parameter's declared type instead of fabricating a
+        // false `TS2304` during lowering. This mirrors
+        // `resolve_return_type_with_params_in_scope`, which seeds the scope when
+        // lowering an ordinary return-type annotation; the predicate's asserted
+        // type is just another type position of the same signature. The `this`
+        // parameter is skipped (its name node is not an identifier, so it is
+        // naturally excluded).
+        let mut seeded_typeof_params: Vec<(String, NodeIndex)> = Vec::new();
+        for &param_idx in &func_data.parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
+                && param_data.type_annotation.is_some()
+                && let Some(name) = self.ctx.arena.get_identifier_text(param_data.name)
+                && name != "this"
+            {
+                seeded_typeof_params.push((name.to_string(), param_data.type_annotation));
+            }
+        }
+        for (name, annotation) in &seeded_typeof_params {
+            let param_type = self.check(*annotation);
+            self.ctx.typeof_param_scope.insert(name.clone(), param_type);
+        }
+
         // Delegate to TypeLowering with standard resolvers.
         // Enable qualified name resolution so return types like `Ns.Type<T>`
         // resolve correctly (QUALIFIED_NAME nodes need the extended resolver).
         let result = self.lower_with_resolvers(idx, true, true);
+
+        for (name, _) in &seeded_typeof_params {
+            self.ctx.typeof_param_scope.remove(name);
+        }
 
         // TS2677: Check that a type predicate's type is assignable to its parameter's type.
         self.check_type_predicate_assignability(idx, func_data.type_annotation, result);
