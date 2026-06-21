@@ -292,6 +292,9 @@ path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 name = "optional_chain_indexed_unknown_tests"
 path = "tests/optional_chain_indexed_unknown_tests.rs"
 [[test]]
+name = "recursive_annotated_arrow_self_reference_tests"
+path = "tests/recursive_annotated_arrow_self_reference_tests.rs"
+[[test]]
 name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 [[test]]
