@@ -551,6 +551,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
 
@@ -596,6 +597,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(

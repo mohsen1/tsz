@@ -737,10 +737,10 @@ fn current_file_declared_unique_symbol_member_ref(
             let Some(name_node) = ctx.arena.get(var_decl.name) else {
                 continue;
             };
-            if !ctx
+            if ctx
                 .arena
                 .get_identifier(name_node)
-                .is_some_and(|ident| ident.escaped_text == base_name)
+                .is_none_or(|ident| ident.escaped_text != base_name)
             {
                 continue;
             }
