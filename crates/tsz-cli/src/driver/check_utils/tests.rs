@@ -209,6 +209,121 @@ fn ts_directive_scan_keeps_real_line_directives() {
 }
 
 #[test]
+fn ts_directive_skips_blank_and_non_directive_slash_comments() {
+    let source = "// @ts-ignore\n// rationale\n\nconst x: string = 1;\n";
+    let directives = find_ts_directives(source);
+    assert_eq!(directives.len(), 1);
+    assert!(!directives[0].is_expect_error);
+    assert_eq!(directives[0].suppressed_line, 3);
+
+    let mut diagnostics = vec![Diagnostic::error(
+        "slash-continuation.ts".to_string(),
+        source.find('1').unwrap() as u32,
+        1,
+        "Type 'number' is not assignable to type 'string'.".to_string(),
+        2322,
+    )];
+    apply_ts_directive_suppression("slash-continuation.ts", source, &mut diagnostics, false);
+
+    assert!(diagnostics.is_empty());
+}
+
+#[test]
+fn ts_directive_does_not_skip_block_comment_continuation() {
+    let source = "// @ts-ignore\n/* rationale */\nconst x: string = 1;\n";
+    let directives = find_ts_directives(source);
+    assert_eq!(directives.len(), 1);
+    assert!(!directives[0].is_expect_error);
+    assert_eq!(directives[0].suppressed_line, 1);
+
+    let mut diagnostics = vec![Diagnostic::error(
+        "block-continuation.ts".to_string(),
+        source.find('1').unwrap() as u32,
+        1,
+        "Type 'number' is not assignable to type 'string'.".to_string(),
+        2322,
+    )];
+    apply_ts_directive_suppression("block-continuation.ts", source, &mut diagnostics, false);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, 2322);
+}
+
+#[test]
+fn ts_directive_does_not_skip_slash_at_pragma_continuation() {
+    let source = "// @ts-ignore\n// @another\n\nconst x: string = 1;\n";
+    let directives = find_ts_directives(source);
+    assert_eq!(directives.len(), 1);
+    assert!(!directives[0].is_expect_error);
+    assert_eq!(directives[0].suppressed_line, 1);
+
+    let mut diagnostics = vec![Diagnostic::error(
+        "slash-pragma-continuation.ts".to_string(),
+        source.find('1').unwrap() as u32,
+        1,
+        "Type 'number' is not assignable to type 'string'.".to_string(),
+        2322,
+    )];
+    apply_ts_directive_suppression(
+        "slash-pragma-continuation.ts",
+        source,
+        &mut diagnostics,
+        false,
+    );
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, 2322);
+}
+
+#[test]
+fn multiline_ts_directive_does_not_skip_following_blank_line() {
+    let source = "/* @ts-ignore\ncontinuation */\n\nconst x: string = 1;\n";
+    let directives = find_ts_directives(source);
+    assert_eq!(directives.len(), 1);
+    assert!(!directives[0].is_expect_error);
+    assert_eq!(directives[0].suppressed_line, 2);
+
+    let mut diagnostics = vec![Diagnostic::error(
+        "multiline-directive-blank.ts".to_string(),
+        source.find('1').unwrap() as u32,
+        1,
+        "Type 'number' is not assignable to type 'string'.".to_string(),
+        2322,
+    )];
+    apply_ts_directive_suppression(
+        "multiline-directive-blank.ts",
+        source,
+        &mut diagnostics,
+        false,
+    );
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, 2322);
+}
+
+#[test]
+fn stacked_expect_error_uses_nearest_directive_only() {
+    let source = "// @ts-expect-error\n// @ts-expect-error\nconst x: string = 1;\n";
+    let directives = find_ts_directives(source);
+    assert_eq!(directives.len(), 2);
+    assert_eq!(directives[0].suppressed_line, 1);
+    assert_eq!(directives[1].suppressed_line, 2);
+
+    let mut diagnostics = vec![Diagnostic::error(
+        "stacked.ts".to_string(),
+        source.find('1').unwrap() as u32,
+        1,
+        "Type 'number' is not assignable to type 'string'.".to_string(),
+        2322,
+    )];
+    apply_ts_directive_suppression("stacked.ts", source, &mut diagnostics, false);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, 2578);
+    assert_eq!(diagnostics[0].start, 0);
+}
+
+#[test]
 fn ts_directive_scan_accepts_form_feed_before_directive() {
     let directives = find_ts_directives("//\x0C@ts-ignore\nconst x: string = 1;");
     assert_eq!(directives.len(), 1);

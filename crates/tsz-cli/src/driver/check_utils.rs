@@ -999,12 +999,10 @@ struct TsDirective {
     unused_diagnostic_length: u32,
 }
 
-/// Whether `line` (0-based) is blank or a `//` line comment. Mirrors tsc's
-/// `markPrecedingCommentDirectiveLine`, which walks past empty lines and lines
-/// matching `^\s*//` when resolving the line a single-line directive guards. A
-/// block (`/* */`) comment line does not start with `//` and is therefore a
-/// barrier, not skipped.
-fn line_is_blank_or_line_comment(text: &str, line_map: &LineMap, line: usize) -> bool {
+/// Whether `line` (0-based) is trivia TypeScript's directive walk-up skips:
+/// empty or an ordinary `//` line. Block comments and `// @...` pragmas stop
+/// the walk.
+fn line_is_skippable_directive_trivia(text: &str, line_map: &LineMap, line: usize) -> bool {
     let Some(start) = line_map.line_start(line) else {
         return false;
     };
@@ -1012,8 +1010,14 @@ fn line_is_blank_or_line_comment(text: &str, line_map: &LineMap, line: usize) ->
     let end = line_map
         .line_start(line + 1)
         .map_or(text.len(), |next| next as usize);
-    let trimmed = text[start..end].trim();
-    trimmed.is_empty() || trimmed.starts_with("//")
+    let line_text = text[start..end].trim();
+    line_text.is_empty()
+        || (line_text.starts_with("//")
+            && !line_text
+                .trim_start_matches('/')
+                .trim_start()
+                .starts_with('@')
+            && find_directive_in_text(line_text).is_none())
 }
 
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in
@@ -1036,16 +1040,14 @@ fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
         };
         // For single-line (`//`/`///`) directives, tsc's
         // `markPrecedingCommentDirectiveLine` resolves the guarded line by
-        // walking past blank lines and other `//` comment lines (regex `^\s*//`)
-        // to the next line bearing real code, so a directive followed by `//`
-        // continuation comments still suppresses that code line (rather than
-        // leaking the error and reporting the directive unused -- TS2578).
-        // Block (`/* */`) directives suppress only the line immediately after
-        // the comment, with no skipping: a non-`//` line (including a
-        // block-comment line) is a barrier.
+        // walking past blank lines and ordinary `//` continuation comments to
+        // the next line bearing real code, so those directives do not leak the
+        // guarded error and then report unused (TS2578). Block directives
+        // suppress only the line immediately after the comment; block-comment
+        // lines and `// @...` pragmas are barriers.
         if !comment.is_multi_line {
             while line_map.line_start(suppressed_line as usize + 1).is_some()
-                && line_is_blank_or_line_comment(text, line_map, suppressed_line as usize)
+                && line_is_skippable_directive_trivia(text, line_map, suppressed_line as usize)
             {
                 suppressed_line += 1;
             }
