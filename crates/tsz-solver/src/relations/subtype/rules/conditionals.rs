@@ -364,6 +364,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Strategy 1.25: getConstraintFromConditionalType for an infer-extraction
+        // conditional whose check type is a constrained type parameter.
+        //
+        // For `Parameters<F>` (= `F extends (...args: infer P) => any ? P :
+        // never`), the default constraint above is the union of branch results,
+        // which leaves the rest-position `infer P` unresolved — so it never
+        // recognizes the array base `never[]`. tsc instead substitutes the check
+        // type `F` with its constraint and re-instantiates: `AnyFunction extends
+        // (...args: infer P) => any ? P : never` evaluates to `never[]`, the
+        // concrete apparent base.
+        //
+        // This is gated on an `infer` in the extends type: a predicate
+        // conditional without `infer` (e.g. `T extends unknown[] ? true :
+        // false`) keeps the determinism guard in Strategy 1.5 below, which this
+        // must not bypass — substituting its check type and picking a single
+        // branch would unsoundly narrow a non-deterministic result. An
+        // infer-extraction conditional has no such hazard: the true branch is
+        // the matched-and-extracted shape, so the instantiated extraction is a
+        // sound upper bound.
+        if let Some(evaluated) =
+            self.infer_extraction_conditional_constraint(self.interner.conditional(*cond))
+            && self.check_subtype(evaluated, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
+
         // Strategy 1.5: Distributive constraint evaluation.
         //
         // When the check_type is a distributive type parameter with a constraint,
@@ -449,6 +475,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    /// tsc's `getConstraintFromConditionalType` for an infer-extraction
+    /// conditional whose check type is a constrained type parameter.
+    ///
+    /// Substitutes the check-type parameter with its own constraint and
+    /// evaluates the result, so a deferred extraction utility such as
+    /// `Parameters<F>` (`F extends (...args: infer P) => any ? P : never`)
+    /// resolves to its concrete apparent base (`never[]`). Returns `None` when
+    /// `type_id` is not a deferred conditional, when its extends type has no
+    /// `infer` (a predicate conditional — substituting and picking a branch
+    /// would unsoundly narrow a non-deterministic result, so those keep the
+    /// determinism-guarded distributive path), when the check type is not a
+    /// type parameter, or when the instantiation collapses to `never`.
+    pub(crate) fn infer_extraction_conditional_constraint(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let cond_id = crate::type_queries::get_conditional_type_id(self.interner, type_id)?;
+        let cond = self.interner.conditional_type(cond_id);
+        if !crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type)
+            || type_param_info(self.interner, cond.check_type).is_none()
+        {
+            return None;
+        }
+        let substituted = crate::type_queries::conditional_check_type_substituted_constraint(
+            self.interner,
+            type_id,
+        )?;
+        let evaluated = self.evaluate_type(substituted);
+        (evaluated != TypeId::NEVER).then_some(evaluated)
     }
 
     /// Compute the default constraint of a deferred conditional type.

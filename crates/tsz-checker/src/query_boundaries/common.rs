@@ -1565,6 +1565,20 @@ pub(crate) fn conditional_default_constraint(
     tsz_solver::type_queries::get_conditional_default_constraint(db, type_id)
 }
 
+/// Construction half of tsc's `getConstraintFromConditionalType`: substitute a
+/// deferred conditional's type-parameter check type with its own base constraint
+/// and return the substituted (still unevaluated) conditional. The caller
+/// evaluates the result with the resolver-backed environment so a deferred
+/// utility such as `Parameters<F>` resolves to its concrete apparent base
+/// (`never[]`). `None` when `type_id` is not a deferred conditional whose check
+/// type is a constrained type parameter, or when the substitution is a no-op.
+pub(crate) fn conditional_check_type_substituted_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::conditional_check_type_substituted_constraint(db, type_id)
+}
+
 pub(crate) fn collect_lazy_def_ids(
     db: &dyn TypeDatabase,
     root: TypeId,
