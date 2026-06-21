@@ -9,7 +9,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+impl TypeNodeChecker<'_, '_> {
     /// TS2677: A type predicate's type must be assignable to its parameter's type.
     pub(super) fn check_type_predicate_assignability(
         &mut self,
