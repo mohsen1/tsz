@@ -441,7 +441,14 @@ impl<'a> CheckerState<'a> {
                 // find namespace"). Accept the UMD alias here so the
                 // member-resolution failure below routes through the TS2694
                 // branch.
-                || symbol.is_umd_export)
+                || symbol.is_umd_export
+                // A named import bound to an `export * as NS` re-export is a
+                // type-position namespace anchor too: a missing member is
+                // TS2694, not TS2503.
+                || self
+                    .ctx
+                    .namespace_reexport_anchor_backing_file(left_sym_id)
+                    .is_some())
         {
             // If the left symbol is a pure interface (no namespace meaning) and a
             // local declaration shadows an outer namespace, the member might exist
@@ -778,6 +785,18 @@ impl<'a> CheckerState<'a> {
                 && let Some(resolved) =
                     self.ctx
                         .resolve_alias_import_member(alias_id, module_specifier, member_name)
+            {
+                return Some(resolved);
+            }
+            // Named import bound to an `export * as NS` namespace re-export: the
+            // member lives in the re-exported module, not in the importing
+            // module's own export surface, so neither lookup above can find it.
+            // Follow the named export to the namespace re-export and resolve the
+            // member through its backing module.
+            if let Some(alias_id) = sym_id
+                && let Some(resolved) = self
+                    .ctx
+                    .resolve_member_via_namespace_reexport(alias_id, member_name)
             {
                 return Some(resolved);
             }

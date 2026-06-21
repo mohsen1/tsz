@@ -587,6 +587,9 @@ path = "tests/ambient_module_value_export_tests.rs"
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
+name = "export_star_as_named_import_type_anchor_tests"
+path = "tests/export_star_as_named_import_type_anchor_tests.rs"
+[[test]]
 name = "deferred_conditional_arithmetic_operand_tests"
 path = "tests/deferred_conditional_arithmetic_operand_tests.rs"
 [[test]]
