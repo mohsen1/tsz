@@ -1202,13 +1202,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        if type_id.is_intrinsic() {
-            return type_id;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Array(elem)) => elem,
-            _ => type_id,
-        }
+        crate::operations::sequence_property::rest_spread_element_type(
+            self.interner.as_type_database(),
+            type_id,
+        )
     }
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.

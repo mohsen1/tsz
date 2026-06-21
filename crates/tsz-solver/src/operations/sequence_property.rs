@@ -39,6 +39,65 @@ pub(crate) fn element_type_with_undefined(db: &dyn TypeDatabase, element_type: T
     db.union2(element_type, TypeId::UNDEFINED)
 }
 
+/// Element type contributed by a spread element `...X` inside a tuple — that is,
+/// the number-indexed element type of `X` (tsc's `getElementTypeOfArrayType` /
+/// variadic-element handling).
+///
+/// - `X[]` / `readonly X[]` → `X`
+/// - a tuple `[a, b?, ...rest]` → the union of its element types, with optional
+///   slots widened by `undefined` and nested spreads resolved recursively
+///   (`[]` contributes `never`)
+/// - an intrinsic (`any`, `never`, …) → returned unchanged
+/// - anything else (a generic type parameter, a type application, a union, …) →
+///   a deferred `X[number]` (`IndexAccess`), so the element stays faithful to
+///   `X`'s own number-index type and is resolved lazily by the evaluator
+///
+/// This is the single source of truth shared by indexed-access evaluation, the
+/// inference constraint walker, call-argument spreading, and property access on
+/// tuples. The previous ad-hoc helpers returned `X` itself for the generic
+/// fallback, so `[...End]` (with `End extends string[]`) wrongly produced
+/// `string[]` instead of `End[number]` (`string`) for both its element type and
+/// inference candidates.
+pub(crate) fn rest_spread_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    rest_spread_element_type_inner(db, type_id, 0)
+}
+
+fn rest_spread_element_type_inner(db: &dyn TypeDatabase, type_id: TypeId, depth: usize) -> TypeId {
+    if depth > MAX_TUPLE_SPREAD_DEPTH || type_id.is_intrinsic() {
+        return type_id;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Array(element)) => element,
+        Some(TypeData::ReadonlyType(inner)) => rest_spread_element_type_inner(db, inner, depth + 1),
+        Some(TypeData::Tuple(list_id)) => {
+            let elements = db.tuple_list(list_id);
+            if elements.is_empty() {
+                return TypeId::NEVER;
+            }
+            let members: Vec<TypeId> = elements
+                .iter()
+                .map(|elem| {
+                    let mut ty = if elem.rest {
+                        rest_spread_element_type_inner(db, elem.type_id, depth + 1)
+                    } else {
+                        elem.type_id
+                    };
+                    if elem.optional {
+                        ty = element_type_with_undefined(db, ty);
+                    }
+                    ty
+                })
+                .collect();
+            db.union(members)
+        }
+        // A generic type parameter, type application, union, etc.: the spread's
+        // element type is `X[number]`. Keep it deferred so the evaluator resolves
+        // it through `X`'s apparent/number-index type rather than collapsing to
+        // `X` itself.
+        _ => db.index_access(type_id, TypeId::NUMBER),
+    }
+}
+
 /// Parse a property name as a tuple/array element index, applying the same
 /// numeric-name canonicalization (`"01"`/`"1.0"` → `1`) used for indexed access.
 /// Returns `None` for non-numeric keys (e.g. array-prototype method names).
