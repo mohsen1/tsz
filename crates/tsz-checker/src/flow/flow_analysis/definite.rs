@@ -643,11 +643,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Prefix unary: `!aFoo.bar`
+        // Prefix unary: `!aFoo.bar`. A `PrefixUnaryExpression` node stores its
+        // operand in `UnaryExprData` (accessed via `get_unary_expr`), not in the
+        // `UnaryExprDataEx` pool used by await/yield/non-null/spread. Using the
+        // wrong accessor returned `None`, so truthiness guards like
+        // `if (!obj.prop)` never reached the destructured property and the
+        // binding element kept its declared (un-narrowed) type.
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(node)
         {
-            return self.find_matching_property_access(unary.expression, source_expr, prop_name);
+            return self.find_matching_property_access(unary.operand, source_expr, prop_name);
         }
 
         // Call expression: `isNonNull(aFoo.bar)`
