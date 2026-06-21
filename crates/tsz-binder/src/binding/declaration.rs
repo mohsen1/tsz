@@ -1404,13 +1404,35 @@ impl BinderState {
         self.record_flow(idx);
         if let Some(try_data) = arena.get_try(node) {
             let pre_try_flow = self.current_flow;
-            let end_label = self.create_branch_label();
+            let has_finally = try_data.finally_block.is_some();
+
+            // `normal_exit_label` collects the normal completion of try and catch.
+            // It is the root of the post-`finally` continuation (code after the
+            // `try`), matching TypeScript's `normalExitLabel`.
+            let normal_exit_label = self.create_branch_label();
+
+            // `finally_label` roots the `finally` body. A `finally` runs on every
+            // path out of the protected region, so its body is analyzed over the
+            // union of: the pre-try state (an exception may be thrown before any
+            // narrowing), the normal exits of try and catch, and every abrupt
+            // completion (`return`/`throw`/`break`/`continue`) that unwinds through
+            // it. This mirrors TypeScript's exception + normal-exit + return label
+            // seeding of the finally label in `bindTryStatement`.
+            let finally_label = if has_finally {
+                let label = self.create_branch_label();
+                self.add_antecedent(label, pre_try_flow);
+                self.finally_entry_targets.push(label);
+                Some(label)
+            } else {
+                None
+            };
 
             // Bind try block
             self.bind_node(arena, try_data.try_block);
             let post_try_flow = self.current_flow;
 
             // Bind catch clause
+            let mut post_catch_flow = None;
             if try_data.catch_clause.is_some()
                 && let Some(catch_node) = arena.get(try_data.catch_clause)
                 && let Some(catch) = arena.get_catch_clause(catch_node)
@@ -1429,22 +1451,159 @@ impl BinderState {
 
                 // Bind catch block
                 self.bind_node(arena, catch.block);
-                self.add_antecedent(end_label, self.current_flow);
+                post_catch_flow = Some(self.current_flow);
 
                 self.exit_scope(arena);
             }
 
-            // Add post-try flow to end label
-            self.add_antecedent(end_label, post_try_flow);
+            if finally_label.is_some() {
+                self.finally_entry_targets.pop();
+            }
 
-            // Bind finally block
-            if try_data.finally_block.is_none() {
-                self.current_flow = end_label;
-            } else {
-                self.current_flow = end_label;
-                self.bind_node(arena, try_data.finally_block);
+            // Normal completion of try and catch feeds both the continuation root
+            // and the finally body.
+            self.add_normal_exits(normal_exit_label, post_try_flow, post_catch_flow);
+            if let Some(label) = finally_label {
+                self.add_normal_exits(label, post_try_flow, post_catch_flow);
+            }
+
+            match finally_label {
+                None => {
+                    self.finish_flow_label(normal_exit_label);
+                }
+                Some(label) => {
+                    // Bind the finally body once, rooted at the full union, so reads
+                    // inside it observe every reaching state.
+                    let finally_first_id = u32::try_from(self.flow_nodes.len()).unwrap_or(u32::MAX);
+                    self.current_flow = label;
+                    self.bind_node(arena, try_data.finally_block);
+                    let post_finally_flow = self.current_flow;
+
+                    // The continuation must see the finally body's mutations but not
+                    // the abrupt/exception-only states. TypeScript expresses this with
+                    // a flow reduce label; tsz materializes the same result by cloning
+                    // the finally body's flow nodes re-rooted at `normal_exit_label`.
+                    self.current_flow = self.clone_finally_for_continuation(
+                        label,
+                        normal_exit_label,
+                        finally_first_id,
+                        post_finally_flow,
+                    );
+                }
             }
         }
+    }
+
+    /// Add the normal-completion flows of a `try` (and its `catch`, if present)
+    /// as antecedents of `label`.
+    fn add_normal_exits(
+        &mut self,
+        label: FlowNodeId,
+        post_try_flow: FlowNodeId,
+        post_catch_flow: Option<FlowNodeId>,
+    ) {
+        self.add_antecedent(label, post_try_flow);
+        if let Some(catch_flow) = post_catch_flow {
+            self.add_antecedent(label, catch_flow);
+        }
+    }
+
+    /// Build the post-`finally` continuation flow by cloning the finally body's
+    /// flow nodes (those allocated at or after `range_start`) with the finally
+    /// entry label re-rooted to `normal_exit_label`. This yields the same flow
+    /// the finally body produces, but reachable only from the normal-completion
+    /// state — the static equivalent of TypeScript's `createReduceLabel`. No AST
+    /// is re-bound, so no symbols are duplicated.
+    fn clone_finally_for_continuation(
+        &mut self,
+        finally_label: FlowNodeId,
+        normal_exit_label: FlowNodeId,
+        range_start: u32,
+        post_finally_flow: FlowNodeId,
+    ) -> FlowNodeId {
+        if post_finally_flow == self.unreachable_flow {
+            return self.unreachable_flow;
+        }
+        // If the try and catch never complete normally (e.g. both always return),
+        // the normal-exit label has no antecedents and the code after the whole
+        // try/finally is unreachable — the finally still runs, but control does not
+        // fall through it. This matches TypeScript collapsing an antecedent-less
+        // `normalExitLabel` to the unreachable flow.
+        let normal_exit_reachable = self
+            .flow_nodes
+            .get(normal_exit_label)
+            .is_some_and(|n| !n.antecedent.is_empty());
+        if !normal_exit_reachable {
+            return self.unreachable_flow;
+        }
+        // An empty finally (or one that collapses to the entry label) contributes
+        // no mutations: the continuation is just the normal-exit state.
+        if post_finally_flow == finally_label {
+            return normal_exit_label;
+        }
+
+        // Collect the finally-body flow nodes the tail depends on, walking
+        // antecedents back to (but not through) the finally entry label. Nodes
+        // older than `range_start` are shared pre-finally context and are not
+        // cloned.
+        let mut to_clone: Vec<FlowNodeId> = Vec::new();
+        let mut seen: rustc_hash::FxHashSet<FlowNodeId> = rustc_hash::FxHashSet::default();
+        let mut stack: Vec<FlowNodeId> = vec![post_finally_flow];
+        while let Some(n) = stack.pop() {
+            if n.is_none() || n == self.unreachable_flow || n == finally_label || n.0 < range_start
+            {
+                continue;
+            }
+            if !seen.insert(n) {
+                continue;
+            }
+            to_clone.push(n);
+            if let Some(node) = self.flow_nodes.get(n) {
+                for &ant in &node.antecedent {
+                    stack.push(ant);
+                }
+            }
+        }
+
+        if to_clone.is_empty() {
+            return normal_exit_label;
+        }
+
+        // Allocate all clones first so antecedent remapping can reference them.
+        let mut map: rustc_hash::FxHashMap<FlowNodeId, FlowNodeId> =
+            rustc_hash::FxHashMap::default();
+        {
+            let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+            for &orig in &to_clone {
+                let flags = flow_nodes.get(orig).map_or(0, |n| n.flags);
+                let clone = flow_nodes.alloc(flags);
+                map.insert(orig, clone);
+            }
+        }
+
+        // Re-root the clones: the finally entry label becomes the normal-exit
+        // label, sibling finally-body nodes map to their clones, and shared
+        // pre-finally antecedents are kept as-is.
+        for &orig in &to_clone {
+            let clone = map[&orig];
+            let (orig_node_idx, antecedents) = match self.flow_nodes.get(orig) {
+                Some(n) => (n.node, n.antecedent.clone()),
+                None => (NodeIndex::NONE, Vec::new()),
+            };
+            if let Some(clone_node) = Arc::make_mut(&mut self.flow_nodes).get_mut(clone) {
+                clone_node.node = orig_node_idx;
+            }
+            for ant in antecedents {
+                let mapped = if ant == finally_label {
+                    normal_exit_label
+                } else {
+                    map.get(&ant).copied().unwrap_or(ant)
+                };
+                self.add_antecedent(clone, mapped);
+            }
+        }
+
+        map[&post_finally_flow]
     }
 }
 
