@@ -7,6 +7,46 @@ use tracing::trace;
 
 use super::super::super::evaluate::TypeEvaluator;
 
+/// Outcome of a structural relation probe that decides a conditional branch.
+///
+/// A `false` produced *only* because the structural walk descended into a
+/// `Lazy(DefId)` whose body was not yet registered — re-entrant lib/interface
+/// resolution, signalled by `note_lazy_resolve_failure` — is not a sound
+/// definitive-false witness. tsc treats such a relation as undetermined and
+/// defers the conditional until a later resolved pass, rather than committing
+/// (and caching) the spurious false branch (issue #14238).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum BranchRelation {
+    /// `source <: target` holds — take the true branch.
+    Holds,
+    /// `source <: target` is definitively false — take the false branch.
+    Fails,
+    /// The relation's `false` depended on an unregistered `Lazy` body, so it
+    /// is undetermined — defer the conditional instead of taking false.
+    Undetermined,
+}
+
+/// Run a structural relation probe that chooses a conditional branch and
+/// classify its result, following the thread-local unresolved-`Lazy` sentinel
+/// so a `false` that depended on an unregistered `Lazy` body is reported as
+/// [`BranchRelation::Undetermined`] instead of [`BranchRelation::Fails`].
+///
+/// This mirrors the subtype cache's own poison-sentinel discipline (it never
+/// publishes a `False` that consumed an unresolved `Lazy`); applying the same
+/// rule at conditional branch-selection keeps a cold / re-entrant pass from
+/// committing a spurious false branch that a later resolved pass would not
+/// (issue #14238).
+pub(super) fn classify_branch_relation(relate: impl FnOnce() -> bool) -> BranchRelation {
+    let lazy_before = crate::limits::lazy_resolve_failure_count();
+    if relate() {
+        BranchRelation::Holds
+    } else if crate::limits::lazy_resolve_failure_count() != lazy_before {
+        BranchRelation::Undetermined
+    } else {
+        BranchRelation::Fails
+    }
+}
+
 /// Resolved and pre-computed operands for one conditional evaluation step.
 pub(super) struct ConditionalOperands {
     pub(super) check_type: TypeId,
@@ -412,23 +452,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Structural subtype probe that decides a conditional branch, with cache
     /// lookup, a thread-local depth guard, and unresolved-`Lazy` classification.
     ///
-    /// Returns [`BranchRelation::Holds`](super::BranchRelation::Holds) when
+    /// Returns [`BranchRelation::Holds`] when
     /// `check_type <: extends_type`,
-    /// [`BranchRelation::Fails`](super::BranchRelation::Fails) when the relation
-    /// is definitively false, and
-    /// [`BranchRelation::Undetermined`](super::BranchRelation::Undetermined)
-    /// when the `false` depended on a `Lazy(DefId)` body that was not yet
-    /// registered (re-entrant resolution) — in which case the spurious false is
-    /// neither cached nor used to take the false branch and the conditional
-    /// defers (issue #14238). The result cache consults `conditional_subtype_cache`
-    /// first; the structural fallback is guarded by a thread-local recursion
-    /// counter that caps at depth 50.
+    /// [`BranchRelation::Fails`] when the relation is definitively false, and
+    /// [`BranchRelation::Undetermined`] when the `false` depended on a
+    /// `Lazy(DefId)` body that was not yet registered (re-entrant resolution) —
+    /// in which case the spurious false is neither cached nor used to take the
+    /// false branch and the conditional defers (issue #14238). The result cache
+    /// consults `conditional_subtype_cache` first; the structural fallback is
+    /// guarded by a thread-local recursion counter that caps at depth 50.
     pub(super) fn conditional_subtype_relation(
         &mut self,
         check_type: TypeId,
         extends_type: TypeId,
-    ) -> super::BranchRelation {
-        use super::BranchRelation;
+    ) -> BranchRelation {
         if let Some(cached) = self.cached_conditional_subtype(check_type, extends_type) {
             return if cached {
                 BranchRelation::Holds
@@ -452,7 +489,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // `Lazy` body is reported as `Undetermined` rather than a definitive
         // false (issue #14238). Shared with the array fast path via
         // `classify_branch_relation`.
-        let relation = super::classify_branch_relation(|| {
+        let relation = classify_branch_relation(|| {
             if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
                 // At excessive depth, conservatively assume not a subtype
                 // (takes the false/else branch of the conditional).

@@ -27,6 +27,9 @@ use super::super::evaluate::TypeEvaluator;
 use super::infer_pattern::InferPatternVisited;
 use crate::type_queries::get_application_base;
 use phases::TailCallStep;
+pub(in crate::evaluation::evaluate_rules::conditional) use phases::{
+    BranchRelation, classify_branch_relation,
+};
 
 /// Maximum number of union members a distributive conditional type
 /// (`Exclude`, `Extract`, `NonNullable`, and any user `T extends U ? X : Y`
@@ -48,46 +51,6 @@ use phases::TailCallStep;
 /// budget avoids making native CI eagerly materialize React-sized surfaces that
 /// the 250-budget path still defers.
 pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 250;
-
-/// Outcome of a structural relation probe that decides a conditional branch.
-///
-/// A `false` produced *only* because the structural walk descended into a
-/// `Lazy(DefId)` whose body was not yet registered — re-entrant lib/interface
-/// resolution, signalled by `note_lazy_resolve_failure` — is not a sound
-/// definitive-false witness. tsc treats such a relation as undetermined and
-/// defers the conditional until a later resolved pass, rather than committing
-/// (and caching) the spurious false branch (issue #14238).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum BranchRelation {
-    /// `source <: target` holds — take the true branch.
-    Holds,
-    /// `source <: target` is definitively false — take the false branch.
-    Fails,
-    /// The relation's `false` depended on an unregistered `Lazy` body, so it
-    /// is undetermined — defer the conditional instead of taking false.
-    Undetermined,
-}
-
-/// Run a structural relation probe that chooses a conditional branch and
-/// classify its result, following the thread-local unresolved-`Lazy` sentinel
-/// so a `false` that depended on an unregistered `Lazy` body is reported as
-/// [`BranchRelation::Undetermined`] instead of [`BranchRelation::Fails`].
-///
-/// This mirrors the subtype cache's own poison-sentinel discipline (it never
-/// publishes a `False` that consumed an unresolved `Lazy`); applying the same
-/// rule at conditional branch-selection keeps a cold / re-entrant pass from
-/// committing a spurious false branch that a later resolved pass would not
-/// (issue #14238).
-pub(super) fn classify_branch_relation(relate: impl FnOnce() -> bool) -> BranchRelation {
-    let lazy_before = crate::limits::lazy_resolve_failure_count();
-    if relate() {
-        BranchRelation::Holds
-    } else if crate::limits::lazy_resolve_failure_count() != lazy_before {
-        BranchRelation::Undetermined
-    } else {
-        BranchRelation::Fails
-    }
-}
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
