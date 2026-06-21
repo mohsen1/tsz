@@ -908,6 +908,9 @@ path = "tests/inline_conditional_infer_return_tests.rs"
 name = "inline_conditional_generic_ref_infer_false_branch_tests"
 path = "tests/inline_conditional_generic_ref_infer_false_branch_tests.rs"
 [[test]]
+name = "this_relative_infer_member_constraint_14385_tests"
+path = "tests/this_relative_infer_member_constraint_14385_tests.rs"
+[[test]]
 name = "conditional_alias_lib_application_tests"
 path = "tests/conditional_alias_lib_application_tests.rs"
 [[test]]
