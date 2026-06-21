@@ -607,6 +607,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // A naked value parameter whose type IS a return type parameter is
+            // pinned directly by this argument. When the argument is a concrete
+            // (non context-sensitive) value, argument inference owns that return
+            // type parameter, so the contextual-return type must be suppressed —
+            // even for an object literal that carries function members, which the
+            // generic function-member guard below would otherwise defer (#14262).
+            // Without this, `reduce(init, fn) as never` (where `reduce<T>(init: T,
+            // fn: (acc: T, k: string) => T): T`) clamps the callback's `acc`/return
+            // to `never` even though `init` already determines `T`.
+            if !is_contextually_sensitive(self, arg_idx)
+                && common::type_param_info(self.ctx.types, param_type)
+                    .is_some_and(|info| return_type_params.contains(&info.name))
+            {
+                return true;
+            }
+
             if is_contextually_sensitive(self, arg_idx)
                 || self.object_literal_contains_function_member(arg_idx)
             {
