@@ -84,6 +84,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             FullIterableTypeKind::Readonly(inner)
         }
+        TypeData::Substitution { base_type, .. } => FullIterableTypeKind::Readonly(base_type),
         TypeData::Function(_) | TypeData::Callable(_) => FullIterableTypeKind::FunctionOrCallable,
         TypeData::IndexAccess(_, _) | TypeData::Conditional(_) | TypeData::Mapped(_) => {
             FullIterableTypeKind::ComplexType

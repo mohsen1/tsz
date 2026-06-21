@@ -12,7 +12,7 @@ use tsz_solver::types::{
     TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget,
 };
 
-impl<'a> TypeLowering<'a> {
+impl TypeLowering<'_> {
     fn lower_lazy_def_reference(&self, def_id: tsz_solver::def::DefId) -> TypeId {
         let lazy = self.interner.lazy(def_id);
         if let Some(type_params) = self.host.resolve_lazy_type_params(def_id)
@@ -204,7 +204,7 @@ impl<'a> TypeLowering<'a> {
         self.interner.index_access(object_type, index_type)
     }
 
-    pub(super) fn strip_numeric_separators<'b>(text: &'b str) -> std::borrow::Cow<'b, str> {
+    pub(super) fn strip_numeric_separators(text: &str) -> std::borrow::Cow<'_, str> {
         if !text.as_bytes().contains(&b'_') {
             return std::borrow::Cow::Borrowed(text);
         }

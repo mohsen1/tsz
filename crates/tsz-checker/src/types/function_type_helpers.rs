@@ -101,6 +101,26 @@ struct DirectExpressionBodyReturnMismatchCtx {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Whether `idx` is an object-literal method shorthand (e.g. `{ m() {} }`).
+    /// The class-vs-object distinction for method declarations is decided by the
+    /// parent node kind: a method's parent is the class or object-literal node
+    /// directly. Object-literal methods are contextually typed by the enclosing
+    /// object literal, so for implicit-any tracking they behave like arrow /
+    /// function-expression property initializers even though they are not
+    /// `is_closure` nodes.
+    pub(crate) fn is_object_literal_method(&self, idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::METHOD_DECLARATION)
+            && self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+    }
+
     pub(crate) fn function_contextual_type_context(
         &mut self,
         idx: NodeIndex,

@@ -265,6 +265,24 @@ impl<'a> CheckerState<'a> {
         {
             return Some(self.ctx.types.resolve_atom_ref(name).to_string());
         }
+        // A computed name `[base.s]` whose qualified expression resolves to a
+        // binding with unique-symbol identity (e.g. a namespace-import-qualified
+        // `Symbol.for(...)` const reached through `import * as base`) keys the
+        // member under the canonical `__unique_<id>` binding-identity atom. The
+        // shared `computed_identifier_unique_symbol_property_ref` resolver
+        // (identifier OR qualified entity name) runs the result through
+        // `follow_import_aliases`, so the declaration-side member key here agrees
+        // with the SAME atom the index-side element access derives from the
+        // `unique symbol` index type. Without this leg the value-position
+        // evaluation below cannot type a cross-module namespace member during
+        // interface-member precomputation (it widens to `unknown`), the member is
+        // keyed under its syntactic fallback name, and the canonical
+        // `__unique_<id>` lookup misses -> false TS7053.
+        if let Some(sym_ref) =
+            self.computed_identifier_unique_symbol_property_ref(computed.expression)
+        {
+            return Some(format!("__unique_{}", sym_ref.0));
+        }
         let prev = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
         let prev_preserve = self.ctx.preserve_literal_types;

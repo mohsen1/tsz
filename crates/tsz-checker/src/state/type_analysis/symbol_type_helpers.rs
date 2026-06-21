@@ -4,7 +4,7 @@
 use crate::query_boundaries::common::{TypeEnvironment, type_param_info};
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -351,6 +351,123 @@ impl<'a> CheckerState<'a> {
             is_method: false,
         });
         Some(func_type)
+    }
+
+    /// Provisional self-reference type for a circular `const`/`let`/`var` bound
+    /// to an arrow or function expression whose parameters and return type are
+    /// all explicitly annotated.
+    ///
+    /// `tsc` resolves an in-body self-reference of such a binding to the
+    /// initializer's declared signature, which is computable from the
+    /// annotations alone without analyzing the body. Without a provisional,
+    /// the variable symbol — which is not a `FUNCTION` symbol, so
+    /// [`Self::provisional_circular_function_symbol_type`] does not apply —
+    /// collapses to `ERROR`/`unknown` during the cycle, so `param.map(self)`
+    /// degrades to `unknown[]` and yields a false `TS18046`/`TS2571`.
+    ///
+    /// Only fires when every parameter and the return type are annotated: an
+    /// un-annotated arrow genuinely needs body inference to determine its
+    /// signature, so it is left to the existing cycle behavior.
+    pub(crate) fn provisional_circular_variable_function_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        use tsz_solver::FunctionShape;
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // Plain value variables only; entities with their own provisional /
+        // lazy handling (functions, classes, interfaces, type aliases, enums,
+        // modules, aliases) are resolved elsewhere.
+        if !symbol.has_any_flags(symbol_flags::VARIABLE)
+            || symbol.has_any_flags(
+                symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::ENUM
+                    | symbol_flags::MODULE
+                    | symbol_flags::ALIAS,
+            )
+        {
+            return None;
+        }
+
+        let declarations = symbol.declarations.clone();
+        for decl_idx in declarations {
+            let Some(init_idx) = self.variable_declaration_function_initializer(decl_idx) else {
+                continue;
+            };
+            let Some(init_node) = self.ctx.arena.get(init_idx) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                continue;
+            }
+            let Some(func) = self.ctx.arena.get_function(init_node) else {
+                continue;
+            };
+            if !self.function_has_explicit_param_and_return_annotations(func) {
+                continue;
+            }
+
+            let sig = self.call_signature_from_function(func, init_idx);
+            return Some(self.ctx.types.factory().function(FunctionShape {
+                type_params: sig.type_params,
+                params: sig.params,
+                this_type: sig.this_type,
+                return_type: sig.return_type,
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: false,
+            }));
+        }
+        None
+    }
+
+    /// Resolve a symbol declaration node to the initializer of its enclosing
+    /// `VariableDeclaration`, when the binding carries no type annotation of its
+    /// own (an annotated binding uses that annotation, not the initializer's
+    /// inferred signature). Symbol declarations may point at the binding
+    /// identifier, so climb to the enclosing declaration when needed.
+    fn variable_declaration_function_initializer(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut node_idx = decl_idx;
+        let mut node = self.ctx.arena.get(node_idx)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            node_idx = self
+                .ctx
+                .arena
+                .get_extended(node_idx)
+                .map(|ext| ext.parent)?;
+            node = self.ctx.arena.get(node_idx)?;
+        }
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let decl = self.ctx.arena.get_variable_declaration(node)?;
+        if decl.type_annotation != NodeIndex::NONE {
+            return None;
+        }
+        Some(decl.initializer)
+    }
+
+    /// Whether a function/arrow node has an explicit return-type annotation and
+    /// an explicit type annotation on every parameter.
+    fn function_has_explicit_param_and_return_annotations(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if func.type_annotation == NodeIndex::NONE {
+            return false;
+        }
+        func.parameters.nodes.iter().copied().all(|param_idx| {
+            self.ctx
+                .arena
+                .get(param_idx)
+                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                .is_some_and(|param| param.type_annotation != NodeIndex::NONE)
+        })
     }
 
     fn provisional_declaration_file_call_signature(
