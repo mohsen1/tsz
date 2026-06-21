@@ -82,7 +82,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Resolve return type annotation with parameter names in scope for `typeof`.
     ///
-    /// Pushes parameter names into typeof_param_scope so that `typeof paramName`
+    /// Pushes parameter names into `typeof_param_scope` so that `typeof paramName`
     /// in the return type annotation resolves to the parameter's declared type.
     pub(super) fn resolve_return_type_with_params_in_scope(
         &mut self,
