@@ -8,3 +8,4 @@ mod indexed_access;
 mod membership_semantics;
 mod narrowing;
 mod optional_chain;
+mod spread_param_constraint_2345;
