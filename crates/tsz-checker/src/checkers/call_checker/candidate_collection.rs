@@ -714,8 +714,7 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 spread_type,
                             )
-                        && (array_element_type_for_type(self.ctx.types, constraint).is_some()
-                            || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+                        && self.spread_type_parameter_constraint_is_array_like(constraint)
                     {
                         // Wrap the spread type parameter in a variadic tuple
                         // marker [...U] so the solver can distinguish `f(...u)`
@@ -1696,6 +1695,34 @@ impl<'a> CheckerState<'a> {
             optional: false,
             rest: true,
         }])
+    }
+
+    /// Whether a spread type parameter's `constraint` is array/tuple-like, so
+    /// `f(...p)` (with `p: P`, `P extends constraint`) lands on a rest parameter
+    /// and is wrapped as a variadic `[...P]` marker rather than materialized into
+    /// a single representative element.
+    ///
+    /// A *direct* array/tuple constraint (`P extends any[]`, `P extends [a, b]`)
+    /// is recognized structurally. A constraint written through a generic alias
+    /// or deferred conditional — `P extends Parameters<F>`, where the alias body
+    /// is `F extends (...a: infer Q) => any ? Q : never` — is opaque until the
+    /// alias is instantiated, so it is expanded through the env-aware evaluator
+    /// first and then classified by its *base constraint* (tsc reads array-likeness
+    /// of such a reference through `getBaseConstraintOfType`, and the rest-position
+    /// `infer Q` carries the implicit `unknown[]` constraint that makes it land).
+    fn spread_type_parameter_constraint_is_array_like(&mut self, constraint: TypeId) -> bool {
+        if array_element_type_for_type(self.ctx.types, constraint).is_some()
+            || tuple_elements_for_type(self.ctx.types, constraint).is_some()
+        {
+            return true;
+        }
+        // The constraint may be a generic-alias `Application` (e.g. `Parameters<F>`)
+        // that only reveals its deferred-conditional body once instantiated.
+        let evaluated = self.evaluate_application_type(constraint);
+        crate::query_boundaries::common::base_constraint_is_array_or_tuple(
+            self.ctx.types,
+            evaluated,
+        )
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
