@@ -1057,16 +1057,6 @@ impl CheckerState<'_> {
                 constructor_name = %constructor_name,
                 "get_type_of_identifier: looking for *Constructor symbol"
             );
-            // Only a *true lib global* models its value side through a
-            // `*Constructor` companion. A module-local declaration named like a
-            // global (`export function Promise() {}`, including one reached
-            // through an import alias) carries the lib's INTERFACE meaning in
-            // the type namespace — the binder preserves it when the declaration
-            // shadows the global value — but its value side is the user's own
-            // function, so substituting the non-callable constructor would emit
-            // a false TS2348. Gate the override on lib provenance, the same
-            // predicate `lib_constructor_companion` above uses.
-            let symbol_is_lib_global = self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id);
             // Use find_value_symbol_in_libs (not resolve_global_value_symbol) to get
             // the correct VALUE symbol. resolve_global_value_symbol can return the
             // wrong symbol when there are name collisions in file_locals.
@@ -1089,15 +1079,8 @@ impl CheckerState<'_> {
                         value_type
                     } else if (flags & tsz_binder::symbol_flags::CLASS) != 0 {
                         self.merge_interface_types(value_type, constructor_type)
-                    } else if symbol_is_lib_global {
-                        // True lib global: the `*Constructor` companion is the
-                        // authoritative value-position type.
-                        constructor_type
                     } else {
-                        // Module-local declaration that merely shadows the global
-                        // (e.g. an imported `export function Promise`): keep its
-                        // own value type instead of the lib constructor.
-                        value_type
+                        constructor_type
                     };
                 }
             } else {
