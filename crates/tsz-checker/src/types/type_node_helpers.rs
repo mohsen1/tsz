@@ -918,8 +918,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// indexable here, so the caller treats the access as indeterminate (legal).
     fn indexable_base_constraint(&self, base: tsz_solver::TypeId) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common as q;
+        use crate::query_boundaries::conditional_constraints as conditional_query;
         if q::is_conditional_type(self.ctx.types, base) {
-            return q::conditional_branch_union_constraint(self.ctx.types, base);
+            return conditional_query::conditional_branch_union_constraint(self.ctx.types, base);
         }
         let base = q::unwrap_readonly_or_noinfer(self.ctx.types, base).unwrap_or(base);
         (q::is_tuple_type(self.ctx.types, base) || q::is_array_type(self.ctx.types, base))
