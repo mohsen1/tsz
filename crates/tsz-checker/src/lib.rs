@@ -307,6 +307,9 @@ mod index_sig_param_intersection_validity_tests;
 #[path = "tests/index_sig_param_resolved_key_type_tests.rs"]
 mod index_sig_param_resolved_key_type_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_symbol_keyspace_tests.rs"]
+mod index_signature_symbol_keyspace_tests;
+#[cfg(test)]
 #[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
 mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
@@ -492,6 +495,9 @@ mod ts2323_tests;
 #[cfg(test)]
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
+#[cfg(test)]
+#[path = "../tests/ts2352_both_callable_overlap_repro_tests.rs"]
+mod ts2352_both_callable_overlap_repro_tests;
 #[cfg(test)]
 #[path = "../tests/ts2352_constrained_type_param_target_tests.rs"]
 mod ts2352_constrained_type_param_target_tests;
@@ -753,6 +759,9 @@ mod conditional_keyof_test;
 #[cfg(test)]
 #[path = "tests/conditional_never_param_inference_tests.rs"]
 mod conditional_never_param_inference_tests;
+#[cfg(test)]
+#[path = "../tests/conditional_rest_arity_erasure_tests.rs"]
+mod conditional_rest_arity_erasure_tests;
 #[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;

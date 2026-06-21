@@ -755,7 +755,14 @@ impl<'a> CheckerState<'a> {
 
             keyof
         } else {
-            self.ctx.types.evaluate_keyof(object_type_for_check)
+            // Resolve the receiver's index-signature key aliases first (e.g. the
+            // lib global `PropertyKey`, only resolvable at use time) so the
+            // resolver-less `evaluate_keyof` query classifies the full key space —
+            // notably the `symbol` arm. Without this, `keyof { [k: PropertyKey]:
+            // V }` drops `symbol` and a symbol index yields a spurious TS2536
+            // (#14315).
+            let normalized = self.resolve_receiver_index_signature_keys(object_type_for_check);
+            self.ctx.types.evaluate_keyof(normalized)
         };
         let is_self_derived_key_space = |candidate: TypeId| {
             crate::query_boundaries::common::index_access_types(self.ctx.types, candidate)

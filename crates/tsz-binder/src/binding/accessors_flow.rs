@@ -290,11 +290,16 @@ impl BinderState {
         // Save and clear return_targets so that return statements inside
         // non-IIFE functions don't redirect to an enclosing IIFE's return target.
         let prev_return_targets = std::mem::take(&mut self.return_targets);
+        // Likewise, abrupt completions inside a nested function unwind that
+        // function, not an enclosing `try`/`finally`, so its finally-entry labels
+        // must not be visible while binding the nested body.
+        let prev_finally_entry_targets = std::mem::take(&mut self.finally_entry_targets);
 
         self.current_flow = start_flow;
         bind_body(self);
         self.current_flow = prev_flow;
         self.return_targets = prev_return_targets;
+        self.finally_entry_targets = prev_finally_entry_targets;
     }
 
     // =========================================================================

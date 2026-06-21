@@ -195,3 +195,95 @@ function f(instance: Function | object) {
         "typeof === 'function' on `Function | object` must keep Function callable; got: {diags:#?}"
     );
 }
+
+/// Regression (issue #14324, mined from arktype): `typeof x === "function"`
+/// narrowing of a union whose members include the bare `object` type must
+/// narrow that member to `Function` (a subtype of `object`), not collapse the
+/// whole union to `never`. tsc reports no error; tsz previously emitted TS2339
+/// because the per-union-member narrowing dropped the `object` member while the
+/// scalar path kept it. Covers `object | symbol`, `object | string`, and the
+/// bare scalar `object` so the per-member and scalar paths stay aligned.
+#[test]
+fn typeof_function_narrows_object_union_member_to_function() {
+    let source = r#"
+function a(value: object | symbol) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+
+function b(value: object | string) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+
+function bare(value: object) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let property_missing: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        property_missing.is_empty(),
+        "typeof === 'function' on a union containing `object` must narrow that member to Function; got: {diags:#?}"
+    );
+}
+
+/// Regression (issue #14324, adjacent): the empty object shape `{}` is a
+/// supertype of `Function`, so a `{} | T` union member that is `{}` narrows to
+/// `Function` under `typeof === "function"` rather than being dropped. The
+/// generic `{} | T` form exercises the type-parameter member alongside `{}`.
+#[test]
+fn typeof_function_narrows_empty_object_union_member_to_function() {
+    let source = r#"
+function emptyShape(value: {} | symbol) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+
+function withTypeParam<T extends symbol>(value: {} | T) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let property_missing: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        property_missing.is_empty(),
+        "typeof === 'function' on a union containing `{{}}` must narrow that member to Function; got: {diags:#?}"
+    );
+}
+
+/// Negative control (issue #14324): a union with no function- or
+/// object-compatible member must still narrow to `never` under
+/// `typeof === "function"`, confirming the fix is scoped to `object`/empty-shape
+/// members and does not over-broadly keep scalars. The collapse-to-`never` is
+/// witnessed here through tsz's current property-access-on-`never` behavior
+/// (TS2339); the witness, not tsc parity for `never` access, is the point.
+#[test]
+fn typeof_function_negative_control_no_compatible_member_is_never() {
+    let source = r#"
+function c(value: string | symbol) {
+  if (typeof value === "function") {
+    return value.name;
+  }
+  return "";
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let property_missing: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        !property_missing.is_empty(),
+        "typeof === 'function' on `string | symbol` must collapse to never (no Function member); got: {diags:#?}"
+    );
+}

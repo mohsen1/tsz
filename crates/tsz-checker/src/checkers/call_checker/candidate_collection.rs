@@ -30,7 +30,7 @@ const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 /// tuple. A *fixed*-length tuple constraint (`[number, number]`) stays
 /// positionally expandable, so multi-spread combos (`f(...u, ...v)`) keep
 /// inferring as before.
-fn type_param_variadic_tuple_spread(
+pub(super) fn type_param_variadic_tuple_spread(
     db: &dyn tsz_solver::construction::TypeDatabase,
     spread_type: TypeId,
     elems: &[TupleElement],
@@ -1910,79 +1910,6 @@ impl<'a> CheckerState<'a> {
             }
             effective_index += 1;
         }
-    }
-
-    pub(super) fn find_prior_non_tuple_spread_for_mismatch(
-        &mut self,
-        args: &[NodeIndex],
-        mismatch_index: usize,
-    ) -> Option<NodeIndex> {
-        let mut effective_index = 0usize;
-        let mut prior_non_tuple_spread = None;
-
-        for &arg_idx in args {
-            if effective_index > mismatch_index {
-                break;
-            }
-            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-                effective_index += 1;
-                continue;
-            };
-            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
-                if effective_index == mismatch_index {
-                    return prior_non_tuple_spread;
-                }
-                effective_index += 1;
-                continue;
-            }
-            let Some(spread_data) = self.ctx.arena.get_spread(arg_node) else {
-                effective_index += 1;
-                continue;
-            };
-            let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            // A variadic-tuple type-parameter spread stays a single unit (see argument
-            // collection); treat it as one position rather than its constraint's
-            // tuple element count.
-            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
-                && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
-            {
-                if mismatch_index < effective_index + elems.len() {
-                    return prior_non_tuple_spread;
-                }
-                effective_index += elems.len();
-                continue;
-            }
-            // An array literal spread (e.g. `...['a', 'x']`) is expanded element-by-element
-            // during argument collection. A mismatch at one of those expanded indices is a
-            // per-element type error (TS2345/TS2322), not a TS2556. Skip past the literal's
-            // elements without setting `prior_non_tuple_spread`.
-            if array_element_type_for_type(self.ctx.types, spread_type).is_some()
-                && let Some(expr_node) = self
-                    .ctx
-                    .arena
-                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
-                && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
-            {
-                let count = literal.elements.nodes.len();
-                if mismatch_index < effective_index + count {
-                    return prior_non_tuple_spread;
-                }
-                effective_index += count;
-                continue;
-            }
-            let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
-                .is_some()
-                || self.is_iterable_type(spread_type);
-            if effective_index == mismatch_index {
-                return prior_non_tuple_spread;
-            }
-            if is_non_tuple_spread {
-                prior_non_tuple_spread = Some(arg_idx);
-            }
-            effective_index += 1;
-        }
-
-        prior_non_tuple_spread
     }
 }
 

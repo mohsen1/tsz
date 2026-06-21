@@ -1012,7 +1012,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
             .collect();
         if !rest_param_from_constraint_fallback {
-            let (min_args, max_args) = self.arg_count_bounds(&instantiated_params);
+            // Params are already instantiated with the inferred type arguments,
+            // so the signature's type parameters are resolved — no erasure.
+            let (min_args, max_args) = self.arg_count_bounds(&instantiated_params, &[]);
             if arg_types.len() < min_args {
                 return CallResult::ArgumentCountMismatch {
                     expected_min: min_args,

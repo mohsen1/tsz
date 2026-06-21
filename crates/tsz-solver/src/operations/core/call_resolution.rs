@@ -1460,7 +1460,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
 
         // Check argument count
-        let (min_args, max_args) = self.arg_count_bounds(&func.params);
+        let (min_args, max_args) = self.arg_count_bounds(&func.params, &func.type_params);
 
         if arg_types.len() < min_args {
             // For variadic tuple rest params (e.g. `...args: [...T[], Required]`),
