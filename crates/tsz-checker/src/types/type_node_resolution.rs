@@ -63,7 +63,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .resolve_symbol_file_index(sym_id)
             .unwrap_or(self.ctx.current_file_idx);
-        self.resolve_import_alias_type_target_from_source(source_file_idx, module_name, import_name)
+        self.resolve_import_alias_type_target_from_source(
+            source_file_idx,
+            module_name,
+            import_name,
+            0,
+        )
     }
 
     /// Resolve a value/type import alias used in **type position** to the
@@ -82,6 +87,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         source_file_idx: usize,
         module_name: &str,
         import_name: &str,
+        depth: usize,
     ) -> Option<tsz_binder::SymbolId> {
         let target_file_idx = self
             .ctx
@@ -129,6 +135,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let target_symbol = target_binder.get_symbol(target_sym_id)?;
         if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
+            // At 2+ re-export hops the single chase above can land on an
+            // intermediate re-export alias stub (it carries an `import_module`
+            // but no TYPE shape of its own) rather than the declaring
+            // class/interface, so the TYPE gate fails and the type reference
+            // wrongly falls back to the value (`typeof`) side (#14358). Follow
+            // the stub one more hop from its own file, bounded to avoid cycles.
+            if depth < 16
+                && let Some(stub_module) = target_symbol.import_module().map(str::to_string)
+            {
+                let stub_name = target_symbol
+                    .import_name()
+                    .unwrap_or(import_name)
+                    .to_string();
+                if stub_module != module_name || stub_name != import_name {
+                    return self.resolve_import_alias_type_target_from_source(
+                        resolved_file_idx,
+                        &stub_module,
+                        &stub_name,
+                        depth + 1,
+                    );
+                }
+            }
             return None;
         }
         self.ctx
@@ -169,7 +197,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .get_file_idx_for_arena(decl_arena)
             .unwrap_or(self.ctx.current_file_idx);
-        self.resolve_import_alias_type_target_from_source(source_file_idx, module_name, import_name)
+        self.resolve_import_alias_type_target_from_source(
+            source_file_idx,
+            module_name,
+            import_name,
+            0,
+        )
     }
 
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
