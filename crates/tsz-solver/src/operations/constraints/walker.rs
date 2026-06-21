@@ -1038,7 +1038,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_elems = self.interner.tuple_list(s_elems);
                 for s_elem in s_elems.iter() {
                     if s_elem.rest {
-                        let rest_elem_type = self.rest_element_type(s_elem.type_id);
+                        // tsc infers a plain array target's element from the
+                        // *element type* of the rest. For a concrete `...E[]`
+                        // that is `E`; for a variadic `...T` (where `T` is a
+                        // generic spread constrained to an array, e.g. `[...End]`
+                        // with `End extends string[]`) the element type is
+                        // `T[number]`, NOT `T` itself. Constraining against the
+                        // raw spread type bound `T` to the whole constraint array
+                        // (`string[]`); using the number-indexed element matches
+                        // tsc, which infers the element type (`End[number]`).
+                        let rest_elem_type = self.array_target_element_of_rest_type(s_elem.type_id);
                         self.constrain_types(ctx, var_map, rest_elem_type, t_elem, priority);
                     } else {
                         self.constrain_types(ctx, var_map, s_elem.type_id, t_elem, priority);
