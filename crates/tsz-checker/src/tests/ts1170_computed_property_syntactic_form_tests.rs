@@ -144,7 +144,7 @@ type M = { [+1]: 0 };
     );
 }
 
-/// BigInt literals (plain and negated) are literal-typed computed names — no TS1170.
+/// `BigInt` literals (plain and negated) are literal-typed computed names — no TS1170.
 #[test]
 fn ts1170_not_emitted_for_bigint_literals() {
     let codes = diag_codes(
