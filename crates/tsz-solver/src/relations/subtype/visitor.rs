@@ -800,6 +800,40 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // Function expressions are assignable to the global `Function` interface.
             // Avoid expanding and comparing every `Function` interface member.
             SubtypeResult::True
+        } else if object_shape_id(self.checker.interner, self.target).is_some()
+            || object_with_index_shape_id(self.checker.interner, self.target).is_some()
+        {
+            // Function <: Object / ObjectWithIndex.
+            //
+            // A function value is an object whose apparent type carries the global
+            // `Function` interface members (`bind`, `call`, `apply`, `name`,
+            // `length`, ...). It is therefore assignable to a plain object target
+            // when that apparent type satisfies the target's required properties —
+            // e.g. an all-optional object constituent of an intersection such as
+            // `LazyMeta & ((...args: any) => Fn)`, where `LazyMeta` is `{ x?: T }`.
+            // This mirrors tsc relating `getApparentType` of a function to an
+            // object type, and parallels the existing `Callable <: Object` arm
+            // below (a hybrid callable already resolves its own properties here).
+            //
+            // The current `in_intersection_member_check` flag is preserved (not
+            // reset): as an intersection member the weak-type check (TS2559) stays
+            // suppressed, so the function satisfies an all-optional member, while a
+            // *direct* assignment to a weak type still triggers TS2559 because the
+            // boxed `Function` interface has properties yet none in common with the
+            // weak target.
+            let boxed_function = self
+                .checker
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .or_else(|| {
+                    self.checker
+                        .interner
+                        .get_boxed_type(IntrinsicKind::Function)
+                });
+            match boxed_function {
+                Some(boxed) => self.checker.check_subtype(boxed, self.target),
+                None => SubtypeResult::False,
+            }
         } else {
             SubtypeResult::False
         }
