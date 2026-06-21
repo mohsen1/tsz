@@ -120,6 +120,9 @@ path = "tests/type_only_import_reexport_tests.rs"
 name = "variadic_tuple_spread_arity_ts2556_tests"
 path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 [[test]]
+name = "variadic_tuple_spread_element_type_tests"
+path = "tests/variadic_tuple_spread_element_type_tests.rs"
+[[test]]
 name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
 [[test]]
@@ -306,6 +309,9 @@ path = "tests/new_expression_regression_tests.rs"
 [[test]]
 name = "new_generic_construct_signature_type_arg_display_tests"
 path = "tests/new_generic_construct_signature_type_arg_display_tests.rs"
+[[test]]
+name = "new_generic_callback_contextual_infer_tests"
+path = "tests/new_generic_callback_contextual_infer_tests.rs"
 [[test]]
 name = "noinfer_diagnostic_display_tests"
 path = "tests/noinfer_diagnostic_display_tests.rs"
@@ -976,6 +982,9 @@ path = "tests/program_context_tests.rs"
 [[test]]
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
+[[test]]
+name = "generic_param_source_apparent_type_inference_tests"
+path = "tests/generic_param_source_apparent_type_inference_tests.rs"
 [[test]]
 name = "kysely_callback_context_tests"
 path = "tests/kysely_callback_context_tests.rs"
@@ -2025,6 +2034,17 @@ path = "tests/function_type_predicate_typeof_param_tests.rs"
 name = "conditional_concrete_check_generic_extends_false_branch_tests"
 path = "tests/conditional_concrete_check_generic_extends_false_branch_tests.rs"
 
+[[test]]
+name = "ambient_readonly_literal_initializer_tests"
+path = "tests/ambient_readonly_literal_initializer_tests.rs"
+
+[[test]]
+name = "untyped_call_keyword_type_arg_tests"
+path = "tests/untyped_call_keyword_type_arg_tests.rs"
+
+[[test]]
+name = "destructuring_deferred_conditional_iterability_tests"
+path = "tests/destructuring_deferred_conditional_iterability_tests.rs"
 [[test]]
 name = "object_keyword_any_index_tests"
 path = "tests/object_keyword_any_index_tests.rs"

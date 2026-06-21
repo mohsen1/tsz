@@ -1345,6 +1345,20 @@ impl<'a> CheckerState<'a> {
         // ES5 with `downlevelIteration=false` reads the numeric index signature
         // path, and that case is already handled above when `target.is_es5()`.
 
+        // Conditional/IndexAccess/Application types containing free type parameters
+        // cannot have iterability proven at the generic boundary — tsc defers TS2488
+        // to instantiation time for these deferred generic types. For a rest binding
+        // pattern typed by e.g. `{} extends T ? [a?: string] : [a: string]`, both
+        // branches are tuples, so no error is ever produced. Mirrors the guard in
+        // `check_spread_argument_iterability`.
+        if (common::is_conditional_type(self.ctx.types, resolved_type)
+            || common::is_index_access_type(self.ctx.types, resolved_type)
+            || common::is_generic_type(self.ctx.types, resolved_type))
+            && common::contains_free_type_parameters(self.ctx.types, resolved_type)
+        {
+            return true;
+        }
+
         // Not iterable - emit TS2488
         self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target, None);
         false
