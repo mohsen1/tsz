@@ -62,61 +62,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # Retry read-only gh/curl calls so a transient GitHub API blip (5xx,
-          # rate limit, dropped connection) cannot fail Bench orchestration.
-          # Echoes the successful attempt's stdout; returns non-zero only after
-          # all attempts fail, so each caller keeps its own safe-default branch.
-          gh_retry() {
-            local attempt=1 max_attempts=5 delay=4 out rc
-            while :; do
-              if out="$("$@" 2>/dev/null)"; then
-                printf '%s' "$out"
-                return 0
-              else
-                rc=$?
-              fi
-              if [[ "$attempt" -ge "$max_attempts" ]]; then
-                echo "gh_retry: '$1' failed after ${max_attempts} attempts (rc=${rc})." >&2
-                return "$rc"
-              fi
-              echo "gh_retry: '$1' attempt ${attempt}/${max_attempts} failed (rc=${rc}); retrying in ${delay}s." >&2
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          should_run=true
-
-          release_only=false
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            case "${{ github.event.schedule }}" in
-              "0 3 * * *"|"0 5 * * *") release_only=true ;;
-            esac
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish_latest_pgo }}" == "true" ]]; then
-            release_only=true
-          fi
-
-          # Single-flight is enforced by the workflow `concurrency` group; this is
-          # a cheap belt-and-suspenders net. cancel-in-progress:false QUEUES (does
-          # not skip) a duplicate cadence tick, so if a strictly-older perf bench
-          # (databaseId < this run) is somehow still in_progress, no-op this run
-          # and let it finish — the next cadence tick measures the newest tip.
-          # Release runs are exempt (separate concurrency group, no shards). A gh
-          # API error fails OPEN: the concurrency group is the real single-flight.
-          if [[ "$release_only" != "true" ]]; then
-            list_other_active_runs() {
-              gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
-                --json databaseId --jq '.[] | select(.databaseId < ${{ github.run_id }}) | .databaseId'
-            }
-            if active_runs="$(gh_retry list_other_active_runs)" && [[ -n "$active_runs" ]]; then
-              echo "An older perf bench is already in progress; no-op this tick (it finishes; the next tick covers the newest tip)."
-              should_run=false
-            fi
-          fi
-
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          # Single-flight is enforced entirely by the workflow `concurrency` group
+          # (group bench-<perf|release>, cancel-in-progress:false): at most one
+          # perf bench runs, and at most one newer tick queues behind it to measure
+          # the next tip. No gate-side dedup is needed (a channel-blind dedup here
+          # would let a long daily-release run false-skip a perf tick); this job
+          # only exposes should_run for the downstream `if:` conditions.
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
   bench-prepare:
     name: bench-prepare
