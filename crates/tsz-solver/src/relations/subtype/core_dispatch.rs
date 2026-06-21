@@ -785,11 +785,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let target_shape = object_shape_id(self.interner, target)
                     .or_else(|| object_with_index_shape_id(self.interner, target));
                 if let Some(t_shape_id) = target_shape {
-                    let t_shape = self.interner.object_shape(t_shape_id);
-                    if t_shape.properties.iter().all(|p| p.optional)
-                        && (t_shape.string_index.is_none() || t_shape.string_index_is_optional())
-                        && (t_shape.number_index.is_none() || t_shape.number_index_is_optional())
-                    {
+                    // Extract the index facts before calling `self`-borrowing helpers.
+                    let (no_required_props, string_index, number_index) = {
+                        let t_shape = self.interner.object_shape(t_shape_id);
+                        (
+                            t_shape.properties.iter().all(|p| p.optional),
+                            t_shape
+                                .string_index
+                                .as_ref()
+                                .map(|si| (t_shape.string_index_is_optional(), si.value_type)),
+                            t_shape
+                                .number_index
+                                .as_ref()
+                                .map(|ni| (t_shape.number_index_is_optional(), ni.value_type)),
+                        )
+                    };
+                    // A *required* index signature normally rejects the `object`
+                    // keyword (it has no implicit index), but tsc's any-index waiver
+                    // (`indexSignaturesRelatedTo`) accepts it when the index value
+                    // type is `any` (`{ [k: string]: any }`, `Record<any, any>`). An
+                    // optional or absent index imposes no requirement; a concrete
+                    // `unknown` value still rejects in both compilers.
+                    let string_index_ok = match string_index {
+                        None => true,
+                        Some((optional, value_type)) => {
+                            optional
+                                || self.target_string_index_any_waives_missing_index(value_type)
+                        }
+                    };
+                    let number_index_ok = match number_index {
+                        None => true,
+                        Some((optional, value_type)) => {
+                            optional
+                                || self.target_string_index_any_waives_missing_index(value_type)
+                        }
+                    };
+                    if no_required_props && string_index_ok && number_index_ok {
                         return SubtypeResult::True;
                     }
                 }
