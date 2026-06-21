@@ -1792,16 +1792,42 @@ jobs:
             echo "Bench target ${TARGET_SHA} is behind current main ${MAIN_SHA}; publishing because active benchmark runs are intentionally allowed to finish."
           fi
 
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
-          echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
+          # Monotonic latest.json guard. Incident: an older/slower bench finishing
+          # late must not clobber a newer latest.json (the root cause behind the
+          # website-side newest-wins selector). Refuse to overwrite latest.* when the
+          # already-published latest.json carries a newer-or-equal generated_at than
+          # this run's results. The timestamped ${TIMESTAMP}.json above is always kept
+          # for history regardless. Only refuses when BOTH timestamps parse and this
+          # run is not strictly newer, so it can never reduce publishing on first
+          # publish or on missing/unparseable metadata.
+          existing_latest="$GITHUB_WORKSPACE/bench-results-existing-latest.json"
+          if ! gsutil -q cp "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json" "$existing_latest" 2>/dev/null; then
+            rm -f "$existing_latest"
+          fi
+          latest_decision="$(node -e '
+            const fs = require("node:fs");
+            const gen = (p) => { try { return Date.parse(JSON.parse(fs.readFileSync(p, "utf8")).generated_at) || 0; } catch { return 0; } };
+            const incoming = gen(process.argv[1]);
+            const existing = gen(process.argv[2]);
+            process.stdout.write(incoming > 0 && existing > 0 && incoming <= existing ? "skip" : "publish");
+          ' "$GITHUB_WORKSPACE/bench-results.json" "$existing_latest")"
+          rm -f "$existing_latest"
+
+          if [[ "$latest_decision" == "skip" ]]; then
+            echo "latest.json guard: existing latest.json is newer-or-equal than this run; keeping it and skipping the latest.* overwrite (timestamped ${TIMESTAMP}.json was still published)."
+            echo "should_redeploy=false" >> "$GITHUB_OUTPUT"
+          else
+            gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+            gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+            gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
+              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
+            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
+            echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Report severe benchmark gaps
         if: steps.publish.outputs.should_redeploy == 'true'
