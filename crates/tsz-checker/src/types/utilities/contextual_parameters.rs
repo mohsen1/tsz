@@ -849,13 +849,45 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|(member, evaluated)| member != evaluated);
             if has_evaluated_members || !union_has_direct_call_signatures {
+                // tsc derives the contextual signature for a function expression
+                // from a union of function types by discarding members whose
+                // call signature is arity-smaller than the expression
+                // (`isAritySmaller`). When exactly one member can accept the
+                // callback's arity, the contextual signature -- and thus every
+                // parameter type -- comes solely from that member. Without this,
+                // a union of plain single-signature function types (e.g.
+                // `MethodDecorator | PropertyDecorator | ClassDecorator`, where
+                // only the 3-parameter `MethodDecorator` can accept a
+                // 3-parameter callback) yields no contextual type for any
+                // parameter and spuriously reports TS7006, because the
+                // per-member mixed-overload path below only handles members
+                // carrying two or more overload signatures. The 2-or-more
+                // survivor case is left to the existing per-member logic, which
+                // preserves tsc's "members must agree, else implicit any".
+                // `evaluated_member` already equals `member` when evaluation
+                // produced no change, so it is the effective member type.
+                let mut arity_viable_members: Vec<TypeId> = Vec::new();
+                for &(_, evaluated_member) in &evaluated_members {
+                    if self.callable_member_accepts_callback_arity(evaluated_member, arg_count) {
+                        arity_viable_members.push(evaluated_member);
+                    }
+                }
+                if arity_viable_members.len() == 1
+                    && let Some(param_type) = self.contextual_callable_member_param_type_for_call(
+                        arity_viable_members[0],
+                        index,
+                        arg_count,
+                    )
+                {
+                    return Some(param_type);
+                }
                 let contextual_members: Vec<_> = evaluated_members
                     .into_iter()
                     .filter_map(|(member, evaluated_member)| {
-                        let target_member = if evaluated_member != member {
-                            evaluated_member
-                        } else {
+                        let target_member = if evaluated_member == member {
                             member
+                        } else {
+                            evaluated_member
                         };
                         if evaluated_member != member {
                             self.contextual_parameter_type_for_call_with_env_from_expected(

@@ -265,6 +265,24 @@ impl<'a> CheckerState<'a> {
         {
             return Some(self.ctx.types.resolve_atom_ref(name).to_string());
         }
+        // A computed name `[base.s]` whose qualified expression resolves to a
+        // binding with unique-symbol identity (e.g. a namespace-import-qualified
+        // `Symbol.for(...)` const reached through `import * as base`) keys the
+        // member under the canonical `__unique_<id>` binding-identity atom. The
+        // shared `computed_identifier_unique_symbol_property_ref` resolver
+        // (identifier OR qualified entity name) runs the result through
+        // `follow_import_aliases`, so the declaration-side member key here agrees
+        // with the SAME atom the index-side element access derives from the
+        // `unique symbol` index type. Without this leg the value-position
+        // evaluation below cannot type a cross-module namespace member during
+        // interface-member precomputation (it widens to `unknown`), the member is
+        // keyed under its syntactic fallback name, and the canonical
+        // `__unique_<id>` lookup misses -> false TS7053.
+        if let Some(sym_ref) =
+            self.computed_identifier_unique_symbol_property_ref(computed.expression)
+        {
+            return Some(format!("__unique_{}", sym_ref.0));
+        }
         let prev = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
         let prev_preserve = self.ctx.preserve_literal_types;
@@ -295,9 +313,21 @@ impl<'a> CheckerState<'a> {
             self.symbol_valued_binding_property_name(computed.expression, expr_type)
         {
             Some(name)
-        } else {
+        } else if let Some(sym_ref) =
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
-                .map(|sym_ref| format!("__unique_{}", sym_ref.0))
+        {
+            Some(format!("__unique_{}", sym_ref.0))
+        } else {
+            // Value-position evaluation produced no key. The expression may
+            // still denote a binding with unique-symbol / plain-`symbol`
+            // identity that has no value meaning at this position — notably a
+            // `unique symbol` reached through a type-only namespace import
+            // (`import type * as s; [s.member]`), whose value-position type is
+            // ERROR. Delegate to the canonical computed-name policy, which keys
+            // purely from the resolved binding's identity rather than from its
+            // value-position type, so the member is not dropped.
+            self.computed_property_expression_name_atom(computed.expression)
+                .map(|atom| self.ctx.types.resolve_atom(atom))
         }
     }
 

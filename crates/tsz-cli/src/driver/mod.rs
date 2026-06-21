@@ -24,3 +24,7 @@ mod cross_file_user_interface_name_override_tests;
 #[cfg(test)]
 #[path = "declare_global_interface_keyof_merge_tests.rs"]
 mod declare_global_interface_keyof_merge_tests;
+
+#[cfg(test)]
+#[path = "cross_file_type_only_namespace_unique_symbol_tests.rs"]
+mod cross_file_type_only_namespace_unique_symbol_tests;

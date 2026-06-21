@@ -9,7 +9,7 @@ use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, Typ
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::debug;
 
-use super::inference_helpers::is_substantive_inference_candidate;
+use super::foreign_param_shapes::is_substantive_inference_candidate;
 use super::readonly_direct_inference;
 use super::{
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
@@ -202,7 +202,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             };
             let source_shape = self.normalize_function_shape_params_for_context(&source_shape);
-            let (callback_min, callback_max) = self.arg_count_bounds(&source_shape.params);
+            let (callback_min, callback_max) =
+                self.arg_count_bounds(&source_shape.params, &source_shape.type_params);
 
             if rest_arg_count < callback_min || callback_max.is_some_and(|max| rest_arg_count > max)
             {
@@ -237,7 +238,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .any(|arg| self.is_contextually_sensitive(arg));
         // Check argument count BEFORE type inference
         // This prevents false positive TS2554 errors for generic functions with optional/rest params
-        let (min_args, max_args) = self.arg_count_bounds(&func.params);
+        let (min_args, max_args) = self.arg_count_bounds(&func.params, &func.type_params);
 
         if arg_types.len() < min_args {
             return CallResult::ArgumentCountMismatch {

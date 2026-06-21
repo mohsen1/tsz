@@ -466,6 +466,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self
+            .default_export_identifier_value_target(member_id)
+            .is_some()
+        {
+            return self.get_validated_member_type(member_id, property_name);
+        }
+
         if let Some(member_symbol) = self
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
@@ -587,6 +594,26 @@ impl<'a> CheckerState<'a> {
         if let Some(target_member_id) =
             self.default_export_identifier_value_target(resolved_member_id)
         {
+            let wrapper_type = self.get_type_of_symbol(resolved_member_id);
+            if !matches!(wrapper_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                return Some(wrapper_type);
+            }
+            if let Some(import_name) = self
+                .get_cross_file_symbol(target_member_id)
+                .or_else(|| self.ctx.binder.get_symbol(target_member_id))
+                .and_then(|target| {
+                    (target.has_any_flags(symbol_flags::ALIAS)
+                        && !target.is_type_only
+                        && target.import_module().is_some())
+                    .then(|| target.import_name().unwrap_or(property_name).to_string())
+                })
+            {
+                let mut visited_aliases = AliasCycleTracker::new();
+                let target_member_id = self
+                    .resolve_alias_symbol(target_member_id, &mut visited_aliases)
+                    .unwrap_or(target_member_id);
+                return self.get_validated_member_type(target_member_id, &import_name);
+            }
             let mut visited_aliases = AliasCycleTracker::new();
             let target_member_id = self
                 .resolve_alias_symbol(target_member_id, &mut visited_aliases)

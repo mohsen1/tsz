@@ -58,6 +58,14 @@ const x: Drink = Drink.TEA;
         ts1362.is_empty(),
         "Should not emit TS1362 when export type merges with namespace export. Got: {ts1362:?}. All: {diagnostics:?}"
     );
+    let ts2709 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2709)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2709.is_empty(),
+        "Should not emit TS2709 when export type merges with namespace export. Got: {ts2709:?}. All: {diagnostics:?}"
+    );
 }
 
 /// Type+value merged symbol is usable through a wildcard barrel.
@@ -114,6 +122,14 @@ const _myValue: Something<string> = Something.of("abc")
         ts2339.is_empty(),
         "Should not emit TS2339 for type+namespace merge through wildcard barrel. Got: {ts2339:?}. All: {diagnostics:?}"
     );
+    let ts2709 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2709)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2709.is_empty(),
+        "Should not emit TS2709 for type+namespace merge through wildcard barrel. Got: {ts2709:?}. All: {diagnostics:?}"
+    );
 }
 
 /// Reproduces exportTypeMergedWithExportStarAsNamespace.ts
@@ -149,6 +165,56 @@ export type MyType = Something.SubType<string>
     assert!(
         ts1362.is_empty(),
         "Should not emit TS1362 when export type merges with export * as namespace. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+    let ts2709 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2709)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2709.is_empty(),
+        "Should not emit TS2709 when export type merges with export-star namespace. Got: {ts2709:?}. All: {diagnostics:?}"
+    );
+}
+
+/// `export default ImportedValue` preserves the imported value type through
+/// `import * as ns`; the synthetic default wrapper must not become the module
+/// namespace object.
+#[test]
+fn namespace_default_export_of_named_import_keeps_value_type() {
+    let ctor = r#"
+export interface Ctor {
+    x: number;
+}
+export type ExtendedCtor<T> = { x: number, ext: T };
+export interface CtorConstructor {
+    extends<T>(x: T): ExtendedCtor<T extends unknown ? Ctor : undefined>;
+}
+export const Ctor: CtorConstructor;
+"#;
+    let index_dts = r#"
+import { Ctor } from "./ctor";
+export default Ctor;
+"#;
+    let usage = r#"
+import * as ns from "mod";
+const Ctor = ns.default;
+export const MyComp = Ctor.extends({ foo: "bar" });
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./node_modules/mod/ctor.d.ts", ctor),
+            ("./node_modules/mod/index.d.ts", index_dts),
+            ("./index.ts", usage),
+        ],
+        2,
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 when namespace default is a named imported value. Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }
 

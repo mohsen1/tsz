@@ -331,3 +331,129 @@ function f<T extends null | undefined>() {
         "TS2352 expected — `{{}}` has no overlap with `null | undefined`. Got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Callable source asserted to a type parameter with a function-union
+// constraint (#14318, mined from es-toolkit `once.ts`). tsc resolves the bare
+// type-parameter target to its constraint and treats the assertion as
+// overlapping iff the callable is comparable to any union member.
+// ---------------------------------------------------------------------------
+
+/// A concrete function asserted to `F` whose constraint is a union of function
+/// types must NOT emit TS2352. Binder names are varied to keep the rule
+/// structural rather than name-driven.
+#[test]
+fn callable_as_function_union_constrained_type_param_no_ts2352() {
+    for (f_name, p_name) in [("F", "fn"), ("Fun", "callback"), ("G", "handler")] {
+        let source = format!(
+            r#"
+function wrap<{f_name} extends ((...args: any[]) => any) | ((...args: any[]) => void)>(
+    {p_name}: (x: number) => string,
+): {f_name} {{
+    return {p_name} as {f_name};
+}}
+"#
+        );
+        let codes = check_strict(&source);
+        let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+        assert!(
+            ts2352.is_empty(),
+            "[{f_name}/{p_name}] no TS2352 expected — a callable overlaps a \
+             function-union constraint. Got: {codes:?}"
+        );
+    }
+}
+
+/// The constraint may be a union of *distinct* function shapes; overlap holds
+/// when the source is comparable to at least one member.
+#[test]
+fn callable_as_union_of_distinct_function_shapes_no_ts2352() {
+    let source = r#"
+function pick<F extends ((a: number) => number) | ((b: string) => string)>(
+    fn: (x: number) => number,
+): F {
+    return fn as F;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected — `(x: number) => number` overlaps the first union member. \
+         Got: {codes:?}"
+    );
+}
+
+/// A construct-signature source asserted to a type parameter whose constraint
+/// is a union of construct signatures overlaps as well.
+#[test]
+fn constructor_as_constructor_union_constrained_type_param_no_ts2352() {
+    let source = r#"
+function make<F extends (new () => object) | (new (x: number) => object)>(
+    k: new () => object,
+): F {
+    return k as F;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected — a constructor overlaps a construct-signature-union \
+         constraint. Got: {codes:?}"
+    );
+}
+
+/// A single-function constraint (not a union) already accepts a callable source
+/// — guard against regressing the non-union path.
+#[test]
+fn callable_as_single_function_constrained_type_param_no_ts2352() {
+    let source = r#"
+function once<F extends (...args: any[]) => any>(fn: () => number): F {
+    return fn as F;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected — single-function constraint accepts a callable. Got: {codes:?}"
+    );
+}
+
+/// Negative control: a primitive source stays incomparable to a
+/// function-union constraint, so TS2352 must still fire.
+#[test]
+fn primitive_as_function_union_constrained_type_param_emits_ts2352() {
+    let source = r#"
+function bad<F extends (() => void) | ((x: number) => number)>(s: number): F {
+    return s as F;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        !ts2352.is_empty(),
+        "TS2352 expected — `number` does not overlap a function-union constraint. \
+         Got: {codes:?}"
+    );
+}
+
+/// Negative control: a callable source vs a type parameter constrained to a
+/// non-callable object shape must still emit TS2352 (the resolution is gated on
+/// a callable on the other side, so this does not over-permit).
+#[test]
+fn callable_as_object_constrained_type_param_emits_ts2352() {
+    let source = r#"
+function bad<F extends { a: number }>(fn: () => void): F {
+    return fn as F;
+}
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        !ts2352.is_empty(),
+        "TS2352 expected — `() => void` does not overlap an object constraint. \
+         Got: {codes:?}"
+    );
+}

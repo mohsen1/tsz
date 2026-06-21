@@ -307,6 +307,9 @@ mod index_sig_param_intersection_validity_tests;
 #[path = "tests/index_sig_param_resolved_key_type_tests.rs"]
 mod index_sig_param_resolved_key_type_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_symbol_keyspace_tests.rs"]
+mod index_signature_symbol_keyspace_tests;
+#[cfg(test)]
 #[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
 mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
@@ -492,6 +495,9 @@ mod ts2323_tests;
 #[cfg(test)]
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
+#[cfg(test)]
+#[path = "../tests/ts2352_both_callable_overlap_repro_tests.rs"]
+mod ts2352_both_callable_overlap_repro_tests;
 #[cfg(test)]
 #[path = "../tests/ts2352_constrained_type_param_target_tests.rs"]
 mod ts2352_constrained_type_param_target_tests;
@@ -754,6 +760,9 @@ mod conditional_keyof_test;
 #[path = "tests/conditional_never_param_inference_tests.rs"]
 mod conditional_never_param_inference_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_rest_arity_erasure_tests.rs"]
+mod conditional_rest_arity_erasure_tests;
+#[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
 #[cfg(test)]
@@ -795,6 +804,9 @@ mod cross_file_unresolved_alias_union_simplification_tests;
 #[cfg(test)]
 #[path = "tests/cross_module_generic_interface_heritage_tests.rs"]
 mod cross_module_generic_interface_heritage_tests;
+#[cfg(test)]
+#[path = "tests/destructured_binding_narrowed_property_tests.rs"]
+mod destructured_binding_narrowed_property_tests;
 #[cfg(test)]
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
@@ -927,6 +939,9 @@ mod identifier_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/import_shadows_global_ctor_tests.rs"]
+mod import_shadows_global_ctor_tests;
 #[cfg(test)]
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;

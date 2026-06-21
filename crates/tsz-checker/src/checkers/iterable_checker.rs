@@ -1038,7 +1038,9 @@ impl<'a> CheckerState<'a> {
         //   type is not array-like (TSC strips strings from union before checking array-likeness).
         // - Emit TS2495 if the type is neither an array nor a string (not iterable at all).
         if self.requires_array_like_iteration_for_es5_target() {
-            if self.is_array_or_tuple_or_string(expr_type) {
+            if self.is_array_or_tuple_or_string(expr_type)
+                || self.es5_constrained_generic_is_array_like(expr_type)
+            {
                 return true;
             }
             // Mirror TSC's logic: strip string-like members from union types.
@@ -1076,6 +1078,41 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Extra ES5 array-like recognition for the iterability checks: a **readonly**
+    /// array (`readonly T[]` / `ReadonlyArray<T>`) iterates as an array in ES5 —
+    /// no `--downlevelIteration` is needed — and a generic type parameter
+    /// constrained to an array/tuple (e.g. `A extends ReadonlyArray<number>`)
+    /// does too, so tsc emits no TS2802 for either. `is_array_or_tuple_type` does
+    /// not see readonly arrays or a parameter's apparent type, so check the
+    /// element type (which resolves readonly/array/tuple) and follow a type
+    /// parameter to its constraint.
+    fn es5_constrained_generic_is_array_like(&mut self, type_id: TypeId) -> bool {
+        let mut t = self.resolve_lazy_type(type_id);
+        let mut hops = 0;
+        loop {
+            if self.is_array_or_tuple_type(t)
+                || crate::query_boundaries::type_computation::complex::is_readonly_type(
+                    self.ctx.types,
+                    t,
+                )
+            {
+                return true;
+            }
+            hops += 1;
+            if hops > 16 {
+                return false;
+            }
+            let Some(constraint) = common::type_parameter_constraint(self.ctx.types, t) else {
+                return false;
+            };
+            let resolved = self.resolve_lazy_type(constraint);
+            if resolved == t {
+                return false;
+            }
+            t = resolved;
+        }
+    }
+
     /// Check iterability of a spread argument and emit TS2488 if not iterable.
     ///
     /// Used for spread in array literals and function call arguments.
@@ -1088,6 +1125,9 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            if self.es5_constrained_generic_is_array_like(spread_type) {
+                return true;
+            }
             let resolved = self.resolve_lazy_type(spread_type);
             if self.is_array_or_tuple_type(resolved) || self.has_numeric_index_signature(resolved) {
                 return true;
@@ -1295,7 +1335,9 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-            if self.is_array_or_tuple_type(resolved_type) {
+            if self.is_array_or_tuple_type(resolved_type)
+                || self.es5_constrained_generic_is_array_like(resolved_type)
+            {
                 return true;
             }
             // Destructuring never uses the "or a string type" variant (allows_strings = false).
@@ -1344,6 +1386,20 @@ impl<'a> CheckerState<'a> {
         // is not enough — tsc emits TS2488 for those types in es2015+ mode. Only
         // ES5 with `downlevelIteration=false` reads the numeric index signature
         // path, and that case is already handled above when `target.is_es5()`.
+
+        // Conditional/IndexAccess/Application types containing free type parameters
+        // cannot have iterability proven at the generic boundary — tsc defers TS2488
+        // to instantiation time for these deferred generic types. For a rest binding
+        // pattern typed by e.g. `{} extends T ? [a?: string] : [a: string]`, both
+        // branches are tuples, so no error is ever produced. Mirrors the guard in
+        // `check_spread_argument_iterability`.
+        if (common::is_conditional_type(self.ctx.types, resolved_type)
+            || common::is_index_access_type(self.ctx.types, resolved_type)
+            || common::is_generic_type(self.ctx.types, resolved_type))
+            && common::contains_free_type_parameters(self.ctx.types, resolved_type)
+        {
+            return true;
+        }
 
         // Not iterable - emit TS2488
         self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target, None);

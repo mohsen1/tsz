@@ -1710,10 +1710,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        // Cheap cycle guard first: re-entering the same `(source, pattern)` pair
+        // is a converged cycle and returns before any further work or stack
+        // growth.
         if !visited.insert((source, pattern)) {
             return true;
         }
+        // Defensive stack growth for the structural infer-match recursion in
+        // `match_infer_pattern_inner`. That recursion is already logically
+        // bounded — the `visited` cycle guard above plus `INFER_MATCH_EXPANSION_
+        // DEPTH` on alias expansion — so termination does not need the shared
+        // solver frame budget; capping it with one could flip a legitimately
+        // deep-but-terminating match to its bail default. But a deeply nested yet
+        // acyclic source/pattern pair (e.g. a recursive conditional that extracts
+        // `infer` through a chain of generic-alias wrappers) can still drive the
+        // native stack past its limit. `grow_solver_stack` grows the stack on
+        // demand without consuming a frame, so a pathological case degrades
+        // through its own depth budget to a bounded TS2589 instead of a
+        // process-aborting SIGABRT (issue #14123, fix direction 2: the
+        // conditional/infer evaluation path must never crash the process). This
+        // only grows the stack; it never changes a match result.
+        crate::recursion::grow_solver_stack(|| {
+            self.match_infer_pattern_inner(source, pattern, bindings, visited, checker)
+        })
+    }
 
+    /// Structural body of [`Self::match_infer_pattern`]. Split out so the public
+    /// entry can pair the `(source, pattern)` cycle guard with one
+    /// `stacker::maybe_grow` segment-grow per recursion level; all recursive
+    /// infer-matching re-enters through `match_infer_pattern`, never here.
+    fn match_infer_pattern_inner(
+        &self,
+        source: TypeId,
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut InferPatternVisited,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
         if source == TypeId::NEVER {
             return self.bind_infer_defaults(pattern, TypeId::NEVER, bindings, checker);
         }

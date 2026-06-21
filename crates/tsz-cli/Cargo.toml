@@ -148,6 +148,10 @@ name = "cross_binder_reexport_meaning_tests"
 path = "tests/cross_binder_reexport_meaning_tests.rs"
 
 [[test]]
+name = "qualified_type_namespace_shadow_tests"
+path = "tests/qualified_type_namespace_shadow_tests.rs"
+
+[[test]]
 name = "imported_infer_readonly_alias_cli_tests"
 path = "tests/imported_infer_readonly_alias_cli_tests.rs"
 
