@@ -131,11 +131,21 @@ where
 /// Outcome-shaped variant for type-node predicate validation.
 ///
 /// `TypeNodeChecker` does not own a `CheckerState`, so it cannot call the full
-/// checker relation helper. Keep the legacy `TypeDatabase` relation decision
-/// inside this query boundary while exposing the same `.related` shape used by
+/// checker relation helper. Keep the `TypeDatabase` relation decision inside
+/// this query boundary while exposing the same `.related` shape used by
 /// checker-state predicate validation.
+///
+/// `env` carries the checker's `DefId`-resolving environment. When present, the
+/// relation runs through that resolver so a predicate or parameter type written
+/// through a type alias (`Lazy(DefId)` head, or a generic-alias `Application`
+/// such as `Alias<T> = keyof T`) is resolved to its body before the structural
+/// comparison — matching tsc, which resolves the alias and relates structurally.
+/// Without the resolver the alias stays opaque and a sound predicate spuriously
+/// fails (false `TS2677`). `None` falls back to the no-op resolver for callers
+/// that have no environment.
 pub(crate) fn type_predicate_type_assignability_outcome(
     db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     predicate_type: TypeId,
     param_type: TypeId,
 ) -> super::assignability::RelationOutcome {
@@ -143,7 +153,7 @@ pub(crate) fn type_predicate_type_assignability_outcome(
         db,
         predicate_type,
         param_type,
-        |source, target| type_predicate_relation_outcome(db, source, target).related,
+        |source, target| type_predicate_relation_outcome(db, env, source, target).related,
     );
 
     super::assignability::RelationOutcome {
@@ -158,17 +168,22 @@ pub(crate) fn type_predicate_type_assignability_outcome(
 
 fn type_predicate_relation_outcome(
     db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     target: TypeId,
 ) -> super::assignability::RelationOutcome {
-    let result = tsz_solver::relations::relation_queries::query_relation(
-        db.as_type_database(),
-        source,
-        target,
-        tsz_solver::relations::relation_queries::RelationKind::Assignable,
-        tsz_solver::relations::relation_queries::RelationPolicy::unflagged_compatibility(),
-        tsz_solver::relations::relation_queries::RelationContext::default(),
-    );
+    let interner = db.as_type_database();
+    let kind = tsz_solver::relations::relation_queries::RelationKind::Assignable;
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::unflagged_compatibility();
+    let context = tsz_solver::relations::relation_queries::RelationContext::default();
+    let result = match env {
+        Some(env) => tsz_solver::relations::relation_queries::query_relation_with_resolver(
+            interner, env, source, target, kind, policy, context,
+        ),
+        None => tsz_solver::relations::relation_queries::query_relation(
+            interner, source, target, kind, policy, context,
+        ),
+    };
 
     super::assignability::RelationOutcome {
         related: result.related,

@@ -1078,14 +1078,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let types = self.ctx.types;
-        if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
-            types,
-            resolved_predicate,
-            resolved_param,
-        )
-        .related
-            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
-        {
+        // Run the predicate relation through the checker's `DefId`-resolving
+        // environment so an alias-typed parameter or asserted type (`type A =
+        // string` head, or a generic-alias `Application` like `Alias<T> = keyof
+        // T`) is resolved to its body before the structural comparison, matching
+        // tsc. Without the resolver the alias stays opaque and a sound predicate
+        // spuriously fails (false TS2677). Scope the env borrow so it is dropped
+        // before the mutable `error` call below.
+        let predicate_related = {
+            let env = self.ctx.type_environment.borrow();
+            crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
+                types,
+                Some(&env),
+                resolved_predicate,
+                resolved_param,
+            )
+            .related
+        };
+        if !predicate_related && let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
             self.ctx.error(
                 type_node.pos,
                 type_node.end - type_node.pos,
