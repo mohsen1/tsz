@@ -1337,9 +1337,8 @@ impl<'a> CheckerState<'a> {
         {
             let property_name = format!("__unique_{}", sym_ref.0);
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            // Resolve the receiver's index-signature key aliases (e.g. the lib
-            // global `PropertyKey`) so the symbol-named-property fallback can see
-            // a symbol-bearing index signature (see #14315).
+            // Resolve receiver index-signature key aliases so symbol fallback
+            // sees `PropertyKey` / symbol-bearing signatures (#14315).
             let resolved_type = self.resolve_receiver_index_signature_keys(resolved_type);
             let union_member_missing_symbol =
                 self.union_member_missing_symbol_key(object_type_for_access, index_type);
@@ -1384,11 +1383,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // A unique-symbol key that names no concrete member still resolves
-            // through a symbol-bearing index signature (`[k: symbol]`,
-            // `[k: PropertyKey]`, `Record<PropertyKey, V>`), since a unique
-            // symbol is a subtype of `symbol`. `get_element_access_type` resolves
-            // the receiver's index-signature key aliases first (see #14315).
+            // A unique-symbol key with no concrete member still resolves through
+            // a symbol-bearing index signature (`symbol`, `PropertyKey`, etc.).
             if result_type.is_none() && !union_member_missing_symbol {
                 let symbol_index_result =
                     self.get_element_access_type(object_type_for_access, index_type, None);

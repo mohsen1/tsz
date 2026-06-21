@@ -179,12 +179,11 @@ impl<'a> CheckerState<'a> {
     /// Returns the input unchanged when there is nothing to resolve (the common
     /// case: no index signature, or an already-structural key). See #14315.
     pub(crate) fn resolve_receiver_index_signature_keys(&mut self, object_type: TypeId) -> TypeId {
-        let Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) =
-            self.ctx.types.lookup(object_type)
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
         else {
             return object_type;
         };
-        let shape = self.ctx.types.object_shape(shape_id);
         let Some(idx) = shape.string_index.as_ref() else {
             return object_type;
         };
