@@ -13,14 +13,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            walk_rs_files(&path, &mut *files);
+            walk_rs_files(&path, files);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             files.push(path);
         }
@@ -42,6 +41,18 @@ fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
 /// APIs that perform semantic validation.
 #[test]
 fn emitter_must_not_use_semantic_validation_apis() {
+    // These are solver relation/compatibility APIs that the emitter must never use.
+    // Using them would mean the emitter is performing semantic type validation.
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        "CompatChecker",
+        "SubtypeChecker",
+        "is_assignable",
+        "is_subtype_of",
+        "RelationResult",
+        "check_assignability",
+        "tsz_checker::",
+    ];
+
     let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -55,18 +66,6 @@ fn emitter_must_not_use_semantic_validation_apis() {
     let mut files = Vec::new();
     walk_rs_files(&emitter_src, &mut files);
 
-    // These are solver relation/compatibility APIs that the emitter must never use.
-    // Using them would mean the emitter is performing semantic type validation.
-    const FORBIDDEN_PATTERNS: &[&str] = &[
-        "CompatChecker",
-        "SubtypeChecker",
-        "is_assignable",
-        "is_subtype_of",
-        "RelationResult",
-        "check_assignability",
-        "tsz_checker::",
-    ];
-
     let mut violations = Vec::new();
 
     for path in &files {
@@ -76,9 +75,8 @@ fn emitter_must_not_use_semantic_validation_apis() {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
         };
 
         for (line_num, line) in src.lines().enumerate() {
@@ -124,6 +122,13 @@ fn emitter_must_not_use_semantic_validation_apis() {
 /// a source-level belt-and-suspenders check and clearer error messages.
 #[test]
 fn binder_must_not_import_solver_or_checker() {
+    const FORBIDDEN_IMPORTS: &[&str] = &[
+        "tsz_solver::",
+        "tsz_checker::",
+        "use tsz_solver",
+        "use tsz_checker",
+    ];
+
     let binder_src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -136,13 +141,6 @@ fn binder_must_not_import_solver_or_checker() {
     let mut files = Vec::new();
     walk_rs_files(&binder_src, &mut files);
 
-    const FORBIDDEN_IMPORTS: &[&str] = &[
-        "tsz_solver::",
-        "tsz_checker::",
-        "use tsz_solver",
-        "use tsz_checker",
-    ];
-
     let mut violations = Vec::new();
 
     for path in &files {
@@ -152,9 +150,8 @@ fn binder_must_not_import_solver_or_checker() {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
         };
 
         for (line_num, line) in src.lines().enumerate() {
@@ -312,9 +309,8 @@ fn solver_raw_symbol_fallback_def_budget_does_not_grow() {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
         };
         for (line_num, line) in src.lines().enumerate() {
             if line.trim_start().starts_with("//") {
