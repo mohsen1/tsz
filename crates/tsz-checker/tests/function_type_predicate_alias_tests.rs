@@ -2,9 +2,9 @@
 //! parameter or asserted type is written through a type alias.
 //!
 //! A type predicate `p is X` is valid when `X` is assignable to `p`'s declared
-//! type. When either side is written through a type alias (`TypeData::Lazy(DefId)`
-//! head, or a generic-alias `Application`), `tsc` resolves the alias to its body
-//! and runs the relation structurally. tsz's function-type-node predicate check
+//! type. When either side is written through a type alias, including aliases with
+//! generic bodies such as `keyof Shape`, `tsc` resolves the alias to its body and
+//! runs the relation structurally. tsz's function-type-node predicate check
 //! (`check_type_predicate_assignability`) previously ran the relation with a
 //! `NoopResolver`, so an aliased side stayed opaque and the relation spuriously
 //! failed — a false-positive TS2677 (issue #14231).
