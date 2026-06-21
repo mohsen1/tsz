@@ -575,7 +575,7 @@ fn declaration_unique_symbol_member_ref(
         return None;
     }
     let type_lit = arena.get_type_literal(type_node)?;
-    for &member_idx in type_lit.members.nodes.iter() {
+    for &member_idx in &type_lit.members.nodes {
         let Some(member_node) = arena.get(member_idx) else {
             continue;
         };
@@ -719,14 +719,14 @@ fn current_file_declared_unique_symbol_member_ref(
     member_name: &str,
 ) -> Option<SymbolRef> {
     let source_file = ctx.arena.source_files.first()?;
-    for &stmt_idx in source_file.statements.nodes.iter() {
+    for &stmt_idx in &source_file.statements.nodes {
         let Some(stmt_node) = ctx.arena.get(stmt_idx) else {
             continue;
         };
         let Some(var_data) = ctx.arena.get_variable(stmt_node) else {
             continue;
         };
-        for &decl_idx in var_data.declarations.nodes.iter() {
+        for &decl_idx in &var_data.declarations.nodes {
             let Some(var_decl) = ctx
                 .arena
                 .get(decl_idx)
