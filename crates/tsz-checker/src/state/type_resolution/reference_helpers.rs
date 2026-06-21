@@ -59,6 +59,14 @@ impl CheckerState<'_> {
         })
     }
 
+    pub(crate) fn symbol_has_declared_type_meaning_or_partner(&self, sym_id: SymbolId) -> bool {
+        self.symbol_has_declared_type_meaning(sym_id)
+            || self
+                .ctx
+                .alias_partner_reverse(self.ctx.binder, sym_id)
+                .is_some_and(|partner_id| self.symbol_has_declared_type_meaning(partner_id))
+    }
+
     /// Resolve `Array<T>`, `ReadonlyArray<T>`, or `ConcatArray<T>` without explicit type arguments.
     pub(crate) fn resolve_array_type_reference(
         &mut self,
@@ -1184,7 +1192,7 @@ impl CheckerState<'_> {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
             if symbol.has_any_flags(symbol_flags::ALIAS) {
-                if self.symbol_has_declared_type_meaning(sym_id) {
+                if self.symbol_has_declared_type_meaning_or_partner(sym_id) {
                     return false;
                 }
 
@@ -1231,7 +1239,7 @@ impl CheckerState<'_> {
             let is_namespace = symbol.has_any_flags(
                 symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
             );
-            let has_type = self.symbol_has_declared_type_meaning(sym_id);
+            let has_type = self.symbol_has_declared_type_meaning_or_partner(sym_id);
             return is_namespace && !has_type;
         }
         false

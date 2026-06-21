@@ -955,6 +955,15 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
+            if let Some(kind) = self.default_export_identifier_type_only_kind(
+                target_binder,
+                target_arena,
+                current_sym_id,
+                sym,
+            ) {
+                return Some(kind);
+            }
+
             for &decl in &sym.declarations {
                 if decl.is_none() {
                     continue;
@@ -993,6 +1002,56 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             return Some(TypeOnlyKind::Export);
+        }
+
+        None
+    }
+
+    fn default_export_identifier_type_only_kind(
+        &self,
+        target_binder: &tsz_binder::BinderState,
+        target_arena: &tsz_parser::parser::NodeArena,
+        default_sym_id: tsz_binder::SymbolId,
+        default_symbol: &tsz_binder::Symbol,
+    ) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        if default_symbol.escaped_name != "default"
+            || !default_symbol.has_any_flags(symbol_flags::ALIAS)
+            || default_symbol.import_module().is_some()
+        {
+            return None;
+        }
+
+        for &decl in &default_symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            let Some(identifier) = target_arena.get_identifier_at(decl) else {
+                continue;
+            };
+            let Some(local_sym_id) = target_binder.file_locals.get(&identifier.escaped_text) else {
+                continue;
+            };
+            if local_sym_id == default_sym_id {
+                continue;
+            }
+            let Some(local_symbol) = target_binder.get_symbol(local_sym_id) else {
+                continue;
+            };
+            if !(local_symbol.has_any_flags(symbol_flags::ALIAS) && local_symbol.is_type_only) {
+                continue;
+            }
+            for &local_decl in &local_symbol.declarations {
+                if local_decl.is_none() {
+                    continue;
+                }
+                let local_arena =
+                    target_binder.arena_for_declaration_or(local_sym_id, local_decl, target_arena);
+                if let Some(kind) = Self::find_direct_type_only_marker(local_arena, local_decl) {
+                    return Some(kind);
+                }
+            }
         }
 
         None
