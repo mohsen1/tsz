@@ -364,7 +364,15 @@ impl<'a> NarrowingContext<'a> {
 
         let resolved = self.resolve_type(member);
         if resolved == member {
-            return None;
+            // Not an alias reference. Fall back to the single-type narrowing,
+            // which maps the non-primitive `object` (and an empty `{}` object
+            // shape, or an indexed access) to the global `Function` type because
+            // function values inhabit `object`. Returning `None` here dropped the
+            // `object` constituent, so `object | symbol` narrowed to `never`
+            // under a `typeof x === "function"` guard instead of `Function`
+            // (#14324). The single-type path already does this; mirror it.
+            let narrowed = self.narrow_to_function(member);
+            return (narrowed != TypeId::NEVER).then_some(narrowed);
         }
 
         if self.is_function_type(resolved) {
