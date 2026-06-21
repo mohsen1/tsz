@@ -75,32 +75,14 @@ impl<'a> CheckerState<'a> {
             .count();
         let has_multiple_arity_compatible_signatures = arity_compatible_signature_count > 1;
 
-        // When the call contains an open-ended (non-tuple) array/iterable spread
-        // — `...arr` where `arr: T[]` — only an overload with an effective rest
-        // parameter can absorb it (tsc's `hasEffectiveRestParameter` precondition
-        // in `chooseOverload`). A fixed-arity overload would otherwise win on the
-        // collapsed single-`any` argument count and then emit a spurious TS2556.
-        // Skipping non-rest candidates here lets the spread bind to the rest
-        // overload, matching tsc.
-        //
-        // The skip is gated on a *reachable* rest overload: one whose trailing
-        // rest parameter sits at or before the position the spread occupies
-        // (`rest index <= leading positional argument count`). Without that
-        // gate, a spread that lands on a fixed parameter of every overload
-        // (e.g. a rest overload `(a, b, c, ...rest)` called as `f(x, ...arr)`,
-        // where the spread hits `b`) would have its non-rest siblings skipped
-        // yet the rest overload also rejected on arity, suppressing the
-        // diagnostic the spread genuinely deserves. When no rest overload is
-        // reachable, the loops run unchanged.
-        let call_has_open_ended_spread = self.call_has_open_ended_array_spread_argument(args);
-        let leading_positional_arg_count = self.positional_arg_count_before_open_ended_spread(args);
-        let any_reachable_rest_overload = signatures.iter().any(|sig| {
-            sig.params
-                .iter()
-                .position(|param| param.rest)
-                .is_some_and(|rest_index| rest_index <= leading_positional_arg_count)
-        });
-        let skip_non_rest_for_spread = call_has_open_ended_spread && any_reachable_rest_overload;
+        // An open-ended (non-tuple) array/iterable spread can only land on an
+        // effective rest parameter, so fixed-arity candidates are skipped in
+        // both overload-trial loops below when a reachable rest overload exists
+        // (see `skip_non_rest_overloads_for_open_ended_spread` for the full
+        // rationale and the reachability gate that preserves the genuine
+        // TS2556).
+        let skip_non_rest_for_spread =
+            self.skip_non_rest_overloads_for_open_ended_spread(args, signatures);
 
         // Overload contextual typing baseline.
         // First pass collects argument types once using a union of overload signatures.
@@ -1984,38 +1966,6 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
             },
             selected_type_predicate: None,
-        })
-    }
-
-    fn recheck_overload_args_after_mismatch_without_context(
-        &mut self,
-        args: &[NodeIndex],
-        mismatch_index: usize,
-    ) {
-        for &arg_idx in args.iter().skip(mismatch_index.saturating_add(1)) {
-            if !self.is_callback_like_argument(arg_idx) {
-                continue;
-            }
-
-            for callback_idx in self.callback_function_indices(arg_idx) {
-                self.ctx
-                    .implicit_any_contextual_closures
-                    .remove(&callback_idx);
-                self.ctx.implicit_any_checked_closures.remove(&callback_idx);
-            }
-            self.invalidate_expression_for_contextual_retry(arg_idx);
-            let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
-        }
-    }
-
-    fn arg_source_span(&self, args: &[NodeIndex], index: usize) -> Option<tsz_solver::SourceSpan> {
-        let &arg_idx = args.get(index)?;
-        self.ctx.arena.get(arg_idx).map(|node| {
-            tsz_solver::SourceSpan::new(
-                self.ctx.file_name.as_str(),
-                node.pos,
-                node.end.saturating_sub(node.pos),
-            )
         })
     }
 }
