@@ -49,6 +49,46 @@ use phases::TailCallStep;
 /// the 250-budget path still defers.
 pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 250;
 
+/// Outcome of a structural relation probe that decides a conditional branch.
+///
+/// A `false` produced *only* because the structural walk descended into a
+/// `Lazy(DefId)` whose body was not yet registered — re-entrant lib/interface
+/// resolution, signalled by `note_lazy_resolve_failure` — is not a sound
+/// definitive-false witness. tsc treats such a relation as undetermined and
+/// defers the conditional until a later resolved pass, rather than committing
+/// (and caching) the spurious false branch (issue #14238).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum BranchRelation {
+    /// `source <: target` holds — take the true branch.
+    Holds,
+    /// `source <: target` is definitively false — take the false branch.
+    Fails,
+    /// The relation's `false` depended on an unregistered `Lazy` body, so it
+    /// is undetermined — defer the conditional instead of taking false.
+    Undetermined,
+}
+
+/// Run a structural relation probe that chooses a conditional branch and
+/// classify its result, following the thread-local unresolved-`Lazy` sentinel
+/// so a `false` that depended on an unregistered `Lazy` body is reported as
+/// [`BranchRelation::Undetermined`] instead of [`BranchRelation::Fails`].
+///
+/// This mirrors the subtype cache's own poison-sentinel discipline (it never
+/// publishes a `False` that consumed an unresolved `Lazy`); applying the same
+/// rule at conditional branch-selection keeps a cold / re-entrant pass from
+/// committing a spurious false branch that a later resolved pass would not
+/// (issue #14238).
+pub(super) fn classify_branch_relation(relate: impl FnOnce() -> bool) -> BranchRelation {
+    let lazy_before = crate::limits::lazy_resolve_failure_count();
+    if relate() {
+        BranchRelation::Holds
+    } else if crate::limits::lazy_resolve_failure_count() != lazy_before {
+        BranchRelation::Undetermined
+    } else {
+        BranchRelation::Fails
+    }
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
@@ -208,7 +248,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return false;
         }
-        !self.check_conditional_subtype(permissive_check, permissive_extends)
+        // Only a definitive `Fails` makes the false branch definitive. `Holds`
+        // relates under the permissive form, and `Undetermined` consumed an
+        // unregistered `Lazy` body — both keep the conditional deferred (#14238).
+        matches!(
+            self.conditional_subtype_relation(permissive_check, permissive_extends),
+            BranchRelation::Fails
+        )
     }
 
     /// Evaluate a conditional type: T extends U ? X : Y
@@ -1026,13 +1072,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
-            let is_sub = self.check_conditional_subtype(check_type, extends_type);
+            let relation = self.conditional_subtype_relation(check_type, extends_type);
             trace!(
                 check = check_type.0,
                 extends = extends_type.0,
-                is_subtype = is_sub,
+                ?relation,
                 "conditional subtype check result"
             );
+
+            // The relation's `false` depended on a `Lazy(DefId)` body that was
+            // not yet registered (re-entrant lib/interface resolution). tsc
+            // treats it as undetermined and defers, rather than committing the
+            // spurious false branch (issue #14238).
+            if relation == BranchRelation::Undetermined {
+                return self.deferred_conditional(cond, check_type, extends_type);
+            }
+            let is_sub = relation == BranchRelation::Holds;
 
             // A conditional whose evaluated CHECK type is an opaque, resolver-less
             // `Application` must defer rather than vacuously take its true branch

@@ -336,7 +336,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `check_type`/`extends_type` while preserving its original branches and
     /// distributivity. Shared by the operand-deferral sites in this module so the
     /// five-field reconstruction lives in one place.
-    fn deferred_conditional(
+    pub(super) fn deferred_conditional(
         &self,
         cond: &ConditionalType,
         check_type: TypeId,
@@ -409,18 +409,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         None
     }
 
-    /// Subtype check with cache lookup and thread-local depth guard.
+    /// Structural subtype probe that decides a conditional branch, with cache
+    /// lookup, a thread-local depth guard, and unresolved-`Lazy` classification.
     ///
-    /// Returns `true` if `check_type <: extends_type`, consulting the evaluator's
-    /// `conditional_subtype_cache` first and falling back to a full structural check
-    /// guarded by a thread-local recursion counter that caps at depth 50.
-    pub(super) fn check_conditional_subtype(
+    /// Returns [`BranchRelation::Holds`](super::BranchRelation::Holds) when
+    /// `check_type <: extends_type`,
+    /// [`BranchRelation::Fails`](super::BranchRelation::Fails) when the relation
+    /// is definitively false, and
+    /// [`BranchRelation::Undetermined`](super::BranchRelation::Undetermined)
+    /// when the `false` depended on a `Lazy(DefId)` body that was not yet
+    /// registered (re-entrant resolution) — in which case the spurious false is
+    /// neither cached nor used to take the false branch and the conditional
+    /// defers (issue #14238). The result cache consults `conditional_subtype_cache`
+    /// first; the structural fallback is guarded by a thread-local recursion
+    /// counter that caps at depth 50.
+    pub(super) fn conditional_subtype_relation(
         &mut self,
         check_type: TypeId,
         extends_type: TypeId,
-    ) -> bool {
+    ) -> super::BranchRelation {
+        use super::BranchRelation;
         if let Some(cached) = self.cached_conditional_subtype(check_type, extends_type) {
-            return cached;
+            return if cached {
+                BranchRelation::Holds
+            } else {
+                BranchRelation::Fails
+            };
         }
 
         // Depth guard: evaluating conditional types can trigger subtype checks
@@ -433,48 +447,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // every exit including a caught panic-unwind, keeping the relation
         // schedule-independent across batch-worker reuse (#13368).
         let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
-        let result = if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
-            // At excessive depth, conservatively assume not a subtype
-            // (takes the false/else branch of the conditional).
-            // This matches tsc's behavior of returning the deferred
-            // conditional when instantiation depth is exceeded.
-            false
-        } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
-            // Fast-path: primitive types (string, number, boolean, bigint,
-            // symbol) are never subtypes of Function. The structural subtype
-            // checker may incorrectly autobox the primitive to its wrapper
-            // type (String, Number, etc.) and find structural compatibility
-            // with the evaluated Function interface. This fast-path prevents
-            // `string extends Function` from incorrectly taking the true
-            // branch, matching tsc's behavior where primitives never extend
-            // Function.
-            false
-        } else if Self::function_intrinsic_extends_callable_target(
-            self.interner(),
-            check_type,
-            extends_type,
-        ) {
-            // In conditional types, tsc treats the global `Function`
-            // intrinsic as satisfying callable targets. Ordinary
-            // assignment intentionally remains stricter.
-            true
-        } else if self.object_literals_have_conflicting_required_property(check_type, extends_type)
-        {
-            // `Extract<Union, { kind: "x" }>` and similar discriminant filters
-            // distribute over every union member. If both sides expose the same
-            // required property with distinct literal values, the relation is
-            // definitively false, so avoid the full structural subtype walk.
-            false
-        } else {
-            let mut strict_checker = self.conditional_subtype_checker();
-            strict_checker.is_subtype_of(check_type, extends_type)
-        };
+        // Classify against the unresolved-`Lazy` sentinel: a `false` produced
+        // only because the structural walk descended into an unregistered
+        // `Lazy` body is reported as `Undetermined` rather than a definitive
+        // false (issue #14238). Shared with the array fast path via
+        // `classify_branch_relation`.
+        let relation = super::classify_branch_relation(|| {
+            if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
+                // At excessive depth, conservatively assume not a subtype
+                // (takes the false/else branch of the conditional).
+                // This matches tsc's behavior of returning the deferred
+                // conditional when instantiation depth is exceeded.
+                false
+            } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
+                // Fast-path: primitive types (string, number, boolean, bigint,
+                // symbol) are never subtypes of Function. The structural subtype
+                // checker may incorrectly autobox the primitive to its wrapper
+                // type (String, Number, etc.) and find structural compatibility
+                // with the evaluated Function interface. This fast-path prevents
+                // `string extends Function` from incorrectly taking the true
+                // branch, matching tsc's behavior where primitives never extend
+                // Function.
+                false
+            } else if Self::function_intrinsic_extends_callable_target(
+                self.interner(),
+                check_type,
+                extends_type,
+            ) {
+                // In conditional types, tsc treats the global `Function`
+                // intrinsic as satisfying callable targets. Ordinary
+                // assignment intentionally remains stricter.
+                true
+            } else if self
+                .object_literals_have_conflicting_required_property(check_type, extends_type)
+            {
+                // `Extract<Union, { kind: "x" }>` and similar discriminant filters
+                // distribute over every union member. If both sides expose the same
+                // required property with distinct literal values, the relation is
+                // definitively false, so avoid the full structural subtype walk.
+                false
+            } else {
+                let mut strict_checker = self.conditional_subtype_checker();
+                strict_checker.is_subtype_of(check_type, extends_type)
+            }
+        });
         // Restore the depth before the cache write to preserve the original
         // decrement ordering; `Drop` would otherwise run at end of scope, but
         // either way the depth is restored on a panic-unwind exit.
         drop(depth_guard);
-        self.cache_conditional_subtype(check_type, extends_type, result);
-        result
+        // An `Undetermined` false consumed an unregistered `Lazy` body: do not
+        // cache it and do not let it take the false branch — defer so a later
+        // resolved pass decides the conditional (issue #14238). Definitive
+        // verdicts are cached as before.
+        if relation != BranchRelation::Undetermined {
+            self.cache_conditional_subtype(
+                check_type,
+                extends_type,
+                relation == BranchRelation::Holds,
+            );
+        }
+        relation
     }
 
     fn object_literals_have_conflicting_required_property(
