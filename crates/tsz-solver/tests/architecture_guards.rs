@@ -274,3 +274,68 @@ fn narrowing_engine_keeps_request_stage_boundary() {
         "narrowing/core.rs must not own the anonymous packed compiler-flags byte — use NarrowingOptions"
     );
 }
+
+// =============================================================================
+// Identity bridge guard — DefId-as-SymbolId raw-symbol fallback budget (#14344)
+// =============================================================================
+
+/// Guard the solver-side `DefId`-as-`SymbolId` reinterpretation surface.
+///
+/// `TypeEnvironment::raw_symbol_fallback_def` recovers a real `DefId` when a
+/// `Lazy(DefId)` actually wrapped a raw `SymbolId.0`. The two are independent
+/// identity spaces that happen to collide on a raw `u32` (see
+/// `crates/tsz-solver/src/def/resolver.rs` and
+/// `docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md`). It is a
+/// compatibility path for the non-canonical identity model tracked by
+/// tsz-org/tsz#14344, and the documented intent is to keep this fallback budget
+/// from growing.
+///
+/// This mirrors the checker's zero `.reference(...)` construction guard on the
+/// solver side: it pins the number of call sites that reinterpret a `DefId` as a
+/// `SymbolId` so the surface cannot GROW. The migration toward content-canonical
+/// identity (#14344) should ratchet `BUDGET` DOWN to 0 as callers are retired; it
+/// must never be raised. Counting `.raw_symbol_fallback_def(` (the method-call
+/// form) excludes the `fn` definition and doc comments.
+#[test]
+fn solver_raw_symbol_fallback_def_budget_does_not_grow() {
+    const BUDGET: usize = 4;
+    const PATTERN: &str = ".raw_symbol_fallback_def(";
+
+    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files(&solver_src, &mut files);
+
+    let mut sites = Vec::new();
+    for path in &files {
+        let rel = path
+            .strip_prefix(&solver_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for (line_num, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(PATTERN) {
+                sites.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        sites.len() <= BUDGET,
+        "Solver `raw_symbol_fallback_def` call sites grew to {} (budget {}). \
+         Each reinterprets a `DefId` as a `SymbolId`; this surface must not grow \
+         while the content-canonical identity migration (tsz-org/tsz#14344) is \
+         retiring it. New code should resolve a real `DefId` and `lazy(def_id)` \
+         instead. See docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md.\n\
+         Call sites:\n{}",
+        sites.len(),
+        BUDGET,
+        sites.join("\n"),
+    );
+}
