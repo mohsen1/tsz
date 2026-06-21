@@ -47,7 +47,7 @@ export {};
 /// #14228 (TS2503, multi-file): `export * as Ns from './m'` produces a namespace
 /// binding usable as a type-qualifier (`Ns.SomeType`) after it is re-imported.
 /// Using `GlobalsGuard.TTypeArray` must not report TS2503 ("Cannot find
-/// namespace 'GlobalsGuard'").
+/// namespace `GlobalsGuard`").
 #[test]
 fn issue_14228_export_star_as_namespace_type_qualifier_no_ts2503() {
     if !lib_files_available() {
