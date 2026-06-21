@@ -2029,5 +2029,9 @@ name = "conditional_concrete_check_generic_extends_false_branch_tests"
 path = "tests/conditional_concrete_check_generic_extends_false_branch_tests.rs"
 
 [[test]]
+name = "ambient_readonly_literal_initializer_tests"
+path = "tests/ambient_readonly_literal_initializer_tests.rs"
+
+[[test]]
 name = "object_keyword_any_index_tests"
 path = "tests/object_keyword_any_index_tests.rs"
