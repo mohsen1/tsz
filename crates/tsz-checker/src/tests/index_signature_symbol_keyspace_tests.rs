@@ -187,3 +187,37 @@ type Bad = NumOnly[symbol];
         "number-only signature indexed by symbol must emit TS2536: {num_only:?}"
     );
 }
+
+/// Union value-position writes by a unique symbol require every union member to
+/// provide either that exact symbol property or a symbol-bearing index
+/// signature. A string/number index signature on another arm is not enough, so
+/// tsc reports TS7053 rather than checking assignment against the explicit
+/// symbol property's value type.
+#[test]
+fn union_unique_symbol_write_requires_symbol_surface_on_every_member() {
+    let found = codes(
+        r#"
+const marker = Symbol();
+type Both =
+  | { [marker]: boolean }
+  | { [n: number]: number; [s: string]: string | number };
+declare let both: Both;
+both[marker] = "not ok";
+"#,
+    );
+    assert!(
+        found.contains(&7053) && !found.contains(&2322),
+        "unique-symbol write into partial union surface must report TS7053, not TS2322: {found:?}"
+    );
+
+    assert_clean(
+        r#"
+const other = Symbol();
+type Both =
+  | { [other]: boolean }
+  | Record<PropertyKey, boolean>;
+declare let both: Both;
+both[other] = true;
+"#,
+    );
+}

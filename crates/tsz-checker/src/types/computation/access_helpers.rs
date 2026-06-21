@@ -1122,6 +1122,30 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
 
+    /// Whether at least one union member lacks the exact symbol member and also
+    /// lacks a symbol-bearing index signature. Receiver index-signature keys are
+    /// normalized before probing so `Record<PropertyKey, V>` still satisfies the
+    /// symbol surface.
+    pub(crate) fn union_member_missing_symbol_key(
+        &mut self,
+        object_type: TypeId,
+        index_type_for_access: TypeId,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        for &member in &members {
+            let member = self.resolve_receiver_index_signature_keys(member);
+            if self.symbol_keyed_access_is_missing(member, index_type_for_access) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Decide whether a wide-`symbol` element access made through a
     /// `symbol`-typed identifier lacks a matching member on `object_type`, i.e.
     /// whether tsc would report an implicit-any element access (TS7053/TS7015).

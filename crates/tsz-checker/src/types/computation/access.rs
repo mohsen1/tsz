@@ -1341,12 +1341,15 @@ impl<'a> CheckerState<'a> {
             // global `PropertyKey`) so the symbol-named-property fallback can see
             // a symbol-bearing index signature (see #14315).
             let resolved_type = self.resolve_receiver_index_signature_keys(resolved_type);
+            let union_member_missing_symbol =
+                self.union_member_missing_symbol_key(object_type_for_access, index_type);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,
                 ..
             } = result
+                && !union_member_missing_symbol
             {
                 use_index_signature_check = false;
                 result_type = Some(effective_write_result(type_id, write_type));
@@ -1372,6 +1375,7 @@ impl<'a> CheckerState<'a> {
                             write_type,
                             ..
                         } = result
+                            && !union_member_missing_symbol
                         {
                             use_index_signature_check = false;
                             result_type = Some(effective_write_result(type_id, write_type));
@@ -1385,7 +1389,7 @@ impl<'a> CheckerState<'a> {
             // `[k: PropertyKey]`, `Record<PropertyKey, V>`), since a unique
             // symbol is a subtype of `symbol`. `get_element_access_type` resolves
             // the receiver's index-signature key aliases first (see #14315).
-            if result_type.is_none() {
+            if result_type.is_none() && !union_member_missing_symbol {
                 let symbol_index_result =
                     self.get_element_access_type(object_type_for_access, index_type, None);
                 if symbol_index_result != TypeId::UNDEFINED && symbol_index_result != TypeId::ERROR

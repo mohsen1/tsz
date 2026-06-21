@@ -561,9 +561,7 @@ mod tests {
         // `keyof` includes the `symbol` arm.
         let keyof = evaluate_keyof(&db, object);
         let includes_symbol = match db.lookup(keyof) {
-            Some(TypeData::Union(members)) => {
-                db.type_list(members).iter().any(|&m| m == TypeId::SYMBOL)
-            }
+            Some(TypeData::Union(members)) => db.type_list(members).contains(&TypeId::SYMBOL),
             _ => keyof == TypeId::SYMBOL,
         };
         assert!(
