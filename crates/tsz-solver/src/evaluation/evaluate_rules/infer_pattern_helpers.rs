@@ -188,6 +188,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             pattern_params.len()
         };
 
+        // A source callable with MORE required parameters than a fixed-arity
+        // pattern (one with no trailing rest) cannot be called with the pattern's
+        // parameter count, so it is not assignable to the pattern and the
+        // conditional `extends` must take its false branch. Without this, a source
+        // like `(a, b) => void` wrongly matched `(p0: infer P0) => any` (matching
+        // only the prefix and ignoring `b`), so `F extends (p0: infer P0) => any`
+        // picked the 1-arity branch instead of falling through to a 2-arity one
+        // (#14323). Mirror the plain relation's arity rule. Rest patterns
+        // (`(...args: infer P) => any`, i.e. `Parameters`) absorb any arity and
+        // are intentionally exempt.
+        if trailing_rest_param.is_none() {
+            let source_required = source_params
+                .iter()
+                .take_while(|param| !param.optional && !param.rest)
+                .count();
+            if source_required > fixed_param_count {
+                return false;
+            }
+        }
+
         // A source callable with fewer parameters is still assignable to the
         // inference pattern (extra trailing positions are ignored at the call
         // site); tsc takes the true branch and defaults the unmatched `infer`
