@@ -355,6 +355,85 @@ fn eval_env_backlog_drains_on_next_successful_write() {
     );
 }
 
+/// Both type environments share one race-safe write discipline
+/// (`apply_or_defer_env_write`). When a single dual-env registration races
+/// *both* cells at once — the exact recursive-resolution scenario where the flow
+/// analyzer holds `type_environment` while the re-entrant evaluator holds
+/// `type_env` — neither write may be dropped: each must defer onto its own queue
+/// and replay symmetrically on flush.
+#[test]
+fn both_envs_defer_then_replay_under_simultaneous_borrow() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let child = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let parent = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+
+    // Hold both cells borrowed, so the evaluator write *and* the flow mirror
+    // each lose the borrow race. `class_extends` is env-local with no shared
+    // store fallback, so the reads below isolate the per-env map.
+    {
+        let held_eval = ctx.type_env.borrow();
+        let held_flow = ctx.type_environment.borrow();
+        ctx.register_class_extends_in_envs(child, parent);
+
+        assert_eq!(
+            held_eval.get_class_extends_def(child),
+            None,
+            "evaluator env must not yet have the deferred write"
+        );
+        assert_eq!(
+            held_flow.get_class_extends_def(child),
+            None,
+            "flow-analyzer env must not yet have the deferred write"
+        );
+        assert_eq!(
+            ctx.deferred_eval_env_write_count(),
+            1,
+            "the lost evaluator write must be queued for replay"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "the lost flow mirror must be queued for replay"
+        );
+    }
+
+    // Both queues drain symmetrically once the cells are borrowable again.
+    ctx.flush_deferred_eval_env_writes();
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_eval_env_write_count(), 0);
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    assert_eq!(
+        ctx.type_env.borrow().get_class_extends_def(child),
+        Some(parent),
+        "evaluator env must receive the replayed write"
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_class_extends_def(child),
+        Some(parent),
+        "flow-analyzer env must receive the replayed write"
+    );
+}
+
 /// Regression for #13944 / #13086: a `DefId -> TypeId` body re-published by the
 /// lazy-resolution path (`register_resolved_def_in_envs`, the gateway
 /// `try_insert_def_in_type_env` now uses) must travel the race-safe deferred
