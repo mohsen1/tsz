@@ -227,13 +227,14 @@ pub struct QueryCache<'a> {
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
-    /// Memo for completed context-free `collect_properties_cached` results.
-    /// Keyed by `(TypeId, resolver_generation)`: the generation prevents
-    /// reusing a result after lazy `DefId` resolution can change. Shares this
-    /// cache's `clear()`/lifecycle envelope (same as
-    /// `object_spread_properties_cache`).
-    collect_properties_result_cache:
-        RefCell<FxHashMap<(TypeId, u64), crate::objects::PropertyCollectionResult>>,
+    /// Memo for completed context-free `collect_properties_cached` results,
+    /// scoped by `resolver_generation` so a result is never reused after lazy
+    /// `DefId` resolution can change it. Generations advance monotonically, so
+    /// the memo retains only the most-recent generations per `TypeId` and evicts
+    /// superseded ones rather than letting the flat `(TypeId, generation)` map
+    /// grow unbounded (issue #14347). Shares this cache's `clear()`/lifecycle
+    /// envelope (same as `object_spread_properties_cache`).
+    collect_properties_result_cache: RefCell<collect_properties_memo::CollectPropertiesMemo>,
     collect_properties_cache_stats: CacheCounter,
     subtype_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
     /// Separate cache for assignability to prevent loose results from poisoning subtype checks.
@@ -306,7 +307,9 @@ impl<'a> QueryCache<'a> {
             application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
-            collect_properties_result_cache: RefCell::new(FxHashMap::default()),
+            collect_properties_result_cache: RefCell::new(
+                collect_properties_memo::CollectPropertiesMemo::default(),
+            ),
             collect_properties_cache_stats: CacheCounter::new(),
             subtype_cache: RefCell::new(FxHashMap::default()),
             assignability_cache: RefCell::new(FxHashMap::default()),
@@ -1321,8 +1324,7 @@ impl CollectPropertiesResultCache for QueryCache<'_> {
         let result = self
             .collect_properties_result_cache
             .borrow()
-            .get(&(type_id, resolver_generation))
-            .cloned();
+            .get(type_id, resolver_generation);
         if result.is_some() {
             self.collect_properties_cache_stats.record_hit();
         } else {
@@ -1337,9 +1339,11 @@ impl CollectPropertiesResultCache for QueryCache<'_> {
         resolver_generation: u64,
         result: PropertyCollectionResult,
     ) {
-        self.collect_properties_result_cache
-            .borrow_mut()
-            .insert((type_id, resolver_generation), result);
+        self.collect_properties_result_cache.borrow_mut().insert(
+            type_id,
+            resolver_generation,
+            result,
+        );
     }
 }
 
@@ -1898,6 +1902,9 @@ impl QueryDatabase for QueryCache<'_> {
 #[cfg(test)]
 #[path = "../../tests/db_tests.rs"]
 mod tests;
+
+#[path = "query_cache_collect_properties_memo.rs"]
+mod collect_properties_memo;
 
 #[path = "query_cache_size.rs"]
 mod size;
