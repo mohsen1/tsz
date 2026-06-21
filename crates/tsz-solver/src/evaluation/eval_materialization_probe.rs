@@ -44,7 +44,7 @@
 use crate::caches::db::{QueryDatabase, TypeDatabase};
 use crate::types::{TypeData, TypeId};
 use dashmap::{DashMap, DashSet};
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -673,13 +673,15 @@ fn fp_recurse(
             shape.is_constructor.hash(hasher);
             shape.is_method.hash(hasher);
             fp_signature(
-                db,
                 &shape.params,
                 shape.this_type,
                 Some(shape.return_type),
-                child_depth,
-                path,
-                hasher,
+                &mut FpSignatureContext {
+                    db,
+                    depth: child_depth,
+                    path,
+                    hasher,
+                },
             );
             // shape.symbol does not exist on FunctionShape; nothing to strip.
         }
@@ -693,26 +695,30 @@ fn fp_recurse(
                 fp_tag(hasher, 0xC5A1);
                 sig.is_method.hash(hasher);
                 fp_signature(
-                    db,
                     &sig.params,
                     sig.this_type,
                     Some(sig.return_type),
-                    child_depth,
-                    path,
-                    hasher,
+                    &mut FpSignatureContext {
+                        db,
+                        depth: child_depth,
+                        path,
+                        hasher,
+                    },
                 );
             }
             for sig in &shape.construct_signatures {
                 fp_tag(hasher, 0xC5A2);
                 sig.is_method.hash(hasher);
                 fp_signature(
-                    db,
                     &sig.params,
                     sig.this_type,
                     Some(sig.return_type),
-                    child_depth,
-                    path,
-                    hasher,
+                    &mut FpSignatureContext {
+                        db,
+                        depth: child_depth,
+                        path,
+                        hasher,
+                    },
                 );
             }
             // Callable properties (e.g. statics) in order, symbol stripped.
@@ -848,32 +854,35 @@ fn fp_index_signature(
     }
 }
 
+struct FpSignatureContext<'a, 'b> {
+    db: &'a dyn TypeDatabase,
+    depth: u32,
+    path: &'b mut FxHashMap<u32, u32>,
+    hasher: &'b mut FxHasher,
+}
+
 /// Hash a call/function signature: arity + per-parameter optional/rest/name-
 /// presence, return-type presence, then recurse parameter and return types.
-#[allow(clippy::too_many_arguments)]
 fn fp_signature(
-    db: &dyn TypeDatabase,
     params: &[crate::types::ParamInfo],
     this_type: Option<TypeId>,
     return_type: Option<TypeId>,
-    depth: u32,
-    path: &mut FxHashMap<u32, u32>,
-    hasher: &mut rustc_hash::FxHasher,
+    ctx: &mut FpSignatureContext<'_, '_>,
 ) {
-    (params.len() as u32).hash(hasher);
-    this_type.is_some().hash(hasher);
+    (params.len() as u32).hash(ctx.hasher);
+    this_type.is_some().hash(ctx.hasher);
     if let Some(t) = this_type {
-        fp_recurse(db, t, depth, path, hasher);
+        fp_recurse(ctx.db, t, ctx.depth, ctx.path, ctx.hasher);
     }
     for p in params {
-        p.optional.hash(hasher);
-        p.rest.hash(hasher);
-        p.name.is_some().hash(hasher);
-        fp_recurse(db, p.type_id, depth, path, hasher);
+        p.optional.hash(ctx.hasher);
+        p.rest.hash(ctx.hasher);
+        p.name.is_some().hash(ctx.hasher);
+        fp_recurse(ctx.db, p.type_id, ctx.depth, ctx.path, ctx.hasher);
     }
-    return_type.is_some().hash(hasher);
+    return_type.is_some().hash(ctx.hasher);
     if let Some(r) = return_type {
-        fp_recurse(db, r, depth, path, hasher);
+        fp_recurse(ctx.db, r, ctx.depth, ctx.path, ctx.hasher);
     }
 }
 
