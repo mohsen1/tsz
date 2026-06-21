@@ -343,8 +343,17 @@ impl CheckerState<'_> {
         symbol_declarations: &[NodeIndex],
         is_umd_export: bool,
     ) -> Option<TypeId> {
+        // Recover a known-global value (`Promise`, `Map`, ...) for a symbol with
+        // no VALUE flag — this handles a type-only declaration merging with the
+        // lib's value side. Exclude import ALIASes: an import is a real local
+        // binding that lexically shadows the ambient global, so the recovery
+        // must not replace it with the non-callable global constructor (false
+        // TS2348). Type-only aliases are already handled in
+        // `resolved_identifier_pre_flag_meaning`, so any ALIAS reaching here is
+        // a value binding resolved downstream to the imported value's type.
         if !self.is_identifier_in_type_position(idx)
             && (flags & symbol_flags::VALUE) == 0
+            && (flags & symbol_flags::ALIAS) == 0
             && self.is_known_global_value_name(name)
         {
             let value_type = self.type_of_value_symbol_by_name(name);

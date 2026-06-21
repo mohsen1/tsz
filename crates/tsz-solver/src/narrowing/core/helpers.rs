@@ -268,7 +268,7 @@ impl<'a> NarrowingContext<'a> {
             let members = self.db.type_list(members);
             let mut functions: Option<Vec<TypeId>> = None;
             for (index, &member) in members.iter().enumerate() {
-                let narrowed = self.narrow_union_member_to_function(member);
+                let narrowed = self.narrow_single_to_function(member);
 
                 match (narrowed, &mut functions) {
                     (Some(result), Some(functions)) => functions.push(result),
@@ -295,36 +295,58 @@ impl<'a> NarrowingContext<'a> {
             return union_or_single(self.db, functions);
         }
 
-        if let Some(narrowed) = self.narrow_type_param_to_function(source_type) {
-            return narrowed;
-        }
+        // Scalar (non-union) source: a member that classifies to nothing
+        // narrows to `never`.
+        self.narrow_single_to_function(source_type)
+            .unwrap_or(TypeId::NEVER)
+    }
 
-        if self.is_function_type(source_type) {
-            source_type
-        } else if source_type == TypeId::OBJECT {
-            self.function_type()
-        } else if let Some(shape_id) = object_shape_id(self.db, source_type) {
+    /// Classify a single resolved type for the `typeof x === "function"` guard.
+    ///
+    /// Returns `None` when `ty` is not a directly recognizable function /
+    /// object / indexed-access form (the caller should then try alias
+    /// resolution). Returns `Some(Function)` for a type that is a supertype of
+    /// `Function` (bare `object` or an empty object shape), `Some(ty)` when `ty`
+    /// is already callable, `Some(ty & Function)` for an indexed access, and
+    /// `Some(never)` for an object shape that has no function-compatible form.
+    ///
+    /// Mirrors `tsc`: `Function` is assignable to `object` and to `{}`, so the
+    /// function-narrowing keeps those members as `Function` rather than
+    /// collapsing them away.
+    fn classify_concrete_to_function(&self, ty: TypeId) -> Option<TypeId> {
+        if self.is_function_type(ty) {
+            return Some(ty);
+        }
+        if ty == TypeId::OBJECT {
+            return Some(self.function_type());
+        }
+        if let Some(shape_id) = object_shape_id(self.db, ty) {
             let shape = self.db.object_shape(shape_id);
-            if shape.properties.is_empty() {
-                self.function_type()
-            } else {
-                TypeId::NEVER
-            }
-        } else if let Some(shape_id) = object_with_index_shape_id(self.db, source_type) {
+            return Some(self.empty_shape_to_function(shape.properties.is_empty()));
+        }
+        if let Some(shape_id) = object_with_index_shape_id(self.db, ty) {
             let shape = self.db.object_shape(shape_id);
-            if shape.properties.is_empty()
-                && shape.string_index.is_none()
-                && shape.number_index.is_none()
-            {
-                self.function_type()
-            } else {
-                TypeId::NEVER
-            }
-        } else if index_access_parts(self.db, source_type).is_some() {
-            // For indexed access types like T[K], narrow to T[K] & Function
-            // This handles cases like: typeof obj[key] === 'function'
+            return Some(self.empty_shape_to_function(
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none(),
+            ));
+        }
+        if index_access_parts(self.db, ty).is_some() {
+            // For indexed access types like T[K], narrow to T[K] & Function.
+            // This handles cases like: typeof obj[key] === 'function'.
             let function_type = self.function_type();
-            self.db.intersection2(source_type, function_type)
+            return Some(self.db.intersection2(ty, function_type));
+        }
+        None
+    }
+
+    /// An object shape narrowed by `typeof === "function"`: `Function` when the
+    /// shape contributes no members (a supertype of `Function`, e.g. bare
+    /// `object` or `{}`), otherwise `never`.
+    fn empty_shape_to_function(&self, is_empty: bool) -> TypeId {
+        if is_empty {
+            self.function_type()
         } else {
             TypeId::NEVER
         }
@@ -336,47 +358,44 @@ impl<'a> NarrowingContext<'a> {
         is_function_type_through_type_constraints(self.db, type_id)
     }
 
-    /// Narrow a single union member for the `typeof === "function"` guard.
+    /// Narrow a single (non-union) type for the `typeof x === "function"` guard.
     ///
-    /// Returns the constituent to keep (`Some`), or `None` to drop the member.
-    /// Handles three cases the raw structural visitor cannot:
+    /// Returns the constituent to keep (`Some`), or `None` to drop it (the
+    /// scalar caller maps `None` to `never`; the union caller drops the member).
+    /// Shared by the scalar path and the per-member union path so both classify
+    /// `object`, `{}`, indexed accesses, type parameters, and alias references
+    /// identically. Handles the cases the raw structural visitor cannot:
     /// - type parameters (`narrow_type_param_to_function`);
-    /// - a member that is directly callable (kept as-is to preserve identity);
-    /// - a member that is a `Lazy`/`Application` alias which resolves to a
-    ///   callable type or to a nested union with callable constituents.
+    /// - directly callable types and supertypes of `Function` (bare `object`
+    ///   and empty object shapes), kept/narrowed by
+    ///   `classify_concrete_to_function`;
+    /// - a `Lazy`/`Application` alias which resolves to a concrete callable /
+    ///   object type or to a nested union with callable constituents.
     ///
     /// The structural `is_function_type` visitor runs over raw `TypeData` and
-    /// cannot see through an unresolved alias reference (e.g. a union member that
-    /// is itself a callable type alias, or one produced by an instantiated
-    /// generic alias whose body has not yet been collapsed). The narrowing
-    /// context owns a resolver, so resolve before classifying. When the member
-    /// is itself directly callable the original member is kept so display and
-    /// identity are unchanged; only members hidden behind an alias are replaced
-    /// by their resolved/recursively-narrowed callable form.
-    fn narrow_union_member_to_function(&self, member: TypeId) -> Option<TypeId> {
+    /// cannot see through an unresolved alias reference (e.g. a member that is
+    /// itself a callable type alias, or one produced by an instantiated generic
+    /// alias whose body has not yet been collapsed). The narrowing context owns
+    /// a resolver, so resolve before classifying. When the member is itself
+    /// directly callable the original member is kept so display and identity are
+    /// unchanged; only members hidden behind an alias are replaced by their
+    /// resolved/recursively-narrowed form.
+    fn narrow_single_to_function(&self, member: TypeId) -> Option<TypeId> {
         if let Some(narrowed) = self.narrow_type_param_to_function(member) {
             return narrowed.non_never();
         }
 
-        if self.is_function_type(member) {
-            return Some(member);
+        if let Some(result) = self.classify_concrete_to_function(member) {
+            return result.non_never();
         }
 
         let resolved = self.resolve_type(member);
         if resolved == member {
-            // Not an alias reference. Fall back to the single-type narrowing,
-            // which maps the non-primitive `object` (and an empty `{}` object
-            // shape, or an indexed access) to the global `Function` type because
-            // function values inhabit `object`. Returning `None` here dropped the
-            // `object` constituent, so `object | symbol` narrowed to `never`
-            // under a `typeof x === "function"` guard instead of `Function`
-            // (#14324). The single-type path already does this; mirror it.
-            let narrowed = self.narrow_to_function(member);
-            return (narrowed != TypeId::NEVER).then_some(narrowed);
+            return None;
         }
 
-        if self.is_function_type(resolved) {
-            return Some(resolved);
+        if let Some(result) = self.classify_concrete_to_function(resolved) {
+            return result.non_never();
         }
 
         // The alias resolved to a nested union (e.g. `Inner<T>` ->

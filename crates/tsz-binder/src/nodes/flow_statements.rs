@@ -281,6 +281,10 @@ impl BinderState {
             self.bind_node(arena, ret.expression);
         }
 
+        // A `return`/`throw` unwinds through the innermost enclosing `try` with a
+        // `finally`, so feed this abrupt-exit state into that finally body.
+        self.feed_innermost_finally_entry();
+
         if node.kind == syntax_kind_ext::RETURN_STATEMENT
             && let Some(&return_target) = self.return_targets.last()
         {
@@ -290,6 +294,7 @@ impl BinderState {
     }
 
     pub(crate) fn bind_break_statement(&mut self) {
+        self.feed_innermost_finally_entry();
         if let Some(&break_target) = self.break_targets.last() {
             self.add_antecedent(break_target, self.current_flow);
         }
@@ -297,10 +302,19 @@ impl BinderState {
     }
 
     pub(crate) fn bind_continue_statement(&mut self) {
+        self.feed_innermost_finally_entry();
         if let Some(&continue_target) = self.continue_targets.last() {
             self.add_antecedent(continue_target, self.current_flow);
         }
         self.current_flow = self.unreachable_flow;
+    }
+
+    /// Feed the current flow into the innermost enclosing `try`'s finally-entry
+    /// label, if any, so abrupt-completion states reach the `finally` body.
+    fn feed_innermost_finally_entry(&mut self) {
+        if let Some(&entry) = self.finally_entry_targets.last() {
+            self.add_antecedent(entry, self.current_flow);
+        }
     }
 
     fn is_syntactically_true_condition(arena: &NodeArena, condition: NodeIndex) -> bool {

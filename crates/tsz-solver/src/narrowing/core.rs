@@ -1279,9 +1279,6 @@ impl<'a> NarrowingContext<'a> {
             let mut matching: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    if let Some(narrowed) = self.narrow_type_param(member, target_type) {
-                        return Some(narrowed);
-                    }
                     if self.is_assignable_to(member, target_type) {
                         return Some(member);
                     }
@@ -1337,6 +1334,25 @@ impl<'a> NarrowingContext<'a> {
                     None
                 })
                 .collect();
+
+            // tsc parity (`getNarrowedTypeWorker`): the type-parameter
+            // intersection synthesis (`T & target`, via `narrow_type_param`) is
+            // only a *fallback*, reached when no declared constituent is
+            // structurally related to the candidate. tsc maps each constituent
+            // `t` to `target` (target <: t), `t` (t <: target), or `never`, and
+            // only when that whole map collapses to `never` does it re-map
+            // instantiable members to `t & target`. So when at least one
+            // constituent already matches structurally, a bare/unrelated
+            // type-parameter member is dropped rather than retained as
+            // `T & target`. Synthesizing it eagerly per member (the old
+            // behavior) kept a non-callable `V & Function` next to the function
+            // member, yielding spurious TS2349/TS2339.
+            if matching.is_empty() {
+                matching = members
+                    .iter()
+                    .filter_map(|&member| self.narrow_type_param(member, target_type))
+                    .collect();
+            }
             self.remove_redundant_intersection_members(&mut matching);
 
             if matching.is_empty() {

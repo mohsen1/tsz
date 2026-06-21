@@ -11,6 +11,7 @@ mod candidate_collection;
 mod diagnostics;
 mod overload_resolution;
 mod spread_arity;
+mod spread_overload_selection;
 
 use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
