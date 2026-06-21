@@ -511,6 +511,16 @@ pub trait TypeWidenCache {
     fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
 }
 
+/// Construction hook for conditional-flow substitution wrapper types.
+///
+/// Kept separate from [`TypeDatabase`] so the broad storage/query trait stays
+/// within its method cap (#8205). `TypeDatabase` inherits this capability, so
+/// existing `&dyn TypeDatabase` callers can still construct substitution
+/// wrappers without depending on concrete interners.
+pub trait TypeSubstitutionConstruction {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId;
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -522,6 +532,7 @@ pub trait TypeDatabase:
     + TypeCompilerOptions
     + TypeApplicationEvalCache
     + TypeWidenCache
+    + TypeSubstitutionConstruction
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -654,7 +665,6 @@ pub trait TypeDatabase:
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId;
     fn this_type(&self) -> TypeId;
     fn no_infer(&self, inner: TypeId) -> TypeId;
-    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId;
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
@@ -1022,6 +1032,12 @@ impl TypeWidenCache for TypeInterner {
     }
 }
 
+impl TypeSubstitutionConstruction for TypeInterner {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        Self::substitution(self, base_type, constraint)
+    }
+}
+
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
         Self::intern(self, key)
@@ -1294,10 +1310,6 @@ impl TypeDatabase for TypeInterner {
 
     fn no_infer(&self, inner: TypeId) -> TypeId {
         Self::no_infer(self, inner)
-    }
-
-    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
-        Self::substitution(self, base_type, constraint)
     }
 
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {

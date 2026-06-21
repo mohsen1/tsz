@@ -7,7 +7,8 @@
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
     QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeDatabase,
-    TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal, TypeWidenCache,
+    TypeDisplayProvenance, TypePredicateCache, TypeSubstitutionConstruction, TypeTupleLimitSignal,
+    TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -962,6 +963,12 @@ impl TypeWidenCache for QueryCache<'_> {
     }
 }
 
+impl TypeSubstitutionConstruction for QueryCache<'_> {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        self.interner.substitution(base_type, constraint)
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1219,10 +1226,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn no_infer(&self, inner: TypeId) -> TypeId {
         self.interner.no_infer(inner)
-    }
-
-    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
-        self.interner.substitution(base_type, constraint)
     }
 
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
