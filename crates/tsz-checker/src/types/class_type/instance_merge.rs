@@ -176,7 +176,7 @@ impl CheckerState<'_> {
                                 let instantiated = self
                                     .instantiate_partial_base_with_heritage_args(
                                         partial,
-                                        &base_type_parameters,
+                                        base_type_parameters.as_ref(),
                                         type_arguments,
                                     );
                                 self.merge_base_instance_properties(
@@ -409,12 +409,10 @@ impl CheckerState<'_> {
     fn instantiate_partial_base_with_heritage_args(
         &mut self,
         partial: TypeId,
-        base_type_parameters: &Option<tsz_parser::parser::NodeList>,
+        base_type_parameters: Option<&tsz_parser::parser::NodeList>,
         type_arguments: Option<&tsz_parser::parser::NodeList>,
     ) -> TypeId {
-        let base_param_count = base_type_parameters
-            .as_ref()
-            .map_or(0, |params| params.nodes.len());
+        let base_param_count = base_type_parameters.map_or(0, |params| params.nodes.len());
         if base_param_count == 0 {
             // Non-generic base: nothing to substitute.
             return partial;
@@ -431,8 +429,9 @@ impl CheckerState<'_> {
             return partial;
         }
 
+        let base_type_parameters = base_type_parameters.cloned();
         let (base_type_params, base_type_param_updates) =
-            self.push_type_parameters(base_type_parameters);
+            self.push_type_parameters(&base_type_parameters);
 
         // Fill unsupplied trailing parameters from their default/constraint,
         // instantiated against the substitution built so far — mirroring the
