@@ -4,6 +4,7 @@ mod cross_module_unique_symbol;
 mod defaults;
 mod distributive_tuple_union;
 mod r#enum;
+mod fp_repro_audit_2026_b;
 mod function_intersection_target;
 mod indexed_access;
 mod membership_semantics;
