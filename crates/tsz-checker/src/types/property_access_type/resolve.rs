@@ -396,6 +396,14 @@ impl<'a> CheckerState<'a> {
             original_object_type
         } else if receiver_needs_env_fallback {
             self.evaluate_property_access_receiver_type(original_object_type)
+        } else if let Some(recovered) =
+            self.recover_arena_collided_application_for_property_access(original_object_type)
+        {
+            // Recover a cross-arena lib interface receiver (e.g. `g: Generator<Y,
+            // R>`) whose type-parameter push collided with the current file arena;
+            // see `recover_arena_collided_application_for_property_access`. Returns
+            // `None` (and falls through) for every well-formed receiver.
+            recovered
         } else {
             self.evaluate_application_type(original_object_type)
         };
