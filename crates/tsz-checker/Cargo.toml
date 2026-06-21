@@ -1988,6 +1988,11 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+
+[[test]]
+name = "global_this_type_position_member_tests"
+path = "tests/global_this_type_position_member_tests.rs"
+
 [[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
