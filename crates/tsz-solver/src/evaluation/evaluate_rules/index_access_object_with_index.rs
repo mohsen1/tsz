@@ -6,13 +6,21 @@ use crate::utils;
 use crate::visitor::{literal_number, union_list_id};
 
 use super::super::evaluate::TypeEvaluator;
-use super::string_index_helpers::{number_index_signature_applies, string_index_signature_applies};
+use super::string_index_helpers::{
+    index_signature_accepts_symbol, number_index_signature_applies, string_index_signature_applies,
+};
 
 pub(super) fn evaluate_object_with_index<R: TypeResolver>(
     evaluator: &TypeEvaluator<'_, R>,
     shape: &ObjectShape,
     index_type: TypeId,
 ) -> TypeId {
+    // The `string_index` slot carries the object's non-numeric index signature,
+    // which may be string-keyed, symbol-keyed, or span both (`string | symbol` /
+    // `PropertyKey`). Route it to the string path unless it is a *symbol-only*
+    // signature, and to the symbol path whenever its key space accepts symbols —
+    // a structural test, not the former `key_type == symbol` slot heuristic
+    // (which dropped union/alias symbol keys, see #14315).
     let string_index = shape
         .string_index
         .as_ref()
@@ -20,7 +28,7 @@ pub(super) fn evaluate_object_with_index<R: TypeResolver>(
     let symbol_index = shape
         .string_index
         .as_ref()
-        .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        .filter(|idx| index_signature_accepts_symbol(evaluator, idx));
 
     // If index is a union, evaluate each member.
     if let Some(members) = union_list_id(evaluator.interner(), index_type) {
