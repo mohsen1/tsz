@@ -278,6 +278,37 @@ impl<'a> FlowAnalyzer<'a> {
         for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
     }
 
+    /// Returns `true` when `assignment_node` is a simple killing definition
+    /// (`target = <rhs>`) whose right-hand side is *syntactically* a definitely
+    /// non-nullish expression (object/array literal, `new`, function/arrow/class
+    /// expression).
+    ///
+    /// Used by flow traversal as a soundness floor when
+    /// [`Self::get_assigned_type`] could not resolve the RHS type (cache miss
+    /// during deferred closure typing, and the syntactic fallback could not
+    /// rebuild a structural type — e.g. an object literal containing a method).
+    /// In that case the declared union must still drop `null`/`undefined` after
+    /// the write, matching tsc's `getAssignmentReducedType`, instead of keeping
+    /// the nullable declared type and reporting a false TS18048.
+    pub(crate) fn is_killing_definition_with_non_nullish_rhs(
+        &self,
+        assignment_node: NodeIndex,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(assignment_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(node) else {
+            return false;
+        };
+        bin.operator_token == SyntaxKind::EqualsToken as u16
+            && self.is_matching_reference(bin.left, target)
+            && self.is_syntactically_non_nullish_expression(bin.right)
+    }
+
     pub(crate) fn get_assigned_type(
         &self,
         assignment_node: NodeIndex,

@@ -40,6 +40,11 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
+        // Track object-literal method shorthand for implicit-any like an
+        // arrow/function-expression member; `is_closure` (which also drives
+        // narrowing depth) stays arrow/function-expression only. Rationale and
+        // class-method exclusion: see `is_object_literal_method`.
+        let tracks_implicit_any = is_closure || self.is_object_literal_method(idx);
         // Rule #42: Increment closure depth when entering a function expression or arrow function
         // This causes mutable variables (let/var) to lose narrowing inside the closure
         if is_closure {
@@ -163,7 +168,7 @@ impl<'a> CheckerState<'a> {
         let mut pushed_this_type = false;
         let this_atom = self.ctx.types.intern_string("this");
         let mut closure_already_checked =
-            is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
+            tracks_implicit_any && self.ctx.implicit_any_checked_closures.contains(&idx);
         let (
             contextual_helper_type,
             contextual_signature_type_params,
@@ -475,7 +480,7 @@ impl<'a> CheckerState<'a> {
                     required_non_this_param_count,
                 )
             });
-        if is_closure && !contextual_signature_accepts_required_arity {
+        if tracks_implicit_any && !contextual_signature_accepts_required_arity {
             self.ctx.implicit_any_checked_closures.remove(&idx);
             self.ctx.implicit_any_contextual_closures.remove(&idx);
             closure_already_checked = false;
@@ -960,7 +965,7 @@ impl<'a> CheckerState<'a> {
                 let binding_context_type = (has_external_binding_context
                     || cached_param_type.is_some())
                 .then_some(type_id);
-                if is_closure && suppresses_implicit_any_context {
+                if tracks_implicit_any && suppresses_implicit_any_context {
                     self.ctx.implicit_any_contextual_closures.insert(idx);
                     _any_param_contextually_typed = true;
                 }
@@ -1262,7 +1267,7 @@ impl<'a> CheckerState<'a> {
         // Only mark as "checked" in statement-checking mode or when a contextual type was
         // available. Closures skipped in build_type_environment due to no contextual type
         // need a second chance in the statement-checking pass — don't pre-emptively lock them.
-        if is_closure
+        if tracks_implicit_any
             && !closure_already_checked
             && (self.ctx.is_checking_statements
                 || (ctx_helper.is_some() && contextual_signature_accepts_required_arity))

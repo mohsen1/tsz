@@ -15,6 +15,30 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_common::Atom;
 
+/// Decompose a substitution type into its `(base_type, constraint)` pair.
+///
+/// Returns `None` when `type_id` is not a `TypeData::Substitution`.
+pub fn substitution_components(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => Some((base_type, constraint)),
+        _ => None,
+    }
+}
+
+/// The underlying base type of a substitution type, or `type_id` unchanged when
+/// it is not a substitution. Used wherever a substitution must present its
+/// surface identity (printing, inference, narrowing) rather than its narrowed
+/// form.
+pub fn substitution_base_or_self(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    substitution_components(db, type_id).map_or(type_id, |(base, _)| base)
+}
+
 pub enum AssignmentNumericDisplayChildren {
     Application { base: TypeId, args: Vec<TypeId> },
     Members(Vec<TypeId>),
@@ -634,6 +658,69 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
     Some(db.union(members))
 }
 
+/// Element type contributed by a variadic/rest spread `...X`.
+///
+/// A spread element distributes the type obtained by number-indexing its operand,
+/// never the operand itself. This is the canonical "element type of an array-like
+/// spread" used wherever a tuple's rest element is unpacked (indexed access,
+/// constraint inference, best-common-type, signature relation):
+/// - `...E[]` / `...ReadonlyArray<E>` → `E`
+/// - `...[A, B, ...C[]]` → `A | B | C`
+/// - `...End` where `End extends string[]` (a type parameter / alias / application
+///   whose array-like form has element `string`) → `string`
+/// - `...End` where `End extends [A, B]` (a tuple constraint) → `A | B`
+///
+/// Anything that is not array-like is returned unchanged, mirroring tsc's
+/// `getElementTypeOfArrayType`. Without this a spread of a generic array-constrained
+/// parameter leaks the whole array type into element positions.
+pub fn rest_spread_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    rest_spread_element_type_inner(db, type_id, 0)
+}
+
+fn rest_spread_element_type_inner(db: &dyn TypeDatabase, type_id: TypeId, depth: usize) -> TypeId {
+    if type_id == TypeId::ANY {
+        return TypeId::ANY;
+    }
+    // Guard against self-referential constraints (`T extends T[]`-style chains).
+    if depth > 16 {
+        return type_id;
+    }
+
+    // Array-like form: `E[]`, `ReadonlyArray<E>`, or a type parameter / alias /
+    // application whose constraint or evaluation reduces to an `Array` element.
+    if let Some(elem) = get_array_element_type(db, type_id) {
+        return elem;
+    }
+
+    // Tuple operand (`...[A, B]`, `...[A, ...B[]]`, or a type parameter constrained
+    // to a tuple): union of each element's contribution, recursing through nested
+    // rest elements so they are unwrapped too. `get_tuple_elements` resolves
+    // readonly/type-parameter/alias wrappers down to the underlying tuple.
+    if let Some(elements) = get_tuple_elements(db, type_id) {
+        if elements.is_empty() {
+            return TypeId::NEVER;
+        }
+        let members: Vec<TypeId> = elements
+            .iter()
+            .map(|elem| {
+                let ty = if elem.rest {
+                    rest_spread_element_type_inner(db, elem.type_id, depth + 1)
+                } else {
+                    elem.type_id
+                };
+                if elem.optional {
+                    db.union2(ty, TypeId::UNDEFINED)
+                } else {
+                    ty
+                }
+            })
+            .collect();
+        return db.union(members);
+    }
+
+    type_id
+}
+
 /// Compute the `keyof` type for an object shape.
 ///
 /// Returns the union of string literal types for all property names in the object.
@@ -868,6 +955,9 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => {
+            get_array_applicable_type(db, constraint)
+        }
         Some(
             TypeData::Application(_)
             | TypeData::Mapped(_)
@@ -1121,6 +1211,7 @@ pub fn get_object_shape_id(
     }
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape_id(db, constraint),
         _ => None,
     }
 }
@@ -1139,6 +1230,7 @@ pub fn get_object_shape(
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
         }
+        Some(TypeData::Substitution { constraint, .. }) => get_object_shape(db, constraint),
         Some(TypeData::TypeParameter(info)) => {
             // For type parameters with constraints, look through to the constraint.
             info.constraint.and_then(|c| get_object_shape(db, c))
@@ -1226,6 +1318,7 @@ pub fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => true,
         Some(TypeData::ReadonlyType(inner)) => is_tuple_like_type(db, inner),
+        Some(TypeData::Substitution { constraint, .. }) => is_tuple_like_type(db, constraint),
         Some(TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()

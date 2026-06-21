@@ -574,6 +574,7 @@ impl BinderState {
                                             && self.symbol_has_non_type_only_import_clause(
                                                 arena, sym_id,
                                             );
+                                        let mut exported_sym_id = sym_id;
                                         let exported_target = if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
@@ -607,6 +608,7 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
+                                            exported_sym_id = clone_id;
                                             Some(clone_id)
                                         } else if should_clone_value_import_export {
                                             let clone_id = {
@@ -621,6 +623,7 @@ impl BinderState {
                                                 clone_sym.is_type_only = false;
                                                 clone_sym.is_exported = true;
                                             }
+                                            exported_sym_id = clone_id;
                                             Some(clone_id)
                                         } else if orig != exp {
                                             Some(sym_id)
@@ -653,6 +656,14 @@ impl BinderState {
                                                 // outer/global/intrinsic meaning.
                                                 self.publish_module_export(exp, target_id);
                                             }
+                                        }
+                                        if self.in_global_augmentation {
+                                            self.record_global_value_augmentation(
+                                                exp,
+                                                exported_sym_id,
+                                                spec_idx,
+                                                symbol_flags::ALIAS,
+                                            );
                                         }
                                     }
                                 }
