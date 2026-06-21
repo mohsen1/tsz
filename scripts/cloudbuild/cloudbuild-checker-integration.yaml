@@ -27,7 +27,7 @@ steps:
 
 options:
   pool:
-    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
+    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool-highmem
   logging: CLOUD_LOGGING_ONLY
 
 timeout: 1800s

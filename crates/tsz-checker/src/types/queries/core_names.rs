@@ -317,7 +317,7 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.unique_symbol(sym_ref))
     }
 
-    fn computed_identifier_unique_symbol_property_ref(
+    pub(crate) fn computed_identifier_unique_symbol_property_ref(
         &self,
         expr_idx: NodeIndex,
     ) -> Option<SymbolRef> {

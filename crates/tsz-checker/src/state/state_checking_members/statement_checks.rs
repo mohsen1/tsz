@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is a valid const initializer in an ambient context.
     /// Valid initializers are string literals, numeric literals, or negative numeric literals.
-    fn is_valid_const_initializer(&self, init_idx: NodeIndex) -> bool {
+    pub(crate) fn is_valid_const_initializer(&self, init_idx: NodeIndex) -> bool {
         self.is_valid_ambient_const_initializer(init_idx)
     }
 
