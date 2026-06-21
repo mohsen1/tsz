@@ -10,7 +10,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tsz_binder::ModuleAugmentation;
+use tsz_binder::{ModuleAugmentation, symbol_flags};
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
@@ -1471,7 +1471,35 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
         base_type: TypeId,
     ) -> TypeId {
-        use tsz_parser::parser::{NodeArena, NodeIndex};
+        use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
+        use tsz_scanner::SyntaxKind;
+
+        fn is_direct_declare_global_member(arena: &NodeArena, node: NodeIndex) -> bool {
+            let Some(block_idx) = arena.parent_of(node) else {
+                return false;
+            };
+            let Some(block) = arena.get(block_idx) else {
+                return false;
+            };
+            if block.kind != syntax_kind_ext::MODULE_BLOCK {
+                return false;
+            }
+            let Some(module_idx) = arena.parent_of(block_idx) else {
+                return false;
+            };
+            let Some(module_node) = arena.get(module_idx) else {
+                return false;
+            };
+            if module_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module) = arena.get_module(module_node) else {
+                return false;
+            };
+            arena
+                .get(module.name)
+                .is_some_and(|name| name.kind == SyntaxKind::GlobalKeyword as u16)
+        }
 
         if base_type == TypeId::ERROR
             || base_type == TypeId::UNKNOWN
@@ -1501,6 +1529,9 @@ impl<'a> CheckerState<'a> {
             if symbol.import_module().is_some() {
                 return base_type;
             }
+            if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+                return base_type;
+            }
             (symbol.escaped_name.clone(), symbol.all_declarations())
         };
 
@@ -1513,7 +1544,7 @@ impl<'a> CheckerState<'a> {
         // Pairing across `all_binders`/`all_arenas` makes the fold correct
         // whether or not the program was loaded through a single pre-aggregated
         // primary binder.
-        let current_arena_ptr = self.ctx.arena as *const NodeArena as usize;
+        let current_arena_ptr = std::ptr::from_ref::<NodeArena>(self.ctx.arena) as usize;
         let mut current_decls: Vec<NodeIndex> = Vec::new();
         let mut cross_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
             FxHashMap::default();
@@ -1521,6 +1552,12 @@ impl<'a> CheckerState<'a> {
 
         if let Some(aug_decls) = self.ctx.binder.global_augmentations.get(&name) {
             for aug in aug_decls {
+                if !is_direct_declare_global_member(
+                    aug.arena.as_deref().unwrap_or(self.ctx.arena),
+                    aug.node,
+                ) {
+                    continue;
+                }
                 if own_declarations.contains(&aug.node) {
                     is_self_global_aug = true;
                 }
@@ -1555,6 +1592,9 @@ impl<'a> CheckerState<'a> {
                     // Entries in a cross-file binder are current-file relative to
                     // THAT binder, so their declaration nodes belong to `arena`.
                     if aug.arena.is_some() {
+                        continue;
+                    }
+                    if !is_direct_declare_global_member(arena.as_ref(), aug.node) {
                         continue;
                     }
                     if own_declarations.contains(&aug.node) {
