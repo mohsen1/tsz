@@ -593,6 +593,9 @@ path = "tests/export_star_module_augmentation_tests.rs"
 name = "deferred_conditional_arithmetic_operand_tests"
 path = "tests/deferred_conditional_arithmetic_operand_tests.rs"
 [[test]]
+name = "keyof_type_param_default_conditional_repro"
+path = "tests/keyof_type_param_default_conditional_repro.rs"
+[[test]]
 name = "hkt_self_augmentation_keyof_repro"
 path = "tests/hkt_self_augmentation_keyof_repro.rs"
 [[test]]
@@ -2000,3 +2003,7 @@ path = "tests/function_type_predicate_typeof_param_tests.rs"
 [[test]]
 name = "ts2367_deferred_conditional_overlap_tests"
 path = "tests/ts2367_deferred_conditional_overlap_tests.rs"
+
+[[test]]
+name = "object_keyword_any_index_tests"
+path = "tests/object_keyword_any_index_tests.rs"
