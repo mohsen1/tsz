@@ -554,6 +554,16 @@ impl BinderState {
                                         let should_clone_type_only_export = spec_type_only
                                             && !orig_is_type_only
                                             && (orig != exp || !orig_was_exported);
+                                        let should_clone_value_import_export = !spec_type_only
+                                            && orig != exp
+                                            && self.symbols.get(sym_id).is_some_and(|symbol| {
+                                                symbol.is_type_only
+                                                    && symbol.has_any_flags(symbol_flags::ALIAS)
+                                                    && symbol.import_module().is_some()
+                                            })
+                                            && self.symbol_has_non_type_only_import_clause(
+                                                arena, sym_id,
+                                            );
                                         let exported_target = if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
@@ -585,6 +595,20 @@ impl BinderState {
                                             if let Some(clone_sym) = self.symbols.get_mut(clone_id)
                                             {
                                                 clone_sym.is_type_only = true;
+                                                clone_sym.is_exported = true;
+                                            }
+                                            Some(clone_id)
+                                        } else if should_clone_value_import_export {
+                                            let clone_id = {
+                                                let src =
+                                                    self.symbols.get(sym_id).cloned().expect(
+                                                        "symbol exists for resolved sym_id",
+                                                    );
+                                                self.symbols.alloc_from(&src)
+                                            };
+                                            if let Some(clone_sym) = self.symbols.get_mut(clone_id)
+                                            {
+                                                clone_sym.is_type_only = false;
                                                 clone_sym.is_exported = true;
                                             }
                                             Some(clone_id)
@@ -865,6 +889,21 @@ impl BinderState {
             .entry(current_file)
             .or_default()
             .set(name.to_string(), sym_id);
+    }
+
+    fn symbol_has_non_type_only_import_clause(
+        &self,
+        arena: &NodeArena,
+        sym_id: crate::SymbolId,
+    ) -> bool {
+        self.symbols.get(sym_id).is_some_and(|symbol| {
+            symbol.declarations.iter().copied().any(|decl_idx| {
+                arena
+                    .get(decl_idx)
+                    .and_then(|node| arena.get_import_clause(node))
+                    .is_some_and(|clause| !clause.is_type_only)
+            })
+        })
     }
 
     /// Existing re-export alias for `name` in the current scope, if any.

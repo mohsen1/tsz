@@ -1487,8 +1487,8 @@ print('1');
 fn test_no_false_ts2300_for_cross_module_default_import_alias() {
     // Reproduces allowImportClausesToMergeWithTypes.ts:
     // When file b.ts exports a value as default, and file a.ts imports it
-    // with the same name as a local interface, no TS2300 should be emitted.
-    // The import clause merges with the interface (type + value).
+    // with the same name as a local interface, the exported default from a.ts
+    // remains both the interface type and the imported value.
     let b_source = r#"
 export const zzz = 123;
 export default zzz;
@@ -1497,24 +1497,46 @@ export default zzz;
 export default interface zzz {
     x: string;
 }
-import zzz from "./a";
+import zzz from "./b";
 const x: zzz = { x: "" };
 export { zzz as default };
 "#;
-    let diagnostics = compile_two_files_get_diagnostics_with_options(
-        b_source,
-        a_source,
-        "./a",
+    let index_source = r#"
+import zzz from "./a";
+
+const x: zzz = { x: "" };
+zzz;
+
+import originalZZZ from "./b";
+originalZZZ;
+
+const y: originalZZZ = x;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("b.ts", b_source),
+            ("a.ts", a_source),
+            ("index.ts", index_source),
+        ],
+        "index.ts",
         CheckerOptions {
-            no_lib: true,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    );
+    )
+    .into_iter()
+    .map(|diag| (diag.code, diag.message_text))
+    .collect::<Vec<_>>();
     let ts2300_count = diagnostics.iter().filter(|(c, _)| *c == 2300).count();
     assert_eq!(
         ts2300_count, 0,
         "External module files should not emit false TS2300 for cross-file \
          default import aliases. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1362),
+        "Merged default import/export should remain value-bearing; got {diagnostics:?}"
     );
 }
 

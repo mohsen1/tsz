@@ -992,7 +992,8 @@ impl BindResultReducer {
                 for (module_key, exports_table) in result.module_exports.iter() {
                     let remapped = remap_symbol_table_required(exports_table, &id_remap);
                     if !remapped.is_empty() {
-                        merge_symbol_table_first_wins(
+                        merge_module_exports_prefer_value_over_type_only(
+                            &self.global_symbols,
                             self.module_exports.entry(module_key.clone()).or_default(),
                             &remapped,
                         );
@@ -1588,6 +1589,54 @@ impl BindResultReducer {
             pre_merge_bind_total_bytes: self.pre_merge_bind_total_bytes,
         }
     }
+}
+
+fn merge_module_exports_prefer_value_over_type_only(
+    global_symbols: &SymbolArena,
+    dst: &mut SymbolTable,
+    src: &SymbolTable,
+) {
+    for (name, &incoming_id) in src.iter() {
+        if let Some(existing_id) = dst.get(name) {
+            if export_symbol_prefers_incoming_value(global_symbols, existing_id, incoming_id) {
+                dst.set(name.clone(), incoming_id);
+            }
+        } else {
+            dst.set(name.clone(), incoming_id);
+        }
+    }
+}
+
+fn export_symbol_prefers_incoming_value(
+    global_symbols: &SymbolArena,
+    existing_id: SymbolId,
+    incoming_id: SymbolId,
+) -> bool {
+    let Some(existing) = global_symbols.get(existing_id) else {
+        return false;
+    };
+    let Some(incoming) = global_symbols.get(incoming_id) else {
+        return false;
+    };
+
+    const TYPE_ONLY_DECL: u32 = crate::binder::symbol_flags::INTERFACE
+        | crate::binder::symbol_flags::TYPE_ALIAS
+        | crate::binder::symbol_flags::TYPE_PARAMETER;
+    let existing_is_type_only = existing.is_type_only
+        || existing.is_pure_type()
+        || (existing.has_any_flags(TYPE_ONLY_DECL)
+            && !existing.has_any_flags(crate::binder::symbol_flags::VALUE)
+            && existing.import_module().is_none())
+        || (existing.has_any_flags(crate::binder::symbol_flags::ALIAS)
+            && !existing.has_any_flags(
+                crate::binder::symbol_flags::VALUE | crate::binder::symbol_flags::EXPORT_VALUE,
+            )
+            && existing.import_module().is_none());
+    let incoming_is_import_value = incoming.has_any_flags(crate::binder::symbol_flags::ALIAS);
+    let incoming_can_provide_value = !incoming.is_type_only
+        && (incoming.has_any_flags(crate::binder::symbol_flags::VALUE) || incoming_is_import_value);
+
+    existing_is_type_only && incoming_can_provide_value
 }
 
 fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> MergedProgram {
