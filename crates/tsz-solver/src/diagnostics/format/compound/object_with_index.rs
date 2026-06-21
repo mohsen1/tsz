@@ -1,42 +1,25 @@
 //! Indexed object formatting helpers.
 
 use super::super::TypeFormatter;
-use crate::types::{ObjectShape, PropertyInfo, TypeId};
+use crate::types::{IndexSignature, ObjectShape, PropertyInfo, TypeId};
 
 impl<'a> TypeFormatter<'a> {
     pub(crate) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
         let mut parts = Vec::new();
         let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
-        if let Some(idx) = shape.string_index_signature() {
-            let key_name = idx
-                .param_name
-                .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "x".to_owned());
-            let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type);
-            let value_str = self.format_index_signature_value(idx.value_type);
-            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
-        }
-        if let Some(ref idx) = shape.number_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "x".to_owned());
-            let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type);
-            let value_str = self.format_index_signature_value(idx.value_type);
-            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
-        }
-        if let Some(idx) = shape.symbol_index_signature() {
-            let key_name = idx
-                .param_name
-                .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "x".to_owned());
-            let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type);
-            let value_str = self.format_index_signature_value(idx.value_type);
-            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
+        // Render index signatures in `string`, `number`, then `symbol` order
+        // (tsc's display order for `Record<PropertyKey, V>`-shaped types).
+        for idx in [
+            shape.string_index_signature(),
+            shape.number_index.as_ref(),
+            shape.symbol_index_signature(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let part = self.format_index_signature_part(idx);
+            parts.push(part);
         }
 
         let mut display_props = self.visible_object_properties(shape.properties.as_slice());
@@ -111,6 +94,19 @@ impl<'a> TypeFormatter<'a> {
             _ => 2,
         };
         (rank, prop.declaration_order)
+    }
+
+    /// Render one index signature as `[name: key]: value`, with an optional
+    /// `readonly ` prefix. Shared by the string/number/symbol slots.
+    fn format_index_signature_part(&mut self, idx: &IndexSignature) -> String {
+        let key_name = idx
+            .param_name
+            .map(|a| self.atom(a).to_string())
+            .unwrap_or_else(|| "x".to_owned());
+        let ro = if idx.readonly { "readonly " } else { "" };
+        let key_type_str = self.format(idx.key_type);
+        let value_str = self.format_index_signature_value(idx.value_type);
+        format!("{ro}[{key_name}: {key_type_str}]: {value_str}")
     }
 
     fn format_index_signature_value(&mut self, value_type: TypeId) -> String {

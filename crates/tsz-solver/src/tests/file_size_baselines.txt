@@ -33,7 +33,7 @@ solver_file_call_args 2097
 solver_file_eval_index_access 2226
 solver_file_def_core 2244
 solver_file_visitor_predicates 742
-solver_file_types   2112
+solver_file_types   2118
 
 binder_max_loc        2890
 binder_oversized      1

@@ -1565,7 +1565,13 @@ pub struct CallableShape {
     pub construct_signatures: Vec<CallSignature>,
     /// Optional properties on the callable (e.g., Function.prototype)
     pub properties: Vec<PropertyInfo>,
-    /// String index signature (for static index signatures on classes)
+    /// String index signature (for static index signatures on classes).
+    ///
+    /// Unlike [`ObjectShape`], a `CallableShape` keeps the single-slot index
+    /// convention: a `symbol` index signature rides here too, discriminated by
+    /// `key_type == SYMBOL`. A static `string` + `symbol` index collision on a
+    /// callable is vanishingly rare, so no dedicated `symbol_index` slot is
+    /// carried; producers merge symbol into this slot via `string_index.or(..)`.
     pub string_index: Option<IndexSignature>,
     /// Number index signature (for static index signatures on classes)
     pub number_index: Option<IndexSignature>,
