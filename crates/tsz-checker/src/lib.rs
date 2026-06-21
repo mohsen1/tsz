@@ -496,6 +496,9 @@ mod ts2323_tests;
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_both_callable_overlap_repro_tests.rs"]
+mod ts2352_both_callable_overlap_repro_tests;
+#[cfg(test)]
 #[path = "../tests/ts2352_constrained_type_param_target_tests.rs"]
 mod ts2352_constrained_type_param_target_tests;
 #[cfg(test)]
