@@ -1805,7 +1805,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if an object shape is a "weak type": all properties are optional,
     /// there is at least one property, and there are no index signatures.
     /// Weak types trigger TS2559 when the source has no common properties.
-    fn is_weak_type_shape(shape: &ObjectShape) -> bool {
+    pub(crate) fn is_weak_type_shape(shape: &ObjectShape) -> bool {
         !shape.properties.is_empty()
             && shape.string_index.is_none()
             && shape.number_index.is_none()

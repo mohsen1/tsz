@@ -1839,8 +1839,19 @@ impl<'a> RestOrOptionalTailPositionExtractor<'a> {
 impl<'a> TypeVisitor for RestOrOptionalTailPositionExtractor<'a> {
     type Output = Option<bool>;
 
-    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
-        None
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        // The `Function` intrinsic (and `Any`) is callable with the
+        // any-signature `(...args: any[]): any` -- it imposes no fixed-arity
+        // parameter list, so a non-tuple spread can never overflow a non-rest
+        // parameter. tsc resolves `(f: Function)(...iter)` through that
+        // any-signature with no TS2556. Returning `true` here mirrors the
+        // `expected == ANY` short-circuit in
+        // `ContextualTypeContext::allows_non_tuple_spread_position`, which only
+        // covers the literal `ANY`/`ERROR` `TypeId`s and not this intrinsic.
+        match kind {
+            IntrinsicKind::Function | IntrinsicKind::Any => Some(true),
+            _ => None,
+        }
     }
 
     fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
@@ -1850,6 +1861,19 @@ impl<'a> TypeVisitor for RestOrOptionalTailPositionExtractor<'a> {
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.function_shape(FunctionShapeId(shape_id));
         Some(is_rest_or_optional_tail_position(&shape.params, self.index))
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        // The global `Function` interface object (carrying `apply`/`call`/
+        // `bind` but no explicit call signature) is callable with the same
+        // any-signature as the `Function` intrinsic in tsc, so a non-tuple
+        // spread into such a callee is allowed. Reuse the shared structural
+        // sniff that backs `matches_global_function_interface_shape`.
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        if crate::type_queries::object_shape_matches_global_function_interface(self.db, &shape) {
+            return Some(true);
+        }
+        None
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {

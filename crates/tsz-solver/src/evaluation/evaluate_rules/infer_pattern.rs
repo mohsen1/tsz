@@ -390,13 +390,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .iter()
                         .any(|&arg| self.type_contains_infer_inner(arg, visited))
             }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.interner().get_conditional(cond_id);
-                self.type_contains_infer_inner(cond.check_type, visited)
-                    || self.type_contains_infer_inner(cond.extends_type, visited)
-                    || self.type_contains_infer_inner(cond.true_type, visited)
-                    || self.type_contains_infer_inner(cond.false_type, visited)
-            }
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().get_mapped(mapped_id);
                 mapped
@@ -440,7 +433,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Enum(_def_id, member_type) => {
                 self.type_contains_infer_inner(member_type, visited)
             }
-            TypeData::Intrinsic(_)
+            // `Conditional`: an `infer X` declaration is scoped to the `extends`
+            // clause of the conditional that introduces it, and `infer` can
+            // syntactically only appear in an `extends` clause (references to the
+            // inferred type are `TypeParameter`, not `Infer`). Every `Infer` node
+            // inside a conditional is therefore *bound* by that conditional (or a
+            // deeper nested one), so a nested conditional contributes no free infer
+            // site to an enclosing conditional. Descending into it would make an
+            // outer conditional whose `extends` clause merely *embeds* a complete
+            // conditional — e.g. `[X] extends { p: unknown extends infer a ? a
+            // : never }[] ? ...` — spuriously enter infer-matching mode and take the
+            // false branch instead of the structural relation (issue #14238). The
+            // remaining kinds are leaves with no `infer`-bearing sub-structure.
+            TypeData::Conditional(_)
+            | TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)
             | TypeData::Recursive(_)

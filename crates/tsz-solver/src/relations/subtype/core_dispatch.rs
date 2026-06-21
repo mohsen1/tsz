@@ -652,15 +652,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // directly to avoid polluting the subtype cache with results computed under
             // different weak-type-enforcement policies.
             let saved = self.in_intersection_member_check;
+            let saved_property_check = self.in_property_check;
             self.in_intersection_member_check = true;
-            for &member in member_list.iter() {
-                if !self.check_subtype(source, member).is_true() {
-                    self.in_intersection_member_check = saved;
-                    return SubtypeResult::False;
+
+            // tsc judges weak-ness on the WHOLE intersection target, not per
+            // member: `isWeakType(A & B)` is true only when *every* member is a
+            // weak object type. A member check inside an outer property comparison
+            // sets `in_property_check`, which would otherwise force the per-member
+            // weak check back on (objects.rs) even though the combined target is
+            // not weak — e.g. `Meta & ((...args) => Fn)` is non-weak because the
+            // call-signature member is not a weak object. When the whole
+            // intersection is not weak, clear `in_property_check` for the member
+            // checks so a source that satisfies every constituent — including a
+            // function value satisfying an all-optional object constituent — is
+            // accepted, matching tsc. When the whole intersection IS weak (every
+            // member weak), keep `in_property_check` so
+            // `{ c: string } <: { a?: string } & { b?: number }` still fails.
+            // The weak-ness prepass only matters when `in_property_check` is set
+            // (otherwise the clear is a no-op), so the common path pays nothing.
+            if self.in_property_check {
+                let intersection_target_is_weak = member_list.iter().all(|&member| {
+                    let resolved = self.resolve_lazy_type(member);
+                    object_shape_id(self.interner, resolved)
+                        .or_else(|| object_with_index_shape_id(self.interner, resolved))
+                        .map(|sid| self.interner.object_shape(sid))
+                        .is_some_and(|shape| Self::is_weak_type_shape(&shape))
+                });
+                if !intersection_target_is_weak {
+                    self.in_property_check = false;
                 }
             }
+
+            let mut all_members_match = true;
+            for &member in member_list.iter() {
+                if !self.check_subtype(source, member).is_true() {
+                    all_members_match = false;
+                    break;
+                }
+            }
+
             self.in_intersection_member_check = saved;
-            return SubtypeResult::True;
+            self.in_property_check = saved_property_check;
+            return if all_members_match {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
         }
 
         if let (Some(s_kind), Some(t_kind)) = (

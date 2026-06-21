@@ -333,8 +333,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .arena
             .get(idx)
-            .map(|n| (self.full_start_of(n.pos), n.end))
-            .unwrap_or((0, 0));
+            .map_or((0, 0), |n| (self.full_start_of(n.pos), n.end));
         let length = end.saturating_sub(full_start);
 
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
@@ -400,8 +399,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .arena
             .get(idx)
-            .map(|n| (self.full_start_of(n.pos), n.end))
-            .unwrap_or((0, 0));
+            .map_or((0, 0), |n| (self.full_start_of(n.pos), n.end));
         let length = end.saturating_sub(full_start);
 
         if parent_node.kind == syntax_kind_ext::UNION_TYPE {
@@ -883,10 +881,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         current
     }
 
-    /// Apparent type of a deferred indexed access `B[K1]` whose base `B` is a
-    /// deferred conditional, for the TS2574 rest-element array-like check. Indexes
-    /// the conditional's branch-union constraint with `K1` (tsc's
-    /// `getConstraintOfIndexedAccessType`) and returns the evaluated result.
+    /// Apparent type of a deferred indexed access `B[K1]` for the TS2574
+    /// rest-element array-like check. Mirrors tsc's
+    /// `getConstraintOfIndexedAccessType`: reduce the base `B` to its apparent
+    /// type and index it with `K1`, then classify the resulting property type.
+    ///
+    /// Two apparent-base shapes are covered:
+    /// * a deferred conditional base — the apparent base is the conditional's
+    ///   branch-union constraint (`Cond<T>['suffix']`);
+    /// * an object / mapped / interface base — the apparent base is the resolved
+    ///   object shape itself, so the property type is read directly
+    ///   (`Parts<T>['suffix']` where `Parts<T>` reduces to `{ suffix: T }`).
+    ///
+    /// An alias-wrapped base (`Application(Lazy(_), [T])`) is expanded to its
+    /// resolved body first so both the aliased and inline forms are covered.
     /// Returns `None` when `type_id` is not such a deferred indexed access or the
     /// apparent type cannot be reduced concretely, leaving the caller to treat the
     /// type as indeterminate (legal).
@@ -896,45 +904,167 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common as q;
         let (base, index) = q::index_access_types(self.ctx.types, type_id)?;
-        // Only handle a still-generic conditional base; concrete indexed accesses
-        // already reduce through `evaluate_type` above. An alias-wrapped base
-        // (`Application(Lazy(Cond), [T])`) is expanded to its conditional first so
-        // both `Cond<T>[k]` and inline `(T extends ... ? ... : ...)[k]` are
-        // covered.
-        let conditional = if q::is_conditional_type(self.ctx.types, base) {
-            base
-        } else if q::is_generic_application(self.ctx.types, base) {
+        // Concrete indexed accesses already reduce through `evaluate_type` above;
+        // here the base is still generic. Expand a generic alias/interface
+        // application (`Application(Lazy(_), [T])`) to its resolved body so both
+        // the aliased and inline forms are covered.
+        let resolved_base = if q::is_generic_application(self.ctx.types, base) {
             let env = self.ctx.type_environment.borrow();
-            let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
+            crate::query_boundaries::flow_analysis::evaluate_application_type(
                 self.ctx.types,
                 &env,
                 base,
-            );
-            if q::is_conditional_type(self.ctx.types, expanded) {
-                expanded
-            } else {
+            )
+        } else {
+            base
+        };
+
+        // The apparent base to index: a conditional reduces to its branch-union
+        // constraint (`getConstraintOfIndexedAccessType`); an object/mapped/
+        // interface body is its own apparent type, so it is indexed directly.
+        let apparent_base = if q::is_conditional_type(self.ctx.types, resolved_base) {
+            let base_constraint =
+                q::conditional_branch_union_constraint(self.ctx.types, resolved_base)?;
+            // The branch-union collapsed to `error` — a branch references an
+            // unresolved import (already flagged TS2307), so its apparent type is
+            // `error`, which tsc treats as `any` (assignable to `readonly any[]`).
+            // Propagate `error` so the caller classifies the spread as array-like
+            // rather than emitting a spurious TS2574.
+            if base_constraint == tsz_solver::TypeId::ERROR {
+                return Some(tsz_solver::TypeId::ERROR);
+            }
+            if q::is_conditional_type(self.ctx.types, base_constraint)
+                || q::is_index_access_type(self.ctx.types, base_constraint)
+            {
                 return None;
             }
+            base_constraint
+        } else if q::is_object_or_mapped_type(self.ctx.types, resolved_base) {
+            resolved_base
         } else {
             return None;
         };
-        let base_constraint = q::conditional_branch_union_constraint(self.ctx.types, conditional)?;
-        if q::is_conditional_type(self.ctx.types, base_constraint)
-            || q::is_index_access_type(self.ctx.types, base_constraint)
-        {
-            return None;
+
+        // Read property `K1` off the apparent base, reducing through the env so a
+        // property contributed by a nested deferred application is materialized.
+        let apparent = self.reduce_apparent_indexed_property(apparent_base, index);
+        // An `error` property type is error contagion from an unresolved import;
+        // tsc treats it as `any`, so surface it as the (legal) apparent type.
+        if apparent == tsz_solver::TypeId::ERROR {
+            return Some(tsz_solver::TypeId::ERROR);
         }
-        let apparent = self
-            .ctx
-            .types
-            .evaluate_type(self.ctx.types.index_access(base_constraint, index));
-        if apparent == tsz_solver::TypeId::ERROR
-            || q::is_index_access_type(self.ctx.types, apparent)
+        if q::is_index_access_type(self.ctx.types, apparent)
             || q::is_conditional_type(self.ctx.types, apparent)
         {
             return None;
         }
         Some(apparent)
+    }
+
+    /// Reduce `apparent_base[K1]` to a concrete property type for the TS2574
+    /// check, mirroring tsc's `getConstraintOfIndexedAccessType`. The apparent
+    /// base may be an object, a homomorphic mapped type (`Simplify<X>`), or a
+    /// union/intersection of those. A homomorphic mapped type is reduced to its
+    /// template instantiated at `K1` (so `Simplify<X>[K1]` becomes `X[K1]`); the
+    /// resulting object — which can still embed a deferred application that
+    /// supplies the property — is expanded through the env-backed evaluator and
+    /// re-indexed. Bounded; leaves opaque fallbacks to the caller after the
+    /// resulting property type is classified.
+    fn reduce_apparent_indexed_property(
+        &self,
+        apparent_base: tsz_solver::TypeId,
+        index: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        use crate::query_boundaries::common as q;
+        let mut base = self.fully_expand_apparent_base(apparent_base);
+        // Unwrap homomorphic mapped types to the property type at `K1` a bounded
+        // number of times (`Simplify<Simplify<…>>` nesting), expanding the base
+        // each round so the eventual index reads a materialized shape.
+        for _ in 0..8 {
+            let Some(reduced) = q::mapped_property_type(self.ctx.types, base, index) else {
+                break;
+            };
+            // `Simplify<X>[K1]` reduces to `X[K1]`; recover `X` to keep expanding
+            // it, falling back to the reduced property type when it is no longer a
+            // `_[K1]` indexed access.
+            let next_base =
+                q::index_access_types(self.ctx.types, reduced).map_or(reduced, |(obj, _)| obj);
+            let expanded = self.fully_expand_apparent_base(next_base);
+            if expanded == base {
+                break;
+            }
+            base = expanded;
+        }
+        let indexed = self.ctx.types.index_access(base, index);
+        {
+            let env = self.ctx.type_environment.borrow();
+            let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
+                self.ctx.types,
+                &env,
+                indexed,
+            );
+            self.ctx.types.evaluate_type(expanded)
+        }
+    }
+
+    /// Recursively env-expand the apparent base of a deferred indexed access so a
+    /// property contributed by a nested deferred application can be read. A
+    /// branch-union member such as `Simplify<{ … } & Inner<T>>` leaves the
+    /// supplying `Inner<T>` application unexpanded after the top-level
+    /// `ApplicationEvaluator` pass; descend into union/intersection members and
+    /// re-run the env-backed evaluator on each so the eventual `[K1]` index reads
+    /// the resolved property. Bounded; returns the input unchanged when nothing
+    /// further reduces.
+    fn fully_expand_apparent_base(&self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
+        use crate::query_boundaries::common as q;
+        let expand_once = |ty: tsz_solver::TypeId| -> tsz_solver::TypeId {
+            let env = self.ctx.type_environment.borrow();
+            let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
+                self.ctx.types,
+                &env,
+                ty,
+            );
+            let evaluated = self.ctx.types.evaluate_type(expanded);
+            // A member that resolves to a deferred conditional (e.g. an
+            // intersection part `Inner<T>` whose body is `T extends … ? … :
+            // { suffix: Suffix }`) is reduced to its branch-union constraint —
+            // tsc's `getBaseConstraintOfType` of a conditional — so the property
+            // it contributes becomes readable. Leave non-conditionals untouched.
+            if q::is_conditional_type(self.ctx.types, evaluated)
+                && let Some(constraint) =
+                    q::conditional_branch_union_constraint(self.ctx.types, evaluated)
+                && !q::is_conditional_type(self.ctx.types, constraint)
+                && !q::is_index_access_type(self.ctx.types, constraint)
+            {
+                return constraint;
+            }
+            evaluated
+        };
+        let mut current = expand_once(type_id);
+        // Distribute into union/intersection members and expand each, then
+        // recombine through the interner so a member application that supplies the
+        // indexed property is materialized. A bounded handful of rounds covers
+        // realistic nesting (`Simplify<A & Inner<T>>`).
+        for _ in 0..8 {
+            let members = q::union_members(self.ctx.types, current)
+                .map(|m| (true, m))
+                .or_else(|| q::intersection_members(self.ctx.types, current).map(|m| (false, m)));
+            let Some((is_union, members)) = members else {
+                break;
+            };
+            let expanded_members: Vec<_> = members.iter().map(|&m| expand_once(m)).collect();
+            let next = if is_union {
+                self.ctx.types.union(expanded_members)
+            } else {
+                self.ctx.types.intersection(expanded_members)
+            };
+            let next = expand_once(next);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        current
     }
 
     pub(super) fn fixed_tuple_spread_elements(
