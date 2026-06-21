@@ -8,7 +8,7 @@ impl<'a> TypeFormatter<'a> {
         let mut parts = Vec::new();
         let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
-        if let Some(ref idx) = shape.string_index {
+        if let Some(idx) = shape.string_index_signature() {
             let key_name = idx
                 .param_name
                 .map(|a| self.atom(a).to_string())
@@ -19,6 +19,16 @@ impl<'a> TypeFormatter<'a> {
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
+            let key_name = idx
+                .param_name
+                .map(|a| self.atom(a).to_string())
+                .unwrap_or_else(|| "x".to_owned());
+            let ro = if idx.readonly { "readonly " } else { "" };
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format_index_signature_value(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
+        }
+        if let Some(idx) = shape.symbol_index_signature() {
             let key_name = idx
                 .param_name
                 .map(|a| self.atom(a).to_string())
@@ -146,6 +156,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         };
@@ -210,6 +221,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         };

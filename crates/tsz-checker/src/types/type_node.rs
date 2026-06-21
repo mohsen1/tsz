@@ -1147,6 +1147,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut symbol_index = None;
         let mut method_overloads: FxHashMap<Atom, Vec<OverloadEntry>> = FxHashMap::default();
         let mut method_overload_order: Vec<OverloadOrderKey> = Vec::new();
         let mut member_order: u32 = 0;
@@ -1435,6 +1436,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if is_valid_index_type || is_valid_via_ast {
                     if key_type == TypeId::NUMBER {
                         number_index = Some(info);
+                    } else if key_type == TypeId::SYMBOL {
+                        symbol_index = Some(info);
                     } else {
                         string_index = Some(info);
                     }
@@ -1578,24 +1581,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
             let factory = self.ctx.types.factory();
 
+            // `CallableShape` keeps the single-slot index convention: a `symbol`
+            // index rides in `string_index` (its `key_type` discriminates it).
             return factory.callable(CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index,
+                string_index: string_index.or(symbol_index),
                 number_index,
                 symbol: None,
                 is_abstract: false,
             });
         }
 
-        if string_index.is_some() || number_index.is_some() {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             let factory = self.ctx.types.factory();
 
             return factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 ..ObjectShape::default()
             });
         }

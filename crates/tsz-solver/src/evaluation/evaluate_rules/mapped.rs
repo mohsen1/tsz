@@ -274,6 +274,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys: Vec::new(),
                 has_string: true,
                 has_number: true,
+                has_symbol: false,
                 template_literals: Vec::new(),
                 symbol_keys: Vec::new(),
             }
@@ -849,6 +850,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // cannot carry it.
         let mut string_index_optional = false;
         let mut number_index_optional = false;
+        let mut symbol_index_optional = false;
 
         let string_index = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
@@ -894,6 +896,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
+        let symbol_index = if key_set.has_symbol {
+            match self.remap_key_type_for_mapped(mapped, TypeId::SYMBOL) {
+                Ok(Some(remapped)) => {
+                    if remapped != TypeId::SYMBOL {
+                        return self.interner().mapped(*mapped);
+                    }
+                    let (sig, optional) = self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::SYMBOL,
+                        is_identity_homomorphic || is_homomorphic,
+                        source_object,
+                    );
+                    symbol_index_optional = optional;
+                    Some(sig)
+                }
+                Ok(None) => None,
+                Err(()) => return self.interner().mapped(*mapped),
+            }
+        } else {
+            None
+        };
+
         let string_index = if string_index.is_none() && !key_set.template_literals.is_empty() {
             let key_type =
                 crate::utils::union_or_single(self.interner(), key_set.template_literals);
@@ -909,7 +933,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             string_index
         };
 
-        if string_index.is_some() || number_index.is_some() {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             // A non-homomorphic mapped type's index signatures derive from its
             // constraint, so `keyof` of the materialized object is the
             // constraint key space (see `ObjectFlags::MAPPED_CONSTRAINT_KEYS`).
@@ -925,11 +949,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if number_index_optional {
                 flags |= ObjectFlags::NUMBER_INDEX_OPTIONAL;
             }
+            if symbol_index_optional {
+                flags |= ObjectFlags::SYMBOL_INDEX_OPTIONAL;
+            }
             self.interner().object_with_index(ObjectShape {
                 flags,
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: None,
             })
         } else {

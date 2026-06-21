@@ -700,6 +700,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         ],
         string_index: None,
         number_index: Some(index_sig),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     });
@@ -707,6 +708,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         properties: vec![],
         string_index: None,
         number_index: Some(index_sig),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     });
@@ -991,6 +993,7 @@ fn format_object_with_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1019,6 +1022,7 @@ fn format_object_with_index_hides_duplicate_internal_default_alias() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1053,6 +1057,7 @@ fn format_object_with_number_index_signature() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1078,6 +1083,7 @@ fn format_object_with_readonly_number_index_signature() {
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1103,6 +1109,7 @@ fn format_object_with_readonly_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1131,6 +1138,7 @@ fn format_object_with_symbol_index_signature() {
                 param_name: param_name.map(|n| db.intern_string(n)),
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         };
@@ -1174,6 +1182,7 @@ fn format_object_with_index_many_properties_truncated() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1219,6 +1228,7 @@ fn format_object_with_index_truncation_skips_omitted_property_formatting() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1268,6 +1278,7 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1304,6 +1315,7 @@ fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
             param_name: Some(db.intern_string("key")),
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1351,6 +1363,7 @@ fn format_array_like_object_with_index_expands_to_locale_string_overload_display
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1397,6 +1410,7 @@ fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };

@@ -77,6 +77,7 @@ export function middle() {
         properties: vec![accessor],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(middle_sym),
     });
     let ctor_type = interner.callable(CallableShape {
@@ -126,6 +127,7 @@ fn test_structural_setter_only_property_uses_write_type() {
         properties: vec![setter_only],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -159,6 +161,7 @@ fn test_structural_authored_split_accessor_uses_get_set() {
         properties: vec![accessor],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -303,6 +306,7 @@ export function wrapClass(param: any) {
         properties: vec![foo],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(wrapped_sym),
     });
     let ctor_type = interner.callable(CallableShape {
@@ -364,6 +368,7 @@ export class Derived extends mixin(Base) {}
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(mixed_base_sym),
     });
 
@@ -420,6 +425,7 @@ export default class extends getGreeterBase() {}
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(greeter_ctor_sym),
     });
 
@@ -914,6 +920,7 @@ fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection()
             param_name: Some(x),
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let constructor_type = interner.callable(CallableShape {
@@ -1174,6 +1181,7 @@ namespace Test {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(iface_sym),
     });
     let ctor_type = interner.callable(CallableShape {
@@ -1263,6 +1271,7 @@ export class A {
         properties: vec![method, duplicate_property],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1330,6 +1339,7 @@ export class A {
         properties: vec![method],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1377,6 +1387,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
             param_name: Some(interner.intern_string("x")),
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1388,6 +1399,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
         )],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let static_string_type = interner.object_with_index(ObjectShape {
@@ -1398,6 +1410,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
         )],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let static_index_type = interner.union(vec![
@@ -1497,6 +1510,7 @@ const Value = class {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: Some(class_sym),
             }),
         )],
@@ -1617,6 +1631,7 @@ export namespace C {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(a_sym),
     });
     interner.store_display_alias(evaluated_type, app_type);

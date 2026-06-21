@@ -1331,6 +1331,7 @@ fn canonicalize_object_with_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -2147,6 +2148,7 @@ fn canonicalize_index_signature_key_name_alpha_equivalent() {
                 param_name: Some(interner.intern_string(key_name)),
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         })
@@ -2179,6 +2181,7 @@ fn canonicalize_index_signature_readonly_and_value_stay_distinct() {
                 param_name: Some(interner.intern_string("k")),
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         })

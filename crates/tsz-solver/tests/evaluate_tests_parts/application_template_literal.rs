@@ -94,6 +94,7 @@ fn test_application_ref_expansion_with_index_signature() {
 
     // Define: type Dict<T> = { [key: string]: T }
     let dict_body = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -121,6 +122,7 @@ fn test_application_ref_expansion_with_index_signature() {
 
     // Expected: { [key: string]: number }
     let expected = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -163,6 +165,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
 
     // Define: type NumericDict<T> = { [index: number]: T }
     let numeric_dict_body = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -190,6 +193,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
 
     // Expected: { [index: number]: string }
     let expected = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

@@ -390,6 +390,15 @@ fn alpha_canonicalize_type(
                 visited,
                 &mut local_changed,
             )?;
+            let symbol_index = alpha_canonicalize_index_signature(
+                interner,
+                shape.symbol_index,
+                binders,
+                bindings,
+                changed,
+                visited,
+                &mut local_changed,
+            )?;
 
             if !local_changed {
                 return Some(type_id);
@@ -400,6 +409,7 @@ fn alpha_canonicalize_type(
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: shape.symbol,
             };
             Some(if matches!(key, TypeData::ObjectWithIndex(_)) {
@@ -646,6 +656,13 @@ fn restore_alpha_type(
                 visited,
                 &mut changed,
             )?;
+            let symbol_index = restore_alpha_index_signature(
+                interner,
+                shape.symbol_index,
+                bindings,
+                visited,
+                &mut changed,
+            )?;
             if !changed {
                 return Some(type_id);
             }
@@ -654,6 +671,7 @@ fn restore_alpha_type(
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: shape.symbol,
             };
             Some(if matches!(key, TypeData::ObjectWithIndex(_)) {

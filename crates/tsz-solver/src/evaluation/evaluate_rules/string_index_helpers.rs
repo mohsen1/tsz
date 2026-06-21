@@ -162,6 +162,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
 
@@ -186,6 +187,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         })
     }
@@ -248,6 +250,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         // A numeric literal prefers the number index signature.
@@ -271,6 +274,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -288,6 +292,7 @@ mod tests {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -316,6 +321,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -350,6 +356,7 @@ mod tests {
                     readonly: false,
                     param_name: None,
                 }),
+                symbol_index: None,
                 symbol: None,
             });
             // Vary the brand name/type so the rule is structural, not name-driven.
@@ -393,6 +400,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         let key = tagged_number(&db, "id", TypeId::STRING);
@@ -410,6 +418,7 @@ mod tests {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         let key = tagged_number(&db, "tag", TypeId::NUMBER);
@@ -437,6 +446,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         let brand_atom = db.intern_string("g");

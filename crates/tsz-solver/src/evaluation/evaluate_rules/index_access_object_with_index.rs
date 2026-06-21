@@ -13,14 +13,8 @@ pub(super) fn evaluate_object_with_index<R: TypeResolver>(
     shape: &ObjectShape,
     index_type: TypeId,
 ) -> TypeId {
-    let string_index = shape
-        .string_index
-        .as_ref()
-        .filter(|idx| idx.key_type != TypeId::SYMBOL);
-    let symbol_index = shape
-        .string_index
-        .as_ref()
-        .filter(|idx| idx.key_type == TypeId::SYMBOL);
+    let string_index = shape.string_index_signature();
+    let symbol_index = shape.symbol_index_signature();
 
     // If index is a union, evaluate each member.
     if let Some(members) = union_list_id(evaluator.interner(), index_type) {

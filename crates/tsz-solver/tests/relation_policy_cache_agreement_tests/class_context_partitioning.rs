@@ -28,6 +28,7 @@ fn subtype_cache_skips_class_check_context() {
         Some(source_symbol),
     );
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -92,6 +93,7 @@ fn class_check_context_verdict_uses_instance_local_memo_not_shared_cache() {
         Some(source_symbol),
     );
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -162,6 +164,7 @@ fn assignability_relation_context_propagates_class_check_without_shared_cache() 
         Some(source_symbol),
     );
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

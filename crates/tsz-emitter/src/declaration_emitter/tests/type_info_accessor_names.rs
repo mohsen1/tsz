@@ -28,6 +28,7 @@ function makeThing() {
         properties: vec![value, other],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let setter_name = |name: &str| setter_names.get(name).cloned();

@@ -108,6 +108,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             keys: Vec::new(),
             has_string: false,
             has_number: false,
+            has_symbol: false,
             template_literals: Vec::new(),
             symbol_keys: Vec::new(),
         };
@@ -139,10 +140,12 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                     } => {
                         self.collect_props_into_keys(&mut keys, properties);
                         keys.has_string = string_index.is_some();
                         keys.has_number = number_index.is_some();
+                        keys.has_symbol = symbol_index.is_some();
                         tracing::trace!(
                             keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                             has_string = keys.has_string,
@@ -175,10 +178,12 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                                     properties,
                                     string_index,
                                     number_index,
+                                    symbol_index,
                                 } => {
                                     self.collect_props_into_keys(&mut keys, properties);
                                     keys.has_string = string_index.is_some();
                                     keys.has_number = number_index.is_some();
+                                    keys.has_symbol = symbol_index.is_some();
                                     tracing::trace!(
                                         keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                                         "extract_mapped_keys: extracted keys from evaluated KeyOf operand"
@@ -249,6 +254,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                     } => {
                         let mut members = Vec::new();
 
@@ -273,6 +279,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                             && checker.is_assignable_to(number_sig.key_type, index_type)
                         {
                             members.push(number_sig.value_type);
+                        }
+                        if let Some(symbol_sig) = symbol_index
+                            && checker.is_assignable_to(symbol_sig.key_type, index_type)
+                        {
+                            members.push(symbol_sig.value_type);
                         }
 
                         if members.is_empty() {
@@ -302,7 +313,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         continue;
                     }
                     if member == TypeId::SYMBOL {
-                        // Generic `symbol` type — no concrete index to track.
+                        // Bare `symbol` intrinsic key — lowers to a `symbol` index
+                        // signature, like `string`/`number` above.
+                        keys.has_symbol = true;
                         continue;
                     }
                     if matches!(
@@ -322,12 +335,14 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         keys.keys.extend(inner_keys.keys);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
+                        keys.has_symbol |= inner_keys.has_symbol;
                         keys.template_literals.extend(inner_keys.template_literals);
                         keys.symbol_keys.extend(inner_keys.symbol_keys);
                     }
                 }
                 if !keys.has_string
                     && !keys.has_number
+                    && !keys.has_symbol
                     && keys.keys.is_empty()
                     && keys.template_literals.is_empty()
                     && keys.symbol_keys.is_empty()
@@ -342,6 +357,12 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             TypeData::Intrinsic(IntrinsicKind::Number) => {
                 keys.has_number = true;
+                Some(keys)
+            }
+            TypeData::Intrinsic(IntrinsicKind::Symbol) => {
+                // Bare `symbol` intrinsic as the whole key constraint
+                // (e.g. `{ [K in symbol]: V }`): lowers to a `symbol` index.
+                keys.has_symbol = true;
                 Some(keys)
             }
             TypeData::Intrinsic(IntrinsicKind::Never) => {

@@ -4,6 +4,7 @@ fn test_readonly_with_index_signature() {
     let interner = TypeInterner::new();
 
     let readonly_indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

@@ -1588,6 +1588,7 @@ impl TypeInterner {
             properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         self.intern(TypeData::Object(shape_id))
@@ -1614,6 +1615,7 @@ impl TypeInterner {
             properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol,
         });
         self.intern(TypeData::Object(shape_id))

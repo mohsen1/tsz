@@ -1297,6 +1297,11 @@ bitflags::bitflags! {
         /// The `number_index` signature is *optional* (`[k: number]?: V`). The
         /// numeric mirror of [`Self::STRING_INDEX_OPTIONAL`].
         const NUMBER_INDEX_OPTIONAL = 1 << 11;
+
+        /// The `symbol_index` signature is *optional* (`[k: symbol]?: V`, e.g.
+        /// from `Partial<Record<symbol, V>>`). The symbol mirror of
+        /// [`Self::STRING_INDEX_OPTIONAL`].
+        const SYMBOL_INDEX_OPTIONAL = 1 << 12;
     }
 }
 
@@ -1315,6 +1320,16 @@ pub struct ObjectShape {
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature: { [key: symbol]: T }.
+    ///
+    /// A type can carry a `symbol` index signature *simultaneously* with a
+    /// `string` (and/or `number`) index — e.g. `Record<PropertyKey, V>` /
+    /// `{ [K in string | number | symbol]: V }`. The bare `symbol` intrinsic key
+    /// therefore needs its own slot; it cannot share `string_index` (whose
+    /// `key_type` historically doubled as a string/symbol discriminator) without
+    /// the two colliding. The contained [`IndexSignature::key_type`] is always
+    /// [`TypeId::SYMBOL`].
+    pub symbol_index: Option<IndexSignature>,
     /// Nominal identity for class instance types (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
 }
@@ -1377,6 +1392,33 @@ impl ObjectShape {
     /// (`[k: number]?: V`, e.g. from `Partial<Record<number, V>>`).
     pub const fn number_index_is_optional(&self) -> bool {
         self.flags.contains(ObjectFlags::NUMBER_INDEX_OPTIONAL)
+    }
+
+    /// Return true if this shape's `symbol_index` signature is optional
+    /// (`[k: symbol]?: V`, e.g. from `Partial<Record<symbol, V>>`).
+    pub const fn symbol_index_is_optional(&self) -> bool {
+        self.flags.contains(ObjectFlags::SYMBOL_INDEX_OPTIONAL)
+    }
+
+    /// The `string` index signature (`[k: string]: V`), if any.
+    ///
+    /// Defensively excludes a `symbol`-keyed signature: the symbol index lives
+    /// in its own [`Self::symbol_index`] slot, but historically a symbol index
+    /// was encoded in `string_index` with `key_type == SYMBOL`, so this filter
+    /// keeps callers correct even if a legacy path still routes one here.
+    pub fn string_index_signature(&self) -> Option<&IndexSignature> {
+        self.string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+    }
+
+    /// The `symbol` index signature (`[k: symbol]: V`), if any.
+    pub fn symbol_index_signature(&self) -> Option<&IndexSignature> {
+        self.symbol_index.as_ref().or_else(|| {
+            self.string_index
+                .as_ref()
+                .filter(|idx| idx.key_type == TypeId::SYMBOL)
+        })
     }
 }
 

@@ -1307,6 +1307,7 @@ fn test_readonly_index_signature() {
     let interner = TypeInterner::new();
 
     let readonly_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1329,6 +1330,7 @@ fn test_readonly_index_vs_mutable() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let readonly_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1342,6 +1344,7 @@ fn test_readonly_index_vs_mutable() {
     });
 
     let mutable_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1529,6 +1532,7 @@ fn test_readonly_with_number_index() {
     let interner = TypeInterner::new();
 
     let readonly_number_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

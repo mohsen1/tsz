@@ -780,6 +780,7 @@ impl TypeInterner {
         let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
+        let mut merged_symbol_index: Option<IndexSignature> = None;
         let mut merged_fresh = true;
 
         for obj in &objects {
@@ -915,6 +916,30 @@ impl TypeInterner {
                 }
                 _ => {}
             }
+
+            match (&obj.symbol_index, &merged_symbol_index) {
+                (Some(idx), None) => {
+                    merged_symbol_index = Some(IndexSignature {
+                        key_type: idx.key_type,
+                        value_type: idx.value_type,
+                        readonly: idx.readonly,
+                        param_name: None,
+                    });
+                }
+                (Some(idx), Some(existing)) => {
+                    if existing.key_type != idx.key_type {
+                        return None;
+                    }
+                    merged_symbol_index = Some(IndexSignature {
+                        key_type: existing.key_type,
+                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
+                        // Intersection: readonly only if ALL constituents are readonly
+                        readonly: existing.readonly && idx.readonly,
+                        param_name: None,
+                    });
+                }
+                _ => {}
+            }
         }
 
         // Sort properties by name for consistent hashing
@@ -925,7 +950,9 @@ impl TypeInterner {
         } else {
             ObjectFlags::empty()
         };
-        let has_index = merged_string_index.is_some() || merged_number_index.is_some();
+        let has_index = merged_string_index.is_some()
+            || merged_number_index.is_some()
+            || merged_symbol_index.is_some();
 
         let intern_shape = |this: &Self, flags: ObjectFlags, properties: Vec<PropertyInfo>| {
             let shape_id = this.intern_object_shape(ObjectShape {
@@ -933,6 +960,7 @@ impl TypeInterner {
                 properties,
                 string_index: merged_string_index,
                 number_index: merged_number_index,
+                symbol_index: merged_symbol_index,
                 symbol: None,
             });
             if has_index {

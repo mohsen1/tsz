@@ -109,6 +109,7 @@ pub enum PropertyCollectionResult {
         properties: Vec<PropertyInfo>,
         string_index: Option<IndexSignature>,
         number_index: Option<IndexSignature>,
+        symbol_index: Option<IndexSignature>,
     },
 }
 
@@ -307,6 +308,7 @@ where
         prop_index: FxHashMap::default(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         seen: FxHashSet::default(),
         found_any: false,
     };
@@ -330,6 +332,7 @@ where
     } else if collector.properties.is_empty()
         && collector.string_index.is_none()
         && collector.number_index.is_none()
+        && collector.symbol_index.is_none()
     {
         // If no properties were collected, return NonObject
         PropertyCollectionResult::NonObject
@@ -340,6 +343,7 @@ where
             properties: collector.properties,
             string_index: collector.string_index,
             number_index: collector.number_index,
+            symbol_index: collector.symbol_index,
         }
     };
 
@@ -382,6 +386,7 @@ struct PropertyCollector<'a, R> {
     prop_index: FxHashMap<Atom, usize>,
     string_index: Option<IndexSignature>,
     number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
     /// Prevent infinite recursion for circular intersections like: type T = { a: number } & T
     seen: FxHashSet<TypeId>,
     /// Track if we encountered Any (makes the whole result Any, commutative)
@@ -601,6 +606,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         self.merge_shape(&shape);
@@ -800,6 +806,20 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.readonly = existing.readonly && idx.readonly;
             } else {
                 self.number_index = Some(*idx);
+            }
+        }
+
+        // Merge symbol index signature
+        if let Some(ref idx) = shape.symbol_index {
+            if let Some(existing) = &mut self.symbol_index {
+                // Intersect value types
+                existing.value_type = self
+                    .interner
+                    .intersect_types_raw2(existing.value_type, idx.value_type);
+                // Readonly only if ALL are readonly
+                existing.readonly = existing.readonly && idx.readonly;
+            } else {
+                self.symbol_index = Some(*idx);
             }
         }
     }

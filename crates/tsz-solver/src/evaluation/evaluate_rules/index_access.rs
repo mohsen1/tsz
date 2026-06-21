@@ -685,19 +685,22 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
             } => {
-                let merged = if string_index.is_some() || number_index.is_some() {
-                    let shape = ObjectShape {
-                        flags: crate::types::ObjectFlags::empty(),
-                        properties,
-                        string_index,
-                        number_index,
-                        symbol: None,
+                let merged =
+                    if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
+                        let shape = ObjectShape {
+                            flags: crate::types::ObjectFlags::empty(),
+                            properties,
+                            string_index,
+                            number_index,
+                            symbol_index,
+                            symbol: None,
+                        };
+                        self.evaluator.interner().object_with_index(shape)
+                    } else {
+                        self.evaluator.interner().object(properties)
                     };
-                    self.evaluator.interner().object_with_index(shape)
-                } else {
-                    self.evaluator.interner().object(properties)
-                };
                 Some(self.evaluator.recurse_index_access(merged, self.index_type))
             }
             PropertyCollectionResult::Any => Some(TypeId::ANY),

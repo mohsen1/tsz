@@ -665,6 +665,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         // Canonicalize index signatures if present
         let new_string_index = self.canonicalize_index_signature(&shape.string_index);
         let new_number_index = self.canonicalize_index_signature(&shape.number_index);
+        let new_symbol_index = self.canonicalize_index_signature(&shape.symbol_index);
 
         // Preserve the symbol field for nominal types (class instances)
         // This ensures that class A and class B with same properties remain distinct
@@ -676,6 +677,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             properties: new_props,
             string_index: new_string_index,
             number_index: new_number_index,
+            symbol_index: new_symbol_index,
             symbol,
         };
 

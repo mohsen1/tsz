@@ -342,6 +342,7 @@ mod shape_identity {
             properties: Vec::new(),
             string_index: Some(string_index_sig(interner, param_name)),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         }
     }

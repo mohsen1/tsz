@@ -284,6 +284,7 @@ fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let union = interner.union(vec![record_type, TypeId::NUMBER]);
@@ -1655,6 +1656,7 @@ fn test_narrow_by_typeof_object_with_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let union = interner.union(vec![TypeId::STRING, record_type]);
