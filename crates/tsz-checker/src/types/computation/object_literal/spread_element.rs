@@ -253,6 +253,23 @@ impl<'a> CheckerState<'a> {
                 *has_union_spread = true;
                 let mut new_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
 
+                // When earlier union spreads already produced branches, any
+                // named properties written since then accumulate in the main
+                // `properties` map (it was cleared after the previous union
+                // spread). Those intervening props are not present in the
+                // existing branches, and the post-union assembly only folds
+                // in props written after the LAST union spread — so without
+                // this snapshot they would vanish from every distributed
+                // branch. Capture them once (sorted by declaration order for
+                // determinism) and fold them into each existing branch below.
+                let intervening_props: Vec<PropertyInfo> = if union_spread_branches.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut props: Vec<PropertyInfo> = properties.values().cloned().collect();
+                    props.sort_by_key(|p| p.declaration_order);
+                    props
+                };
+
                 // Collect properties from each union member for TS2783
                 // and branching.
                 let mut all_member_props: Vec<Vec<PropertyInfo>> = members
@@ -324,6 +341,11 @@ impl<'a> CheckerState<'a> {
                         // Subsequent union spread: cross-product with existing branches
                         for existing in union_spread_branches.iter() {
                             let mut branch = existing.clone();
+                            // Fold in named props written since the previous
+                            // union spread so they survive this distribution.
+                            for prop in &intervening_props {
+                                self.merge_spread_property(&mut branch, prop);
+                            }
                             for prop in &member_props {
                                 self.merge_spread_property(&mut branch, prop);
                             }
