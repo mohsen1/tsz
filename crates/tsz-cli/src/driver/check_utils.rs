@@ -999,33 +999,58 @@ struct TsDirective {
     unused_diagnostic_length: u32,
 }
 
+/// Match `commentDirectiveRegExMultiLine`
+/// (`/^(?:\/|\*)*\s*@(ts-expect-error|ts-ignore)/`) against a block comment's
+/// last line. tsc only registers a block comment as a directive when its final
+/// line begins the directive, so `/* @ts-ignore */` qualifies but
+/// `/* @ts-ignore\n...*/` (directive on a non-final line) does not.
+fn directive_in_block_last_line(last_line: &str) -> Option<DirectiveKind> {
+    let body = last_line
+        .trim_start()
+        .trim_start_matches(|c| c == '/' || c == '*')
+        .trim_start();
+    for (kind, text) in [
+        (DirectiveKind::ExpectError, "@ts-expect-error"),
+        (DirectiveKind::Ignore, "@ts-ignore"),
+    ] {
+        if let Some(rest) = body.strip_prefix(text)
+            && (rest.is_empty() || is_directive_separator(rest.as_bytes()[0]))
+        {
+            return Some(kind);
+        }
+    }
+    None
+}
+
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in
 /// comments. `line_map` must be built from the same `text`.
+///
+/// tsc registers each directive on the line of the comment's end (`_tsc.js`
+/// `createCommentDirectivesMap`): single-line `//`/`///` comments match the
+/// whole comment; block comments are matched against their last line alone.
 fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
     let mut directives = Vec::new();
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
-        let comment_text = comment.get_text(text);
-        let Some((kind, directive_offset)) = find_directive_in_text(comment_text) else {
-            continue;
+        let (kind, unused_diagnostic_start) = if comment.is_multi_line {
+            let close_line = line_map.line_index(comment.end.saturating_sub(1)) as usize;
+            let last_line_start = line_map
+                .line_start(close_line)
+                .unwrap_or(comment.pos)
+                .max(comment.pos);
+            let last_line = &text[last_line_start as usize..comment.end as usize];
+            let Some(kind) = directive_in_block_last_line(last_line) else {
+                continue;
+            };
+            (kind, last_line_start)
+        } else {
+            let Some((kind, _offset)) = find_directive_in_text(comment.get_text(text)) else {
+                continue;
+            };
+            (kind, comment.pos)
         };
 
-        let suppressed_line = if comment.is_multi_line {
-            let close_line = line_map.line_index(comment.end.saturating_sub(1));
-            close_line + 1
-        } else {
-            let comment_line = line_map.line_index(comment.pos);
-            comment_line + 1
-        };
-        let directive_start = comment.pos.saturating_add(directive_offset);
-        let directive_line = line_map.line_index(directive_start) as usize;
-        let directive_line_start = line_map.line_start(directive_line).unwrap_or(comment.pos);
-        let unused_diagnostic_start = if comment.is_multi_line && directive_line_start > comment.pos
-        {
-            directive_line_start
-        } else {
-            comment.pos
-        };
+        let suppressed_line = line_map.line_index(comment.end.saturating_sub(1)) + 1;
 
         directives.push(TsDirective {
             is_expect_error: kind == DirectiveKind::ExpectError,
@@ -1036,6 +1061,54 @@ fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
     }
 
     directives
+}
+
+/// Mirror tsc's `markPrecedingCommentDirectiveLine` (`_tsc.js`): starting from
+/// the line above `diag_line`, walk upward skipping blank lines and
+/// `//`-comment lines and return the first line that carries a directive. Stop
+/// (returning `None`) at the first line with non-comment content. Block-comment
+/// directive lines are caught before the content check so a `/* @ts-ignore */`
+/// line still suppresses across an intervening blank line.
+fn preceding_directive_line(
+    diag_line: u32,
+    directive_lines: &rustc_hash::FxHashSet<u32>,
+    text: &str,
+    line_map: &LineMap,
+) -> Option<u32> {
+    if diag_line == 0 {
+        return None;
+    }
+    let mut line = diag_line - 1;
+    loop {
+        if directive_lines.contains(&line) {
+            return Some(line);
+        }
+        let line_text = line_trimmed(text, line_map, line);
+        if !line_text.is_empty() && !line_text.starts_with("//") {
+            return None;
+        }
+        if line == 0 {
+            return None;
+        }
+        line -= 1;
+    }
+}
+
+/// The trimmed text of a single 0-based `line` in `text`.
+fn line_trimmed<'a>(text: &'a str, line_map: &LineMap, line: u32) -> &'a str {
+    let Some(start) = line_map.line_start(line as usize) else {
+        return "";
+    };
+    let start = start as usize;
+    let end = line_map
+        .line_start(line as usize + 1)
+        .map(|next| next as usize)
+        .unwrap_or(text.len())
+        .min(text.len());
+    if start >= end {
+        return "";
+    }
+    text[start..end].trim()
 }
 
 /// Apply `@ts-expect-error` and `@ts-ignore` directive suppression to diagnostics.
@@ -1059,9 +1132,18 @@ pub(super) fn apply_ts_directive_suppression(
     let has_ts_nocheck =
         tsz_common::comments::has_ts_directive_in_leading_trivia(source_text, "@ts-nocheck");
 
-    let mut directive_used = vec![false; directives.len()];
+    // Lines (0-based) carrying a directive. tsc keys directives by the line of
+    // the comment's end; `suppressed_line` is that line + 1.
+    let directive_lines: rustc_hash::FxHashSet<u32> = directives
+        .iter()
+        .map(|d| d.suppressed_line.saturating_sub(1))
+        .collect();
 
-    // Suppress diagnostics on directive-targeted lines.
+    // Directive lines that suppressed (or were touched by) at least one
+    // diagnostic. An unused `@ts-expect-error` line draws TS2578.
+    let mut used_directive_lines: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+
+    // Suppress diagnostics whose line resolves to a preceding directive.
     //
     // tsc applies `@ts-ignore` and `@ts-expect-error` uniformly across the
     // checking pipeline, including the JSDoc `@type` lookup that runs during
@@ -1077,13 +1159,13 @@ pub(super) fn apply_ts_directive_suppression(
     // used. Keep those diagnostics while recording the directive hit.
     diagnostics.retain(|diag| {
         let diag_line = line_map.line_index(diag.start);
-        for (idx, directive) in directives.iter().enumerate() {
-            if diag_line == directive.suppressed_line {
-                directive_used[idx] = true;
-                return is_ts_directive_unsuppressible_syntactic(diag.code);
+        match preceding_directive_line(diag_line, &directive_lines, source_text, &line_map) {
+            Some(dline) => {
+                used_directive_lines.insert(dline);
+                is_ts_directive_unsuppressible_syntactic(diag.code)
             }
+            None => true,
         }
-        true
     });
 
     // Emit TS2578 for unused @ts-expect-error directives.
@@ -1093,8 +1175,9 @@ pub(super) fn apply_ts_directive_suppression(
     // opener, while directives inside multiline block comments start at the
     // line containing the directive text.
     if !has_ts_nocheck {
-        for (idx, directive) in directives.iter().enumerate() {
-            if directive.is_expect_error && !directive_used[idx] {
+        for directive in &directives {
+            let dline = directive.suppressed_line.saturating_sub(1);
+            if directive.is_expect_error && !used_directive_lines.contains(&dline) {
                 diagnostics.push(Diagnostic::error(
                     file_name.to_string(),
                     directive.unused_diagnostic_start,
