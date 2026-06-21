@@ -1218,16 +1218,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        if type_id == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if type_id.is_intrinsic() {
-            return type_id;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Array(elem)) => elem,
-            _ => type_id,
-        }
+        crate::type_queries::rest_spread_element_type(self.interner, type_id)
     }
 
     fn are_parameters_compatible(&self, source: TypeId, target: TypeId, bivariant: bool) -> bool {

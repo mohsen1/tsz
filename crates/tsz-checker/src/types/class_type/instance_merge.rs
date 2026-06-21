@@ -144,29 +144,47 @@ impl CheckerState<'_> {
                                 .borrow()
                                 .get(&base_class_idx)
                                 .copied();
-                            if let Some(cached_partial) = cached_partial {
-                                self.merge_base_instance_properties(
-                                    cached_partial,
-                                    &mut b.properties,
-                                    &mut b.string_index,
-                                    &mut b.number_index,
-                                );
+                            // The base class is mid-resolution (base<->derived cycle):
+                            // we use a partial/prescan type for it instead of recursing.
+                            // That partial still carries the base class's own type
+                            // parameters (e.g. `_def: Def`), so it must be instantiated
+                            // with the heritage type arguments (`Base<DerivedDef>`)
+                            // before merging — mirroring the normal non-cycle path
+                            // below — or inherited members keep the bare type param
+                            // (its constraint) instead of the supplied argument.
+                            let partial = if let Some(cached_partial) = cached_partial {
+                                Some(cached_partial)
                             } else if let Some(base_node) = self.ctx.arena.get(base_class_idx)
                                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
                             {
                                 // No cached partial type yet — build a quick prescan
                                 // from the base class's declared property types and
                                 // constructor parameter properties.
-                                let partial =
+                                let prescan =
                                     self.quick_prescan_class_members(base_class_idx, base_class);
-                                if partial != TypeId::ERROR {
-                                    self.merge_base_instance_properties(
+                                (prescan != TypeId::ERROR).then_some(prescan)
+                            } else {
+                                None
+                            };
+                            if let Some(partial) = partial {
+                                let base_type_parameters = self
+                                    .ctx
+                                    .arena
+                                    .get(base_class_idx)
+                                    .and_then(|node| self.ctx.arena.get_class(node))
+                                    .and_then(|cls| cls.type_parameters.clone());
+                                let instantiated = self
+                                    .instantiate_partial_base_with_heritage_args(
                                         partial,
-                                        &mut b.properties,
-                                        &mut b.string_index,
-                                        &mut b.number_index,
+                                        base_type_parameters.as_ref(),
+                                        type_arguments,
                                     );
-                                }
+                                self.merge_base_instance_properties(
+                                    instantiated,
+                                    &mut b.properties,
+                                    &mut b.string_index,
+                                    &mut b.number_index,
+                                );
                             }
                         }
                         break;
@@ -372,6 +390,81 @@ impl CheckerState<'_> {
             }
         }
         None
+    }
+
+    /// Instantiate a base class's partial/prescan instance type with the
+    /// heritage type arguments from an `extends Base<Args>` clause.
+    ///
+    /// Used by the base<->derived cycle fallback in
+    /// [`Self::class_instance_merge_base_members`], where the base class is
+    /// mid-resolution and a partial type is used instead of recursing into its
+    /// full instance type. That partial still carries the base class's own type
+    /// parameters, so its members (e.g. `_def: Def`) must be substituted with
+    /// the supplied arguments (`Base<DerivedDef>` => `Def := DerivedDef`) before
+    /// being merged into the derived class, exactly as the normal non-cycle
+    /// path does. Without a heritage clause that has fewer/more args than the
+    /// base has parameters, defaults/constraints fill or excess args truncate,
+    /// mirroring the normal path. When the base is non-generic or no arguments
+    /// can apply, the partial is returned unchanged.
+    fn instantiate_partial_base_with_heritage_args(
+        &mut self,
+        partial: TypeId,
+        base_type_parameters: Option<&tsz_parser::parser::NodeList>,
+        type_arguments: Option<&tsz_parser::parser::NodeList>,
+    ) -> TypeId {
+        let base_param_count = base_type_parameters.map_or(0, |params| params.nodes.len());
+        if base_param_count == 0 {
+            // Non-generic base: nothing to substitute.
+            return partial;
+        }
+
+        let mut type_args = Vec::with_capacity(type_arguments.map_or(0, |a| a.nodes.len()));
+        if let Some(args) = type_arguments {
+            for &arg_idx in &args.nodes {
+                type_args.push(self.get_type_from_type_node(arg_idx));
+            }
+        }
+
+        if can_skip_base_instantiation(base_param_count, type_args.len()) {
+            return partial;
+        }
+
+        let base_type_parameters = base_type_parameters.cloned();
+        let (base_type_params, base_type_param_updates) =
+            self.push_type_parameters(&base_type_parameters);
+
+        // Fill unsupplied trailing parameters from their default/constraint,
+        // instantiated against the substitution built so far — mirroring the
+        // normal heritage path.
+        if type_args.len() < base_type_params.len() {
+            for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
+                let fallback = param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN);
+                let substitution = TypeSubstitution::from_args(
+                    self.ctx.types,
+                    &base_type_params[..param_index],
+                    &type_args,
+                );
+                type_args.push(
+                    crate::query_boundaries::common::instantiate_type_preserving_meta(
+                        self.ctx.types,
+                        fallback,
+                        &substitution,
+                    ),
+                );
+            }
+        }
+        if type_args.len() > base_type_params.len() {
+            type_args.truncate(base_type_params.len());
+        }
+
+        let substitution =
+            TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+        let instantiated = instantiate_type(self.ctx.types, partial, &substitution);
+        self.pop_type_parameters(base_type_param_updates);
+        instantiated
     }
 
     /// Merge interface declarations for class/interface merging (class members

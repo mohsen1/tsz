@@ -54,6 +54,15 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
             )
         {
+            // A cross-arena lib interface (e.g. `Generator<Y, R>`) whose
+            // type-parameter push collided with the current file arena cannot be
+            // substituted by the shared evaluator; recover before delegating. See
+            // `recover_arena_collided_application_for_property_access`.
+            if let Some(recovered) =
+                self.recover_arena_collided_application_for_property_access(type_id)
+            {
+                return recovered;
+            }
             return self.evaluate_application_type(type_id);
         }
         let Some(ApplicationBaseBody {
@@ -70,16 +79,38 @@ impl<'a> CheckerState<'a> {
         if type_params.is_empty() {
             return body_type;
         }
+        self.instantiate_application_body_for_property_access(
+            body_type,
+            &type_params,
+            &args,
+            type_id,
+        )
+    }
 
+    /// Instantiate a generic interface/class body with its type parameters bound
+    /// to an application's arguments, then env-evaluate the result.
+    ///
+    /// The arguments are env-evaluated, substituted into `body_type`, polymorphic
+    /// `this` is rebound to `application`, and the result is env-evaluated;
+    /// evaluation that collapses to `ERROR` falls back to the pre-evaluation
+    /// instantiation. Shared by `evaluate_application_type_for_property_access`
+    /// and the arena-collision recovery so the two stay in lock-step.
+    fn instantiate_application_body_for_property_access(
+        &mut self,
+        body_type: TypeId,
+        type_params: &[TypeParamInfo],
+        args: &[TypeId],
+        application: TypeId,
+    ) -> TypeId {
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| self.evaluate_type_with_env(arg))
             .collect();
         let substitution =
-            query::TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
+            query::TypeSubstitution::from_args(self.ctx.types, type_params, &evaluated_args);
         let mut instantiated = query::instantiate_type(self.ctx.types, body_type, &substitution);
         if query::contains_this_type(self.ctx.types, instantiated) {
-            instantiated = query::substitute_this_type(self.ctx.types, instantiated, type_id);
+            instantiated = query::substitute_this_type(self.ctx.types, instantiated, application);
         }
         let evaluated = self.evaluate_type_with_env(instantiated);
         if evaluated == TypeId::ERROR {
@@ -87,6 +118,68 @@ impl<'a> CheckerState<'a> {
         } else {
             evaluated
         }
+    }
+
+    /// Recover a property-access receiver whose cross-arena type-parameter push
+    /// collided with the current file arena, leaving the shared
+    /// `evaluate_application_type` unable to substitute its arguments.
+    ///
+    /// `type_reference_symbol_type_with_params` pushes a lib interface's
+    /// type-parameter nodes against the *current file* arena; when the owner
+    /// arena differs the `NodeIndex`es collide with unrelated current-file nodes,
+    /// so the pushed set disagrees in arity with the application arguments and the
+    /// shared evaluator's substitution against that same body is a no-op (the
+    /// interface's own parameters leak — false TS2322 on `Generator<Y,
+    /// R>.next().value`). Detect that arity mismatch and re-instantiate the
+    /// (identical) body with the symbol's canonical parameters, which match the
+    /// body's identities. Returns `None` for every well-formed application so the
+    /// caller keeps the shared evaluator.
+    pub(crate) fn recover_arena_collided_application_for_property_access(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let (base, args) = query::application_info(self.ctx.types, type_id)?;
+        if args.is_empty() {
+            return None;
+        }
+        // Cheap gate before the heavier interface re-lowering below: the arena
+        // collision only affects a cross-file interface/class base, whose
+        // type-parameter nodes live in a different arena than the push reads.
+        // Same-file generics and type-alias applications (`Partial`, `Pick`,
+        // `Record`, …) push against their own arena and never collide, so they
+        // keep the shared evaluator without paying the probe.
+        let base_def_id = query::lazy_def_id(self.ctx.types, base)?;
+        let base_def_info = self.ctx.definition_store.get(base_def_id)?;
+        if base_def_info
+            .file_id
+            .is_none_or(|file_id| file_id == self.ctx.current_file_idx as u32)
+            || !matches!(
+                base_def_info.kind,
+                tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+            )
+        {
+            return None;
+        }
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        // The body and pushed parameters come from the same query the shared
+        // evaluator uses, so the arity comparison is exactly its substitution
+        // input. A matching arity means the shared evaluator already substitutes
+        // correctly; bail and leave it untouched.
+        let (body_type, pushed_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if pushed_params.len() == args.len()
+            || body_type == TypeId::ANY
+            || body_type == TypeId::ERROR
+        {
+            return None;
+        }
+        let canonical = self.get_type_params_for_symbol(sym_id);
+        if canonical.len() != args.len() {
+            return None;
+        }
+        let instantiated = self.instantiate_application_body_for_property_access(
+            body_type, &canonical, &args, type_id,
+        );
+        (instantiated != body_type).then_some(instantiated)
     }
 
     pub(crate) fn resolve_application_base_body(

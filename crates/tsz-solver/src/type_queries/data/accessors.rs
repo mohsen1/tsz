@@ -634,6 +634,69 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
     Some(db.union(members))
 }
 
+/// Element type contributed by a variadic/rest spread `...X`.
+///
+/// A spread element distributes the type obtained by number-indexing its operand,
+/// never the operand itself. This is the canonical "element type of an array-like
+/// spread" used wherever a tuple's rest element is unpacked (indexed access,
+/// constraint inference, best-common-type, signature relation):
+/// - `...E[]` / `...ReadonlyArray<E>` → `E`
+/// - `...[A, B, ...C[]]` → `A | B | C`
+/// - `...End` where `End extends string[]` (a type parameter / alias / application
+///   whose array-like form has element `string`) → `string`
+/// - `...End` where `End extends [A, B]` (a tuple constraint) → `A | B`
+///
+/// Anything that is not array-like is returned unchanged, mirroring tsc's
+/// `getElementTypeOfArrayType`. Without this a spread of a generic array-constrained
+/// parameter leaks the whole array type into element positions.
+pub fn rest_spread_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    rest_spread_element_type_inner(db, type_id, 0)
+}
+
+fn rest_spread_element_type_inner(db: &dyn TypeDatabase, type_id: TypeId, depth: usize) -> TypeId {
+    if type_id == TypeId::ANY {
+        return TypeId::ANY;
+    }
+    // Guard against self-referential constraints (`T extends T[]`-style chains).
+    if depth > 16 {
+        return type_id;
+    }
+
+    // Array-like form: `E[]`, `ReadonlyArray<E>`, or a type parameter / alias /
+    // application whose constraint or evaluation reduces to an `Array` element.
+    if let Some(elem) = get_array_element_type(db, type_id) {
+        return elem;
+    }
+
+    // Tuple operand (`...[A, B]`, `...[A, ...B[]]`, or a type parameter constrained
+    // to a tuple): union of each element's contribution, recursing through nested
+    // rest elements so they are unwrapped too. `get_tuple_elements` resolves
+    // readonly/type-parameter/alias wrappers down to the underlying tuple.
+    if let Some(elements) = get_tuple_elements(db, type_id) {
+        if elements.is_empty() {
+            return TypeId::NEVER;
+        }
+        let members: Vec<TypeId> = elements
+            .iter()
+            .map(|elem| {
+                let ty = if elem.rest {
+                    rest_spread_element_type_inner(db, elem.type_id, depth + 1)
+                } else {
+                    elem.type_id
+                };
+                if elem.optional {
+                    db.union2(ty, TypeId::UNDEFINED)
+                } else {
+                    ty
+                }
+            })
+            .collect();
+        return db.union(members);
+    }
+
+    type_id
+}
+
 /// Compute the `keyof` type for an object shape.
 ///
 /// Returns the union of string literal types for all property names in the object.

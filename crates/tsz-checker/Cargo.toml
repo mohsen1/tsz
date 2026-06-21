@@ -174,6 +174,9 @@ path = "tests/for_await_type_parameter_iterability_tests.rs"
 name = "async_iterable_type_param_element_tests"
 path = "tests/async_iterable_type_param_element_tests.rs"
 [[test]]
+name = "generic_generator_member_substitution_tests"
+path = "tests/generic_generator_member_substitution_tests.rs"
+[[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 [[test]]
@@ -410,6 +413,9 @@ path = "tests/ts2307_per_site_dedup_tests.rs"
 name = "ts2769_anchor_disagreeing_overloads_tests"
 path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
 [[test]]
+name = "ts2749_export_alias_local_class_collision_tests"
+path = "tests/ts2749_export_alias_local_class_collision_tests.rs"
+[[test]]
 name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
 [[test]]
@@ -586,6 +592,9 @@ path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
 name = "deferred_conditional_arithmetic_operand_tests"
 path = "tests/deferred_conditional_arithmetic_operand_tests.rs"
+[[test]]
+name = "keyof_type_param_default_conditional_repro"
+path = "tests/keyof_type_param_default_conditional_repro.rs"
 [[test]]
 name = "hkt_self_augmentation_keyof_repro"
 path = "tests/hkt_self_augmentation_keyof_repro.rs"
@@ -1907,6 +1916,9 @@ workspace = true
 name = "type_only_import_value_use_attribution_tests"
 path = "tests/type_only_import_value_use_attribution_tests.rs"
 [[test]]
+name = "callable_interface_index_tests"
+path = "tests/callable_interface_index_tests.rs"
+[[test]]
 name = "distributive_callable_branch_tests"
 path = "tests/distributive_callable_branch_tests.rs"
 [[test]]
@@ -1981,9 +1993,17 @@ name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
 
 [[test]]
+name = "global_this_type_position_member_tests"
+path = "tests/global_this_type_position_member_tests.rs"
+
+[[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
 
 [[test]]
 name = "type_predicate_alias_resolution_tests"
 path = "tests/type_predicate_alias_resolution_tests.rs"
+
+[[test]]
+name = "object_keyword_any_index_tests"
+path = "tests/object_keyword_any_index_tests.rs"

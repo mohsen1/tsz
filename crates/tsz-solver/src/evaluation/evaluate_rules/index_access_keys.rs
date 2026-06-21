@@ -8,7 +8,7 @@ use crate::types::{
     IntrinsicKind, LiteralValue, SymbolRef, TupleElement, TypeData, TypeId, TypeListId,
 };
 use crate::utils;
-use crate::visitor::{TypeVisitor, array_element_type, literal_number, tuple_list_id};
+use crate::visitor::{TypeVisitor, literal_number, tuple_list_id};
 
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
@@ -186,26 +186,12 @@ impl TypeVisitor for ArrayKeyVisitor<'_> {
 
 /// Get the element type of a rest element, handling arrays and nested tuples.
 ///
-/// For arrays, returns the element type. For tuples, returns the union of all element types.
-/// Otherwise returns the type as-is.
+/// Delegates to the canonical [`crate::type_queries::rest_spread_element_type`],
+/// which distributes the number-indexed element of the spread operand (`...E[]` →
+/// `E`, `...[A, B]` → `A | B`, `...End` where `End extends string[]` → `string`)
+/// instead of leaking the whole array type.
 pub(super) fn rest_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    if let Some(elem) = array_element_type(db, type_id) {
-        return elem;
-    }
-    if let Some(elements) = tuple_list_id(db, type_id) {
-        let elements = db.tuple_list(elements);
-        let types: Vec<TypeId> = elements
-            .iter()
-            .map(|e| tuple_element_type_with_rest(db, e))
-            .collect();
-        if types.is_empty() {
-            TypeId::NEVER
-        } else {
-            db.union(types)
-        }
-    } else {
-        type_id
-    }
+    crate::type_queries::rest_spread_element_type(db, type_id)
 }
 
 /// Get the type of a tuple element, handling optional and rest elements.
