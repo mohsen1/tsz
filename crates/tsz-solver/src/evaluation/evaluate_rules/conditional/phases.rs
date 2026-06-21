@@ -115,6 +115,69 @@ pub(super) enum TailCallStep {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// True when either operand of a failed branch relation hides part of its
+    /// key space behind a `keyof` of a `Lazy(DefId)` this resolver cannot expand.
+    ///
+    /// Such a `keyof` is opaque: a concrete `literal extends keyof Ref` check
+    /// cannot rule out that `Ref` declares the literal, so a definitive `false`
+    /// is unsound. `evaluate_keyof` expands every *resolvable* alias, so any
+    /// `KeyOf(Lazy(D))` still present in an evaluated operand is unresolvable in
+    /// the current context. Deferring matches tsc, which keeps `K extends keyof
+    /// Ref ? …` pending until `Ref` resolves. Unlike the bare-`Lazy` defer rows
+    /// this also fires when `contains_type_parameters` is false — a cross-arena
+    /// alias member of an intersection is not a type parameter, so the generic
+    /// gates never catch it (#14337).
+    pub(super) fn relation_has_unresolvable_keyof_lazy(
+        &mut self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        self.type_has_unresolvable_keyof_lazy(check_type, 0)
+            || self.type_has_unresolvable_keyof_lazy(extends_type, 0)
+    }
+
+    /// Walk unions/intersections looking for a `KeyOf` operand that reduces to an
+    /// unresolvable `Lazy(DefId)`. Bounded depth keeps a malformed self-referential
+    /// type from recursing without progress.
+    fn type_has_unresolvable_keyof_lazy(&mut self, ty: TypeId, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match self.interner().lookup(ty) {
+            // `type_list` returns an owned `Arc`, so iterating it does not hold a
+            // borrow of `self` across the recursive `&mut self` calls.
+            Some(TypeData::Union(list)) | Some(TypeData::Intersection(list)) => {
+                let members = self.interner().type_list(list);
+                members
+                    .iter()
+                    .any(|&m| self.type_has_unresolvable_keyof_lazy(m, depth + 1))
+            }
+            Some(TypeData::KeyOf(inner)) => self.keyof_inner_is_unresolvable_lazy(inner, depth + 1),
+            _ => false,
+        }
+    }
+
+    /// True when `ty` is — or a union/intersection member of `ty` is — a
+    /// `Lazy(DefId)` the resolver returns `None` for (cannot expand).
+    fn keyof_inner_is_unresolvable_lazy(&mut self, ty: TypeId, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match self.interner().lookup(ty) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver()
+                .resolve_lazy(def_id, self.interner())
+                .is_none(),
+            Some(TypeData::Union(list)) | Some(TypeData::Intersection(list)) => {
+                let members = self.interner().type_list(list);
+                members
+                    .iter()
+                    .any(|&m| self.keyof_inner_is_unresolvable_lazy(m, depth + 1))
+            }
+            _ => false,
+        }
+    }
+
     /// Decide whether a conditional with an `infer`-bearing extends pattern and a
     /// generic-tuple check type must stay deferred.
     ///
