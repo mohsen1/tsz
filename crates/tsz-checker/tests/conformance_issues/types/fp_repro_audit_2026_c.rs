@@ -149,7 +149,7 @@ export type { A };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14225"]
+#[ignore = "reproduces #14225 (issue closed but minimal repro still emits TS2503)"]
 fn issue_14225_reimported_namespace_qualified_type_no_ts2503() {
     if !lib_files_available() {
         return;
@@ -182,7 +182,6 @@ export { r }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14213"]
 fn issue_14213_curried_arrow_return_annotation_contextual_no_ts7006() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -207,7 +206,7 @@ export const f =
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14167"]
+#[ignore = "reproduces #14167 (issue closed but minimal repro still emits TS2344)"]
 fn issue_14167_conditional_true_branch_substitution_no_ts2344() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -231,7 +230,7 @@ export {};
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14263"]
+#[ignore = "reproduces #14263 (issue closed but minimal repro still emits TS2348)"]
 fn issue_14263_imported_value_shadows_global_ctor_no_ts2348() {
     if !lib_files_available() {
         return;
@@ -292,7 +291,7 @@ export const fromBlock = <A>(O: Ord<A>): Ord<A[]> =>
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14220"]
+#[ignore = "reproduces #14220 (issue closed but minimal repro still emits TS2339)"]
 fn issue_14220_primitive_not_record_conditional_branch_no_ts2339() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -345,7 +344,6 @@ export { Local as Capitalize }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14232"]
 fn issue_14232_concrete_check_generic_extends_false_branch_no_ts2322() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
