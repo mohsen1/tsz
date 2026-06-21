@@ -8,8 +8,9 @@ use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::evaluate::{TypeEvaluator, evaluate_index_access, evaluate_type};
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
+use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -174,9 +175,6 @@ pub fn reduce_index_access_to_base_constraint(db: &dyn TypeDatabase, type_id: Ty
     let Some(TypeData::IndexAccess(object, index)) = db.lookup(type_id) else {
         return type_id;
     };
-
-    use crate::evaluation::evaluate::{evaluate_index_access, evaluate_type};
-    use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 
     // Reduce the object's type parameters to their constraints, then evaluate so
     // an alias `Application` (e.g. `Parameters<(...args: any[]) => any>`)
