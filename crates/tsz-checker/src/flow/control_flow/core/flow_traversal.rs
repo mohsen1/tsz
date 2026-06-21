@@ -799,7 +799,8 @@ impl<'a> FlowAnalyzer<'a> {
                                                 | flow_flags::LOOP_LABEL
                                                 | flow_flags::ASSIGNMENT
                                                 | flow_flags::AWAIT_POINT
-                                                | flow_flags::YIELD_POINT,
+                                                | flow_flags::YIELD_POINT
+                                                | flow_flags::START,
                                         )
                                     });
                                 if ant_needs_defer {
@@ -848,7 +849,8 @@ impl<'a> FlowAnalyzer<'a> {
                                             | flow_flags::ASSIGNMENT
                                             | flow_flags::SWITCH_CLAUSE
                                             | flow_flags::AWAIT_POINT
-                                            | flow_flags::YIELD_POINT,
+                                            | flow_flags::YIELD_POINT
+                                            | flow_flags::START,
                                     )
                                 });
                             if ant_needs_defer {
