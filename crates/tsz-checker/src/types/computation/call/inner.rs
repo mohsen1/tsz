@@ -832,12 +832,20 @@ impl<'a> CheckerState<'a> {
             self.replace_function_type_for_call(callee_type, callee_type_for_call);
         if callee_type_for_call == TypeId::ANY {
             let check_excess_properties = false;
+            // The callee resolved to the implicit any-signature `(...args: any[])`
+            // of the global `Function`/`any` callee, so the re-collection must
+            // treat the parameter list as `any`-callable: a non-tuple spread can
+            // never overflow a fixed-arity slot. Threading an `ANY` callable
+            // context (instead of `none()`) routes the TS2556 spread-arity check
+            // through the `expected == ANY` short-circuit in
+            // `ContextualTypeContext::allows_non_tuple_spread_position`, matching
+            // tsc which reports no TS2556 for `(f: Function)(...iter)`.
             self.collect_call_argument_types_with_context(
                 args,
                 |_i, _arg_count| None,
                 check_excess_properties,
                 None, // No skipping needed
-                CallableContext::none(),
+                CallableContext::new(TypeId::ANY),
             );
             return if nullish_cause.is_some() {
                 common::union_with_undefined(self.ctx.types, TypeId::ANY)

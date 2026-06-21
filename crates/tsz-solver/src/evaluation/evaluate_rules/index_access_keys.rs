@@ -186,10 +186,12 @@ impl TypeVisitor for ArrayKeyVisitor<'_> {
 
 /// Get the element type of a rest element, handling arrays and nested tuples.
 ///
-/// For arrays, returns the element type. For tuples, returns the union of all element types.
-/// Otherwise returns the type as-is.
+/// Delegates to the canonical [`crate::type_queries::rest_spread_element_type`],
+/// which distributes the number-indexed element of the spread operand (`...E[]` →
+/// `E`, `...[A, B]` → `A | B`, `...End` where `End extends string[]` → `string`)
+/// instead of leaking the whole array type.
 pub(super) fn rest_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    crate::operations::sequence_property::rest_spread_element_type(db, type_id)
+    crate::type_queries::rest_spread_element_type(db, type_id)
 }
 
 /// Get the type of a tuple element, handling optional and rest elements.

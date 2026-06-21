@@ -1663,10 +1663,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut members = Vec::new();
         for elem in elements {
             let mut ty = if elem.rest {
-                crate::operations::sequence_property::rest_spread_element_type(
-                    self.interner(),
-                    elem.type_id,
-                )
+                crate::type_queries::rest_spread_element_type(self.interner(), elem.type_id)
             } else {
                 elem.type_id
             };

@@ -531,6 +531,16 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
+            // A bare type-position identifier that names an in-scope type
+            // parameter (e.g. the `<E>` declared on a call/method signature of
+            // this type literal) binds to that type parameter, even when an
+            // enclosing value of the same name is visible. Mirror the canonical
+            // type-reference path, which consults the type-parameter scope before
+            // the value-used-as-type (TS2749) diagnostic.
+            if let Some(type_param) = self.lookup_type_parameter(name) {
+                return type_param;
+            }
+
             let recovered_type_symbol = if name != "Array"
                 && let TypeSymbolResolution::ValueOnly(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
@@ -555,9 +565,6 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-            if let Some(type_param) = self.lookup_type_parameter(name) {
-                return type_param;
-            }
             if let Some(sym_id) = recovered_type_symbol.or_else(|| {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)

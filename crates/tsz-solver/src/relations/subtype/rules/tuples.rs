@@ -398,10 +398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // itself.
                     let ok = type_param_info(self.interner, variadic).is_some_and(|info| {
                         info.constraint.is_some_and(|c| {
-                            let e = crate::operations::sequence_property::rest_spread_element_type(
-                                self.interner,
-                                c,
-                            );
+                            let e = crate::type_queries::rest_spread_element_type(self.interner, c);
                             // `rest_spread_element_type` returns its input unchanged
                             // for a non-array-like constraint; `e != c` means the
                             // constraint actually decomposed to an element type.

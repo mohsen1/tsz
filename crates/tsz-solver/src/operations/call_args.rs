@@ -1202,10 +1202,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        crate::operations::sequence_property::rest_spread_element_type(
-            self.interner.as_type_database(),
-            type_id,
-        )
+        crate::type_queries::rest_spread_element_type(self.interner, type_id)
+    }
+
+    /// Element type of a tuple rest element when inferring against a plain array
+    /// target `T[]` (tsc's `getElementTypeOfArrayType` for the variadic case).
+    ///
+    /// A concrete `...E[]` rest contributes `E`. A variadic `...G` rest, where
+    /// `G` is a generic spread (type parameter, lazy reference, application,
+    /// conditional, …) constrained to an array, contributes its number-indexed
+    /// element type `G[number]` rather than the spread type `G` itself. Binding
+    /// the array target's element to `G` would resolve to `G`'s whole constraint
+    /// array (e.g. `string[]` for `End extends string[]`); tsc instead infers the
+    /// element type (`End[number]`).
+    pub(crate) fn array_target_element_of_rest_type(&self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        let unwrapped = self.unwrap_readonly(type_id);
+        match self.interner.lookup(unwrapped) {
+            // Concrete array spread `...E[]`: the element type is `E`.
+            Some(TypeData::Array(elem)) => elem,
+            // Variadic spread `...G` of a non-array-literal type: the element
+            // type is the number-indexed access `G[number]`, deferred until the
+            // spread's binding is known (matching tsc's display `End[number]`).
+            _ => self.interner.index_access(unwrapped, TypeId::NUMBER),
+        }
     }
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
