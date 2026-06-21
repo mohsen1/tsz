@@ -282,14 +282,16 @@ impl<'a> CheckerState<'a> {
     /// Mirrors tsc's `getReducedApparentType` for the indexed-access case:
     /// `Parameters<F>["length"]` (where `F extends (...args: any[]) => any`)
     /// reduces through `F`'s constraint to `any[]["length"]` = `number`. The
-    /// underlying reduction lives in the solver's `getBaseConstraintOfType`
-    /// (`get_base_constraint_of_type`); type-parameter operands are handled by
-    /// the dedicated apparent-type path, so they are not re-reduced here.
+    /// underlying reduction lives in the solver's
+    /// `reduce_index_access_to_base_constraint`, a comparability-only reducer
+    /// kept off the shared `get_base_constraint_of_type` hot path (so it does
+    /// not perturb assignment narrowing / constraint validation). Non-indexed
+    /// and type-parameter operands pass through unchanged.
     fn reduce_instantiable_indexed_access(&mut self, type_id: TypeId) -> TypeId {
-        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id) {
-            return type_id;
-        }
-        crate::query_boundaries::common::get_base_constraint_of_type(self.ctx.types, type_id)
+        crate::query_boundaries::common::reduce_index_access_to_base_constraint(
+            self.ctx.types,
+            type_id,
+        )
     }
 
     /// Check if two types are comparable (overlap).

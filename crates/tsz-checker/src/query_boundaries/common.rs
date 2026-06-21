@@ -1380,6 +1380,18 @@ pub(crate) fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId
     tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
 }
 
+/// Reduce an instantiable indexed access `Obj[Idx]` to its base constraint for
+/// the comparability/overlap relation only (TS2678/TS2367). Non-`IndexAccess`
+/// inputs and irreducible accesses are returned unchanged. This is kept separate
+/// from [`get_base_constraint_of_type`] so the reduction does not leak onto the
+/// shared base-constraint hot path (assignment narrowing, constraint validation).
+pub(crate) fn reduce_index_access_to_base_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::reduce_index_access_to_base_constraint(db, type_id)
+}
+
 pub(crate) fn get_call_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,

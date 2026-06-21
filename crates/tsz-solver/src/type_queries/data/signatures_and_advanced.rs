@@ -135,41 +135,46 @@ pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// `Infer` types inside conditional types should NOT be resolved here — they are checked
 /// during conditional type evaluation, not at type argument validation time.
 pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    // Fast path: intrinsics aren't `TypeParameter(_)`/`IndexAccess(_, _)`; return as-is.
+    // Fast path: intrinsics aren't `TypeParameter(_)`; return as-is.
     if type_id.is_intrinsic() {
         return type_id;
     }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
-        // An instantiable indexed access `Obj[Idx]` is reduced through the base
-        // constraint of its object, mirroring tsc's `getBaseConstraintOfType`
-        // for `IndexedAccessType` (it computes `getBaseConstraint(objectType)`
-        // and re-indexes). For example `Parameters<F>["length"]` where
-        // `F extends (...args: any[]) => any` reduces to `any[]["length"]` =
-        // `number`. Without this, the deferred indexed access stays opaque and a
-        // numeric-literal switch/`===` operand looks non-comparable (false
-        // TS2678/TS2367).
-        Some(TypeData::IndexAccess(object, index)) => {
-            index_access_base_constraint(db, type_id, object, index)
-        }
         _ => type_id,
     }
 }
 
-/// Base constraint of an instantiable indexed access `Obj[Idx]`.
+/// Base constraint of an instantiable indexed access `Obj[Idx]`, for the
+/// comparability/overlap relation ONLY.
+///
+/// This is a deliberately narrow reducer kept OUT of the shared
+/// [`get_base_constraint_of_type`]: the shared base-constraint query is on the
+/// hot path of assignment narrowing, generic-call normalization, and type-arg
+/// constraint validation, where reducing an instantiable indexed access changes
+/// the displayed/relation surface (e.g. it strips the `| undefined` that tsc
+/// keeps on `Partial<T>[keyof T]` in an assignment diagnostic). The comparability
+/// relation (TS2678 switch/case, TS2367 `===`/`!==`) is the only caller that
+/// needs tsc's `getReducedApparentType` indexed-access reduction.
 ///
 /// Reduces the object's contained type parameters to their constraints (tsc's
 /// base-constraint mapper), evaluates that, then evaluates the indexed access
-/// against the reduced object. Returns the original `type_id` unchanged when no
-/// reduction is possible (the index access remains genuinely deferred) or when
-/// reduction produces an `Error`, so the relation sees the same opaque type it
-/// would have before.
-fn index_access_base_constraint(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    object: TypeId,
-    index: TypeId,
-) -> TypeId {
+/// against the reduced object. Returns the input `type_id` unchanged when it is
+/// not an `IndexAccess`, when no reduction is possible (the index access remains
+/// genuinely deferred), or when reduction produces an `Error`, so the relation
+/// sees the same opaque type it would have before.
+///
+/// For example `Parameters<F>["length"]` where `F extends (...args: any[]) => any`
+/// reduces to `any[]["length"]` = `number`, so a numeric-literal switch/`===`
+/// operand can overlap it (no false TS2678/TS2367).
+pub fn reduce_index_access_to_base_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let Some(TypeData::IndexAccess(object, index)) = db.lookup(type_id) else {
+        return type_id;
+    };
+
     use crate::evaluation::evaluate::{evaluate_index_access, evaluate_type};
     use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 
