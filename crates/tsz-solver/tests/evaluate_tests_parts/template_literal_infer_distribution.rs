@@ -1593,6 +1593,95 @@ fn test_template_literal_pattern_infer_numeric() {
 }
 
 #[test]
+fn test_template_literal_infer_extends_literal_union_coerces_numeric() {
+    // type Digit = 0|1|...|9;
+    // type FirstDigit<T> = T extends `${infer N extends Digit}${infer R}` ? N : "no-match";
+    // FirstDigit<"25"> === 2  (tsc captures the numeric literal, not "2")
+    let interner = TypeInterner::new();
+
+    let digit_members: Vec<TypeId> = (0..=9).map(|i| interner.literal_number(i as f64)).collect();
+    let digit = interner.union(digit_members);
+
+    let (_n_name, infer_n) = test_constrained_infer_param(&interner, "N", digit);
+    let (_r_name, infer_r) = test_infer_param(&interner, "R");
+
+    // `${infer N extends Digit}${infer R}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_n),
+        TemplateSpan::Type(infer_r),
+    ]);
+
+    let no_match = interner.literal_string("no-match");
+    let cond = ConditionalType {
+        check_type: interner.literal_string("25"),
+        extends_type: pattern,
+        true_type: infer_n,
+        false_type: no_match,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    assert_eq!(
+        result,
+        interner.literal_number(2.0),
+        "Expected N coerced to the numeric literal 2, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_template_literal_infer_extends_single_numeric_literal() {
+    // `${infer N extends 5}` against "5" captures the 5 literal; "6" takes false.
+    let interner = TypeInterner::new();
+
+    let five = interner.literal_number(5.0);
+    let (_n_name, infer_n) = test_constrained_infer_param(&interner, "N", five);
+
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(infer_n)]);
+    let no_match = interner.literal_string("no-match");
+
+    let cond_match = ConditionalType {
+        check_type: interner.literal_string("5"),
+        extends_type: pattern,
+        true_type: infer_n,
+        false_type: no_match,
+        is_distributive: false,
+    };
+    assert_eq!(evaluate_conditional(&interner, &cond_match), five);
+
+    // Negative control: captured value outside the literal set -> false branch.
+    let cond_miss = ConditionalType {
+        check_type: interner.literal_string("6"),
+        extends_type: pattern,
+        true_type: infer_n,
+        false_type: no_match,
+        is_distributive: false,
+    };
+    assert_eq!(evaluate_conditional(&interner, &cond_miss), no_match);
+}
+
+#[test]
+fn test_template_literal_infer_extends_bigint_literal() {
+    // `${infer N extends 7n}` against "7" captures the 7n bigint literal.
+    let interner = TypeInterner::new();
+
+    let seven_n = interner.literal_bigint_with_sign(false, "7");
+    let (_n_name, infer_n) = test_constrained_infer_param(&interner, "N", seven_n);
+
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(infer_n)]);
+    let no_match = interner.literal_string("no-match");
+
+    let cond = ConditionalType {
+        check_type: interner.literal_string("7"),
+        extends_type: pattern,
+        true_type: infer_n,
+        false_type: no_match,
+        is_distributive: false,
+    };
+    assert_eq!(evaluate_conditional(&interner, &cond), seven_n);
+}
+
+#[test]
 fn test_template_literal_multiple_adjacent_types() {
     // `${A}${B}${C}` - multiple type interpolations
     let interner = TypeInterner::new();
