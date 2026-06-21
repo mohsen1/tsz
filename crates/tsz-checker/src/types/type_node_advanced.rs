@@ -16,12 +16,12 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use super::unique_symbol_arena::has_declared_unique_symbol_owner;
+use super::unique_symbol_construction::unique_symbol_type_for_operator;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{SymbolRef, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -83,14 +83,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                if inner_type == TypeId::SYMBOL
-                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
-                {
-                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
-                        &self.ctx.file_name,
-                        node.pos,
-                        node.end,
-                    ));
+                if inner_type == TypeId::SYMBOL {
+                    return unique_symbol_type_for_operator(self.ctx, idx, node.pos, node.end);
                 }
                 return inner_type;
             }
@@ -1215,17 +1209,4 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Delegate to TypeLowering with extended resolvers (enum flags + lib search)
         self.lower_with_resolvers(idx, true, false)
     }
-}
-
-fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
-    let mut hash = 0x811c_9dc5u32;
-    for byte in file_name.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    for value in [pos, end] {
-        hash ^= value;
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    SymbolRef(hash | 0x8000_0000)
 }

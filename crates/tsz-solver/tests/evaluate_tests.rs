@@ -71,3 +71,4 @@ include!("evaluate_tests_parts/indexed_access_template_recursive.rs");
 include!("evaluate_tests_parts/tuple_keyof_indexed_access.rs");
 include!("evaluate_tests_parts/distributive_tuple_union_regression.rs");
 include!("evaluate_tests_parts/deferred_index_key_regression.rs");
+include!("evaluate_tests_parts/cross_arena_unresolved_name_regression.rs");
