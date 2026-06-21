@@ -590,18 +590,27 @@ impl BinderState {
                                                 clone_sym.is_exported = true;
                                             }
                                             // Renamed *top-level* exports go to the public
-                                            // surface only (see `seed_module_export`). Namespace
-                                            // member exports keep the scope/file-local seeding:
-                                            // their cross-references resolve through the
+                                            // surface only (see `seed_module_export`). The
+                                            // synthetic `default` slot is the exception: default
+                                            // import classification still consults the legacy
+                                            // file-local default path, and there is no user
+                                            // identifier named `default` to clobber. Namespace
+                                            // member exports also keep the scope/file-local
+                                            // seeding; their cross-references resolve through the
                                             // namespace's own exports table, not `file_locals`.
-                                            if orig != exp && current_namespace_sym_id.is_none() {
+                                            if orig != exp
+                                                && exp != "default"
+                                                && current_namespace_sym_id.is_none()
+                                            {
                                                 self.seed_module_export(exp, clone_id);
                                             } else {
                                                 self.set_scope_and_file_local(exp, clone_id);
                                             }
                                             exported_sym_id = clone_id;
                                         } else if orig != exp {
-                                            if current_namespace_sym_id.is_none() {
+                                            if exp != "default"
+                                                && current_namespace_sym_id.is_none()
+                                            {
                                                 self.seed_module_export(exp, sym_id);
                                             } else {
                                                 self.set_scope_and_file_local(exp, sym_id);
