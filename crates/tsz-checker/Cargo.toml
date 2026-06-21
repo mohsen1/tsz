@@ -1916,6 +1916,9 @@ path = "tests/class_interface_self_merge_implements_tests.rs"
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]
+name = "reexported_symbol_keyed_member_tests"
+path = "tests/reexported_symbol_keyed_member_tests.rs"
+[[test]]
 name = "polymorphic_this_display_tests"
 path = "tests/polymorphic_this_display_tests.rs"
 [[test]]
