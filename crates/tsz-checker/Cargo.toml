@@ -848,6 +848,9 @@ path = "tests/contextual_tuple_tests.rs"
 name = "contextual_return_tuple_generic_member_tests"
 path = "tests/contextual_return_tuple_generic_member_tests.rs"
 [[test]]
+name = "contextual_return_callback_param_only_inference_tests"
+path = "tests/contextual_return_callback_param_only_inference_tests.rs"
+[[test]]
 name = "contextual_return_value_arg_pinned_tests"
 path = "tests/contextual_return_value_arg_pinned_tests.rs"
 [[test]]
