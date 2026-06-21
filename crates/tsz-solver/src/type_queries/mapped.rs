@@ -483,6 +483,16 @@ fn find_mapped_property_alias_provenance_candidate(
                 remaining,
             );
         }
+        TypeData::Substitution { base_type, .. } => {
+            return find_mapped_property_alias_provenance_candidate(
+                db,
+                base_type,
+                evaluated_property_type,
+                evaluate_candidate,
+                visited,
+                remaining,
+            );
+        }
         TypeData::TypeParameter(_)
         | TypeData::Infer(_)
         | TypeData::Intrinsic(_)

@@ -466,6 +466,143 @@ fn test_index_access_keyof_empty_object_is_never() {
     assert_eq!(result, TypeId::NEVER, "{{}}[keyof {{}}] should be never");
 }
 
+#[test]
+fn test_index_access_never_key_on_array_is_element_type() {
+    // `never` is assignable to every index key, so tsc resolves `T[never]` to
+    // `T`'s index source. For an array that is the element type, not `never`.
+    let interner = TypeInterner::new();
+
+    let array = interner.array(TypeId::STRING);
+    let index_access = interner.index_access(array, TypeId::NEVER);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "string[][never] should be the element type string"
+    );
+}
+
+#[test]
+fn test_index_access_never_key_on_tuple_is_element_union() {
+    let interner = TypeInterner::new();
+
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let index_access = interner.index_access(tuple, TypeId::NEVER);
+
+    let result = evaluate_type(&interner, index_access);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        result, expected,
+        "[string, number][never] should be the element union string | number"
+    );
+}
+
+#[test]
+fn test_index_access_never_key_on_string_index_signature() {
+    // `Record<string, number>`-shaped object: `T[never]` picks up the string
+    // index signature value type.
+    let interner = TypeInterner::new();
+
+    let obj = interner.object_with_index(crate::types::ObjectShape {
+        symbol: None,
+        flags: crate::types::ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    let index_access = interner.index_access(obj, TypeId::NEVER);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "{{ [k: string]: number }}[never] should be the index value type number"
+    );
+}
+
+#[test]
+fn test_index_access_never_key_on_readonly_array_is_element_type() {
+    let interner = TypeInterner::new();
+
+    let array = interner.array(TypeId::NUMBER);
+    let readonly_array = interner.readonly_type(array);
+    let index_access = interner.index_access(readonly_array, TypeId::NEVER);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "(readonly number[])[never] should be the element type number"
+    );
+}
+
+#[test]
+fn test_index_access_never_key_on_string_mapped_is_value_type() {
+    // `Record<string, boolean>` expands to `{ [P in string]: boolean }`. Indexing
+    // it by `never` reads the (implicit string) index signature value type.
+    let interner = TypeInterner::new();
+
+    let mapped_type_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: mapped_type_param,
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let index_access = interner.index_access(mapped, TypeId::NEVER);
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "{{ [P in string]: boolean }}[never] should be the index value type boolean"
+    );
+}
+
+#[test]
+fn test_index_access_never_key_on_array_union_distributes() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let number_array = interner.array(TypeId::NUMBER);
+    let union = interner.union(vec![string_array, number_array]);
+    let index_access = interner.index_access(union, TypeId::NEVER);
+
+    let result = evaluate_type(&interner, index_access);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        result, expected,
+        "(string[] | number[])[never] should distribute to string | number"
+    );
+}
+
 // =============================================================================
 // Multiple Index Access Tests
 // =============================================================================

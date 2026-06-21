@@ -795,6 +795,15 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // tsc only offers the "Did you mean to call '<obj>.get'?" hint (TS7052)
+        // when the get/set signature requires at least one argument
+        // (`getMinArgumentCount(s) >= 1`). A rest-only `get(..._: any)` or an
+        // optional leading param has min-arg-count 0, so tsc emits plain TS7053
+        // (witness: mobx `legacyobservablearray.ts` array-entry descriptors).
+        if !first.is_required() {
+            return false;
+        }
+
         self.element_access_method_suggestion_relation_outcome(index_type, first.type_id)
             .related
     }

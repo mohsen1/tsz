@@ -58,6 +58,7 @@ fn can_skip_concrete_instantiation_inner(
     match key {
         TypeData::TypeParameter(_)
         | TypeData::Infer(_)
+        | TypeData::Substitution { .. }
         | TypeData::Conditional(_)
         | TypeData::Mapped(_)
         | TypeData::IndexAccess(_, _)
@@ -298,6 +299,20 @@ fn alpha_canonicalize_type(
                 type_id
             } else {
                 interner.no_infer(next)
+            })
+        }
+        TypeData::Substitution {
+            base_type,
+            constraint,
+        } => {
+            let next_base =
+                alpha_canonicalize_type(interner, base_type, binders, bindings, changed, visited)?;
+            let next_constraint =
+                alpha_canonicalize_type(interner, constraint, binders, bindings, changed, visited)?;
+            Some(if next_base == base_type && next_constraint == constraint {
+                type_id
+            } else {
+                interner.substitution(next_base, next_constraint)
             })
         }
         TypeData::Tuple(tuple_id) => {
@@ -1499,6 +1514,20 @@ pub(super) fn index_access_operand_needs_resolver(
 /// the branch unevaluated ensures that the substitution carries the same interned
 /// `Map<string,number>` `Application` `TypeId` that the checker produces for the
 /// source expression, so the subtype comparison succeeds without structural expansion.
+/// Whether deferral of type-parameter-default conditionals whose `check`/`extends`
+/// still hold an unresolved `Lazy(DefId)`/`Recursive` ref is active.
+///
+/// Default-on; `TSZ_DISABLE_DEFER_LAZY_DEFAULT_CONDITIONAL=1` is the kill switch
+/// that restores the prior eager (resolver-less) branch selection. See
+/// [`maybe_evaluate_concrete_conditional`].
+fn defer_lazy_default_conditional_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_DEFER_LAZY_DEFAULT_CONDITIONAL").is_ok_and(|v| v == "1")
+    })
+}
+
 pub(super) fn maybe_evaluate_concrete_conditional(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1523,6 +1552,37 @@ pub(super) fn maybe_evaluate_concrete_conditional(
     // would produce a union of branch results which requires the full evaluator.
     if cond.is_distributive && matches!(interner.lookup(cond.check_type), Some(TypeData::Union(_)))
     {
+        return type_id;
+    }
+    // The branch is picked by a *resolver-less* subtype check (no `query_db`),
+    // so it cannot follow a semantic ref. When `check_type` or `extends_type`
+    // contains a `Lazy(DefId)`/`Recursive` ref — for example a type-parameter
+    // default whose `extends` is `keyof T` and `T` was substituted with the
+    // unresolved `Lazy(Route)` form, leaving `keyof Lazy(Route)` — the relation
+    // sees a deferred meta-type over an unresolved alias and silently answers
+    // `false`, picking the wrong (false) branch and baking it into the default.
+    // That is how ts-rest's `ClientInferRequestBase` third-parameter default
+    // (`'headers' extends keyof T ? Prettify<...> : never`) collapses to `never`
+    // and the surrounding `Without<...>` mapped type can no longer surface
+    // `headers`. Leave such conditionals deferred so the later resolver-aware
+    // evaluator (reached on property access / mapped-type expansion) resolves
+    // the alias and picks the branch correctly. `Application` bases are
+    // intentionally NOT disqualifying here: the documented
+    // `K extends string ? Map<K, V> : Map<string, V>` case keeps its concrete
+    // `string extends string` check/extends and must still resolve eagerly to
+    // preserve the branch `Application` `TypeId` identity.
+    // Kill switch: `TSZ_DISABLE_DEFER_LAZY_DEFAULT_CONDITIONAL=1` restores the
+    // prior eager (resolver-less) branch selection.
+    if defer_lazy_default_conditional_enabled()
+        && (crate::type_queries::contains_lazy_or_recursive_db(interner, cond.check_type)
+            || crate::type_queries::contains_lazy_or_recursive_db(interner, cond.extends_type))
+    {
+        tracing::trace!(
+            type_id = type_id.0,
+            check = cond.check_type.0,
+            extends = cond.extends_type.0,
+            "maybe_evaluate_concrete_conditional: deferring (check/extends holds Lazy/Recursive ref)"
+        );
         return type_id;
     }
     // Both check and extends are concrete. Use a subtype check to pick the branch

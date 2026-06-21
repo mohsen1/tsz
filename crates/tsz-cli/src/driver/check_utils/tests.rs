@@ -243,6 +243,83 @@ fn ts_directive_suppresses_next_line_with_form_feed_spacing() {
     );
 }
 
+/// Build a single TS2304 diagnostic anchored at `bad_ref` within `source`.
+#[cfg(test)]
+fn bad_ref_diagnostic(source: &str) -> Vec<Diagnostic> {
+    let start = source.find("bad_ref").expect("source must contain bad_ref") as u32;
+    vec![Diagnostic::error(
+        "repro.ts".to_string(),
+        start,
+        "bad_ref".len() as u32,
+        "Cannot find name 'bad_ref'.".to_string(),
+        2304,
+    )]
+}
+
+#[test]
+fn ts_directive_suppresses_across_continuation_comment() {
+    // tsc walks up from the error line skipping `//`-comment lines, so a
+    // directive whose comment wraps onto a second explanatory line still
+    // suppresses the code below.
+    let source = "// @ts-expect-error - reason\n// continued reason\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+    assert!(
+        diagnostics.is_empty(),
+        "directive must suppress across a continuation comment line, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts_directive_suppresses_across_blank_line() {
+    let source = "// @ts-expect-error\n\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+    assert!(
+        diagnostics.is_empty(),
+        "directive must suppress across a blank line, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts_directive_walk_up_stops_at_real_code_line() {
+    // A real code line between the directive and the error stops the walk: the
+    // error survives and the unused directive is reported (TS2578).
+    let source = "// @ts-expect-error\nconst ok = 1;\nbad_ref;\n";
+    let mut diagnostics = bad_ref_diagnostic(source);
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "real error must survive a code line between directive and error, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2578),
+        "directive that suppressed nothing must be reported unused, got: {codes:?}"
+    );
+}
+
+#[test]
+fn inert_multiline_block_directive_is_not_a_directive() {
+    // tsc registers a block-comment directive only when its LAST line begins the
+    // directive. `/* @ts-expect-error\nmore */` does not, so it neither
+    // suppresses the code below nor draws an unused-directive TS2578.
+    let source = "/* @ts-expect-error\nmore */\nbad_ref;\n";
+    assert_eq!(
+        find_ts_directives(source).len(),
+        0,
+        "a block comment whose last line lacks the directive must not register"
+    );
+    let mut diagnostics = bad_ref_diagnostic(source);
+    apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![2304],
+        "inert block must leave the error and add no TS2578, got: {codes:?}"
+    );
+}
+
 #[test]
 fn ts_directive_scan_keeps_template_substitution_directives() {
     let directives =

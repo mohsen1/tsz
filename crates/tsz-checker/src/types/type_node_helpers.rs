@@ -227,6 +227,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         seen_rest: &mut bool,
         grammar_broke: &mut bool,
     ) {
+        if self.rest_type_node_is_unconstrained_infer(type_node) {
+            if *seen_rest && !*grammar_broke {
+                self.ctx.error(
+                    pos,
+                    end.saturating_sub(pos),
+                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
+                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
+                );
+                *grammar_broke = true;
+            }
+            *seen_rest = true;
+            return;
+        }
         if !self.rest_element_type_is_array_like(elem_type) {
             if !*grammar_broke {
                 self.emit_rest_element_type_must_be_array(pos, end);
@@ -768,6 +781,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             };
         }
+        // Conditional true-branch substitutions present their base identity for
+        // display/inference, but rest grammar needs their structural constraint.
+        let base_constraint = q::get_base_constraint_of_type(self.ctx.types, t);
+        if base_constraint != t && base_constraint != TypeId::UNKNOWN {
+            return self.rest_element_type_is_definitely_not_array_like(base_constraint, depth + 1);
+        }
         // Types that remain instantiable *and* still reference free type
         // parameters are deferred generics whose array-like-ness `tsc` decides
         // from the (usually array-like) constraint; tsz frequently cannot
@@ -822,35 +841,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         const MAX_REST_ELEMENT_RESOLVE_ROUNDS: usize = 16;
         let mut current = type_id;
         for _ in 0..MAX_REST_ELEMENT_RESOLVE_ROUNDS {
-            let next = {
-                let env = self.ctx.type_environment.borrow();
-                // Resolve a bare `Lazy(DefId)` alias reference, then evaluate any
-                // resulting application through the env-backed
-                // `ApplicationEvaluator` (which can resolve lazy application
-                // heads such as `Cond<number[]>`, where the plain solver
-                // evaluator cannot).
-                let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
-                    self.ctx.types,
-                    Some(&env),
-                    current,
-                );
-                crate::query_boundaries::flow_analysis::evaluate_application_type(
-                    self.ctx.types,
-                    &env,
-                    resolved,
-                )
-            };
-            // Reduce a now-concrete conditional / indexed-access result
-            // (e.g. `number extends infer U ? U : never` from `Cond<number>`)
-            // so it is classified by its reduced shape rather than left opaque.
-            let next = self.ctx.types.evaluate_type(next);
-            // A *deferred* indexed access into a deferred conditional
-            // (`Cond<T>['suffix']`) stays opaque here, but tsc classifies its
-            // array-like-ness from its apparent type: the conditional's
-            // branch-union constraint indexed by the inner key. Reduce to that
-            // apparent type so a tuple-valued branch (`{ suffix: [] }`) is
-            // accepted while a non-array branch (`{ s: string }`) still fires
-            // TS2574. Mirrors `getConstraintOfIndexedAccessType`.
+            // Resolve a bare `Lazy(DefId)` alias reference, evaluate any resulting
+            // application, and reduce a now-concrete conditional / indexed-access
+            // result so it is classified by its reduced shape rather than left
+            // opaque.
+            let next = self.resolve_alias_and_application_round(current);
+            // A *deferred* indexed access whose base is a deferred conditional
+            // (`Cond<T>['suffix']`) or a type parameter (`T[0]`) stays opaque
+            // here, but tsc classifies its array-like-ness from its apparent
+            // type: the base's resolved constraint indexed by the inner key.
+            // Reduce to that apparent type so a tuple-valued element (`{ suffix:
+            // [] }`, `[unknown[], unknown[]]`) is accepted while a non-array
+            // element (`{ s: string }`, `[string, …]`) still fires TS2574.
+            // Mirrors `getConstraintOfIndexedAccessType`.
             let next = self
                 .deferred_indexed_access_apparent_array_like_type(next)
                 .unwrap_or(next);
@@ -862,17 +865,81 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         current
     }
 
+    /// One round of env-backed alias/application resolution for the TS2574
+    /// rest-element check: resolve a bare `Lazy(DefId)` alias reference, then
+    /// evaluate any resulting application through the env-backed
+    /// `ApplicationEvaluator` (which can resolve lazy application heads such as
+    /// `Cond<number[]>`, where the plain solver evaluator cannot), then reduce
+    /// the result via `evaluate_type` (e.g. `number extends infer U ? U : never`
+    /// from `Cond<number>`). Unlike [`Self::resolve_type_for_rest_element_check`]
+    /// this performs no indexed-access apparent-type reduction, so it is safe to
+    /// reuse when resolving a base/constraint without re-entering that logic.
+    fn resolve_alias_and_application_round(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        let next = {
+            let env = self.ctx.type_environment.borrow();
+            let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                self.ctx.types,
+                Some(&env),
+                type_id,
+            );
+            crate::query_boundaries::flow_analysis::evaluate_application_type(
+                self.ctx.types,
+                &env,
+                resolved,
+            )
+        };
+        self.ctx.types.evaluate_type(next)
+    }
+
+    /// Resolve `type_id` to a fixpoint through env-backed alias/application
+    /// resolution (no indexed-access reduction). Used to resolve the constraint
+    /// of an indexed-access base (`T`'s constraint in `T[K]`) to its concrete
+    /// tuple/array shape.
+    fn resolve_alias_and_application(&self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
+        const MAX_ROUNDS: usize = 16;
+        let mut current = type_id;
+        for _ in 0..MAX_ROUNDS {
+            let next = self.resolve_alias_and_application_round(current);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        current
+    }
+
+    /// The indexable base constraint of an indexed-access base `B` for the
+    /// TS2574 rest-element check: a deferred conditional yields its branch-union
+    /// constraint (tsc's `getConstraintOfIndexedAccessType`), while a (readonly-
+    /// unwrapped) tuple/array yields itself. Any other shape is not concretely
+    /// indexable here, so the caller treats the access as indeterminate (legal).
+    fn indexable_base_constraint(&self, base: tsz_solver::TypeId) -> Option<tsz_solver::TypeId> {
+        use crate::query_boundaries::common as q;
+        if q::is_conditional_type(self.ctx.types, base) {
+            return q::conditional_branch_union_constraint(self.ctx.types, base);
+        }
+        let base = q::unwrap_readonly_or_noinfer(self.ctx.types, base).unwrap_or(base);
+        (q::is_tuple_type(self.ctx.types, base) || q::is_array_type(self.ctx.types, base))
+            .then_some(base)
+    }
+
     /// Apparent type of a deferred indexed access `B[K1]` for the TS2574
     /// rest-element array-like check. Mirrors tsc's
     /// `getConstraintOfIndexedAccessType`: reduce the base `B` to its apparent
     /// type and index it with `K1`, then classify the resulting property type.
     ///
-    /// Two apparent-base shapes are covered:
+    /// Apparent-base shapes covered here:
     /// * a deferred conditional base — the apparent base is the conditional's
     ///   branch-union constraint (`Cond<T>['suffix']`);
     /// * an object / mapped / interface base — the apparent base is the resolved
     ///   object shape itself, so the property type is read directly
-    ///   (`Parts<T>['suffix']` where `Parts<T>` reduces to `{ suffix: T }`).
+    ///   (`Parts<T>['suffix']` where `Parts<T>` reduces to `{ suffix: T }`);
+    /// * a type parameter base — the apparent base is the parameter's declared
+    ///   constraint resolved through any generic alias to a concrete tuple/array
+    ///   (`T extends Pair<unknown[], unknown[]>` -> `[unknown[], unknown[]]`).
     ///
     /// An alias-wrapped base (`Application(Lazy(_), [T])`) is expanded to its
     /// resolved body first so both the aliased and inline forms are covered.
@@ -926,7 +993,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else if q::is_object_or_mapped_type(self.ctx.types, resolved_base) {
             resolved_base
         } else {
-            return None;
+            // A type parameter (`T[K]`) indexes its declared constraint; if the
+            // candidate is already an application/alias, index its resolved
+            // shape. This also covers the case where `evaluate_type` substituted
+            // `T` with its constraint application, e.g.
+            // `Pair<unknown[], unknown[]>[0]`.
+            let candidate = match q::type_param_info(self.ctx.types, base) {
+                Some(info) => info.constraint?,
+                None => base,
+            };
+            let resolved = self.resolve_alias_and_application(candidate);
+            self.indexable_base_constraint(resolved)?
         };
 
         // Read property `K1` off the apparent base, reducing through the env so a
@@ -1144,6 +1221,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             self.check(idx)
         }
+    }
+
+    fn rest_type_node_is_unconstrained_infer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::INFER_TYPE {
+            return false;
+        }
+        let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(infer_data.type_parameter)
+            .and_then(|tp_node| self.ctx.arena.get_type_parameter(tp_node))
+            .is_some_and(|tp_data| tp_data.constraint == NodeIndex::NONE)
     }
 
     pub(super) fn is_this_type_allowed(

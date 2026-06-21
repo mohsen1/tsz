@@ -445,6 +445,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     self.interner.no_infer(c_inner)
                 }
 
+                // Substitution type: canonicalize the base variable and the
+                // implied constraint, then re-derive through the simplifying
+                // constructor so its identity tracks the canonical base/constraint.
+                TypeData::Substitution {
+                    base_type,
+                    constraint,
+                } => {
+                    let c_base = self.canonicalize(base_type);
+                    let c_constraint = self.canonicalize(constraint);
+                    self.interner.substitution(c_base, c_constraint)
+                }
+
                 // Conditional type (T extends U ? X : Y)
                 TypeData::Conditional(cond_id) => {
                     let cond = self.interner.conditional_type(cond_id);

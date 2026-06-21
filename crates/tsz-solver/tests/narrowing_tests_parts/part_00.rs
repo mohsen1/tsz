@@ -480,6 +480,68 @@ fn test_constructor_identity_false_branch_does_not_exclude_instance() {
     );
 }
 
+#[test]
+fn test_constructor_identity_keeps_structural_subtype_source() {
+    // `x.constructor === Ctor` true-branch: a structural (non-class) source
+    // that is a subtype of the constructor's instance type must be preserved,
+    // not narrowed to `never`. Mirrors tsc's `isConstructedBy` falling through
+    // to `isTypeSubtypeOf` for non-class types (e.g. `({a}).constructor === C`
+    // where the source already matches `C`'s instance shape).
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    // instance shape: { a: number }
+    let instance = interner.object(vec![PropertyInfo::new(a, TypeId::NUMBER)]);
+    // source: { a: number, b: string } <: { a: number }
+    let source = interner.object(vec![
+        PropertyInfo::new(a, TypeId::NUMBER),
+        PropertyInfo::new(b, TypeId::STRING),
+    ]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(
+        source,
+        &TypeGuard::Constructor(instance),
+        GuardSense::Positive,
+    );
+
+    assert_eq!(
+        narrowed, source,
+        "structural source that is a subtype of the constructor instance type \
+         must be preserved, not narrowed to `never`"
+    );
+}
+
+#[test]
+fn test_constructor_identity_drops_structural_non_subtype_source() {
+    // A structural source that is NOT a subtype of the instance type narrows to
+    // `never` (e.g. a disjoint object shape). This preserves the `never` outcome
+    // for cases like `({} as {}).constructor === Array`.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let req = interner.intern_string("required");
+
+    // instance shape requires `required: number`
+    let instance = interner.object(vec![PropertyInfo::new(req, TypeId::NUMBER)]);
+    // source lacks `required`, so `source` is not a subtype of `instance`.
+    let source = interner.object(vec![PropertyInfo::new(a, TypeId::STRING)]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(
+        source,
+        &TypeGuard::Constructor(instance),
+        GuardSense::Positive,
+    );
+
+    assert_eq!(
+        narrowed,
+        TypeId::NEVER,
+        "structural source that is not a subtype of the constructor instance \
+         type narrows to `never`"
+    );
+}
+
 // =============================================================================
 // Typeof Narrowing Tests
 // =============================================================================

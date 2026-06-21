@@ -658,6 +658,7 @@ fn instantiate_call_type(
 }
 
 mod contextual_signature_instantiation;
+mod foreign_param_shapes;
 mod inference_helpers;
 mod inference_helpers_candidates;
 mod normalization;

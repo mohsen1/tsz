@@ -215,7 +215,7 @@ pub mod observability {
 /// These create or modify types via the interner. Should be accessed through
 /// `query_boundaries` in the checker crate.
 pub mod construction {
-    pub use crate::caches::db::{QueryDatabase, TypeDatabase};
+    pub use crate::caches::db::{QueryDatabase, TypeDatabase, TypeSubstitutionConstruction};
     pub use crate::caches::query_cache::{QueryCache, RelationCacheProbe, SharedQueryCache};
     pub use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
     pub use crate::intern::type_factory::*;
@@ -478,6 +478,9 @@ mod narrowing_discriminant_tests;
 #[cfg(test)]
 #[path = "../tests/numeric_keyof_tests.rs"]
 mod numeric_keyof_tests;
+#[cfg(test)]
+#[path = "../tests/primitive_mapped_index_subtype_tests.rs"]
+mod primitive_mapped_index_subtype_tests;
 #[cfg(test)]
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;

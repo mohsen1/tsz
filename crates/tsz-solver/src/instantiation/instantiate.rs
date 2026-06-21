@@ -14,8 +14,8 @@ use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IndexSignature, MappedType, ObjectShape, ParamInfo, TupleElement, TypeData, TypeId,
-    TypeParamInfo, TypePredicate,
+    IndexSignature, MappedType, ObjectShape, ParamInfo, TupleElement, TupleListId, TypeData,
+    TypeId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -241,12 +241,18 @@ impl<'a> TypeInstantiator<'a> {
     ) -> Option<(TypeId, bool)> {
         match interner.lookup(type_id) {
             Some(TypeData::Array(element_type)) => Some((element_type, false)),
+            Some(TypeData::Substitution { constraint, .. }) => {
+                Self::extract_array_element(interner, constraint)
+            }
             Some(TypeData::ReadonlyType(inner)) => {
                 let inner_resolved = crate::evaluation::evaluate::evaluate_type(interner, inner);
-                if let Some(TypeData::Array(element_type)) = interner.lookup(inner_resolved) {
-                    Some((element_type, true))
-                } else {
-                    None
+                match interner.lookup(inner_resolved) {
+                    Some(TypeData::Array(element_type)) => Some((element_type, true)),
+                    Some(TypeData::Substitution { constraint, .. }) => {
+                        Self::extract_array_element(interner, constraint)
+                            .map(|(element_type, _)| (element_type, true))
+                    }
+                    _ => None,
                 }
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
@@ -256,6 +262,34 @@ impl<'a> TypeInstantiator<'a> {
                     .as_ref()
                     .filter(|idx| idx.readonly)
                     .map(|idx| (idx.value_type, true))
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_tuple_source(
+        interner: &dyn TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<(TupleListId, bool)> {
+        let resolved = crate::evaluation::evaluate::evaluate_type(interner, type_id);
+        if resolved.is_intrinsic() {
+            return None;
+        }
+        match interner.lookup(resolved) {
+            Some(TypeData::Tuple(tuple_id)) => Some((tuple_id, false)),
+            Some(TypeData::Substitution { constraint, .. }) => {
+                Self::extract_tuple_source(interner, constraint)
+            }
+            Some(TypeData::ReadonlyType(inner)) => {
+                let inner_resolved = crate::evaluation::evaluate::evaluate_type(interner, inner);
+                match interner.lookup(inner_resolved) {
+                    Some(TypeData::Tuple(tuple_id)) => Some((tuple_id, true)),
+                    Some(TypeData::Substitution { constraint, .. }) => {
+                        Self::extract_tuple_source(interner, constraint)
+                            .map(|(tuple_id, _)| (tuple_id, true))
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }
@@ -271,12 +305,18 @@ impl<'a> TypeInstantiator<'a> {
         let evaluated = crate::evaluation::evaluate::evaluate_type(interner, type_id);
         match interner.lookup(evaluated) {
             Some(TypeData::Array(_)) | Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::Substitution { constraint, .. }) => {
+                Self::is_array_or_tuple_like(interner, constraint)
+            }
             Some(TypeData::ReadonlyType(inner)) => {
                 let inner_eval = crate::evaluation::evaluate::evaluate_type(interner, inner);
-                matches!(
-                    interner.lookup(inner_eval),
-                    Some(TypeData::Array(_) | TypeData::Tuple(_))
-                )
+                match interner.lookup(inner_eval) {
+                    Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+                    Some(TypeData::Substitution { constraint, .. }) => {
+                        Self::is_array_or_tuple_like(interner, constraint)
+                    }
+                    _ => false,
+                }
             }
             Some(TypeData::Union(members)) => {
                 let members = interner.type_list(members);
@@ -961,6 +1001,22 @@ impl<'a> TypeInstantiator<'a> {
                     type_id
                 } else {
                     self.interner.no_infer(inst_inner)
+                }
+            }
+
+            // Substitution: instantiate the base and the constraint, then
+            // re-derive through the simplifying constructor. Once the base is
+            // concrete the narrowing is fully determined and collapses to base.
+            TypeData::Substitution {
+                base_type,
+                constraint,
+            } => {
+                let inst_base = self.instantiate(*base_type);
+                let inst_constraint = self.instantiate(*constraint);
+                if inst_base == *base_type && inst_constraint == *constraint {
+                    type_id
+                } else {
+                    self.interner.substitution(inst_base, inst_constraint)
                 }
             }
 

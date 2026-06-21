@@ -141,6 +141,16 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => {
+            // The base constraint of a substitution is the base constraint of
+            // its substitution intersection `base & constraint` (tsc:
+            // `getBaseConstraint(getSubstitutionIntersection(type))`).
+            let base_constraint = get_base_constraint_of_type(db, base_type);
+            db.intersection2(base_constraint, constraint)
+        }
         _ => type_id,
     }
 }
