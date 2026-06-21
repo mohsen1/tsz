@@ -1015,21 +1015,24 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Deferred conditional operands (e.g. `Exclude<T, U>` = `T extends U ?
+        // never : T`) are instantiable types with no concrete value form until
+        // applied. tsc compares them through their apparent type: the default
+        // constraint (`getDefaultConstraintOfConditionalType`). Normalize that
+        // apparent type here, then keep using the overlap routine's existing
+        // primitive, union, intersection, callable, and object handling.
+        let apparent_left = self.conditional_overlap_apparent_type(left);
+        let apparent_right = self.conditional_overlap_apparent_type(right);
+        if apparent_left != left || apparent_right != right {
+            return self.types_have_no_overlap(apparent_left, apparent_right);
+        }
+
         // For type parameters, delegate to the comparability check which correctly handles:
         // - T vs {} → comparable (overlap exists, return false)
         // - T vs U (unrelated) → not comparable (no overlap, return true)
         // - T extends X vs Y → uses constraint resolution
-        //
-        // Deferred conditional operands (e.g. `Exclude<T, U>` = `T extends U ? never
-        // : T`) are instantiable types with no concrete value form until applied, so
-        // a direct assignability probe wrongly reports no overlap. tsc compares them
-        // through their apparent type — the default constraint
-        // (`getDefaultConstraintOfConditionalType`). The comparability gateway owns
-        // that resolution, so route a deferred conditional operand through it too.
         if is_type_parameter_like(self.ctx.types, left)
             || is_type_parameter_like(self.ctx.types, right)
-            || crate::query_boundaries::common::is_conditional_type(self.ctx.types, left)
-            || crate::query_boundaries::common::is_conditional_type(self.ctx.types, right)
         {
             return !self.is_type_comparable_to(left, right);
         }
@@ -1399,6 +1402,21 @@ impl<'a> CheckerState<'a> {
             classify_literal_type(self.ctx.types, type_id),
             LiteralTypeKind::NotLiteral
         ) || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, type_id)
+    }
+
+    fn conditional_overlap_apparent_type(&mut self, type_id: TypeId) -> TypeId {
+        let Some(constraint) = crate::query_boundaries::common::conditional_default_constraint(
+            self.ctx.types,
+            type_id,
+        ) else {
+            return type_id;
+        };
+
+        if is_type_parameter_like(self.ctx.types, constraint) {
+            self.get_type_param_apparent_type(constraint)
+        } else {
+            constraint
+        }
     }
 
     pub(crate) fn are_pure_signature_objects(&mut self, left: TypeId, right: TypeId) -> bool {
