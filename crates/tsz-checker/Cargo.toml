@@ -1985,3 +1985,6 @@ path = "tests/partial_record_optional_index_assignability_tests.rs"
 [[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
+[[test]]
+name = "es5_constrained_generic_array_iterability_tests"
+path = "tests/es5_constrained_generic_array_iterability_tests.rs"
