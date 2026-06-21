@@ -971,6 +971,29 @@ pub fn instantiate_type_params_to_constraints(db: &dyn QueryDatabase, type_id: T
     }
 }
 
+/// [`instantiate_type_params_to_constraints`] for callers that only hold a
+/// `&dyn TypeDatabase` (no cross-call cache).
+///
+/// Maps every type parameter reachable from `type_id` to its constraint and
+/// re-instantiates. This is the base-constraint mapper used when reducing an
+/// instantiable type to its apparent form — e.g. an `IndexAccess` object such
+/// as `Parameters<F>` collapses to `Parameters<(...args: any[]) => any>` when
+/// `F extends (...args: any[]) => any`, which then evaluates to `any[]`.
+pub fn instantiate_type_params_to_constraints_uncached(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let mut substitution = TypeSubstitution::new();
+    with_constraint_visited(|visited| {
+        collect_type_param_constraint_substitutions(interner, type_id, &mut substitution, visited);
+    });
+    if substitution.is_empty() {
+        type_id
+    } else {
+        instantiate_type(interner, type_id, &substitution)
+    }
+}
+
 fn collect_type_param_constraint_substitutions(
     db: &dyn TypeDatabase,
     type_id: TypeId,

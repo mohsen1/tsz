@@ -135,13 +135,62 @@ pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// `Infer` types inside conditional types should NOT be resolved here — they are checked
 /// during conditional type evaluation, not at type argument validation time.
 pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    // Fast path: intrinsics aren't `TypeParameter(_)`; return as-is.
+    // Fast path: intrinsics aren't `TypeParameter(_)`/`IndexAccess(_, _)`; return as-is.
     if type_id.is_intrinsic() {
         return type_id;
     }
     match db.lookup(type_id) {
         Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
+        // An instantiable indexed access `Obj[Idx]` is reduced through the base
+        // constraint of its object, mirroring tsc's `getBaseConstraintOfType`
+        // for `IndexedAccessType` (it computes `getBaseConstraint(objectType)`
+        // and re-indexes). For example `Parameters<F>["length"]` where
+        // `F extends (...args: any[]) => any` reduces to `any[]["length"]` =
+        // `number`. Without this, the deferred indexed access stays opaque and a
+        // numeric-literal switch/`===` operand looks non-comparable (false
+        // TS2678/TS2367).
+        Some(TypeData::IndexAccess(object, index)) => {
+            index_access_base_constraint(db, type_id, object, index)
+        }
         _ => type_id,
+    }
+}
+
+/// Base constraint of an instantiable indexed access `Obj[Idx]`.
+///
+/// Reduces the object's contained type parameters to their constraints (tsc's
+/// base-constraint mapper), evaluates that, then evaluates the indexed access
+/// against the reduced object. Returns the original `type_id` unchanged when no
+/// reduction is possible (the index access remains genuinely deferred) or when
+/// reduction produces an `Error`, so the relation sees the same opaque type it
+/// would have before.
+fn index_access_base_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    object: TypeId,
+    index: TypeId,
+) -> TypeId {
+    use crate::evaluation::evaluate::{evaluate_index_access, evaluate_type};
+    use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
+
+    // Reduce the object's type parameters to their constraints, then evaluate so
+    // an alias `Application` (e.g. `Parameters<(...args: any[]) => any>`)
+    // collapses to its concrete body (`any[]`).
+    let object_constraint = evaluate_type(
+        db,
+        instantiate_type_params_to_constraints_uncached(db, object),
+    );
+
+    // No progress reducing the object: keep the deferred form.
+    if object_constraint == object {
+        return type_id;
+    }
+
+    let resolved = evaluate_index_access(db, object_constraint, index);
+    if resolved == TypeId::ERROR || resolved == type_id {
+        type_id
+    } else {
+        resolved
     }
 }
 

@@ -276,6 +276,22 @@ impl<'a> CheckerState<'a> {
         found_function_prop
     }
 
+    /// Reduce an instantiable indexed-access operand (`Obj[Idx]`) to its base
+    /// constraint for comparability, leaving everything else unchanged.
+    ///
+    /// Mirrors tsc's `getReducedApparentType` for the indexed-access case:
+    /// `Parameters<F>["length"]` (where `F extends (...args: any[]) => any`)
+    /// reduces through `F`'s constraint to `any[]["length"]` = `number`. The
+    /// underlying reduction lives in the solver's `getBaseConstraintOfType`
+    /// (`get_base_constraint_of_type`); type-parameter operands are handled by
+    /// the dedicated apparent-type path, so they are not re-reduced here.
+    fn reduce_instantiable_indexed_access(&mut self, type_id: TypeId) -> TypeId {
+        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id) {
+            return type_id;
+        }
+        crate::query_boundaries::common::get_base_constraint_of_type(self.ctx.types, type_id)
+    }
+
     /// Check if two types are comparable (overlap).
     ///
     /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
@@ -308,16 +324,22 @@ impl<'a> CheckerState<'a> {
             return self.type_params_are_comparable(source, target);
         }
 
-        // Resolve type parameter to apparent type (constraint or `unknown`)
+        // Resolve type parameter to apparent type (constraint or `unknown`).
+        // An operand that is not a type parameter but is an instantiable indexed
+        // access (`Obj[Idx]`, e.g. `Parameters<F>["length"]`) is reduced to its
+        // base constraint, mirroring tsc's `getReducedApparentType` /
+        // `getBaseConstraintOfType`: `Parameters<F>["length"]` collapses through
+        // `F`'s constraint to `any[]["length"]` = `number`, so a numeric-literal
+        // `case`/`===` operand can overlap it (no false TS2678/TS2367).
         let source_apparent = if source_is_tp {
             self.get_type_param_apparent_type(source)
         } else {
-            source
+            self.reduce_instantiable_indexed_access(source)
         };
         let target_apparent = if target_is_tp {
             self.get_type_param_apparent_type(target)
         } else {
-            target
+            self.reduce_instantiable_indexed_access(target)
         };
 
         let skip_signature_only_fast_path =
