@@ -205,6 +205,12 @@ pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
 
+/// `true` when `type_id` is an anonymous object/object-with-index/mapped shape
+/// — i.e. a structural object body whose apparent type is itself.
+pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
+}
+
 /// Check if a type is a generic application type with type parameters in its arguments.
 /// For example, `Options<State, Actions>` where `State` or `Actions` are type parameters.
 pub(crate) fn is_generic_application_with_type_params(
@@ -983,6 +989,27 @@ pub(crate) fn mapped_type_info(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<tsz_solver::MappedType>> {
     tsz_solver::type_queries::get_mapped_type(db, type_id)
+}
+
+/// Reduce a mapped-type property access `Mapped[key_literal]` to the mapped
+/// template instantiated for that key (tsc's homomorphic mapped-type indexing).
+/// Returns `None` when `type_id` is not a mapped type or `key_literal` is not a
+/// string-literal key.
+pub(crate) fn mapped_property_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    key_literal: TypeId,
+) -> Option<TypeId> {
+    let mapped = tsz_solver::type_queries::get_mapped_type(db, type_id)?;
+    string_literal_value(db, key_literal)?;
+    Some(
+        tsz_solver::type_queries::instantiate_mapped_template_for_property(
+            db,
+            mapped.template,
+            mapped.type_param.name,
+            key_literal,
+        ),
+    )
 }
 
 // ── Index access types query ──

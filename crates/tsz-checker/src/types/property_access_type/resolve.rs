@@ -396,6 +396,14 @@ impl<'a> CheckerState<'a> {
             original_object_type
         } else if receiver_needs_env_fallback {
             self.evaluate_property_access_receiver_type(original_object_type)
+        } else if let Some(recovered) =
+            self.recover_arena_collided_application_for_property_access(original_object_type)
+        {
+            // Recover a cross-arena lib interface receiver (e.g. `g: Generator<Y,
+            // R>`) whose type-parameter push collided with the current file arena;
+            // see `recover_arena_collided_application_for_property_access`. Returns
+            // `None` (and falls through) for every well-formed receiver.
+            recovered
         } else {
             self.evaluate_application_type(original_object_type)
         };
@@ -502,29 +510,8 @@ impl<'a> CheckerState<'a> {
         {
             object_type = literal_type;
         }
-        let (receiver_start, receiver_end) = self
-            .ctx
-            .arena
-            .get(access.expression)
-            .map(|node| (node.pos, node.end))
-            .unwrap_or((u32::MAX, u32::MAX));
-        // A receiver "has a DAA error" when:
-        //   1. The receiver expression node itself was flagged with TS2454, or
-        //   2. The property-access node was flagged, or
-        //   3. Any TS2454 diagnostic falls within the receiver's [pos, end) span.
-        //
-        // Case (3) covers composite receivers like `get(foo)` where the
-        // identifier `foo` is a sub-expression of the receiver (not the
-        // receiver itself) and was the DAA-flagged node. tsc suppresses
-        // TS18047/TS18048/TS18049 (and the legacy TS2531/TS2532/TS2533) on
-        // property access whenever the receiver expression contains a
-        // definite-assignment failure, because the cascade is meaningless
-        // once we already reported that the underlying variable has no value.
-        let receiver_has_daa_error = self.ctx.daa_error_nodes.contains(&access.expression.0)
-            || self.ctx.daa_error_nodes.contains(&idx.0)
-            || self.ctx.diagnostics.iter().any(|diag| {
-                diag.code == 2454 && diag.start >= receiver_start && diag.start < receiver_end
-            });
+        let receiver_has_daa_error =
+            self.receiver_has_definite_assignment_error(idx, access.expression);
         if !skip_flow_narrowing
             // When TS2454 already forced the receiver read back to its declared type,
             // keep property access on that declared type so member lookup and call

@@ -859,3 +859,131 @@ const checked = checkShape<{ x: number; y: string }>()({
         ts2353[0].message_text
     );
 }
+
+// ---------------------------------------------------------------------------
+// "Filter" conditional idiom literal preservation (issue #14226).
+//
+// `{ [K in keyof T]: T[K] extends E ? T[K] : never }` (tsc's `Narrow` helper)
+// passes a source property that matches `E` straight through the true branch
+// and keeps it as a *regular* (non-widening) literal, while a plain
+// homomorphic copy `{ [K in keyof T]: T[K] }` widens the inferred literal.
+// The reverse-mapped reconstruction must reproduce that per-property split.
+// ---------------------------------------------------------------------------
+
+/// Helper: the structural TS2322 message produced by assigning the inferred
+/// reverse-mapped result to an incompatible primitive (`number`).
+fn ts2322_message(code: &str) -> String {
+    let diags = check_source_diagnostics(code);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "expected a TS2322 diagnostic to force structural display, got: {diags:#?}"
+    );
+    ts2322
+        .iter()
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn filter_conditional_preserves_source_literal() {
+    // `T[K] extends prim ? T[K] : never` with a matching source keeps `"there"`.
+    let code = r#"
+declare function narrow<T>(
+    x: { [K in keyof T]: T[K] extends (string | number | bigint | boolean) ? T[K] : never }
+): T;
+const r = narrow({ hi: "there" });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("hi: \"there\""),
+        "filter conditional must preserve the source literal `\"there\"`, got: {msg}"
+    );
+}
+
+#[test]
+fn homomorphic_identity_widens_source_literal() {
+    // Plain `{ [K in keyof T]: T[K] }` (no filter) widens `"there"` to `string`.
+    let code = r#"
+declare function copy<T>(x: { [K in keyof T]: T[K] }): T;
+const r = copy({ hi: "there" });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("hi: string"),
+        "plain homomorphic copy must widen the source literal to `string`, got: {msg}"
+    );
+}
+
+#[test]
+fn non_filter_conditional_widens_source_literal() {
+    // A conditional whose false branch is *not* `never` is a homomorphic copy,
+    // not a filter; tsc widens it like the identity mapping.
+    let code = r#"
+declare function copyCond<T>(
+    x: { [K in keyof T]: T[K] extends string ? T[K] : T[K] }
+): T;
+const r = copyCond({ hi: "there" });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("hi: string"),
+        "conditional with non-`never` false branch must widen, got: {msg}"
+    );
+}
+
+#[test]
+fn filter_conditional_widens_property_that_fails_check() {
+    // Per-property: with `extends string`, the string property preserves its
+    // literal while the number property (which fails the check) widens.
+    let code = r#"
+declare function narrowStr<T>(
+    x: { [K in keyof T]: T[K] extends string ? T[K] : never }
+): T;
+const r = narrowStr({ s: "a", n: 1 });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("s: \"a\"") && msg.contains("n: number"),
+        "filter must preserve the matching property and widen the failing one, got: {msg}"
+    );
+}
+
+#[test]
+fn filter_conditional_preserves_all_matching_properties() {
+    // With `extends string | number`, both properties match and are preserved.
+    let code = r#"
+declare function narrowSN<T>(
+    x: { [K in keyof T]: T[K] extends (string | number) ? T[K] : never }
+): T;
+const r = narrowSN({ s: "a", n: 1 });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("s: \"a\"") && msg.contains("n: 1"),
+        "filter must preserve every matching literal property, got: {msg}"
+    );
+}
+
+#[test]
+fn filter_conditional_preserves_literal_with_renamed_binders() {
+    // Anti-hardcoding: the rule is structural, not tied to the `T`/`K` names.
+    let code = r#"
+declare function pick<Elem, Key extends keyof Elem = keyof Elem>(
+    x: { [P in keyof Elem]: Elem[P] extends string ? Elem[P] : never }
+): Elem;
+const r = pick({ label: "ok" });
+const bad: number = r;
+"#;
+    let msg = ts2322_message(code);
+    assert!(
+        msg.contains("label: \"ok\""),
+        "renamed binders must not change the filter literal-preservation rule, got: {msg}"
+    );
+}
