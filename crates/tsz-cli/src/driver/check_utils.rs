@@ -1007,7 +1007,7 @@ struct TsDirective {
 fn directive_in_block_last_line(last_line: &str) -> Option<DirectiveKind> {
     let body = last_line
         .trim_start()
-        .trim_start_matches(|c| c == '/' || c == '*')
+        .trim_start_matches(['/', '*'])
         .trim_start();
     for (kind, text) in [
         (DirectiveKind::ExpectError, "@ts-expect-error"),
