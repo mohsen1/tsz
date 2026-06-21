@@ -9,7 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, IndexSignature, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{CallSignature, CallableShape, IndexSignature, PropertyInfo, TypeId};
 
 use super::can_skip_base_instantiation;
 
@@ -422,20 +422,11 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         inst_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id,
-                            write_type: type_id,
                             optional: prop.question_token,
                             readonly: self.has_readonly_modifier(&prop.modifiers),
-                            is_method: false,
-                            is_class_prototype: false,
                             visibility: self.get_member_visibility(&prop.modifiers, prop.name),
                             parent_id: current_sym,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
+                            ..PropertyInfo::new(name_atom, type_id)
                         });
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -470,20 +461,11 @@ impl<'a> CheckerState<'a> {
                                 TypeId::ANY
                             };
                             inst_props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id,
-                                write_type: type_id,
                                 optional: param.question_token,
                                 readonly: self.has_readonly_modifier(&param.modifiers),
-                                is_method: false,
-                                is_class_prototype: false,
                                 visibility: self.get_visibility_from_modifiers(&param.modifiers),
                                 parent_id: current_sym,
-                                declaration_order: 0,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                                non_widening: false,
+                                ..PropertyInfo::new(name_atom, type_id)
                             });
                         }
                     }
@@ -529,20 +511,11 @@ impl<'a> CheckerState<'a> {
                             is_abstract: false,
                         });
                         inst_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: callable_type,
-                            write_type: callable_type,
                             optional: method.question_token,
-                            readonly: false,
                             is_method: true,
-                            is_class_prototype: false,
                             visibility: self.get_member_visibility(&method.modifiers, method.name),
                             parent_id: current_sym,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
+                            ..PropertyInfo::new(name_atom, callable_type)
                         });
                     }
                     _ => {}
@@ -668,20 +641,11 @@ impl<'a> CheckerState<'a> {
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
                                 extra_property: Some(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: TypeId::ANY,
-                                    write_type: TypeId::ANY,
                                     optional: prop.question_token,
                                     readonly,
-                                    is_method: false,
-                                    is_class_prototype: false,
                                     visibility,
                                     parent_id: current_sym,
-                                    declaration_order: 0,
-                                    is_string_named: false,
-                                    is_symbol_named: false,
-                                    single_quoted_name: false,
-                                    non_widening: false,
+                                    ..PropertyInfo::new(name_atom, TypeId::ANY)
                                 }),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -789,20 +753,11 @@ impl<'a> CheckerState<'a> {
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
                                 extra_property: Some(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: TypeId::ANY,
-                                    write_type: TypeId::ANY,
                                     optional: prop.question_token,
                                     readonly,
-                                    is_method: false,
-                                    is_class_prototype: false,
                                     visibility,
                                     parent_id: current_sym,
-                                    declaration_order: 0,
-                                    is_string_named: false,
-                                    is_symbol_named: false,
-                                    single_quoted_name: false,
-                                    non_widening: false,
+                                    ..PropertyInfo::new(name_atom, TypeId::ANY)
                                 }),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -868,20 +823,11 @@ impl<'a> CheckerState<'a> {
                     properties.insert(
                         name_atom,
                         PropertyInfo {
-                            name: name_atom,
-                            type_id,
-                            write_type: type_id,
                             optional: prop.question_token,
                             readonly,
-                            is_method: false,
-                            is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
+                            ..PropertyInfo::new(name_atom, type_id)
                         },
                     );
                 }
@@ -1160,20 +1106,12 @@ impl<'a> CheckerState<'a> {
             properties.insert(
                 name,
                 PropertyInfo {
-                    name,
                     type_id: read_type,
                     write_type,
-                    optional: false,
                     readonly,
-                    is_method: false,
-                    is_class_prototype: false,
                     visibility: accessor.visibility,
                     parent_id: current_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
+                    ..PropertyInfo::new(name, read_type)
                 },
             );
         }
@@ -1208,20 +1146,11 @@ impl<'a> CheckerState<'a> {
             properties.insert(
                 name,
                 PropertyInfo {
-                    name,
-                    type_id,
-                    write_type: type_id,
                     optional,
-                    readonly: false,
                     is_method: true,
-                    is_class_prototype: false,
                     visibility: method.visibility,
                     parent_id: current_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
+                    ..PropertyInfo::new(name, type_id)
                 },
             );
         }
@@ -1301,20 +1230,8 @@ impl<'a> CheckerState<'a> {
                         .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
                         .unwrap_or(TypeId::ANY);
                     partial_ctor_props.push(PropertyInfo {
-                        name: prototype_name,
-                        type_id: prototype_type,
-                        write_type: prototype_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
                         parent_id: current_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
+                        ..PropertyInfo::new(prototype_name, prototype_type)
                     });
                 }
 
@@ -1359,20 +1276,11 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     inst_props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id,
-                        write_type: type_id,
                         optional: prop.question_token,
                         readonly: self.has_readonly_modifier(&prop.modifiers),
-                        is_method: false,
-                        is_class_prototype: false,
                         visibility: self.get_member_visibility(&prop.modifiers, prop.name),
                         parent_id: current_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
+                        ..PropertyInfo::new(name_atom, type_id)
                     });
                 }
                 if !inst_props.is_empty() {
@@ -1440,20 +1348,8 @@ impl<'a> CheckerState<'a> {
         properties.insert(
             prototype_name,
             PropertyInfo {
-                name: prototype_name,
-                type_id: prototype_type,
-                write_type: prototype_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
                 parent_id: current_sym,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
+                ..PropertyInfo::new(prototype_name, prototype_type)
             },
         );
 
