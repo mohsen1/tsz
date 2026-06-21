@@ -616,10 +616,21 @@ impl<'a> CheckerState<'a> {
                             // needing full symbol type resolution here. Merged class/value
                             // symbols (like a user class colliding with lib `Symbol`) still need
                             // constructor validation because their value side may be non-newable.
-                            let skip_constructor_check =
-                                self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
-                                    s.has_any_flags(symbol_flags::CLASS)
-                                        && !s.has_any_flags(symbol_flags::VARIABLE)
+                            //
+                            // `use_flow_narrowed_base` is decided from the same symbol read:
+                            // a narrowable value binding (a `var`/`let`/`const`/parameter, not a
+                            // class/interface type declaration) is typed via its flow-narrowed
+                            // node type below, matching tsc's `checkExpression`.
+                            let (skip_constructor_check, use_flow_narrowed_base) = self
+                                .get_cross_file_symbol(sym_to_check)
+                                .map_or((false, false), |s| {
+                                    let skip = s.has_any_flags(symbol_flags::CLASS)
+                                        && !s.has_any_flags(symbol_flags::VARIABLE);
+                                    let flow_narrowed = s.has_any_flags(symbol_flags::VARIABLE)
+                                        && !s.has_any_flags(
+                                            symbol_flags::CLASS | symbol_flags::INTERFACE,
+                                        );
+                                    (skip, flow_narrowed)
                                 });
 
                             // When a user class shadows a lib variable of the same name
@@ -658,8 +669,16 @@ impl<'a> CheckerState<'a> {
                             }
 
                             if !skip_constructor_check {
+                                // A narrowable value binding is typed via its
+                                // flow-narrowed node type (tsc's `checkExpression`), so a
+                                // narrowing like `Ctor | undefined → Ctor` (e.g.
+                                // `klass ? class extends klass {} : null`) is honored
+                                // instead of falsely reporting TS2507. Class/interface
+                                // symbols keep their location-independent declared type.
                                 let symbol_type = if is_being_resolved {
                                     TypeId::ERROR
+                                } else if use_flow_narrowed_base {
+                                    self.get_type_of_node(expr_idx)
                                 } else {
                                     self.get_type_of_symbol(sym_to_check)
                                 };
