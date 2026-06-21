@@ -143,7 +143,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let d_type = interner.object(vec![
         PropertyInfo {
@@ -159,7 +159,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo {
             name: test2_name,
@@ -174,7 +174,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             declaration_order: 1,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 

@@ -234,6 +234,11 @@ pub(crate) fn widen_mutable_object_literal_property_types(
     let mut widened_shape = shape.as_ref().clone();
     let mut changed = false;
     for prop in &mut widened_shape.properties {
+        // Preserve regular (non-widening) literal properties — those held a
+        // literal from an `as const`/assertion source that tsc never widens.
+        if prop.non_widening {
+            continue;
+        }
         let widened_read = crate::query_boundaries::common::widen_literal_type(db, prop.type_id);
         let widened_write =
             crate::query_boundaries::common::widen_literal_type(db, prop.write_type);

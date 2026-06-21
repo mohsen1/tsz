@@ -54,6 +54,21 @@ impl<'a> CheckerContext<'a> {
             || !self.binder.augmentation_target_modules.is_empty()
     }
 
+    /// Whether any file in the program registers a `declare global { ... }`
+    /// augmentation. Checks the current binder and every cross-file binder so
+    /// the global-augmentation fold runs whether or not the program was loaded
+    /// through a single pre-aggregated primary binder.
+    pub fn program_has_global_augmentations(&self) -> bool {
+        if !self.binder.global_augmentations.is_empty() {
+            return true;
+        }
+        self.all_binders.as_ref().is_some_and(|binders| {
+            binders
+                .iter()
+                .any(|binder| !binder.global_augmentations.is_empty())
+        })
+    }
+
     pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
         self.definition_store.source_file_symbol_type_cache_scope()
     }

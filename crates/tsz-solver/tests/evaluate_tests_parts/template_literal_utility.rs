@@ -49,7 +49,7 @@ fn test_partial_required_inverse() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     match interner.lookup(required_partial) {
@@ -82,7 +82,7 @@ fn test_readonly_with_optional() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     match interner.lookup(readonly_optional) {

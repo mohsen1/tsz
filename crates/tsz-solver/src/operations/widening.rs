@@ -262,6 +262,57 @@ pub fn widen_type_for_mutable_binding(
     widen_type_cached(db, type_id, &mut cache, true, true, true, false, false)
 }
 
+/// Widen a `const` declaration's fresh initializer type the way tsc does.
+///
+/// `const` preserves a *top-level* primitive literal — `const c = "x"` is `"x"`,
+/// and `const c = cond ? "x" : "y"` is `"x" | "y"` — but array, tuple, and
+/// object-literal element positions are mutable, so their literal members still
+/// widen: `const c = cond ? ["x"] : []` is `string[]`, not `("x")[]` (#14165,
+/// remeda `errors.push(...)`). The plain [`widen_type_for_mutable_binding`]
+/// (used for `let`/`var`) would over-widen the top-level literal union to
+/// `string`, which is wrong for `const`.
+///
+/// Strategy: preserve a top-level literal / unique symbol; map a union member by
+/// member (literal members preserved, compound members widened); and widen a
+/// fresh array/tuple/object compound's members via the mutable-binding widener
+/// (which respects object freshness). Reached only for fresh compound
+/// initializers — the checker gates on `is_fresh_literal_expression`, so a
+/// non-fresh initializer keeps its declared type.
+pub fn widen_const_initializer(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    match db.lookup(type_id) {
+        // Distribute over a union: literal members are preserved, array/object
+        // members widen. `cond ? "x" : ["y"]` → `"x" | string[]`.
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&m| widen_const_initializer(db, m))
+                .collect();
+            if mapped.iter().zip(members.iter()).all(|(a, b)| a == b) {
+                type_id
+            } else {
+                db.union(mapped)
+            }
+        }
+        // Mutable compounds: widen element / property literals (freshness-respecting).
+        Some(
+            TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_),
+        ) => widen_type_for_mutable_binding(db, type_id),
+        // A top-level primitive literal / unique symbol (`const` preserves it) and
+        // everything else (functions, type parameters, applications, …) unchanged.
+        _ => type_id,
+    }
+}
+
 /// Deep-widen a type including inside function/callable signatures.
 ///
 /// Unlike `widen_type` which skips Function/Callable types for performance
@@ -517,9 +568,17 @@ fn widen_type_cached(
                 //   class C { readonly a = [1, 2, 3] }   // → number[]
                 // Likewise, the unique-symbol primitive carve-out remains
                 // for readonly props: `readonly s: unique symbol` stays.
-                let preserve_readonly_top_level =
-                    prop.readonly && readonly_property_preserves_top_level_type(db, prop.type_id);
-                let widened_type = if preserve_readonly_top_level {
+                // A `readonly` property keeps its *own* primitive literal type,
+                // and a `non_widening` (regular) literal property — preserved at
+                // construction from an `as const`/assertion source — must never
+                // re-widen either, mirroring tsc's `getWidenedType` leaving
+                // regular literals untouched. In both cases only the *top-level*
+                // literal is preserved; compound values still recurse so nested
+                // fresh literals widen as tsc does.
+                let preserves_literal = prop.readonly || prop.non_widening;
+                let widened_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.type_id)
+                {
                     prop.type_id
                 } else {
                     widen_type_cached(
@@ -535,9 +594,9 @@ fn widen_type_cached(
                 };
 
                 // Write type follows read type logic.
-                let preserve_readonly_top_level_write = prop.readonly
-                    && readonly_property_preserves_top_level_type(db, prop.write_type);
-                let widened_write_type = if preserve_readonly_top_level_write {
+                let widened_write_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.write_type)
+                {
                     prop.write_type
                 } else {
                     widen_type_cached(
@@ -854,12 +913,17 @@ pub(crate) fn widen_object_literal_properties(
             let mut changed = false;
 
             for prop in &shape.properties {
-                let widened_type = if prop.readonly {
+                // `non_widening` properties hold a regular (non-widening) literal
+                // preserved from an `as const`/assertion source; tsc's
+                // `getWidenedType` never widens those, so skip them alongside
+                // readonly properties.
+                let preserve = prop.readonly || prop.non_widening;
+                let widened_type = if preserve {
                     prop.type_id
                 } else {
                     widen_type(db, prop.type_id)
                 };
-                let widened_write_type = if prop.readonly {
+                let widened_write_type = if preserve {
                     prop.write_type
                 } else {
                     widen_type(db, prop.write_type)

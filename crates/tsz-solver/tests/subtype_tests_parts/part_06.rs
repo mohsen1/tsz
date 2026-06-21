@@ -1053,7 +1053,7 @@ fn test_readonly_with_optional() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let obj_readonly_required =
@@ -1113,7 +1113,7 @@ fn test_readonly_method_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let obj_mutable_method = interner.object(vec![PropertyInfo::method(method_name, method)]);

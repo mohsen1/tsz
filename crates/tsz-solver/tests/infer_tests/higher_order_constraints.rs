@@ -1647,6 +1647,7 @@ fn test_default_recursive_type() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     ctx.add_upper_bound(var_t, node);
     ctx.add_lower_bound(var_t, node);

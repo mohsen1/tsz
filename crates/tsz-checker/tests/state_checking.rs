@@ -36,6 +36,7 @@ fn exposes_state_checking_boundary_queries() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     let readonly_array = types.readonly_type(array);
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);

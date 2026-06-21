@@ -36,6 +36,7 @@ fn test_deep_widen_object_candidate_homomorphic_mapped() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Add as HomomorphicMappedType candidate (from reverse mapped inference)
@@ -86,6 +87,7 @@ fn test_deep_widen_object_candidate_naked_type_variable() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Add as NakedTypeVariable candidate (direct inference)
@@ -136,6 +138,7 @@ fn test_no_deep_widen_return_type_priority() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Add as ReturnType candidate (from contextual typing)
@@ -622,6 +625,7 @@ fn test_reverse_mapped_inference_preserves_source_declaration_order() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     };
 
     // Mapped target: `{ [K in keyof T]: { wrap: T[K] } }`. Wrapping T[K] in

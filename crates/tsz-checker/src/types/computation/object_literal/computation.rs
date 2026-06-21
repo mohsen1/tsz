@@ -664,6 +664,10 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // Regular (non-widening) literal property — see
+                    // `PropertyInfo::non_widening`.
+                    let prop_non_widening =
+                        self.object_property_value_is_non_widening(prop.initializer);
                     // When a JSDoc @type annotation is present, check assignability
                     // of the initializer against the declared type, and use the
                     // declared type as the property type (not the initializer type).
@@ -691,14 +695,7 @@ impl<'a> CheckerState<'a> {
                         }
                         declared_type
                     } else {
-                        let value_has_non_widening_source = self
-                            .expression_is_type_assertion(prop.initializer)
-                            || self.identifier_refers_to_non_widening_declared_value_type(
-                                prop.initializer,
-                            )
-                            || self
-                                .object_literal_property_access_literal_type(prop.initializer)
-                                .is_some();
+                        let value_has_non_widening_source = prop_non_widening;
                         // Apply bidirectional type inference - use contextual type to narrow
                         // the value type, except for function-like values with explicit
                         // signature annotations. For those, tsc preserves the explicit
@@ -933,6 +930,8 @@ impl<'a> CheckerState<'a> {
                         is_string_named,
                         is_symbol_named,
                         single_quoted_name,
+                        // JSDoc `@type` takes the declared type (annotation-governed).
+                        non_widening: jsdoc_declared_type.is_none() && prop_non_widening,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
@@ -1265,6 +1264,10 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(shorthand_name_idx, &shorthand_request)
                     };
 
+                    // Regular (non-widening) literal — see `PropertyInfo::non_widening`.
+                    let shorthand_prop_non_widening = shorthand_sym.is_some_and(|sym_id| {
+                        self.sym_has_non_widening_declared_value_type(sym_id)
+                    });
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
                         let has_uninitialized_value_decl = shorthand_sym.is_some_and(|sym_id| {
                             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1319,14 +1322,11 @@ impl<'a> CheckerState<'a> {
                             value_type,
                             property_context_type,
                         );
-                        let shorthand_is_non_widening = shorthand_sym.is_some_and(|sym_id| {
-                            self.sym_has_non_widening_declared_value_type(sym_id)
-                        });
                         if self.should_widen_object_property_literal(
                             value_type,
                             property_context_type,
                             had_object_context,
-                            shorthand_is_non_widening,
+                            shorthand_prop_non_widening,
                         ) {
                             self.widen_literal_type(value_type)
                         } else {
@@ -1384,6 +1384,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
+                        non_widening: shorthand_prop_non_widening,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
@@ -1765,6 +1766,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named,
                         is_symbol_named,
                         single_quoted_name,
+                        non_widening: false,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(

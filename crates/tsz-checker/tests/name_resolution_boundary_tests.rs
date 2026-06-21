@@ -407,6 +407,69 @@ type T = { x: myFunc };
 }
 
 #[test]
+fn signature_type_param_in_type_literal_shadows_enclosing_value() {
+    // A bare type-position identifier inside a call/method signature member of
+    // an object type literal binds to that signature's own type parameter, even
+    // when an enclosing value of the same name is visible. tsc resolves the
+    // type parameter first; the type-literal resolver must consult the
+    // type-parameter scope before the value-used-as-type recovery (TS2749).
+    let diags = check(
+        r#"
+interface Either<E, A> { readonly _e: E; readonly _a: A }
+declare const E: number;
+type Sig<A> = {
+    <E>(a: A, ma: Either<E, A>): boolean
+};
+"#,
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2749),
+        0,
+        "Expected no TS2749 when a call-signature type parameter shadows an enclosing value, got: {diags:?}"
+    );
+}
+
+#[test]
+fn method_signature_type_param_in_type_literal_shadows_enclosing_value() {
+    // Same rule for a method signature, with an alternate binder name to keep
+    // the fix scope-based rather than identifier-based.
+    let diags = check(
+        r#"
+interface Wrap<G, A> { readonly _g: G; readonly _a: A }
+declare const G: number;
+type Sig<A> = {
+    pick<G>(ma: Wrap<G, A>): boolean
+};
+"#,
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2749),
+        0,
+        "Expected no TS2749 when a method-signature type parameter shadows an enclosing value, got: {diags:?}"
+    );
+}
+
+#[test]
+fn genuine_value_used_as_type_in_type_literal_still_reports() {
+    // Negative control: when no type parameter of the same name is in scope, a
+    // value used in type position is still a genuine TS2749 in the type-literal
+    // resolver.
+    let diags = check(
+        r#"
+interface Box<V> { readonly _v: V }
+declare const V: number;
+type Bad = {
+    (a: number): Box<V>
+};
+"#,
+    );
+    assert!(
+        has_diagnostic_code(&diags, 2749),
+        "Expected TS2749 when a genuine value with no type-parameter shadow is used as a type, got: {diags:?}"
+    );
+}
+
+#[test]
 fn phase2_value_only_in_qualified_type_routes_through_boundary() {
     let diags = check(
         r#"

@@ -128,6 +128,7 @@ fn test_definition_store_interface() {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             },
             PropertyInfo {
                 name: y_name,
@@ -143,6 +144,7 @@ fn test_definition_store_interface() {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             },
         ],
     );
@@ -574,6 +576,7 @@ fn test_find_def_by_shape_via_register() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         PropertyInfo {
             name: y_name,
@@ -589,6 +592,7 @@ fn test_find_def_by_shape_via_register() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ];
 
@@ -677,6 +681,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }],
         string_index: None,
         number_index: None,

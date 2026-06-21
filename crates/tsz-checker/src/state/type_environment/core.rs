@@ -10,7 +10,6 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
 use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
 thread_local! {
@@ -117,19 +116,9 @@ impl CheckerState<'_> {
                 }
 
                 props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id: specific_member_type,
-                    write_type: specific_member_type,
-                    optional: false,
                     readonly: true,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
                     declaration_order: props.len() as u32 + 1,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
+                    ..PropertyInfo::new(name_atom, specific_member_type)
                 });
             }
         }
@@ -1032,19 +1021,9 @@ impl CheckerState<'_> {
 
                 for remapped_name in remapped_names {
                     properties.push(PropertyInfo {
-                        name: remapped_name,
-                        type_id: property_type,
-                        write_type: property_type,
                         optional,
                         readonly,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
+                        ..PropertyInfo::new(remapped_name, property_type)
                     });
                 }
             }
@@ -1158,19 +1137,9 @@ impl CheckerState<'_> {
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
-                    name: remapped_name,
-                    type_id: property_type,
-                    write_type: property_type,
                     optional,
                     readonly,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
+                    ..PropertyInfo::new(remapped_name, property_type)
                 });
             }
         }
