@@ -377,6 +377,38 @@ impl<'a> CheckerState<'a> {
         filled
     }
 
+    /// Default any type parameter or `__infer_*` placeholder that round-1
+    /// inference could not fix to its default/constraint/`unknown` before the
+    /// contextual parameter type is pushed into a context-sensitive callback
+    /// argument. Without this, reading the callback parameter as a value (e.g.
+    /// assigning `res` out of `new Promise((res) => { resolve = res })`)
+    /// relates an un-fixed `(value: __infer_0 | ...) => void` and produces a
+    /// tsz-only false positive; `tsc` fixes the type parameter (e.g.
+    /// `T = unknown`) so the callback parameter becomes concrete. Shared by the
+    /// generic call and generic `new` round-2 contextual-typing paths so the
+    /// two cannot drift.
+    pub(crate) fn default_unfixed_sensitive_contextual_type_params(
+        &self,
+        is_sensitive: bool,
+        contextual: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> TypeId {
+        if is_sensitive
+            && (common::contains_type_parameters(self.ctx.types, contextual)
+                || common::contains_infer_types(self.ctx.types, contextual))
+        {
+            crate::query_boundaries::inference::instantiate_remaining_contextual_type_params(
+                self.ctx.types,
+                contextual,
+                type_params,
+                substitution,
+            )
+        } else {
+            contextual
+        }
+    }
+
     pub(crate) fn direct_round1_literal_conflict_type_params(
         &mut self,
         shape: &FunctionShape,

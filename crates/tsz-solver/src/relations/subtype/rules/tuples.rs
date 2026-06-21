@@ -392,18 +392,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // `[...X] <: E[]` reduces to `X <: E[]` when the spread `X` is
                     // itself array-like. expand_tuple_rest keeps such a spread
                     // unreduced as the variadic — a type parameter constrained to
-                    // an array (the historical `[..U, ..U] <: E[]` case) or a
-                    // deferred conditional like `Parameters<F>` whose base
-                    // constraint is array-like. Relate the spread to the array
-                    // form `E[]` (which resolves an instantiable spread through its
-                    // constraint), or fall back to the type-parameter constraint's
-                    // element type.
+                    // an array/tuple or a deferred conditional like `Parameters<F>`
+                    // whose base constraint is array-like. Relate the spread to the
+                    // array form `E[]` (which resolves an instantiable spread
+                    // through its constraint), or fall back to the constraint's
+                    // rest-spread element type.
                     let variadic_as_array = self.interner.array(t_elem);
                     let ok = self.check_subtype(variadic, variadic_as_array).is_true()
                         || type_param_info(self.interner, variadic).is_some_and(|info| {
                             info.constraint.is_some_and(|c| {
-                                array_element_type(self.interner, c)
-                                    .is_some_and(|e| self.check_subtype(e, t_elem).is_true())
+                                let e =
+                                    crate::type_queries::rest_spread_element_type(self.interner, c);
+                                // `rest_spread_element_type` returns its input unchanged
+                                // for a non-array-like constraint; `e != c` means the
+                                // constraint actually decomposed to an element type.
+                                e != c && self.check_subtype(e, t_elem).is_true()
                             })
                         });
                     if !ok {

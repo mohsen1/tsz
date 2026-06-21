@@ -318,6 +318,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.is_contextually_sensitive(inner)
             }
 
+            // Substitution presents its base variable's contextual sensitivity.
+            TypeData::Substitution { base_type, .. } => self.is_contextually_sensitive(base_type),
+
             // Type parameters with constraints: check constraint
             TypeData::TypeParameter(info) | TypeData::Infer(info) => info
                 .constraint

@@ -282,6 +282,17 @@ fn any_declaration_matches(
     // declaration was never inspected and `unique symbol` identity queries
     // silently returned `false`.
     let decl_is_current_file = symbol.decl_file_idx as usize == ctx.current_file_idx;
+    // The arena that actually holds the symbol's declaration nodes. For a
+    // cross-file import copy (`import * as ns` / a named import of the same
+    // const reached from another file) the per-binder `declaration_arenas` /
+    // `symbol_arenas` maps were populated only in the importing binder, not in
+    // the binder of the file recorded as `decl_file_idx`; consulting the
+    // owner file's arena directly recovers the original declaration
+    // (e.g. the `Symbol.for(...)` initializer of a re-imported `unique symbol`
+    // const) so identity queries do not silently return `false` when the
+    // declaration is reached through an import alias.
+    let owner_file_arena =
+        (symbol.decl_file_idx != u32::MAX).then(|| ctx.get_arena_for_file(symbol.decl_file_idx));
     symbol.all_declarations().into_iter().any(|decl_idx| {
         let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
         if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
@@ -289,6 +300,9 @@ fn any_declaration_matches(
         }
         if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
             candidate_arenas.push(symbol_arena.as_ref());
+        }
+        if let Some(arena) = owner_file_arena {
+            candidate_arenas.push(arena);
         }
         if decl_is_current_file || std::ptr::eq(owner_binder, ctx.binder) {
             candidate_arenas.push(ctx.arena);

@@ -130,12 +130,7 @@ impl<'a> CheckerState<'a> {
         };
         match node.kind {
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => true,
-            syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_extended(func_idx)
-                .and_then(|ext| self.ctx.arena.get(ext.parent))
-                .is_some_and(|parent| parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION),
+            syntax_kind_ext::METHOD_DECLARATION => self.is_object_literal_method(func_idx),
             _ => false,
         }
     }
