@@ -86,3 +86,15 @@ pub(super) fn is_bare_foreign_type_param_shape(
     }
     false
 }
+
+pub(super) fn is_substantive_inference_candidate(
+    interner: &dyn crate::construction::TypeDatabase,
+    ty: TypeId,
+    local_type_params: &FxHashSet<tsz_common::Atom>,
+    local_placeholders: &[tsz_common::Atom],
+) -> bool {
+    !ty.is_any_unknown_or_error()
+        && !is_bare_foreign_type_param(interner, ty, local_type_params, local_placeholders)
+        && !crate::visitor::contains_type_parameters(interner, ty)
+        && !crate::type_queries::contains_infer_types_db(interner, ty)
+}
