@@ -81,3 +81,29 @@ const bad: { id: 1 } = value;
         "mismatched target must report exactly one TS2322. Got: {c:?}"
     );
 }
+
+/// Safety-net generalization (issue #14123, fix direction #2): a genuinely
+/// non-convergent recursive conditional — one whose recursive call *grows* its
+/// argument every step (`Grow<{ p: P }>` -> `Grow<{ p: P[] }>` -> …) so it never
+/// reaches a fixpoint — must degrade to a bounded `TS2589` diagnostic rather than
+/// exhausting the native stack with a `SIGABRT`. This locks the property that the
+/// conditional/`infer` evaluation recursion is depth-bounded: a future loss of
+/// convergence on this path can never again crash the process, only surface
+/// "Type instantiation is excessively deep and possibly infinite". Binder names
+/// differ from the converging witnesses above so the guard is structural.
+#[test]
+fn issue_14123_nonconvergent_growth_bounds_to_ts2589_not_sigabrt() {
+    let c = codes(
+        r#"
+type Grow<V> =
+    V extends { p: infer Q } ? Grow<{ p: Q[] }> :
+    V;
+type Diverge = Grow<{ p: 0 }>;
+declare const d: Diverge;
+"#,
+    );
+    assert!(
+        c.contains(&2589),
+        "non-convergent growth must surface bounded TS2589 (no SIGABRT). Got: {c:?}"
+    );
+}
