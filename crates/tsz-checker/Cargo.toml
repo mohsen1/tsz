@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "as_const_object_property_inference_tests"
 path = "tests/as_const_object_property_inference_tests.rs"
 [[test]]
+name = "object_literal_unique_symbol_member_tests"
+path = "tests/object_literal_unique_symbol_member_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
