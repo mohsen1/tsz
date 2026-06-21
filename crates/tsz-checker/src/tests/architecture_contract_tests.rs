@@ -75,6 +75,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     let dog = interner.object(vec![
@@ -92,6 +93,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
         tsz_solver::PropertyInfo {
             name: dog_breed,
@@ -107,6 +109,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         },
     ]);
 

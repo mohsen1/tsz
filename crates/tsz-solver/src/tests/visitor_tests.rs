@@ -448,6 +448,7 @@ fn test_contains_error_type() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
     assert!(contains_error_type(&interner, object_with_error_method));
 

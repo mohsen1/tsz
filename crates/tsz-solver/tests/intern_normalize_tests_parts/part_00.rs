@@ -1136,7 +1136,7 @@ fn object_readonly_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let rw = i.object(vec![PropertyInfo::new(
         i.intern_string("x"),

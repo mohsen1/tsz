@@ -198,6 +198,7 @@ mod tests {
             is_string_named: false,
             is_symbol_named: true,
             single_quoted_name: false,
+            non_widening: false,
         });
 
         let shape = crate::types::ObjectShape {

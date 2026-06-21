@@ -1148,6 +1148,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 result,
                 result_key.as_ref(),
             );
+            // #14101 / #13242 OPEN-2: instantiation-identity dedup ceiling.
+            // How many distinct results would collapse if the nominal symbol
+            // brand were ignored. Measurement-only, same gate.
+            crate::evaluation::eval_materialization_probe::record_canon_headroom(
+                &key,
+                result,
+                self.interner,
+                self.query_db,
+            );
         }
 
         // Symmetric cleanup: leave guard and cache result

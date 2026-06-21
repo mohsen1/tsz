@@ -116,12 +116,42 @@ impl<'a> NarrowingContext<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             };
             let filter_obj = self.db.object(vec![required_prop]);
             let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
             trace!("Narrowing unknown to object & property = {}", narrowed.0);
             return narrowed;
         }
+
+        // Resolve aliases / generic applications to their structural form before
+        // deciding union vs non-union. A type alias instantiation such as
+        // `Enumerable<T> = ArrayLike<T> | Iterable<T>` reaches here as a
+        // `TypeData::Application` (or a `Lazy`/`IndexAccess`), for which
+        // `union_list_id` returns `None`; without this resolution the
+        // union-filtering path below is skipped and the receiver wrongly falls
+        // through to the non-union branch (producing `union & Record<prop,
+        // unknown>`, so the property reads back as `unknown`). Resolving here
+        // mirrors tsc's `narrowTypeByInKeyword`, which filters the constituents
+        // of the *resolved* union. We deliberately skip resolution when the
+        // source is already a union (the existing path handles it) or a type
+        // parameter (the constraint-aware branch below must see the bare
+        // parameter so it can intersect with `Record<prop, unknown>` or its
+        // narrowed constraint).
+        let source_type = if union_list_id(self.db, source_type).is_none()
+            && type_param_info(self.db, source_type).is_none()
+        {
+            let resolved = self.resolve_type(source_type);
+            if resolved != source_type {
+                trace!(
+                    "Resolved alias/application {} to {}",
+                    source_type.0, resolved.0
+                );
+            }
+            resolved
+        } else {
+            source_type
+        };
 
         // Handle type parameters: narrow the constraint and intersect if changed
         if let Some(type_param_info) = type_param_info(self.db, source_type) {
@@ -321,6 +351,7 @@ impl<'a> NarrowingContext<'a> {
             is_string_named: false,
             is_symbol_named,
             single_quoted_name: false,
+            non_widening: false,
         };
         self.db
             .object_with_flags(vec![required_prop], ObjectFlags::IN_OPERATOR_RECORD)

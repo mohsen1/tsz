@@ -1248,6 +1248,7 @@ mod tests {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
 
         // Target has Lazy property type — solver cannot resolve it
@@ -1266,6 +1267,7 @@ mod tests {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
 
         // Solver returns false because Lazy types are opaque here.
@@ -1301,6 +1303,7 @@ mod tests {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
 
         // Target: { mode: AutomationMode } (enum with string members)
@@ -1324,6 +1327,7 @@ mod tests {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false,
+            non_widening: false,
         }]);
 
         // When both sides are resolved, the comparable check succeeds
@@ -1391,6 +1395,7 @@ mod tests {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             }],
             string_index: None,
             number_index: None,
@@ -1510,6 +1515,7 @@ mod tests {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             }],
             string_index: None,
             number_index: None,
@@ -1592,6 +1598,7 @@ mod tests {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             }],
             string_index: None,
             number_index: None,
@@ -1658,6 +1665,7 @@ mod tests {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 }],
                 string_index: None,
                 number_index: None,
@@ -1723,6 +1731,7 @@ mod tests {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             }],
             string_index: None,
             number_index: None,

@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn combine_augmentation_with_lib(
+    pub(crate) fn combine_augmentation_with_lib(
         &mut self,
         lib_type: Option<TypeId>,
         aug_type: TypeId,

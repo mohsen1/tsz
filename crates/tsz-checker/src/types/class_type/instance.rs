@@ -258,6 +258,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -320,6 +321,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                     k if k == syntax_kind_ext::GET_ACCESSOR
@@ -357,6 +359,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named: false,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -401,6 +404,7 @@ impl<'a> CheckerState<'a> {
                                 is_string_named: false,
                                 is_symbol_named: false,
                                 single_quoted_name: false,
+                                non_widening: false,
                             });
                         }
                     }
@@ -552,6 +556,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named,
                             single_quoted_name: false,
+                            non_widening: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
                             b.properties.values().cloned().collect();
@@ -666,6 +671,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named,
                             single_quoted_name: false,
+                            non_widening: false,
                         },
                     );
                 }
@@ -796,6 +802,7 @@ impl<'a> CheckerState<'a> {
                                 is_string_named: false,
                                 is_symbol_named: false,
                                 single_quoted_name: false,
+                                non_widening: false,
                             },
                         );
                     }
@@ -1081,6 +1088,7 @@ impl<'a> CheckerState<'a> {
                             is_string_named: false,
                             is_symbol_named,
                             single_quoted_name: false,
+                            non_widening: false,
                         });
                     }
                 }
@@ -1101,6 +1109,7 @@ impl<'a> CheckerState<'a> {
                         is_string_named: false,
                         is_symbol_named: deferred.is_symbol_named,
                         single_quoted_name: false,
+                        non_widening: false,
                     });
                 }
             }
@@ -1292,6 +1301,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: method.is_symbol_named,
                     single_quoted_name: false,
+                    non_widening: false,
                 });
             }
             let partial_type = factory.object_with_index(ObjectShape {
@@ -1452,6 +1462,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: accessor.is_symbol_named,
                     single_quoted_name: false,
+                    non_widening: false,
                 },
             );
         }
@@ -1502,6 +1513,7 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: method.is_symbol_named,
                     single_quoted_name: false,
+                    non_widening: false,
                 },
             );
         }
@@ -1528,6 +1540,7 @@ impl<'a> CheckerState<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             });
         }
     }
