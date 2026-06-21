@@ -146,7 +146,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.interner().lookup(ty) {
             // `type_list` returns an owned `Arc`, so iterating it does not hold a
             // borrow of `self` across the recursive `&mut self` calls.
-            Some(TypeData::Union(list)) | Some(TypeData::Intersection(list)) => {
+            Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
                 let members = self.interner().type_list(list);
                 members
                     .iter()
@@ -168,7 +168,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .resolver()
                 .resolve_lazy(def_id, self.interner())
                 .is_none(),
-            Some(TypeData::Union(list)) | Some(TypeData::Intersection(list)) => {
+            Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
                 let members = self.interner().type_list(list);
                 members
                     .iter()
