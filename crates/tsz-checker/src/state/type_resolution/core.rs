@@ -10,7 +10,7 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Keep the lowered generic base/defaults and ordinary argument identity,
     /// but replace checker-owned explicit type-argument slots when needed so
     /// inline type literals preserve computed property names and related facts.
@@ -1863,7 +1863,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
                     );
                 }
-                return self.apply_conditional_flow_substitution(idx, type_param);
+                return type_param;
             }
 
             // TS1212/TS1213/TS1214: Strict-mode reserved word used as type reference

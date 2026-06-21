@@ -4,7 +4,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -49,8 +49,9 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
-                if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && self.type_arg_is_unknown_keyword(arg_idx)
+                let arg_idx = type_args_list.nodes.get(i).copied();
+                if let Some(unknown_arg_idx) =
+                    arg_idx.filter(|&idx| self.type_arg_is_unknown_keyword(idx))
                 {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     let inst_constraint = self
@@ -59,7 +60,7 @@ impl<'a> CheckerState<'a> {
                         let constraint_str =
                             self.format_type_diagnostic_constraint(inst_constraint);
                         self.error_at_node_msg(
-                            arg_idx,
+                            unknown_arg_idx,
                             crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                             &["unknown", &constraint_str],
                         );
@@ -67,43 +68,44 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Skip constraint checking when the type argument is an error type
-                // (avoids cascading errors from unresolved references)
                 if type_arg == TypeId::ERROR {
                     continue;
                 }
+                if arg_idx.is_some_and(|idx| self.type_arg_subtree_has_arity_error(idx)) {
+                    continue;
+                }
 
-                // Suppress cascading TS2344 when an inner type ref already
-                // emitted a type-argument arity diagnostic.
-                if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && self.type_arg_subtree_has_arity_error(arg_idx)
+                if arg_idx
+                    .is_some_and(|idx| self.type_arg_subtree_has_value_used_as_type_error(idx))
                 {
                     continue;
                 }
 
-                if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && self.type_arg_subtree_has_value_used_as_type_error(arg_idx)
-                {
-                    continue;
-                }
-
-                // `this` is polymorphic; tsc defers this constraint check.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
 
-                // Decide substitution arguments (conditional-flow narrowing) by
-                // the relation before the composite-deferral heuristics below.
+                if let Some(arg_idx) = arg_idx
+                    && self.conditional_flow_type_arg_constraint_handled(
+                        type_arg,
+                        constraint,
+                        &type_arg_subst,
+                        arg_idx,
+                    )
+                {
+                    continue;
+                }
+
                 if self.substitution_type_arg_constraint_handled(
                     type_arg,
                     constraint,
                     &type_arg_subst,
-                    type_args_list.nodes.get(i).copied(),
+                    arg_idx,
                 ) {
                     continue;
                 }
 
-                if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                if let Some(arg_idx) = arg_idx {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     if constraint_resolved == TypeId::ANY {
                         continue;

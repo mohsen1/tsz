@@ -6,32 +6,28 @@
 //! solver substitution type. This keeps a check variable used in the true branch
 //! well-formed against dependent constraints.
 
+use crate::query_boundaries::common::{self as query_common, TypeSubstitution};
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
-    /// Apply `tsc`'s `getConditionalFlowTypeOfType`: when a type-variable
-    /// reference at `node_idx` appears inside the true branch of one or more
-    /// enclosing conditional types whose check operand is that same variable,
-    /// narrow it to a substitution type `type_param & extends_1 & … & extends_n`.
+impl CheckerState<'_> {
+    /// Instantiate a whole type argument with conditional-flow substitutions
+    /// visible at `node_idx`.
     ///
-    /// This lets a check variable used inside the true branch satisfy a dependent
-    /// constraint: inside `T extends string ? F<T> : never`, references to `T`
-    /// carry `T & string`, so a use like `Capitalize<T>` (or a nested
-    /// `Capitalize<CamelCase<T>>`) is well-formed.
-    pub(crate) fn apply_conditional_flow_substitution(
+    /// This is intentionally narrower than lowering every true-branch type
+    /// reference. It is used by generic constraint validation, where tsc asks
+    /// whether the current type argument satisfies the constraint under the
+    /// true-branch assumption.
+    pub(crate) fn apply_conditional_flow_to_type_arg(
         &mut self,
         node_idx: NodeIndex,
-        type_param: TypeId,
+        type_arg: TypeId,
     ) -> TypeId {
-        // Walk up the AST, collecting the extends nodes of every enclosing
-        // conditional whose true branch contains `node_idx` and whose check
-        // operand is the same type variable. Collect node indices first so the
-        // immutable arena walk does not conflict with the `&mut self` lowering
-        // of each extends type afterwards.
-        let mut extends_nodes: Vec<NodeIndex> = Vec::new();
+        let mut subst = TypeSubstitution::new();
+        let mut found = false;
+
         let mut child = node_idx;
         let mut parent = self
             .ctx
@@ -50,9 +46,18 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                 && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
                 && cond.true_type == child
-                && self.naked_check_type_param_id(cond.check_type) == Some(type_param)
+                && let Some(type_param) = self.naked_check_type_param_id(cond.check_type)
+                && let Some(info) =
+                    query_common::type_param_info(self.ctx.types.as_type_database(), type_param)
             {
-                extends_nodes.push(cond.extends_type);
+                let current = subst.get(info.name).unwrap_or(type_param);
+                let extends = self.get_type_from_type_node(cond.extends_type);
+                let constraint = self.ctx.types.intersection2(current, extends);
+                subst.insert(
+                    info.name,
+                    self.ctx.types.substitution(type_param, constraint),
+                );
+                found = true;
             }
             child = parent;
             parent = self
@@ -62,18 +67,11 @@ impl<'a> CheckerState<'a> {
                 .map_or(NodeIndex::NONE, |info| info.parent);
         }
 
-        if extends_nodes.is_empty() {
-            return type_param;
+        if found {
+            query_common::instantiate_type(self.ctx.types, type_arg, &subst)
+        } else {
+            type_arg
         }
-
-        // The substitution's constraint is `type_param & extends_1 & …`, mirroring
-        // tsc's `getIntersectionType([...constraints, type])`.
-        let mut constraint = type_param;
-        for extends_idx in extends_nodes {
-            let extends = self.get_type_from_type_node(extends_idx);
-            constraint = self.ctx.types.intersection2(constraint, extends);
-        }
-        self.ctx.types.substitution(type_param, constraint)
     }
 
     /// Resolve a type node to the `TypeId` of the naked type parameter it names
