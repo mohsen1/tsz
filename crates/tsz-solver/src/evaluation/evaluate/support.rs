@@ -1314,6 +1314,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
                 self.evaluate(*inner)
             }
+            TypeData::UnresolvedTypeName(atom) => self.visit_unresolved_type_name(*atom, type_id),
             TypeData::Substitution {
                 base_type,
                 constraint,
@@ -1327,6 +1328,44 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // All other types pass through unchanged (default behavior)
             _ => type_id,
         }
+    }
+
+    /// Resolve a cross-file reference carried as `UnresolvedTypeName(name)`.
+    ///
+    /// The lowering pass leaves a bare `UnresolvedTypeName(name)` whenever a
+    /// type reference inside a (typically generic) declaration body could not be
+    /// bound to a `DefId` in the checker that first lowered it — most commonly a
+    /// name that is in scope only in the *declaring* file and is reached through
+    /// a generic alias body at a *consuming* file (e.g. `type Lookup<K> =
+    /// Registry[K]` imported and applied as `Lookup<"a">`, where `Registry`
+    /// stays an `UnresolvedTypeName` once the alias crosses the module/arena
+    /// boundary). The application *base* path already recovers such names via
+    /// [`Self::resolve_application_def_id`], and the type-*argument* path via
+    /// [`Self::try_expand_type_arg`]; this arm gives every other position
+    /// (an index-access object `Registry[K]`, a `keyof` operand, a conditional
+    /// check, ...) the same recovery so deferred operators over the reference
+    /// reduce exactly as the same-module path does.
+    ///
+    /// Resolution defers to the active resolver: the `TypeEnvironment` pass only
+    /// answers from the map seeded by the checker's cross-arena registration
+    /// (declaring-file scoped, collision-safe), while the wider `CheckerContext`
+    /// pass walks the merged binder graph. When the name genuinely does not
+    /// resolve (a true error, or a registration-window artifact), the original
+    /// display-preserving `UnresolvedTypeName` is returned unchanged.
+    fn visit_unresolved_type_name(&mut self, atom: Atom, original_type_id: TypeId) -> TypeId {
+        let name = self.interner.resolve_atom_ref(atom);
+        if let Some(def_id) = self.resolver.resolve_unresolved_type_name(&name)
+            && self.resolver.resolve_lazy(def_id, self.interner).is_some()
+        {
+            // Only commit to the rewrite when the resolver surfaces a body for
+            // the recovered def; otherwise keep the name opaque so a later pass
+            // (with the body registered) expands it, rather than collapsing to a
+            // bare unresolved `Lazy`. Evaluating the canonical `Lazy(def_id)`
+            // (not its raw body) reuses `visit_lazy`'s default/`this`-binding
+            // handling and follows any alias chain through the recursion guard.
+            return self.evaluate(self.interner.lazy(def_id));
+        }
+        original_type_id
     }
 
     /// Visit a conditional type: T extends U ? X : Y
