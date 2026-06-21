@@ -188,6 +188,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             pattern_params.len()
         };
 
+        // Arity gate, mirroring `compareSignaturesRelated`'s parameter-count
+        // check (see `check_params_compatible`): for the extends relation to
+        // hold, the source must be callable with the pattern's parameter list.
+        // A source signature with no rest parameter whose required-argument
+        // count exceeds a fixed-arity (no trailing rest) pattern's parameter
+        // count demands more arguments than the pattern supplies, so tsc fails
+        // the relation and the conditional takes the false branch. Without this
+        // guard tsz truncates the source to the pattern prefix and wrongly
+        // matches a higher-arity source (e.g. `(a, b) => {}` against
+        // `(p0: infer P0) => any`). A trailing rest in the pattern absorbs extra
+        // source params, so the cap only applies to fixed-arity patterns.
+        if trailing_rest_param.is_none() && !source_params.last().is_some_and(|param| param.rest) {
+            let source_required = checker.required_param_count(source_params);
+            // tsc's `getMinArgumentCount` treats trailing parameters whose type
+            // includes `void` as optional for arity, so a source like
+            // `(a: string, b: void) => …` still satisfies a 1-arg pattern; only
+            // a non-void extra required parameter fails the relation.
+            if source_required > fixed_param_count
+                && source_params
+                    .iter()
+                    .skip(fixed_param_count)
+                    .take(source_required - fixed_param_count)
+                    .any(|param| !checker.param_type_contains_void(param.type_id))
+            {
+                return false;
+            }
+        }
+
         // A source callable with fewer parameters is still assignable to the
         // inference pattern (extra trailing positions are ignored at the call
         // site); tsc takes the true branch and defaults the unmatched `infer`
