@@ -220,6 +220,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
+    fn generic_extends_can_use_permissive_false_branch(&self, extends_type: TypeId) -> bool {
+        crate::visitors::visitor_predicates::is_tuple_type(self.interner(), extends_type)
+    }
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -1086,7 +1090,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
-            } else if extends_has_type_params
+            } else if (extends_has_type_params
+                // A *concrete* check against a generic extends still resolves to
+                // the false branch when the relation also fails under the
+                // permissive instantiation (every extends type parameter -> `any`,
+                // tsc's `getPermissiveInstantiation` gate). e.g.
+                // `[] extends [T, ...T[]] ? "yes" : "no"` is `"no"` because `[]`
+                // is not a `[any, ...any[]]` regardless of `T`. Keep the exception
+                // to tuple-like extends operands: richer generic extends operands,
+                // such as React's `ElementType extends T` component-props
+                // conditionals, must remain deferred so contextual JSX typing can
+                // infer `T` before the conditional chooses a branch.
+                && (!self.generic_extends_can_use_permissive_false_branch(extends_type)
+                    || extends_has_infer
+                    || self.is_depth_detection_pass()
+                    || !self.permissive_false_branch_is_definitive(check_type, extends_type)))
                 // tsc parity (`getConditionalType`): a conditional whose
                 // effective check type is still generic — instantiable flags,
                 // or a type reference/tuple/template whose arguments are

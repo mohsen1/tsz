@@ -244,6 +244,34 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // A callable asserted to a bare type parameter whose constraint is (or
+    // includes) function types overlaps iff the callable is assertion-comparable
+    // to that constraint. tsc resolves the bare type-parameter target to its
+    // base constraint and runs the per-member overlap decomposition; resolving
+    // it here lets the union handling above and the callable-signature overlap
+    // below apply (e.g. `(fn as F)` where
+    // `F extends ((...a: any[]) => any) | ((...a: any[]) => void)`). Gating on a
+    // *direct callable* on the other side keeps this from over-permitting
+    // object/primitive sources against a type-parameter constraint (which the
+    // narrower object-without-required-members rule above already governs), and
+    // preserves the negative control: a `string` source stays incomparable to a
+    // function-union constraint. The symmetric source case covers a generic
+    // source asserted to a concrete callable.
+    if is_direct_callable_for_assertion(db, source)
+        && let Some(TypeData::TypeParameter(info)) = target_data
+        && let Some(constraint) = informative_type_param_constraint(info.constraint)
+        && types_are_comparable_for_assertion_inner(db, source, constraint, depth + 1, nested)
+    {
+        return true;
+    }
+    if is_direct_callable_for_assertion(db, target)
+        && let Some(TypeData::TypeParameter(info)) = source_data
+        && let Some(constraint) = informative_type_param_constraint(info.constraint)
+        && types_are_comparable_for_assertion_inner(db, constraint, target, depth + 1, nested)
+    {
+        return true;
+    }
+
     // A deferred conditional (or an indexed access whose object base is a
     // deferred conditional) has no extractable properties, so it would fall
     // through to the property-overlap check and report a false TS2352. tsc
@@ -338,13 +366,17 @@ fn type_param_primitive_comparable_with_constraint(
     let Some(TypeData::TypeParameter(info)) = db.lookup(type_param) else {
         return false;
     };
-    let Some(constraint) = info
-        .constraint
-        .filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN)
-    else {
+    let Some(constraint) = informative_type_param_constraint(info.constraint) else {
         return false;
     };
     is_primitive_comparable(db, other, constraint) || is_primitive_comparable(db, constraint, other)
+}
+
+/// A type parameter's assertion-relevant base constraint: its declared
+/// constraint, unless that constraint is the uninformative `any`/`unknown`
+/// (which carries no structural overlap signal for the TS2352 check).
+fn informative_type_param_constraint(constraint: Option<TypeId>) -> Option<TypeId> {
+    constraint.filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN)
 }
 
 fn callable_signatures_overlap_for_assertion(

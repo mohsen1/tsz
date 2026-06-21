@@ -5,10 +5,10 @@
 mod contextual_retry;
 mod helpers;
 mod mismatch_helpers;
+mod retry_state;
 mod return_context;
 
 use crate::context::TypingRequest;
-use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
@@ -18,23 +18,9 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
-
-type NoReturnContextFallback = (Vec<TypeId>, TypeId, SelectedTypePredicate, FullSnapshot);
-type BestTypeMismatch = (
-    OverloadResolution,
-    crate::context::NodeTypeCache,
-    Vec<crate::diagnostics::Diagnostic>,
-);
+use retry_state::{BestTypeMismatch, NoReturnContextFallback};
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn snapshot_overload_retry_state(&mut self) -> FullSnapshot {
-        self.ctx.snapshot_full()
-    }
-
-    pub(super) fn rollback_overload_retry_state(&mut self, snap: &FullSnapshot) {
-        self.ctx.rollback_full(snap);
-    }
-
     /// Resolve an overloaded call by trying each signature.
     ///
     /// This method iterates through overload signatures and returns the first
@@ -75,6 +61,15 @@ impl<'a> CheckerState<'a> {
             })
             .count();
         let has_multiple_arity_compatible_signatures = arity_compatible_signature_count > 1;
+
+        // An open-ended (non-tuple) array/iterable spread can only land on an
+        // effective rest parameter, so fixed-arity candidates are skipped in
+        // both overload-trial loops below when a reachable rest overload exists
+        // (see `skip_non_rest_overloads_for_open_ended_spread` for the full
+        // rationale and the reachability gate that preserves the genuine
+        // TS2556).
+        let skip_non_rest_for_spread =
+            self.skip_non_rest_overloads_for_open_ended_spread(args, signatures);
 
         // Overload contextual typing baseline.
         // First pass collects argument types once using a union of overload signatures.
@@ -279,6 +274,12 @@ impl<'a> CheckerState<'a> {
         let arg_readonly_markers =
             self.call_arg_source_readonly_annotation_markers(args, arg_types.len());
         for (idx, original_sig) in signatures.iter().enumerate() {
+            // An open-ended array/iterable spread can only land on an effective
+            // rest parameter; a fixed-arity overload is not applicable (see
+            // `skip_non_rest_for_spread`).
+            if skip_non_rest_for_spread && !original_sig.params.iter().any(|param| param.rest) {
+                continue;
+            }
             let sig = self.overload_signature_for_inference(
                 original_sig,
                 idx,
@@ -1039,6 +1040,11 @@ impl<'a> CheckerState<'a> {
         // this candidate and surface its diagnostics instead of silently recovering.
         let mut callback_body_only_success: Option<BestTypeMismatch> = None;
         for (idx, original_sig) in signatures.iter().enumerate() {
+            // See the first-pass loop: an open-ended spread requires an effective
+            // rest parameter, so fixed-arity overloads are skipped here too.
+            if skip_non_rest_for_spread && !original_sig.params.iter().any(|param| param.rest) {
+                continue;
+            }
             let sig = self.overload_signature_for_inference(
                 original_sig,
                 idx,

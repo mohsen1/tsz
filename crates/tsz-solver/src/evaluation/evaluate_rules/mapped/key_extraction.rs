@@ -17,6 +17,35 @@ use crate::visitor::keyof_inner_type;
 use tsz_common::interner::Atom;
 
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
+    /// Classify a source object's non-numeric index slot into
+    /// `(contributes_string, contributes_symbol)`. A symbol-only signature
+    /// (`[k: symbol]`) contributes only symbol; a `string | symbol` /
+    /// `PropertyKey` signature contributes both; any other (string, template,
+    /// literal-pattern) contributes string. The `ObjectShape` model stores
+    /// symbol-keyed signatures in the `string_index` slot discriminated by
+    /// `key_type`, so a homomorphic mapped type iterating over such a source
+    /// must recover the symbol key space here (#14315).
+    fn classify_non_numeric_index_slot(
+        &self,
+        slot: Option<&crate::types::IndexSignature>,
+    ) -> (bool, bool) {
+        let Some(sig) = slot else {
+            return (false, false);
+        };
+        let includes_symbol =
+            super::super::string_index_helpers::index_signature_key_includes_symbol(
+                self.interner(),
+                self.resolver(),
+                sig.key_type,
+            );
+        let symbol_only = includes_symbol
+            && matches!(
+                self.interner().lookup(sig.key_type),
+                Some(TypeData::Intrinsic(IntrinsicKind::Symbol))
+            );
+        (!symbol_only, includes_symbol)
+    }
+
     pub(super) fn mapped_key_from_literal(&self, type_id: TypeId) -> Option<MappedKey> {
         match self.interner().lookup(type_id)? {
             TypeData::Literal(LiteralValue::String(atom)) => Some(MappedKey {
@@ -108,6 +137,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             keys: Vec::new(),
             has_string: false,
             has_number: false,
+            has_symbol: false,
             template_literals: Vec::new(),
             symbol_keys: Vec::new(),
         };
@@ -141,7 +171,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         number_index,
                     } => {
                         self.collect_props_into_keys(&mut keys, properties);
-                        keys.has_string = string_index.is_some();
+                        let (has_string, has_symbol) =
+                            self.classify_non_numeric_index_slot(string_index.as_ref());
+                        keys.has_string = has_string;
+                        keys.has_symbol = has_symbol;
                         keys.has_number = number_index.is_some();
                         tracing::trace!(
                             keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
@@ -155,6 +188,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                     PropertyCollectionResult::Any => {
                         keys.has_string = true;
                         keys.has_number = true;
+                        keys.has_symbol = true;
                         tracing::trace!("extract_mapped_keys: KeyOf is Any type");
                         Some(keys)
                     }
@@ -177,7 +211,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                                     number_index,
                                 } => {
                                     self.collect_props_into_keys(&mut keys, properties);
-                                    keys.has_string = string_index.is_some();
+                                    let (has_string, has_symbol) =
+                                        self.classify_non_numeric_index_slot(string_index.as_ref());
+                                    keys.has_string = has_string;
+                                    keys.has_symbol = has_symbol;
                                     keys.has_number = number_index.is_some();
                                     tracing::trace!(
                                         keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
@@ -188,6 +225,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                                 PropertyCollectionResult::Any => {
                                     keys.has_string = true;
                                     keys.has_number = true;
+                                    keys.has_symbol = true;
                                     return Some(keys);
                                 }
                                 PropertyCollectionResult::NonObject => {}
@@ -302,7 +340,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         continue;
                     }
                     if member == TypeId::SYMBOL {
-                        // Generic `symbol` type — no concrete index to track.
+                        // Broad `symbol` type contributes a symbol-keyed index
+                        // signature (e.g. `Record<PropertyKey, V>`).
+                        keys.has_symbol = true;
                         continue;
                     }
                     if matches!(
@@ -322,12 +362,14 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         keys.keys.extend(inner_keys.keys);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
+                        keys.has_symbol |= inner_keys.has_symbol;
                         keys.template_literals.extend(inner_keys.template_literals);
                         keys.symbol_keys.extend(inner_keys.symbol_keys);
                     }
                 }
                 if !keys.has_string
                     && !keys.has_number
+                    && !keys.has_symbol
                     && keys.keys.is_empty()
                     && keys.template_literals.is_empty()
                     && keys.symbol_keys.is_empty()
@@ -342,6 +384,12 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             TypeData::Intrinsic(IntrinsicKind::Number) => {
                 keys.has_number = true;
+                Some(keys)
+            }
+            TypeData::Intrinsic(IntrinsicKind::Symbol) => {
+                // `{ [P in symbol]: V }` / `Record<symbol, V>` — a symbol-keyed
+                // index signature.
+                keys.has_symbol = true;
                 Some(keys)
             }
             TypeData::Intrinsic(IntrinsicKind::Never) => {
@@ -386,9 +434,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 // Start with the first member's keys and intersect with the rest.
                 let mut result = member_keys.remove(0);
                 for other in &member_keys {
-                    // For string/number index: intersection means both must have it.
+                    // For string/number/symbol index: intersection means both must have it.
                     result.has_string = result.has_string && other.has_string;
                     result.has_number = result.has_number && other.has_number;
+                    result.has_symbol = result.has_symbol && other.has_symbol;
                     // For string literals: keep only those present in both sets.
                     // If one side has `has_string` (string index signature), all
                     // literals from the other side are kept (since string encompasses them).
