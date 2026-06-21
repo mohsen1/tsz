@@ -2040,5 +2040,8 @@ name = "untyped_call_keyword_type_arg_tests"
 path = "tests/untyped_call_keyword_type_arg_tests.rs"
 
 [[test]]
+name = "destructuring_deferred_conditional_iterability_tests"
+path = "tests/destructuring_deferred_conditional_iterability_tests.rs"
+[[test]]
 name = "object_keyword_any_index_tests"
 path = "tests/object_keyword_any_index_tests.rs"
