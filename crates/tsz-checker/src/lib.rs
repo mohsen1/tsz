@@ -1486,6 +1486,9 @@ mod variadic_tuple_elaboration_tests;
 #[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
 mod variadic_tuple_readonly_relation_tests;
 #[cfg(test)]
+#[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
+mod variadic_tuple_spread_element_inference_tests;
+#[cfg(test)]
 #[path = "../tests/variadic_tuple_tail_arity_inference_tests.rs"]
 mod variadic_tuple_tail_arity_inference_tests;
 #[cfg(test)]
