@@ -22,6 +22,7 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::infer_matching_helpers::constraint_is_nullable_union;
 use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
 use super::template_segment_prefix::match_template_segment_prefix;
 
@@ -432,7 +433,7 @@ impl<'a> InferenceContext<'a> {
             ) => {
                 if let Some(constraint) = param_info.constraint
                     && constraint != source
-                    && !self.constraint_is_nullable_union(constraint)
+                    && !constraint_is_nullable_union(self.interner, constraint)
                     && self.target_contains_inference_param(target)
                 {
                     self.infer_from_types(constraint, target, priority)?;
@@ -1636,16 +1637,6 @@ impl<'a> InferenceContext<'a> {
     /// instead of structurally matching `Foo<V>`.
     fn target_contains_inference_param(&self, target: TypeId) -> bool {
         self.target_contains_inference_param_inner(target, &mut std::collections::HashSet::new())
-    }
-
-    fn constraint_is_nullable_union(&self, constraint: TypeId) -> bool {
-        let Some(TypeData::Union(members)) = self.interner.lookup(constraint) else {
-            return false;
-        };
-        self.interner
-            .type_list(members)
-            .iter()
-            .any(|&member| member.is_nullable())
     }
 
     fn target_contains_inference_param_inner(
