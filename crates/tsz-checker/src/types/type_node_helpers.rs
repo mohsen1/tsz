@@ -930,7 +930,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Read property `K1` off the apparent base, reducing through the env so a
         // property contributed by a nested deferred application is materialized.
-        let apparent = self.reduce_apparent_indexed_property(apparent_base, index)?;
+        let apparent = self.reduce_apparent_indexed_property(apparent_base, index);
         // An `error` property type is error contagion from an unresolved import;
         // tsc treats it as `any`, so surface it as the (legal) apparent type.
         if apparent == tsz_solver::TypeId::ERROR {
@@ -951,13 +951,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// template instantiated at `K1` (so `Simplify<X>[K1]` becomes `X[K1]`); the
     /// resulting object — which can still embed a deferred application that
     /// supplies the property — is expanded through the env-backed evaluator and
-    /// re-indexed. Bounded; returns `None` when no concrete property type is
-    /// reachable, leaving the caller to treat the spread as indeterminate (legal).
+    /// re-indexed. Bounded; leaves opaque fallbacks to the caller after the
+    /// resulting property type is classified.
     fn reduce_apparent_indexed_property(
         &self,
         apparent_base: tsz_solver::TypeId,
         index: tsz_solver::TypeId,
-    ) -> Option<tsz_solver::TypeId> {
+    ) -> tsz_solver::TypeId {
         use crate::query_boundaries::common as q;
         let mut base = self.fully_expand_apparent_base(apparent_base);
         // Unwrap homomorphic mapped types to the property type at `K1` a bounded
@@ -970,9 +970,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // `Simplify<X>[K1]` reduces to `X[K1]`; recover `X` to keep expanding
             // it, falling back to the reduced property type when it is no longer a
             // `_[K1]` indexed access.
-            let next_base = q::index_access_types(self.ctx.types, reduced)
-                .map(|(obj, _)| obj)
-                .unwrap_or(reduced);
+            let next_base =
+                q::index_access_types(self.ctx.types, reduced).map_or(reduced, |(obj, _)| obj);
             let expanded = self.fully_expand_apparent_base(next_base);
             if expanded == base {
                 break;
@@ -980,7 +979,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             base = expanded;
         }
         let indexed = self.ctx.types.index_access(base, index);
-        let apparent = {
+        {
             let env = self.ctx.type_environment.borrow();
             let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
                 self.ctx.types,
@@ -988,8 +987,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 indexed,
             );
             self.ctx.types.evaluate_type(expanded)
-        };
-        Some(apparent)
+        }
     }
 
     /// Recursively env-expand the apparent base of a deferred indexed access so a
