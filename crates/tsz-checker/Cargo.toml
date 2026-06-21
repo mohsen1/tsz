@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "as_const_object_property_inference_tests"
 path = "tests/as_const_object_property_inference_tests.rs"
 [[test]]
+name = "object_literal_unique_symbol_member_tests"
+path = "tests/object_literal_unique_symbol_member_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
@@ -119,6 +122,9 @@ path = "tests/type_only_import_reexport_tests.rs"
 [[test]]
 name = "variadic_tuple_spread_arity_ts2556_tests"
 path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
+[[test]]
+name = "variadic_tuple_spread_element_type_tests"
+path = "tests/variadic_tuple_spread_element_type_tests.rs"
 [[test]]
 name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
@@ -298,11 +304,17 @@ path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 name = "optional_chain_indexed_unknown_tests"
 path = "tests/optional_chain_indexed_unknown_tests.rs"
 [[test]]
+name = "recursive_annotated_arrow_self_reference_tests"
+path = "tests/recursive_annotated_arrow_self_reference_tests.rs"
+[[test]]
 name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 [[test]]
 name = "new_generic_construct_signature_type_arg_display_tests"
 path = "tests/new_generic_construct_signature_type_arg_display_tests.rs"
+[[test]]
+name = "new_generic_callback_contextual_infer_tests"
+path = "tests/new_generic_callback_contextual_infer_tests.rs"
 [[test]]
 name = "noinfer_diagnostic_display_tests"
 path = "tests/noinfer_diagnostic_display_tests.rs"
@@ -458,6 +470,9 @@ path = "tests/ts2636_method_bivariance_tests.rs"
 name = "function_bivariance"
 path = "tests/function_bivariance.rs"
 [[test]]
+name = "curried_annotated_return_object_member_implicit_any_tests"
+path = "tests/curried_annotated_return_object_member_implicit_any_tests.rs"
+[[test]]
 name = "function_expression_excess_param_implicit_any_tests"
 path = "tests/function_expression_excess_param_implicit_any_tests.rs"
 [[test]]
@@ -590,6 +605,9 @@ path = "tests/ambient_module_value_export_tests.rs"
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
+name = "export_star_as_named_import_type_anchor_tests"
+path = "tests/export_star_as_named_import_type_anchor_tests.rs"
+[[test]]
 name = "deferred_conditional_arithmetic_operand_tests"
 path = "tests/deferred_conditional_arithmetic_operand_tests.rs"
 [[test]]
@@ -658,6 +676,9 @@ path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 [[test]]
 name = "typeof_const_member_conditional_tests"
 path = "tests/typeof_const_member_conditional_tests.rs"
+[[test]]
+name = "generic_union_function_guard_narrowing_tests"
+path = "tests/generic_union_function_guard_narrowing_tests.rs"
 [[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
@@ -848,6 +869,9 @@ path = "tests/keyof_array_literal_diagnostic_tests.rs"
 name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
 [[test]]
+name = "override_computed_entity_name_ts4127_tests"
+path = "tests/override_computed_entity_name_ts4127_tests.rs"
+[[test]]
 name = "keyof_well_known_symbol_key_tests"
 path = "tests/keyof_well_known_symbol_key_tests.rs"
 [[test]]
@@ -964,6 +988,9 @@ path = "tests/program_context_tests.rs"
 [[test]]
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
+[[test]]
+name = "generic_param_source_apparent_type_inference_tests"
+path = "tests/generic_param_source_apparent_type_inference_tests.rs"
 [[test]]
 name = "kysely_callback_context_tests"
 path = "tests/kysely_callback_context_tests.rs"
@@ -1612,6 +1639,9 @@ path = "tests/class_expression_heritage_ts2416_tests.rs"
 name = "predicate_alias_generic_inference_tests"
 path = "tests/predicate_alias_generic_inference_tests.rs"
 [[test]]
+name = "predicate_bare_target_nested_param_inference_tests"
+path = "tests/predicate_bare_target_nested_param_inference_tests.rs"
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 [[test]]
@@ -1997,8 +2027,31 @@ name = "global_this_type_position_member_tests"
 path = "tests/global_this_type_position_member_tests.rs"
 
 [[test]]
+name = "generic_callable_as_assertion_overlap_tests"
+path = "tests/generic_callable_as_assertion_overlap_tests.rs"
+[[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
+
+[[test]]
+name = "conditional_concrete_check_generic_extends_false_branch_tests"
+path = "tests/conditional_concrete_check_generic_extends_false_branch_tests.rs"
+
+[[test]]
+name = "ambient_readonly_literal_initializer_tests"
+path = "tests/ambient_readonly_literal_initializer_tests.rs"
+
+[[test]]
+name = "untyped_call_keyword_type_arg_tests"
+path = "tests/untyped_call_keyword_type_arg_tests.rs"
+
+[[test]]
+name = "destructuring_deferred_conditional_iterability_tests"
+path = "tests/destructuring_deferred_conditional_iterability_tests.rs"
+[[test]]
+name = "es5_constrained_generic_array_iterability_tests"
+path = "tests/es5_constrained_generic_array_iterability_tests.rs"
+
 [[test]]
 name = "object_keyword_any_index_tests"
 path = "tests/object_keyword_any_index_tests.rs"

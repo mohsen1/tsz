@@ -191,6 +191,121 @@ fn reexported_numeric_enum_typed_as_typeof_renamed_binders() {
     );
 }
 
+/// Repro C (#14358): a `declare class` re-exported through two or more
+/// `export { C } from '...'` hops keeps its **type** meaning, so `readonly C[]`
+/// in type position resolves to the class instance type (member access on an
+/// element succeeds) rather than falling back to the constructor value
+/// `typeof C` and reporting TS2339.
+///
+/// The single-step re-export chase lands on the first re-export *stub* (a symbol
+/// carrying an import-module reference but no TYPE shape of its own) at 2+ hops;
+/// the type reference then wrongly used the value side. tsz now re-chases the
+/// stub to the declaring module so the type meaning is preserved.
+#[test]
+fn reexported_declare_class_keeps_type_meaning_through_two_hops() {
+    let out = run_tsz(
+        &[
+            ("a.ts", "export declare class C { m: string; }\n"),
+            ("b.ts", "export { C } from './a';\n"),
+            ("c.ts", "export { C } from './b';\n"),
+            (
+                "use.ts",
+                "import { C } from './c';\nexport function f(d: readonly C[]) { return d[0].m; }\n",
+            ),
+        ],
+        "use.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        !out.contains("TS2339"),
+        "2-hop re-exported declare class must keep its type meaning (no TS2339), got:\n{out}"
+    );
+}
+
+/// Three hops, with all user-chosen names varied (class, member, file stems), so
+/// the re-chase follows structure rather than identifier text and is not capped
+/// at a single extra hop.
+#[test]
+fn reexported_declare_class_keeps_type_meaning_through_three_hops_renamed() {
+    let out = run_tsz(
+        &[
+            (
+                "widget.ts",
+                "export declare class Widget { label: string; }\n",
+            ),
+            ("mid.ts", "export { Widget } from './widget';\n"),
+            ("barrel.ts", "export { Widget } from './mid';\n"),
+            ("top.ts", "export { Widget } from './barrel';\n"),
+            (
+                "consumer.ts",
+                "import { Widget } from './top';\nexport function g(items: readonly Widget[]) { return items[0].label; }\n",
+            ),
+        ],
+        "consumer.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        !out.contains("TS2339"),
+        "3-hop renamed re-exported declare class must keep its type meaning (no TS2339), got:\n{out}"
+    );
+}
+
+/// Parity guard: a value-only declaration (`declare const`) re-exported through
+/// two hops and used in a type position must STILL report TS2749 — the re-chase
+/// only preserves a TYPE-bearing target, so a value never becomes a type.
+#[test]
+fn reexported_value_in_type_position_still_errors_through_hops() {
+    let out = run_tsz(
+        &[
+            ("av.ts", "export declare const V: number;\n"),
+            ("bv.ts", "export { V } from './av';\n"),
+            ("cv.ts", "export { V } from './bv';\n"),
+            (
+                "usev.ts",
+                "import { V } from './cv';\nexport function f(d: readonly V[]) { return d; }\n",
+            ),
+        ],
+        "usev.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        out.contains("TS2749"),
+        "a 2-hop re-exported value used as a type must still report TS2749, got:\n{out}"
+    );
+}
+
+/// Parity guard: a genuinely absent member on the re-exported class instance
+/// still reports TS2339 — the fix resolves the type, it does not suppress real
+/// missing-property errors.
+#[test]
+fn reexported_declare_class_missing_member_still_errors() {
+    let out = run_tsz(
+        &[
+            ("ac.ts", "export declare class C { m: string; }\n"),
+            ("bc.ts", "export { C } from './ac';\n"),
+            ("cc.ts", "export { C } from './bc';\n"),
+            (
+                "usec.ts",
+                "import { C } from './cc';\nexport function f(d: readonly C[]) { return d[0].nope; }\n",
+            ),
+        ],
+        "usec.ts",
+    );
+    if out == "__SKIP__" {
+        return;
+    }
+    assert!(
+        out.contains("TS2339"),
+        "a genuinely absent member on the resolved class instance must still report TS2339, got:\n{out}"
+    );
+}
+
 /// Parity guard: a genuinely absent enum member on a re-exported enum still
 /// reports TS2339 — the fix must not blanket-suppress member errors.
 #[test]

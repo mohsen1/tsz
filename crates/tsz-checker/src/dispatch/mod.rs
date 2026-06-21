@@ -854,6 +854,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             } else {
                                 (false, asserted_type)
                             };
+                            // A generic callable/constructable assertion target with its
+                            // OWN bound type parameters (`new <t extends object>(base: t) => t`,
+                            // `<T>(x: T) => T`) has no concrete shape to compare, so the
+                            // structural overlap check spuriously fails and emits TS2352 even
+                            // when the source is itself callable/constructable. tsc's
+                            // `isTypeComparableTo` instantiates the signature's type parameters
+                            // and finds the two callables/constructors overlap. Mirror that:
+                            // when the asserted type is a generic signature (bound — not free —
+                            // type parameters) and both the source and the target are
+                            // callable or constructable, treat them as overlapping (#14325). A
+                            // non-callable source (`"s" as <T>(x: T) => T`) is not
+                            // callable/constructable, so a real TS2352 is still emitted.
+                            let generic_callable_overlap = should_check
+                                && generic_query::contains_type_parameters(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                )
+                                && !generic_query::contains_free_type_parameters(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                )
+                                && (crate::query_boundaries::common::is_callable_type(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                ) || crate::query_boundaries::common::has_construct_signatures(
+                                    self.checker.ctx.types,
+                                    effective_asserted,
+                                ))
+                                && (crate::query_boundaries::common::is_callable_type(
+                                    self.checker.ctx.types,
+                                    expr_type,
+                                ) || crate::query_boundaries::common::has_construct_signatures(
+                                    self.checker.ctx.types,
+                                    expr_type,
+                                ));
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
                                 // (i.e., the types don't "sufficiently overlap").
@@ -944,6 +979,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 if !source_to_target
                                     && !target_to_source
                                     && !generic_indexed_assertion_source
+                                    && !generic_callable_overlap
                                 {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
@@ -1063,55 +1099,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         }
                                     }
 
-                                    // Final fallback: check structural property overlap.
-                                    // Skip the comparable heuristic when both sides are
-                                    // Callable types (constructor/class types) because the
-                                    // property-overlap check is too permissive — shared
-                                    // `prototype` properties mask real mismatches between
-                                    // distinct generic instantiations. tsc uses a full
-                                    // structural relation (isTypeComparableTo) instead.
-                                    // Only skip for Callable; Object types need the check
-                                    // for legitimate assertions like `{a: 1} as {a: number}`.
+                                    // Final fallback: structural overlap of the
+                                    // deeply-evaluated source and target. When both sides
+                                    // are callable/constructor types this compares
+                                    // call/construct signatures (erasing the target's
+                                    // generic type parameters) instead of the too-permissive
+                                    // property-overlap heuristic; see
+                                    // `assertion_deep_types_overlap`.
                                     if !have_overlap {
-                                        let evaluated_expr =
-                                            self.checker.evaluate_type_for_assignability(expr_type);
-                                        let evaluated_asserted = self
-                                            .checker
-                                            .evaluate_type_for_assignability(effective_asserted);
-
-                                        // Deep-evaluate object property types so the
-                                        // solver's comparable check sees concrete types
-                                        // instead of Lazy(DefId) references.  Without
-                                        // this, nested interface properties (e.g.,
-                                        // `automation: Automation` inside `UserSettings`)
-                                        // appear as opaque Lazy refs that the solver
-                                        // cannot structurally compare, causing false
-                                        // TS2352 on valid assertions like
-                                        // `{mode: ""} as UserSettings`.
-                                        let deep_expr = self
-                                            .checker
-                                            .deep_evaluate_object_properties(evaluated_expr);
-                                        let deep_asserted = self
-                                            .checker
-                                            .deep_evaluate_object_properties(evaluated_asserted);
-
-                                        let both_callable = crate::query_boundaries::common::callable_shape_id(
-                                            self.checker.ctx.types,
-                                            deep_expr,
-                                        )
-                                        .is_some()
-                                            && crate::query_boundaries::common::callable_shape_id(
-                                                self.checker.ctx.types,
-                                                deep_asserted,
-                                            )
-                                            .is_some();
-                                        if !both_callable {
-                                            have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
-                                                self.checker.ctx.types,
-                                                deep_expr,
-                                                deep_asserted,
-                                            );
-                                        }
+                                        have_overlap = self.checker.assertion_deep_types_overlap(
+                                            expr_type,
+                                            effective_asserted,
+                                        );
                                     }
                                     // Per-property comparable check: the solver's
                                     // `types_are_comparable_for_assertion` can't resolve
