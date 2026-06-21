@@ -172,10 +172,53 @@ pub(super) fn prepare_source_resolution_setup(
                     import_kind: *import_kind,
                     resolution_mode_override: *resolution_mode_override,
                 };
-                if let Some(discovered) = source_module_resolutions
-                    .and_then(|resolutions| resolutions.get(&source_resolution_key))
-                {
-                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                // An exact-name `declare module "<spec>"` takes precedence over a
+                // file/path resolution that points at a *different* file than the
+                // one declaring the ambient module. tsc's `resolveExternalModule`
+                // consults `tryFindAmbientModule` (an exact-name ambient lookup)
+                // *before* `getResolvedModule`, so a project that declares
+                // `declare module "graphql-scalars"` in one file and also maps the
+                // same bare name through a catch-all `paths` entry (or unrelated
+                // on-disk stub) must read the ambient module's named exports, not
+                // the path-mapped file's surface. Source discovery runs before
+                // ambient modules are known (its `is_ambient_module` closure is
+                // hardcoded to `false`), so the recorded resolution can point at
+                // the path-mapped stub; re-assert ambient precedence here.
+                //
+                // Crucially, this must NOT fire when the path-resolved file *is*
+                // the file that declares the ambient module (e.g. a real package
+                // whose `index.d.ts` contains `declare module "express" { ... }`
+                // discovered through node resolution, possibly merged with a
+                // module augmentation). In that case the ambient declaration and
+                // the resolved file are the same module, so the normal resolved
+                // path must stand to preserve the full module surface and any
+                // augmentation merge.
+                //
+                // Only non-relative bare specifiers are eligible, mirroring tsc's
+                // `isExternalModuleNameRelative` guard. Pattern ambient modules
+                // (`*.svg`) never match a concrete specifier via the exact-name
+                // membership test and keep flowing through the wildcard path.
+                let specifier_is_ordinary_bare = !specifier.starts_with('.')
+                    && !specifier.starts_with('/')
+                    && (!specifier.contains(':') || specifier.starts_with("node:"));
+                let exact_name_ambient_match = specifier_is_ordinary_bare && {
+                    if let Some(idx) = skeleton_for_ambient {
+                        idx.is_ambient_module(specifier)
+                    } else {
+                        program.declared_modules.contains(specifier.as_str())
+                            || program
+                                .shorthand_ambient_modules
+                                .contains(specifier.as_str())
+                    }
+                };
+
+                let discovered = source_module_resolutions
+                    .and_then(|resolutions| resolutions.get(&source_resolution_key));
+
+                // Resolve the discovered target to a program file index up front so
+                // ambient precedence can compare it against the ambient module's
+                // declaring file(s).
+                let discovered_target = discovered.and_then(|discovered| {
                     let canonical = if should_apply_duplicate_package_redirect(file_path) {
                         package_redirects
                             .get(&discovered.canonical_path)
@@ -184,24 +227,58 @@ pub(super) fn prepare_source_resolution_setup(
                     } else {
                         discovered.canonical_path.clone()
                     };
-                    if let Some(target_idx) = program_file_index
+                    program_file_index
                         .get_with_symlink_fallback(&canonical, &canonical, options)
-                    {
-                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                        resolved_module_request_paths.insert(
-                            (
-                                file_idx,
-                                specifier.clone(),
-                                request_mode_key,
-                                request_kind_key,
-                            ),
-                            target_idx,
-                        );
-                        if discovered.resolved_using_ts_extension {
-                            resolved_module_ts_extension_flags
-                                .insert((file_idx, specifier.clone()), true);
+                        .map(|target_idx| (target_idx, discovered.resolved_using_ts_extension))
+                });
+
+                // The ambient module's declaring file(s): files whose binder
+                // recorded a bodied `declare module "<spec>"` export surface.
+                // When the discovered resolution target is one of these, the
+                // ambient is the resolved file itself — keep the resolved path.
+                let discovered_target_declares_ambient = exact_name_ambient_match
+                    && match (skeleton_for_ambient, discovered_target) {
+                        (Some(idx), Some((target_idx, _))) => {
+                            idx.module_binders_for(specifier).contains(&target_idx)
                         }
+                        // No skeleton: fall back to keeping the resolved path
+                        // whenever a concrete file resolved (conservative — only
+                        // path-less ambient when nothing resolved on disk). This
+                        // avoids dropping a genuine same-file ambient/package in
+                        // the sequential path where per-file declarer data is not
+                        // projected.
+                        (None, Some(_)) => true,
+                        _ => false,
+                    };
+
+                if exact_name_ambient_match && !discovered_target_declares_ambient {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    continue;
+                }
+
+                if let Some((target_idx, resolved_using_ts_extension)) = discovered_target {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                    resolved_module_request_paths.insert(
+                        (
+                            file_idx,
+                            specifier.clone(),
+                            request_mode_key,
+                            request_kind_key,
+                        ),
+                        target_idx,
+                    );
+                    if resolved_using_ts_extension {
+                        resolved_module_ts_extension_flags
+                            .insert((file_idx, specifier.clone()), true);
                     }
+                    continue;
+                }
+                if discovered.is_some() {
+                    // Discovered a resolution but the target is not in the program
+                    // file index (e.g. filtered out). Preserve the prior behavior
+                    // of marking the specifier resolved without a path.
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     continue;
                 }
 

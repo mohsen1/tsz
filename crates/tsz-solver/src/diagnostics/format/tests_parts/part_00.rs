@@ -217,7 +217,7 @@ fn object_type_with_hyphenated_property_quoted() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     };
     let obj = db.object(vec![prop]);
     let mut fmt = TypeFormatter::new(&db);

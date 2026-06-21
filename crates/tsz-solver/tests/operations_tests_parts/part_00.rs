@@ -196,7 +196,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let dog = interner.object(vec![
         PropertyInfo {
@@ -212,7 +212,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);

@@ -135,7 +135,14 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        // Resolve the object type's constraint chain to find a mapped type
+        // Resolve the object type to its apparent form, then index it. For a
+        // bare type parameter this is its base constraint (`T extends C` ⟹ apply
+        // `C`); for any other generic-but-deferred object (e.g. a conditional
+        // that still mentions an `infer` variable, `Win extends { x?: infer U }
+        // ? U : …`) evaluate the object to its concrete apparent type so the
+        // covariant index-access rule below can see through to the underlying
+        // callable member. When neither resolves to something other than the
+        // object itself there is nothing to prove callable, so bail.
         let object_constraint = if query::is_bare_type_parameter(db, object) {
             let base = query::base_constraint_of_type(db, object);
             if base != object {
@@ -144,9 +151,44 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
         } else {
-            return false;
+            let evaluated = self.evaluate_type_for_assignability(object);
+            if evaluated == object {
+                return false;
+            }
+            evaluated
         };
+
+        // General, structural rule: `T[K]` carries a call/construct signature
+        // whenever the apparent (base-constraint) type of `T`, indexed by `K`,
+        // yields a callable type. Indexed access is covariant in the object, so
+        // `T <: C` implies `T[K] <: C[K]`; if `C[K]` is callable, so is `T[K]`.
+        //
+        // This covers a *concrete* interface/object member that is itself
+        // callable (e.g. `interface I { connect: (...) => ... }`, `I['connect']`,
+        // or a hybrid call-signature-plus-properties interface) — the
+        // mapped-template and index-signature special cases below recognise only
+        // those two constraint shapes and miss a plain named callable property.
+        // Evaluating the access through the resolved constraint is sound for a
+        // generic key as well: a key that distributes to a non-callable value
+        // produces a union/deferred form that is not callable, so callability is
+        // never over-claimed.
+        let constraint_indexed = self
+            .ctx
+            .types
+            .factory()
+            .index_access(object_constraint, index);
+        let constraint_indexed = self.evaluate_type_for_assignability(constraint_indexed);
+        // Re-borrow after the `&mut self` evaluation above; this `db` stays valid
+        // through the mapped-template lookup below (no further `&mut self` call
+        // until that block's own evaluation re-borrows).
         let db = self.ctx.types.as_type_database();
+        if constraint_indexed != type_id
+            && (query::is_callable_type(db, constraint_indexed)
+                || query::callable_shape_for_type(db, constraint_indexed).is_some())
+        {
+            return true;
+        }
+
         // Check if the resolved constraint is a mapped type with callable template
         if let Some(template) = query::mapped_type_template(db, object_constraint) {
             let template_eval = self.evaluate_type_for_assignability(template);

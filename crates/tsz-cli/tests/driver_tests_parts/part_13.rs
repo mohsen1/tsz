@@ -383,3 +383,145 @@ fn compile_project_module_suffixes_relative_import_falls_back_to_base_when_no_va
          variant exists. Diagnostic codes: {codes:?}",
     );
 }
+
+// An exact-name `declare module "<spec>"` takes precedence over a catch-all
+// `paths` mapping (or on-disk stub) that also matches the bare specifier. tsc's
+// `resolveExternalModule` calls `tryFindAmbientModule` before `getResolvedModule`,
+// so the ambient module's named exports must be consulted instead of the
+// path-mapped file's surface. Witnessed by the type-graphql project, whose
+// `"*": ["stub.d.ts"]` mapping shadowed `declare module "graphql-scalars"`
+// and produced false TS2614.
+#[test]
+fn compile_exact_name_ambient_module_wins_over_catch_all_paths_mapping() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "esnext",
+            "strict": true,
+            "types": [],
+            "skipLibCheck": true,
+            "noEmit": true,
+            "moduleResolution": "bundler",
+            "baseUrl": ".",
+            "ignoreDeprecations": "6.0",
+            "paths": { "*": ["stub.d.ts"] }
+          },
+          "include": ["src/**/*.ts", "ambients.d.ts"]
+        }"#,
+    );
+    // The path-mapped stub exposes no named exports (`export =` of `any`).
+    write_file(
+        &base.join("stub.d.ts"),
+        "declare const tszStub: any;\nexport = tszStub;\n",
+    );
+    // The exact-name ambient module DOES export the member.
+    write_file(
+        &base.join("ambients.d.ts"),
+        "declare module 'somepkg' {\n  export const NamedFromAmbient: any;\n}\n",
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "export { NamedFromAmbient } from 'somepkg';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2614: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2614)
+        .collect();
+    let ts2305: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER)
+        .collect();
+    assert!(
+        ts2614.is_empty() && ts2305.is_empty(),
+        "Exact-name `declare module 'somepkg'` must win over the catch-all \
+         `paths` mapping so `NamedFromAmbient` resolves. Got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+// Negative control: when the exact-name ambient module exists but genuinely
+// does NOT export the imported member, the no-exported-member diagnostic must
+// still fire. And a bare specifier with NO ambient declaration must continue to
+// resolve via `paths` (a present member is fine; an absent one still errors).
+#[test]
+fn compile_exact_name_ambient_precedence_keeps_missing_member_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "esnext",
+            "strict": true,
+            "types": [],
+            "skipLibCheck": true,
+            "noEmit": true,
+            "moduleResolution": "bundler",
+            "baseUrl": ".",
+            "ignoreDeprecations": "6.0",
+            "paths": { "realpkg": ["realpkg.ts"], "*": ["stub.d.ts"] }
+          },
+          "include": ["src/**/*.ts", "ambients.d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("stub.d.ts"),
+        "declare const tszStub: any;\nexport = tszStub;\n",
+    );
+    write_file(&base.join("realpkg.ts"), "export const RealNamed: number = 1;\n");
+    write_file(
+        &base.join("ambients.d.ts"),
+        "declare module 'ambientpkg' {\n  export const Present: any;\n}\n",
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        // (1) ambient exists but lacks `Missing` -> error.
+        // (2) no ambient for `realpkg`; resolves via paths -> ok.
+        // (3) `realpkg` resolved member genuinely absent -> error.
+        "export { Missing } from 'ambientpkg';\n\
+         export { RealNamed } from 'realpkg';\n\
+         export { NotInReal } from 'realpkg';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_member_lines: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER || d.code == 2614
+        })
+        .map(|d| d.message_text.clone())
+        .collect();
+    // Exactly the two genuinely-absent members must error; `RealNamed` resolves.
+    assert!(
+        missing_member_lines.iter().any(|m| m.contains("Missing")),
+        "ambient module without `Missing` must still error. Got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        missing_member_lines.iter().any(|m| m.contains("NotInReal")),
+        "path-resolved `realpkg` without `NotInReal` must still error. Got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !missing_member_lines.iter().any(|m| m.contains("RealNamed")),
+        "`RealNamed` must resolve via the `paths` mapping (no ambient declared). \
+         Got: {:#?}",
+        result.diagnostics
+    );
+}

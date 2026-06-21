@@ -1625,3 +1625,60 @@ fn test_conditional_generic_tuple_shape_pattern_still_defers() {
         interner.lookup(result)
     );
 }
+
+#[test]
+fn test_conditional_array_extends_element_with_nested_conditional_infer_not_false_branch() {
+    // Regression for #14238: `[MyFn] extends Fn[] ? T : F` where the array's
+    // element type `Fn` embeds a *complete* conditional that declares its own
+    // `infer` — `{ args: unknown extends infer a ? a : never }`. The nested
+    // `infer a` is bound by the inner conditional, so it is NOT an inference
+    // site for the outer conditional. The outer conditional must therefore treat
+    // the extends clause as concrete and follow the structural-relation path
+    // (where the element relation `MyFn <: Fn` holds) rather than spuriously
+    // entering infer-matching and committing the FALSE branch.
+    //
+    // In this resolver-less unit environment the relation conservatively defers
+    // (returns a deferred `Conditional`); the full checker resolves it to the
+    // true branch (covered end-to-end). Either outcome is correct — the
+    // regression is committing the false branch, which is what this guards.
+    let interner = TypeInterner::new();
+
+    let (_a_name, infer_a) = test_infer_param(&interner, "a");
+    // `unknown extends infer a ? a : never` — a complete, non-generic conditional
+    // that evaluates to `unknown`; the `infer a` declaration is scoped to it.
+    let nested = interner.conditional(ConditionalType {
+        check_type: TypeId::UNKNOWN,
+        extends_type: infer_a,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let args = interner.intern_string("args");
+    let fn_obj = interner.object(vec![PropertyInfo::new(args, nested)]);
+    let my_fn_obj = interner.object(vec![PropertyInfo::new(args, nested)]);
+
+    let check = interner.tuple(vec![TupleElement {
+        type_id: my_fn_obj,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let extends = interner.array(fn_obj);
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_ne!(
+        result,
+        TypeId::NUMBER,
+        "`[MyFn] extends Fn[]` must not collapse to the false branch; a nested \
+         conditional's bound `infer` is not an outer inference site (#14238); \
+         got {:?}",
+        interner.lookup(result)
+    );
+}

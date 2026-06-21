@@ -1147,70 +1147,92 @@ impl TypeInterner {
             return;
         }
 
-        // Small unions use a u64 bitset; larger partition misses use Vec<bool>.
+        // Dispatch on width: small unions use a u64 bitset; wider ones a Vec.
+        self.reduce_union_subtypes_sized(flat);
+    }
+
+    /// Size-dispatching union reduction: the bitset path caps at 64 members, so
+    /// anything wider must use the heap-backed large-row reducer. Every caller
+    /// that reduces a union of unbounded width — the top-level entry and each
+    /// discriminant/fallback/combined group in `try_partition_union_reduction`
+    /// — routes through this dispatcher so the `len <= 64` invariant of
+    /// `reduce_union_subtypes_quadratic` is never violated.
+    fn reduce_union_subtypes_sized(&self, flat: &mut TypeListBuffer) {
+        let len = flat.len();
         if len <= 64 {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
-            let mut keep = vec![true; len];
-            // Precompute one coarse structural bucket per member (O(N)). A pair
-            // whose buckets cannot relate (e.g. object-vs-literal, primitive-vs-
-            // object, literal-vs-literal) is skipped without the shallow subtype
-            // call: `is_subtype_shallow` would deterministically answer `false`.
-            // This subsumes the bare-literal-pair skip and collapses the dominant
-            // cross-kind term of the mixed object/primitive/literal large-row
-            // union shape from N(N-1) shallow calls toward the count of genuinely
-            // same-kind pairs, while object-vs-object / function-vs-function
-            // reductions are preserved exactly. The inert deferred family is
-            // already lifted out above, so the residual here is concrete; any
-            // member the classifier does not model precisely buckets as
-            // `Wildcard` and keeps the real check.
-            let kinds: Vec<ShallowReduceKind> = flat
-                .iter()
-                .map(|&id| self.shallow_reduce_kind(id))
-                .collect();
-            let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
-                &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
-            });
-            for i in 0..len {
-                if !keep[i] {
+            self.reduce_union_subtypes_large_row(flat);
+        }
+    }
+
+    /// Heap-backed union reduction for partitions wider than the 64-bit bitset.
+    /// Identical semantics to `reduce_union_subtypes_quadratic`
+    /// (`shallow_reduce_kind` / `may_relate` / `is_subtype_shallow`), only the
+    /// keep-set is a `Vec<bool>` instead of a `u64` so it is size-unbounded.
+    fn reduce_union_subtypes_large_row(&self, flat: &mut TypeListBuffer) {
+        let len = flat.len();
+        if len <= 1 {
+            return;
+        }
+        let mut keep = vec![true; len];
+        // Precompute one coarse structural bucket per member (O(N)). A pair
+        // whose buckets cannot relate (e.g. object-vs-literal, primitive-vs-
+        // object, literal-vs-literal) is skipped without the shallow subtype
+        // call: `is_subtype_shallow` would deterministically answer `false`.
+        // This subsumes the bare-literal-pair skip and collapses the dominant
+        // cross-kind term of the mixed object/primitive/literal large-row
+        // union shape from N(N-1) shallow calls toward the count of genuinely
+        // same-kind pairs, while object-vs-object / function-vs-function
+        // reductions are preserved exactly. The inert deferred family is
+        // already lifted out above, so the residual here is concrete; any
+        // member the classifier does not model precisely buckets as
+        // `Wildcard` and keeps the real check.
+        let kinds: Vec<ShallowReduceKind> = flat
+            .iter()
+            .map(|&id| self.shallow_reduce_kind(id))
+            .collect();
+        let shallow_checks = tsz_common::perf_counters::enabled_fast()
+            .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
                     continue;
                 }
-                for j in 0..len {
-                    if i == j || !keep[j] {
-                        continue;
-                    }
-                    if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
-                        // The bucket skip must never hide a real subtype
-                        // relation: validate the over-approximation against the
-                        // shallow engine in debug/test builds across the whole
-                        // corpus. Release builds pay only the `may_relate` match.
-                        debug_assert!(
-                            !self.is_subtype_shallow(flat[i], flat[j]),
-                            "shallow_reduce_kind skipped a relating pair: \
-                             {:?} <: {:?}",
-                            kinds[i],
-                            kinds[j],
-                        );
-                        continue;
-                    }
-                    if let Some(counter) = shallow_checks {
-                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    if self.is_subtype_shallow(flat[i], flat[j]) {
-                        keep[i] = false;
-                        break;
-                    }
+                if !ShallowReduceKind::may_relate(kinds[i], kinds[j]) {
+                    // The bucket skip must never hide a real subtype
+                    // relation: validate the over-approximation against the
+                    // shallow engine in debug/test builds across the whole
+                    // corpus. Release builds pay only the `may_relate` match.
+                    debug_assert!(
+                        !self.is_subtype_shallow(flat[i], flat[j]),
+                        "shallow_reduce_kind skipped a relating pair: \
+                         {:?} <: {:?}",
+                        kinds[i],
+                        kinds[j],
+                    );
+                    continue;
+                }
+                if let Some(counter) = shallow_checks {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if self.is_subtype_shallow(flat[i], flat[j]) {
+                    keep[i] = false;
+                    break;
                 }
             }
-            let mut write = 0;
-            for read in 0..len {
-                if keep[read] {
-                    flat[write] = flat[read];
-                    write += 1;
-                }
-            }
-            flat.truncate(write);
         }
+        let mut write = 0;
+        for read in 0..len {
+            if keep[read] {
+                flat[write] = flat[read];
+                write += 1;
+            }
+        }
+        flat.truncate(write);
     }
 
     /// Reduce large object unions by likely discriminant property when useful.
@@ -1266,24 +1288,27 @@ impl TypeInterner {
             }
         }
 
-        // Reduce each partition independently.
+        // Reduce each partition independently. A single discriminant value can
+        // hold more than 64 members (the typebox >64-arm same-discriminant
+        // shape), so route through the width dispatcher rather than the bitset
+        // reducer directly.
         let mut result: TypeListBuffer = SmallVec::new();
         for (_, group) in partitions {
             let mut group_buf = TypeListBuffer::from_vec(group);
-            self.reduce_union_subtypes_quadratic(&mut group_buf);
+            self.reduce_union_subtypes_sized(&mut group_buf);
             result.extend(group_buf);
         }
 
         // Reduce fallback, then check fallback against all winners.
         if !fallback.is_empty() {
             let mut fallback_buf = TypeListBuffer::from_vec(fallback);
-            self.reduce_union_subtypes_quadratic(&mut fallback_buf);
+            self.reduce_union_subtypes_sized(&mut fallback_buf);
             result.extend(fallback_buf);
         }
 
         // Final pass only when partitioning actually reduced the problem.
         if result.len() < members.len() {
-            self.reduce_union_subtypes_quadratic(&mut result);
+            self.reduce_union_subtypes_sized(&mut result);
             Some(result)
         } else {
             None
@@ -1939,63 +1964,7 @@ mod tests {
             "disjoint members must all survive the small bucketed partition path"
         );
     }
-
-    #[test]
-    fn application_union_member_order_is_permutation_independent() {
-        use crate::def::DefId;
-
-        // Build a set of distinct `Application` union members exercising every
-        // axis the comparator orders on: builtin vs deferred (`Lazy`) base,
-        // different `DefId`s, differing argument lists, and differing arity.
-        // Mixing in a non-application deferred member and a builtin also drives
-        // the `Application`-vs-other ranking. Canonical union construction must
-        // produce the SAME interned type regardless of input order — the
-        // comparator that orders these members (now reading pre-fetched
-        // component keys instead of resolving inside the sort) must remain a
-        // consistent strict total order.
-        let interner = TypeInterner::new();
-        let base_a = interner.lazy(DefId(101));
-        let base_b = interner.lazy(DefId(202));
-
-        let members = vec![
-            interner.application(base_a, vec![TypeId::NUMBER]),
-            interner.application(base_b, vec![TypeId::STRING]),
-            interner.application(base_a, vec![TypeId::STRING]),
-            interner.application(base_a, vec![TypeId::NUMBER, TypeId::STRING]),
-            interner.application(base_b, vec![]),
-            interner.application(TypeId::OBJECT, vec![TypeId::BOOLEAN]),
-            interner.lazy(DefId(303)),
-            TypeId::NUMBER,
-        ];
-
-        let canonical = interner.union(members.clone());
-        let Some(TypeData::Union(canonical_list)) = interner.lookup(canonical) else {
-            panic!("expected the application-bearing union to survive normalization");
-        };
-        let canonical_members: Vec<TypeId> = interner.type_list(canonical_list).to_vec();
-        assert!(
-            canonical_members.len() >= 2,
-            "the disjoint application members must survive reduction"
-        );
-
-        // Reversed, rotated, and swapped permutations of the SAME member set
-        // must all canonicalize to the identical interned union type id.
-        let mut reversed = members.clone();
-        reversed.reverse();
-
-        let mut rotated = members.clone();
-        rotated.rotate_left(3);
-
-        let mut swapped = members.clone();
-        swapped.swap(0, members.len() - 1);
-        swapped.swap(1, 4);
-
-        for perm in [reversed, rotated, swapped] {
-            assert_eq!(
-                interner.union(perm),
-                canonical,
-                "application union member ordering must be independent of input order"
-            );
-        }
-    }
 }
+
+#[cfg(test)]
+mod application_order_tests;

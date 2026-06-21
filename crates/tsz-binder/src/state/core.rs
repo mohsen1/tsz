@@ -1375,6 +1375,13 @@ impl BinderState {
             || (incoming.has_any_flags(TYPE_ONLY_DECL)
                 && !incoming.has_any_flags(symbol_flags::VALUE)
                 && incoming.import_module().is_none());
+        if incoming_is_type_only
+            && existing.has_any_flags(symbol_flags::ALIAS)
+            && existing.import_name() == Some("*")
+            && !existing.is_umd_export
+        {
+            return false;
+        }
         let existing_can_provide_value = !existing.is_type_only
             && (existing.has_any_flags(symbol_flags::VALUE)
                 || (existing.has_any_flags(symbol_flags::ALIAS)

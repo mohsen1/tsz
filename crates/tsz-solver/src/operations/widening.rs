@@ -470,14 +470,30 @@ fn widen_type_cached(
                 }
             };
             let has_literal = members.iter().any(|&m| is_fresh_member(m));
-            let small_fresh_union = has_literal
-                && members.len() <= 3
+            // A union of only fresh literals (`"a" | "b" | …`, optionally with
+            // pass-through `undefined`/`null`/`void`). `small_fresh_union` caps
+            // this at 3 members for the general/display/argument paths because a
+            // larger literal union there is more likely to come from a type alias
+            // (`type Lang = "fr" | "en" | "es" | "de"`) that must keep its
+            // members. The inference and mutable-binding callers
+            // (`widen_object_union_members == true`) already establish freshness
+            // upstream — they only deep-widen array/tuple/object literals whose
+            // candidate is fresh (not a `type`-annotated source) — so for them
+            // the arity cap is wrong: tsc widens a fresh literal element union to
+            // its primitive regardless of how many distinct literals it has
+            // (`frz(["PATCH","POST","PUT","DELETE"])` → `Readonly<string[]>`).
+            let all_fresh_literal_or_passthrough = has_literal
                 && members
                     .iter()
                     .all(|&m| is_fresh_member(m) || is_passthrough_intrinsic(m));
+            let small_fresh_union = all_fresh_literal_or_passthrough && members.len() <= 3;
+            let fresh_literal_union =
+                widen_object_union_members && all_fresh_literal_or_passthrough;
             let has_fresh_object_or_array_member =
                 members.iter().any(|&m| is_fresh_object_or_array_member(m));
-            if small_fresh_union || (widen_object_union_members && has_fresh_object_or_array_member)
+            if small_fresh_union
+                || fresh_literal_union
+                || (widen_object_union_members && has_fresh_object_or_array_member)
             {
                 let mut members_to_widen = members.to_vec();
                 if widen_object_union_members {
@@ -568,9 +584,17 @@ fn widen_type_cached(
                 //   class C { readonly a = [1, 2, 3] }   // → number[]
                 // Likewise, the unique-symbol primitive carve-out remains
                 // for readonly props: `readonly s: unique symbol` stays.
-                let preserve_readonly_top_level =
-                    prop.readonly && readonly_property_preserves_top_level_type(db, prop.type_id);
-                let widened_type = if preserve_readonly_top_level {
+                // A `readonly` property keeps its *own* primitive literal type,
+                // and a `non_widening` (regular) literal property — preserved at
+                // construction from an `as const`/assertion source — must never
+                // re-widen either, mirroring tsc's `getWidenedType` leaving
+                // regular literals untouched. In both cases only the *top-level*
+                // literal is preserved; compound values still recurse so nested
+                // fresh literals widen as tsc does.
+                let preserves_literal = prop.readonly || prop.non_widening;
+                let widened_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.type_id)
+                {
                     prop.type_id
                 } else {
                     widen_type_cached(
@@ -586,9 +610,9 @@ fn widen_type_cached(
                 };
 
                 // Write type follows read type logic.
-                let preserve_readonly_top_level_write = prop.readonly
-                    && readonly_property_preserves_top_level_type(db, prop.write_type);
-                let widened_write_type = if preserve_readonly_top_level_write {
+                let widened_write_type = if preserves_literal
+                    && readonly_property_preserves_top_level_type(db, prop.write_type)
+                {
                     prop.write_type
                 } else {
                     widen_type_cached(
@@ -905,12 +929,17 @@ pub(crate) fn widen_object_literal_properties(
             let mut changed = false;
 
             for prop in &shape.properties {
-                let widened_type = if prop.readonly {
+                // `non_widening` properties hold a regular (non-widening) literal
+                // preserved from an `as const`/assertion source; tsc's
+                // `getWidenedType` never widens those, so skip them alongside
+                // readonly properties.
+                let preserve = prop.readonly || prop.non_widening;
+                let widened_type = if preserve {
                     prop.type_id
                 } else {
                     widen_type(db, prop.type_id)
                 };
-                let widened_write_type = if prop.readonly {
+                let widened_write_type = if preserve {
                     prop.write_type
                 } else {
                     widen_type(db, prop.write_type)

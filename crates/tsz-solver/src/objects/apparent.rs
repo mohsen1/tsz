@@ -553,6 +553,7 @@ pub fn apparent_primitive_shape(
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             }),
             ApparentMemberKind::Method(return_type) => {
                 let method_ty = make_method_type(db, return_type);
@@ -570,6 +571,7 @@ pub fn apparent_primitive_shape(
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 });
             }
         }

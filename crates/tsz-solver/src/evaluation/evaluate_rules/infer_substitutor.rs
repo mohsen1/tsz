@@ -201,6 +201,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_string_named: prop.is_string_named,
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
+                        non_widening: false,
                     });
                 }
                 if changed {
@@ -237,6 +238,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_string_named: prop.is_string_named,
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
+                        non_widening: false,
                     });
                 }
                 let string_index = shape.string_index.as_ref().map(|index| {
@@ -310,38 +312,25 @@ impl<'a> InferSubstitutor<'a> {
                 // match succeeds, which makes `evaluate_mapped` defer and collapse
                 // the outer object level.
                 let mapped = self.interner.get_mapped(mapped_id);
-                let constraint = self.substitute(mapped.constraint);
-                let type_param_constraint =
-                    mapped.type_param.constraint.map(|c| self.substitute(c));
-                let type_param_default = mapped.type_param.default.map(|d| self.substitute(d));
-                let (name_type, template) =
-                    self.with_shadowed_binding(mapped.type_param.name, |substitutor| {
-                        (
-                            mapped.name_type.map(|n| substitutor.substitute(n)),
-                            substitutor.substitute(mapped.template),
-                        )
-                    });
-                let unchanged = constraint == mapped.constraint
-                    && name_type == mapped.name_type
-                    && template == mapped.template
-                    && type_param_constraint == mapped.type_param.constraint
-                    && type_param_default == mapped.type_param.default;
-                if unchanged {
-                    type_id
-                } else {
-                    self.interner.mapped(MappedType {
-                        type_param: TypeParamInfo {
-                            constraint: type_param_constraint,
-                            default: type_param_default,
-                            ..mapped.type_param
-                        },
-                        constraint,
-                        name_type,
-                        template,
-                        readonly_modifier: mapped.readonly_modifier,
-                        optional_modifier: mapped.optional_modifier,
-                    })
-                }
+
+                // Homomorphic union distribution (tsc: `instantiateMappedType`
+                // distributes over a union source via `mapType`). When the
+                // mapped type is homomorphic over a substituted infer/type
+                // variable — its constraint is `keyof X` where X's name is
+                // bound here — and X resolves to a union, substituting X with
+                // the whole union and re-interning ONE mapped type collapses
+                // `keyof (A | B)` to the shared keys, losing per-member
+                // structure (a union of tuples becomes an index-signature
+                // object; a union of objects becomes `{}`). Distribute per
+                // member instead so each homomorphic instance maps over a
+                // single source and downstream evaluation preserves its shape.
+                // This runs before the plain structural substitution, which only
+                // sees the already-collapsed `keyof <union>` and cannot recover
+                // the homomorphic origin (the directly-authored
+                // `{ [K in keyof (A | B)]: ... }`, which tsc does NOT
+                // distribute, never has its source name in `bindings`).
+                self.try_distribute_mapped_over_union_binding(&mapped)
+                    .unwrap_or_else(|| self.substitute_mapped_structural(type_id, &mapped))
             }
             TypeData::IndexAccess(obj, idx) => {
                 let new_obj = self.substitute(obj);
@@ -571,6 +560,7 @@ impl<'a> InferSubstitutor<'a> {
                             is_string_named: prop.is_string_named,
                             is_symbol_named: prop.is_symbol_named,
                             single_quoted_name: prop.single_quoted_name,
+                            non_widening: false,
                         }
                     })
                     .collect();
@@ -622,6 +612,105 @@ impl<'a> InferSubstitutor<'a> {
 
         self.visiting.insert(type_id, result);
         result
+    }
+
+    /// Plain structural substitution of a mapped type: substitute every
+    /// reachable `TypeId` (constraint, iteration-variable constraint/default,
+    /// `name_type`, template) and re-intern, returning `type_id` unchanged when
+    /// nothing was substituted. The iteration variable is shadowed while
+    /// visiting `name_type`/`template` so an inner binding of the same name does
+    /// not leak the outer infer binding.
+    fn substitute_mapped_structural(&mut self, type_id: TypeId, mapped: &MappedType) -> TypeId {
+        let constraint = self.substitute(mapped.constraint);
+        let type_param_constraint = mapped.type_param.constraint.map(|c| self.substitute(c));
+        let type_param_default = mapped.type_param.default.map(|d| self.substitute(d));
+        let (name_type, template) =
+            self.with_shadowed_binding(mapped.type_param.name, |substitutor| {
+                (
+                    mapped.name_type.map(|n| substitutor.substitute(n)),
+                    substitutor.substitute(mapped.template),
+                )
+            });
+        let unchanged = constraint == mapped.constraint
+            && name_type == mapped.name_type
+            && template == mapped.template
+            && type_param_constraint == mapped.type_param.constraint
+            && type_param_default == mapped.type_param.default;
+        if unchanged {
+            type_id
+        } else {
+            self.interner.mapped(MappedType {
+                type_param: TypeParamInfo {
+                    constraint: type_param_constraint,
+                    default: type_param_default,
+                    ..mapped.type_param
+                },
+                constraint,
+                name_type,
+                template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            })
+        }
+    }
+
+    /// Name of the homomorphic source variable when `constraint` is `keyof X`
+    /// and X is a substitutable infer / type / unresolved-name reference.
+    fn homomorphic_source_name(&self, constraint: TypeId) -> Option<Atom> {
+        let TypeData::KeyOf(source) = self.interner.lookup(constraint)? else {
+            return None;
+        };
+        match self.interner.lookup(source)? {
+            TypeData::Infer(info) | TypeData::TypeParameter(info) => Some(info.name),
+            TypeData::UnresolvedTypeName(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Distribute a homomorphic mapped type over a union-valued binding.
+    ///
+    /// Returns `Some(union)` when `mapped` is homomorphic over a substituted
+    /// variable (`{ [K in keyof X]: ... }` with X's name bound here) and that
+    /// binding is a `Union`; the result is the union of the mapped type applied
+    /// to each member (X rebound to the single member). Returns `None` when the
+    /// mapped type is not homomorphic over a bound variable, or its binding is
+    /// not a union, so the caller falls back to plain structural substitution.
+    fn try_distribute_mapped_over_union_binding(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        let source_name = self.homomorphic_source_name(mapped.constraint)?;
+        let bound = *self.bindings.get(&source_name)?;
+        let TypeData::Union(list_id) = self.interner.lookup(bound)? else {
+            return None;
+        };
+        let members = self.interner.type_list(list_id).to_vec();
+        if members.len() < 2 {
+            return None;
+        }
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            // Rebind the homomorphic source to this single member, then
+            // re-substitute the whole mapped type. With a non-union binding the
+            // distribution check above no longer fires, so this recurses into
+            // the plain structural substitution and yields a homomorphic mapped
+            // type over the single member (`{ [K in keyof <member>]: ... }`),
+            // which downstream evaluation shapes correctly (tuple stays a tuple,
+            // object stays an object).
+            let previous = self.bindings.insert(source_name, member);
+            // The per-member result depends on the binding environment, so the
+            // shared `visiting` memo (keyed only by `TypeId`) must not leak a
+            // cached substitution computed under a different member's binding.
+            let saved_visiting = std::mem::take(&mut self.visiting);
+            results.push(self.substitute(self.interner.mapped(*mapped)));
+            self.visiting = saved_visiting;
+            match previous {
+                Some(prev) => {
+                    self.bindings.insert(source_name, prev);
+                }
+                None => {
+                    self.bindings.remove(&source_name);
+                }
+            }
+        }
+        Some(self.interner.union(results))
     }
 
     fn with_shadowed_binding<T>(&mut self, name: Atom, f: impl FnOnce(&mut Self) -> T) -> T {

@@ -116,6 +116,7 @@ impl<'a> NarrowingContext<'a> {
                 is_string_named: false,
                 is_symbol_named: false,
                 single_quoted_name: false,
+                non_widening: false,
             };
             let filter_obj = self.db.object(vec![required_prop]);
             let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
@@ -201,6 +202,31 @@ impl<'a> NarrowingContext<'a> {
                 .filter_map(|&member| {
                     // CRITICAL: Resolve Lazy types for each member
                     let resolved_member = self.resolve_type(member);
+
+                    // A constituent may itself resolve to a *nested* union — most
+                    // commonly a generic alias such as
+                    // `Resp<T> = ErrorResponse | SuccessResponse<T>` reaching here
+                    // as an `Application`. tsc's `narrowTypeByInKeyword` filters the
+                    // constituents of the *fully flattened* union, so the `in`
+                    // narrowing must distribute into the nested union rather than
+                    // applying a single keep/drop decision to the alias as a whole.
+                    // Without this, the negative branch keeps the entire alias (its
+                    // `error`-bearing arm makes the property *not required* overall),
+                    // so a later `.result` access wrongly sees the still-present
+                    // `ErrorResponse` arm (false TS2339); the positive branch
+                    // symmetrically keeps the `error`-only arm. Recurse so each
+                    // nested constituent is filtered independently. `resolve_type`
+                    // is identity/cycle-guarded and the nested constituents resolve
+                    // to non-union structural forms, so the recursion is bounded by
+                    // the (finite) alias-nesting depth.
+                    if union_list_id(self.db, resolved_member).is_some() {
+                        let narrowed = self.narrow_by_property_presence(
+                            resolved_member,
+                            property_name,
+                            present,
+                        );
+                        return (narrowed != TypeId::NEVER).then_some(narrowed);
+                    }
 
                     let has_property = self.type_has_property(resolved_member, property_name);
                     if present {
@@ -350,6 +376,7 @@ impl<'a> NarrowingContext<'a> {
             is_string_named: false,
             is_symbol_named,
             single_quoted_name: false,
+            non_widening: false,
         };
         self.db
             .object_with_flags(vec![required_prop], ObjectFlags::IN_OPERATOR_RECORD)

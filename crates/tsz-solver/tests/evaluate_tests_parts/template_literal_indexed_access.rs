@@ -839,7 +839,7 @@ fn test_indexed_access_optional_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -871,7 +871,7 @@ fn test_indexed_access_mixed_optional_required() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -886,7 +886,7 @@ fn test_indexed_access_mixed_optional_required() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 
@@ -1023,7 +1023,7 @@ fn test_indexed_access_readonly_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -1155,7 +1155,7 @@ fn test_generator_function_async_return() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let cond = ConditionalType {
@@ -1183,7 +1183,7 @@ fn test_generator_function_async_return() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     subst.insert(t_name, input_obj);
 
@@ -1487,7 +1487,7 @@ fn test_module_augmentation_class_extension() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // T extends { new: ... } ? T : never

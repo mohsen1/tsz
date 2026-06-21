@@ -1320,7 +1320,7 @@ fn test_property_with_divergent_write_type() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     };
     let obj = interner.object(vec![prop]);
 

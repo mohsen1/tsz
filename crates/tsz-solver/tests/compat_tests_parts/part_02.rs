@@ -271,7 +271,7 @@ fn test_void_return_exception_constructors() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // new () => Instance
@@ -296,7 +296,7 @@ fn test_void_return_exception_constructors() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Constructor returning instance IS assignable to void-returning constructor
@@ -346,7 +346,7 @@ fn test_method_bivariance_allows_derived_methods() {
         is_class_prototype: false,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // class Derived extends Base { x: string; y: number; compare(other: Derived): void }
@@ -376,7 +376,7 @@ fn test_method_bivariance_allows_derived_methods() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // With method bivariance (default), derived method with narrower parameter is assignable
@@ -424,7 +424,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         is_class_prototype: false,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Derived type with method
@@ -454,7 +454,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Methods are still bivariant even with strictFunctionTypes
@@ -517,7 +517,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let obj_with_animal_method = interner.object(vec![PropertyInfo {
@@ -533,7 +533,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Methods are bivariant even with strictFunctionTypes
@@ -822,7 +822,7 @@ fn test_union_intersection_distributivity_basic() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
@@ -840,7 +840,7 @@ fn test_union_intersection_distributivity_basic() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // (A | B) & C
@@ -878,7 +878,7 @@ fn test_intersection_union_distributivity() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
@@ -896,7 +896,7 @@ fn test_intersection_union_distributivity() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // A & (B | C)
@@ -1048,7 +1048,7 @@ fn test_strict_function_types_affects_methods_independently() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Dog: { name: string, breed: string } - Dog is subtype of Animal
@@ -1067,7 +1067,7 @@ fn test_strict_function_types_affects_methods_independently() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);
@@ -1177,7 +1177,7 @@ fn test_keyof_union_contravariance() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Type B: { age: number }
@@ -1210,7 +1210,7 @@ fn test_keyof_union_contravariance() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     };
     // Type C: { name: string, x: number }
     let type_c = interner.object(vec![
@@ -1259,7 +1259,7 @@ fn test_keyof_intersection_distributivity() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Type B: { name: string, age: number }
@@ -1277,7 +1277,7 @@ fn test_keyof_intersection_distributivity() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
     ]);
@@ -1326,7 +1326,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
     ]);
@@ -1347,7 +1347,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(email, TypeId::STRING),
     ]);
@@ -1420,7 +1420,7 @@ fn test_best_common_type_with_supertype() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Type Dog: { name: string, breed: string }
@@ -1439,7 +1439,7 @@ fn test_best_common_type_with_supertype() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ]);
@@ -1639,7 +1639,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let target = interner.object(vec![
         PropertyInfo::new(brand, TypeId::NEVER),
@@ -1656,7 +1656,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
 
@@ -1688,7 +1688,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             declaration_order: 0,
             is_string_named: false,
             is_symbol_named: false,
-            single_quoted_name: false,
+            single_quoted_name: false, non_widening: false,
         },
     ]);
     let target = interner.object(vec![PropertyInfo {
@@ -1704,7 +1704,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // A class can implement an interface (source with brand -> target without brand)
@@ -1732,7 +1732,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -1747,7 +1747,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     // Structural check passes

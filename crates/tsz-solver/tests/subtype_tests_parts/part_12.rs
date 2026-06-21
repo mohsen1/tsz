@@ -892,7 +892,7 @@ fn test_this_type_with_getter_setter() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(obj != TypeId::ERROR);
@@ -1380,7 +1380,7 @@ fn test_readonly_optional_property() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(readonly_optional != TypeId::ERROR);
@@ -1500,7 +1500,7 @@ fn test_readonly_method_is_always_readonly() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     assert!(obj != TypeId::ERROR);

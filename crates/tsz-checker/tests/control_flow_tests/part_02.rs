@@ -1496,3 +1496,79 @@ function f(value: string) {
 // ============================================================================
 // FAILING TESTS - These tests FAIL to demonstrate the bugs exist
 // ============================================================================
+
+/// Issue #14259: a self-referential generic call on a loop back-edge
+/// (`h = pipe(h, f)`) must not leak the callee's bare, un-instantiated return
+/// type parameter into `h`'s loop-flow type. tsc keeps `h` at `number`; the
+/// syntactic flow fallback used to surface `pipe`'s declared return `B`, which
+/// then failed the next iteration's argument check with a spurious TS2345.
+#[test]
+fn test_ts2345_not_emitted_for_self_referential_generic_call_loop_back_edge() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B
+declare const f: (self: number) => number
+let h = 6151
+for (let i = 0; i < 3; i++) { h = pipe(h, f) }
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2345 = checker.ctx.diagnostics.iter().any(|d| d.code == 2345);
+    assert!(
+        !has_ts2345,
+        "self-referential generic call on a loop back-edge must not leak a bare \
+         return type parameter; got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Issue #14259 negative control: declining to adopt an un-instantiated return
+/// parameter must not suppress a genuine type mismatch. Here `f` returns
+/// `string`, so `pipe(h, f)` is `string` and assigning it back into the
+/// `number` variable `h` must still report TS2322.
+#[test]
+fn test_ts2322_still_emitted_for_self_referential_loop_with_real_mismatch() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B
+declare const f: (self: number) => string
+let h = 6151
+for (let i = 0; i < 3; i++) { h = pipe(h, f) }
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2322 = checker.ctx.diagnostics.iter().any(|d| d.code == 2322);
+    assert!(
+        has_ts2322,
+        "a genuine string-vs-number loop mismatch must still report TS2322; got: {:?}",
+        checker.ctx.diagnostics
+    );
+}

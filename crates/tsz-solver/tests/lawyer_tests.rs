@@ -730,6 +730,7 @@ fn test_private_brands_nominality() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Class B with private x: number (parent_id = SymbolId(2))
@@ -747,6 +748,7 @@ fn test_private_brands_nominality() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Should NOT be assignable due to different private declarations
@@ -784,6 +786,7 @@ fn test_subclass_inherits_parent_brand() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Subclass C extends A, inherits private x (parent_id = SymbolId(1) - same as parent!)
@@ -801,6 +804,7 @@ fn test_subclass_inherits_parent_brand() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Should be assignable because the private member has the same declaration
@@ -833,6 +837,7 @@ fn test_protected_brands_nominality() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Class B with protected x: number (parent_id = SymbolId(2))
@@ -850,6 +855,7 @@ fn test_protected_brands_nominality() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Should NOT be assignable due to different protected declarations
@@ -882,6 +888,7 @@ fn test_public_members_structural() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Class B with public x: number (parent_id = SymbolId(2))
@@ -899,6 +906,7 @@ fn test_public_members_structural() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Should be assignable because public members are structural
@@ -931,6 +939,7 @@ fn test_visibility_leakage_prevented() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Target: interface with public x
@@ -948,6 +957,7 @@ fn test_visibility_leakage_prevented() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Should NOT be assignable (visibility leakage prevented)
@@ -981,6 +991,7 @@ fn test_private_brands_in_intersection() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
+        non_widening: false,
     }]);
 
     // Additional type with public y

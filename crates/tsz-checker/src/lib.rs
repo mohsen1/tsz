@@ -238,6 +238,9 @@ mod flow_truthy_proves_assignment_tests;
 #[path = "tests/flow_usage_relation_routing_arch_tests.rs"]
 mod flow_usage_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/function_callee_spread_ts2556_tests.rs"]
+mod function_callee_spread_ts2556_tests;
+#[cfg(test)]
 #[path = "tests/function_type_relation_routing_arch_tests.rs"]
 mod function_type_relation_routing_arch_tests;
 #[cfg(test)]
@@ -282,6 +285,9 @@ mod global_this_typeof_surface_tests;
 #[cfg(test)]
 #[path = "tests/heritage_constraint_structural_name_lookup_arch_tests.rs"]
 mod heritage_constraint_structural_name_lookup_arch_tests;
+#[cfg(test)]
+#[path = "tests/heritage_flow_narrowed_base_tests.rs"]
+mod heritage_flow_narrowed_base_tests;
 #[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
@@ -916,6 +922,9 @@ mod import_attributes_relation_routing_arch_tests;
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;
 #[cfg(test)]
+#[path = "tests/in_narrow_aliased_union_tests.rs"]
+mod in_narrow_aliased_union_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_apparent_member_tests.rs"]
 mod in_narrow_apparent_member_tests;
 #[cfg(test)]
@@ -933,6 +942,9 @@ mod index_signature_property_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
 mod index_signature_value_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/indexed_access_callable_member_constraint_ts2344_tests.rs"]
+mod indexed_access_callable_member_constraint_ts2344_tests;
 #[cfg(test)]
 #[path = "tests/indexed_access_constraint_relation_routing_arch_tests.rs"]
 mod indexed_access_constraint_relation_routing_arch_tests;
@@ -1134,6 +1146,9 @@ mod never_absorption_call_spread_tests;
 #[cfg(test)]
 #[path = "../tests/never_initializer_falls_through_tests.rs"]
 mod never_initializer_falls_through_tests;
+#[cfg(test)]
+#[path = "tests/never_return_import_alias_tests.rs"]
+mod never_return_import_alias_tests;
 #[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
@@ -1449,6 +1464,9 @@ mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
 #[path = "tests/union_source_literal_target_display_tests.rs"]
 mod union_source_literal_target_display_tests;
+#[cfg(test)]
+#[path = "tests/union_to_tuple_never_base_depth_tests.rs"]
+mod union_to_tuple_never_base_depth_tests;
 #[cfg(test)]
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;

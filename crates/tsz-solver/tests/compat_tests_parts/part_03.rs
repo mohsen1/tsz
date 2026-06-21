@@ -1004,7 +1004,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let obj_two = interner.object(vec![PropertyInfo {
@@ -1020,7 +1020,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         declaration_order: 0,
         is_string_named: false,
         is_symbol_named: false,
-        single_quoted_name: false,
+        single_quoted_name: false, non_widening: false,
     }]);
 
     let source = interner.intersection(vec![obj_two, TypeId::STRING]);

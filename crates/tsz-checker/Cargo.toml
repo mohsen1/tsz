@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "as_const_object_property_inference_tests"
+path = "tests/as_const_object_property_inference_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
@@ -173,6 +176,9 @@ path = "tests/async_iterable_type_param_element_tests.rs"
 [[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
+[[test]]
+name = "identity_alias_union_arm_inference_tests"
+path = "tests/identity_alias_union_arm_inference_tests.rs"
 [[test]]
 name = "recursive_array_utility_inference_tests"
 path = "tests/recursive_array_utility_inference_tests.rs"
@@ -404,6 +410,9 @@ path = "tests/ts2307_per_site_dedup_tests.rs"
 name = "ts2769_anchor_disagreeing_overloads_tests"
 path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
 [[test]]
+name = "ts2749_export_alias_local_class_collision_tests"
+path = "tests/ts2749_export_alias_local_class_collision_tests.rs"
+[[test]]
 name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
 [[test]]
@@ -466,6 +475,9 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 [[test]]
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
+[[test]]
+name = "this_type_indexed_access_receiver_tests"
+path = "tests/this_type_indexed_access_receiver_tests.rs"
 [[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
@@ -584,6 +596,9 @@ path = "tests/hkt_self_augmentation_keyof_repro.rs"
 name = "hkt_cross_file_augmentation_13653_repro"
 path = "tests/hkt_cross_file_augmentation_13653_repro.rs"
 [[test]]
+name = "declare_global_interface_keyof_merge_tests"
+path = "tests/declare_global_interface_keyof_merge_tests.rs"
+[[test]]
 name = "hkt_typeof_uri_instance_assignability_13930_repro"
 path = "tests/hkt_typeof_uri_instance_assignability_13930_repro.rs"
 [[test]]
@@ -598,6 +613,9 @@ path = "tests/ts2303_tests.rs"
 [[test]]
 name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
+[[test]]
+name = "namespace_builtin_collision_indexed_access_tests"
+path = "tests/namespace_builtin_collision_indexed_access_tests.rs"
 [[test]]
 name = "class_reserved_word_diagnostics_tests"
 path = "tests/class_reserved_word_diagnostics_tests.rs"
@@ -802,6 +820,9 @@ path = "tests/contextual_tuple_tests.rs"
 [[test]]
 name = "contextual_return_tuple_generic_member_tests"
 path = "tests/contextual_return_tuple_generic_member_tests.rs"
+[[test]]
+name = "contextual_return_value_arg_pinned_tests"
+path = "tests/contextual_return_value_arg_pinned_tests.rs"
 [[test]]
 name = "contextual_ts2345_conformance_tests"
 path = "tests/contextual_ts2345_conformance_tests.rs"
@@ -1808,6 +1829,9 @@ path = "tests/optional_property_required_elaboration_tests.rs"
 name = "variadic_tuple_arity_inference_tests"
 path = "tests/variadic_tuple_arity_inference_tests.rs"
 [[test]]
+name = "variadic_infer_element_tests"
+path = "tests/variadic_infer_element_tests.rs"
+[[test]]
 name = "diagnostic_index_suppression_tests"
 path = "tests/diagnostic_index_suppression_tests.rs"
 [[test]]
@@ -1958,3 +1982,6 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+[[test]]
+name = "function_type_predicate_typeof_param_tests"
+path = "tests/function_type_predicate_typeof_param_tests.rs"

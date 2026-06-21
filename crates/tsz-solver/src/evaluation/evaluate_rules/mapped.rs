@@ -716,6 +716,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     is_string_named,
                     is_symbol_named,
                     single_quoted_name,
+                    non_widening: false,
                 });
             }
         }
@@ -829,6 +830,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     is_string_named: false,
                     is_symbol_named: true,
                     single_quoted_name: false,
+                    non_widening: false,
                 });
             }
         }
@@ -1097,6 +1099,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
+                    non_widening: false,
                 });
             }
         }
