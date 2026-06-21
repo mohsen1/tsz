@@ -354,20 +354,23 @@ impl<'a> FlowAnalyzer<'a> {
                 if bin.operator_token != SyntaxKind::EqualsToken as u16
                     && is_compound_assignment_operator(bin.operator_token)
                 {
-                    if self.is_access_reference(target) {
-                        return None;
-                    }
-
-                    // When node_types is not available, use heuristics for flow narrowing
-                    if self.node_types.is_none() {
-                        return fallback_compound_assignment_result(
-                            self.interner,
-                            bin.operator_token,
-                            self.literal_type_from_node(bin.right),
-                        );
-                    }
-
+                    // Logical assignments (&&=, ||=, ??=) narrow the LHS the same way
+                    // whether the target is a plain local or a property/element access:
+                    // `o.m ||= …` / `this.m ??= …` drop the falsy/nullish part of `o.m`
+                    // for the rest of the flow, exactly as `m ||= …` does for a local.
+                    // tsc applies `getAssignmentReducedType` to member targets too, so
+                    // this branch runs BEFORE the access-reference guard below (which is
+                    // a conservative read-surface preservation for arithmetic/bitwise
+                    // compound writes like `o.m += 1`, not for the logical operators).
                     if is_logical_compound_assignment_operator(bin.operator_token) {
+                        // When node_types is not available, use heuristics for flow narrowing.
+                        if self.node_types.is_none() {
+                            return fallback_compound_assignment_result(
+                                self.interner,
+                                bin.operator_token,
+                                self.literal_type_from_node(bin.right),
+                            );
+                        }
                         // For logical assignments (&&=, ||=, ??=), the post-assignment
                         // type of the LHS must reflect the full expression semantics:
                         //   x ??= y  -> NonNullable<x> | typeof y
@@ -393,6 +396,19 @@ impl<'a> FlowAnalyzer<'a> {
                             bin.left,
                             bin.right,
                             bin.operator_token,
+                        );
+                    }
+
+                    if self.is_access_reference(target) {
+                        return None;
+                    }
+
+                    // When node_types is not available, use heuristics for flow narrowing
+                    if self.node_types.is_none() {
+                        return fallback_compound_assignment_result(
+                            self.interner,
+                            bin.operator_token,
+                            self.literal_type_from_node(bin.right),
                         );
                     }
 

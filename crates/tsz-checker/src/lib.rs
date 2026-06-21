@@ -373,6 +373,9 @@ mod literal_application_alias_display_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
 #[cfg(test)]
+#[path = "tests/logical_assignment_member_narrowing_tests.rs"]
+mod logical_assignment_member_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
