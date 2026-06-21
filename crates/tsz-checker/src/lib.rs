@@ -1135,6 +1135,9 @@ mod never_absorption_call_spread_tests;
 #[path = "../tests/never_initializer_falls_through_tests.rs"]
 mod never_initializer_falls_through_tests;
 #[cfg(test)]
+#[path = "tests/never_return_import_alias_tests.rs"]
+mod never_return_import_alias_tests;
+#[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]

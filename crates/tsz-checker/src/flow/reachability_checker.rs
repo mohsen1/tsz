@@ -214,11 +214,30 @@ impl<'a> CheckerState<'a> {
     }
 
     fn symbol_explicitly_returns_never(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
+        let (is_alias, decl_idx) = {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+            (
+                symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS),
+                symbol.primary_declaration(),
+            )
         };
 
-        let Some(decl_idx) = symbol.primary_declaration() else {
+        // An imported function's symbol is an alias whose primary declaration is
+        // the import specifier (no return-type annotation) and whose real
+        // declaration lives in another file's arena, so neither can be read
+        // through `self.ctx.arena`. Inspect the alias's computed function-type
+        // return instead — arena-independent and already resolved by the type
+        // system through import and `export *` re-export chains — matching tsc's
+        // `isNeverReturningCall`, which examines the resolved signature. Covers a
+        // direct `import { die }` and transitive `export *` barrel re-exports.
+        if is_alias {
+            let ty = self.get_type_of_symbol(sym_id);
+            return query::function_return_type(self.ctx.types, ty) == Some(TypeId::NEVER);
+        }
+
+        let Some(decl_idx) = decl_idx else {
             return false;
         };
 
