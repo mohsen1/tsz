@@ -34,6 +34,18 @@ impl<'a> CheckerState<'a> {
         self.ctx.rollback_full(snap);
     }
 
+    /// Whether any overload other than `idx` declares a rest parameter.
+    ///
+    /// A non-tuple array spread that cannot bind to one overload's fixed arity
+    /// is a soft failure when another overload can absorb it into a rest
+    /// parameter, so TS2556 is committed only when none of the overloads can.
+    fn any_other_overload_has_rest(signatures: &[tsz_solver::CallSignature], idx: usize) -> bool {
+        signatures
+            .iter()
+            .enumerate()
+            .any(|(j, candidate)| j != idx && candidate.params.iter().any(|param| param.rest))
+    }
+
     /// Resolve an overloaded call by trying each signature.
     ///
     /// This method iterates through overload signatures and returns the first
@@ -886,7 +898,21 @@ impl<'a> CheckerState<'a> {
                     if !did_instantiated_retry {
                         self.ctx.node_types.merge(&temp_node_types);
                     }
-                    self.validate_non_tuple_spreads_for_signature(args, func_type);
+                    // This overload type-checks the spread's element type but a
+                    // non-tuple array spread (`...arr` where `arr: T[]`) cannot
+                    // be bound to its fixed-arity positions. tsc keeps scanning
+                    // the overload set: an overload with a rest parameter accepts
+                    // the spread regardless of declaration order. Defer to it as
+                    // a soft failure when one exists; otherwise commit TS2556.
+                    if let Some(spread_idx) =
+                        self.non_tuple_spread_into_non_rest_position(args, func_type)
+                    {
+                        if Self::any_other_overload_has_rest(signatures, idx) {
+                            self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                            continue;
+                        }
+                        self.error_spread_must_be_tuple_or_rest_at(spread_idx);
+                    }
 
                     // CRITICAL FIX - Check excess properties against the MATCHED signature,
                     // not the union. Using the union would allow properties that exist in other overloads
@@ -930,6 +956,17 @@ impl<'a> CheckerState<'a> {
                     if let Some(spread_idx) =
                         self.find_prior_non_tuple_spread_for_mismatch(args, index)
                     {
+                        // A non-tuple array spread (`...arr` where `arr: T[]`) has an
+                        // unknown runtime length, so it cannot satisfy this overload's
+                        // fixed-arity positional parameters. tsc treats that as a soft
+                        // overload failure rather than a committed diagnostic: it keeps
+                        // scanning, and an overload with a rest parameter accepts the
+                        // spread regardless of declaration order. Only commit TS2556
+                        // when no overload in the set could absorb the spread into a
+                        // rest parameter (e.g. every overload is fixed-arity).
+                        if Self::any_other_overload_has_rest(signatures, idx) {
+                            continue;
+                        }
                         self.error_spread_must_be_tuple_or_rest_at(spread_idx);
                         self.ctx.node_types.merge(&temp_node_types);
                         return Some(OverloadResolution {

@@ -1856,6 +1856,21 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         func_type: TypeId,
     ) {
+        if let Some(arg_idx) = self.non_tuple_spread_into_non_rest_position(args, func_type) {
+            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+        }
+    }
+
+    /// Locate a non-tuple array/iterable spread argument that lands on a
+    /// non-rest, fixed-arity position of `func_type`, returning its argument
+    /// node without emitting a diagnostic. Overload resolution uses this to
+    /// decide whether the spread is a soft failure (a sibling overload with a
+    /// rest parameter can absorb it) before committing TS2556.
+    pub(super) fn non_tuple_spread_into_non_rest_position(
+        &mut self,
+        args: &[NodeIndex],
+        func_type: TypeId,
+    ) -> Option<NodeIndex> {
         let ctx = ContextualTypeContext::with_expected(self.ctx.types, func_type);
         let mut effective_index = 0usize;
         for &arg_idx in args {
@@ -1912,11 +1927,11 @@ impl<'a> CheckerState<'a> {
                 .is_some()
                 || self.is_iterable_type(spread_type);
             if is_non_tuple_spread && !ctx.allows_non_tuple_spread_position(effective_index) {
-                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
-                return;
+                return Some(arg_idx);
             }
             effective_index += 1;
         }
+        None
     }
 
     pub(super) fn find_prior_non_tuple_spread_for_mismatch(

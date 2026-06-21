@@ -1231,6 +1231,9 @@ mod overload_generic_wrapper_compat_tests;
 #[path = "tests/overload_param_relation_routing_arch_tests.rs"]
 mod overload_param_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/overload_spread_rest_fallback_ts2556_tests.rs"]
+mod overload_spread_rest_fallback_ts2556_tests;
+#[cfg(test)]
 #[path = "tests/overload_two_pass_any_source_tests.rs"]
 mod overload_two_pass_any_source_tests;
 #[cfg(test)]
