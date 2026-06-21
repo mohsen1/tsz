@@ -95,6 +95,25 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Whether the *flow-narrowed* type of a heritage base expression (a value
+    /// reference) is a constructor at this location.
+    ///
+    /// tsc types a class `extends <expr>` base via `checkExpression`, which
+    /// applies control-flow narrowing. This mirrors that narrowing for the
+    /// constructor-validity check so a binding narrowed from `Ctor | undefined`
+    /// to `Ctor` (e.g. inside `klass ? class extends klass {} : null`) is
+    /// recognized as a valid base. Used only as a fallback *after* the declared
+    /// symbol type fails the constructor check, so it can only accept a base —
+    /// never introduce a new `TS2507`.
+    fn flow_narrowed_base_is_constructor(&mut self, expr_idx: NodeIndex) -> bool {
+        let node_type = self.get_type_of_node(expr_idx);
+        if node_type == TypeId::ERROR {
+            return false;
+        }
+        let evaluated = self.evaluate_type_for_assignability(node_type);
+        self.is_constructor_type(evaluated)
+    }
+
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
     /// Emits TS2689 when a class extends an interface.
@@ -616,10 +635,21 @@ impl<'a> CheckerState<'a> {
                             // needing full symbol type resolution here. Merged class/value
                             // symbols (like a user class colliding with lib `Symbol`) still need
                             // constructor validation because their value side may be non-newable.
-                            let skip_constructor_check =
-                                self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
-                                    s.has_any_flags(symbol_flags::CLASS)
-                                        && !s.has_any_flags(symbol_flags::VARIABLE)
+                            //
+                            // `use_flow_narrowed_base` is decided from the same symbol read:
+                            // a narrowable value binding (a `var`/`let`/`const`/parameter, not a
+                            // class/interface type declaration) is typed via its flow-narrowed
+                            // node type below, matching tsc's `checkExpression`.
+                            let (skip_constructor_check, use_flow_narrowed_base) = self
+                                .get_cross_file_symbol(sym_to_check)
+                                .map_or((false, false), |s| {
+                                    let skip = s.has_any_flags(symbol_flags::CLASS)
+                                        && !s.has_any_flags(symbol_flags::VARIABLE);
+                                    let flow_narrowed = s.has_any_flags(symbol_flags::VARIABLE)
+                                        && !s.has_any_flags(
+                                            symbol_flags::CLASS | symbol_flags::INTERFACE,
+                                        );
+                                    (skip, flow_narrowed)
                                 });
 
                             // When a user class shadows a lib variable of the same name
@@ -746,6 +776,19 @@ impl<'a> CheckerState<'a> {
                                     // constructor type by checking through the solver's relation logic.
                                     let is_valid_base = if self.is_constructor_type(evaluated_type)
                                     {
+                                        true
+                                    } else if use_flow_narrowed_base
+                                        && self.flow_narrowed_base_is_constructor(expr_idx)
+                                    {
+                                        // The declared type of a value reference is not (yet) a
+                                        // constructor, but tsc types the heritage base via
+                                        // `checkExpression`, applying control-flow narrowing at
+                                        // this location. A binding narrowed from `Ctor | undefined`
+                                        // to `Ctor` (e.g. `klass ? class extends klass {} : null`)
+                                        // is a valid base. This only ever *accepts* a base the
+                                        // declared-type check rejected — it never introduces a new
+                                        // TS2507 — so an `any`/already-constructor declared type is
+                                        // unaffected.
                                         true
                                     } else {
                                         // For types that don't directly report as constructors,
