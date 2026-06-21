@@ -824,35 +824,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         const MAX_REST_ELEMENT_RESOLVE_ROUNDS: usize = 16;
         let mut current = type_id;
         for _ in 0..MAX_REST_ELEMENT_RESOLVE_ROUNDS {
-            let next = {
-                let env = self.ctx.type_environment.borrow();
-                // Resolve a bare `Lazy(DefId)` alias reference, then evaluate any
-                // resulting application through the env-backed
-                // `ApplicationEvaluator` (which can resolve lazy application
-                // heads such as `Cond<number[]>`, where the plain solver
-                // evaluator cannot).
-                let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
-                    self.ctx.types,
-                    Some(&env),
-                    current,
-                );
-                crate::query_boundaries::flow_analysis::evaluate_application_type(
-                    self.ctx.types,
-                    &env,
-                    resolved,
-                )
-            };
-            // Reduce a now-concrete conditional / indexed-access result
-            // (e.g. `number extends infer U ? U : never` from `Cond<number>`)
-            // so it is classified by its reduced shape rather than left opaque.
-            let next = self.ctx.types.evaluate_type(next);
-            // A *deferred* indexed access into a deferred conditional
-            // (`Cond<T>['suffix']`) stays opaque here, but tsc classifies its
-            // array-like-ness from its apparent type: the conditional's
-            // branch-union constraint indexed by the inner key. Reduce to that
-            // apparent type so a tuple-valued branch (`{ suffix: [] }`) is
-            // accepted while a non-array branch (`{ s: string }`) still fires
-            // TS2574. Mirrors `getConstraintOfIndexedAccessType`.
+            // Resolve a bare `Lazy(DefId)` alias reference, evaluate any resulting
+            // application, and reduce a now-concrete conditional / indexed-access
+            // result so it is classified by its reduced shape rather than left
+            // opaque.
+            let next = self.resolve_alias_and_application_round(current);
+            // A *deferred* indexed access whose base is a deferred conditional
+            // (`Cond<T>['suffix']`) or a type parameter (`T[0]`) stays opaque
+            // here, but tsc classifies its array-like-ness from its apparent
+            // type: the base's resolved constraint indexed by the inner key.
+            // Reduce to that apparent type so a tuple-valued element (`{ suffix:
+            // [] }`, `[unknown[], unknown[]]`) is accepted while a non-array
+            // element (`{ s: string }`, `[string, …]`) still fires TS2574.
+            // Mirrors `getConstraintOfIndexedAccessType`.
             let next = self
                 .deferred_indexed_access_apparent_array_like_type(next)
                 .unwrap_or(next);
@@ -864,10 +848,82 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         current
     }
 
+    /// One round of env-backed alias/application resolution for the TS2574
+    /// rest-element check: resolve a bare `Lazy(DefId)` alias reference, then
+    /// evaluate any resulting application through the env-backed
+    /// `ApplicationEvaluator` (which can resolve lazy application heads such as
+    /// `Cond<number[]>`, where the plain solver evaluator cannot), then reduce
+    /// the result via `evaluate_type` (e.g. `number extends infer U ? U : never`
+    /// from `Cond<number>`). Unlike [`Self::resolve_type_for_rest_element_check`]
+    /// this performs no indexed-access apparent-type reduction, so it is safe to
+    /// reuse when resolving a base/constraint without re-entering that logic.
+    fn resolve_alias_and_application_round(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        let next = {
+            let env = self.ctx.type_environment.borrow();
+            let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                self.ctx.types,
+                Some(&env),
+                type_id,
+            );
+            crate::query_boundaries::flow_analysis::evaluate_application_type(
+                self.ctx.types,
+                &env,
+                resolved,
+            )
+        };
+        self.ctx.types.evaluate_type(next)
+    }
+
+    /// Resolve `type_id` to a fixpoint through env-backed alias/application
+    /// resolution (no indexed-access reduction). Used to resolve the constraint
+    /// of an indexed-access base (`T`'s constraint in `T[K]`) to its concrete
+    /// tuple/array shape.
+    fn resolve_alias_and_application(&self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
+        const MAX_ROUNDS: usize = 16;
+        let mut current = type_id;
+        for _ in 0..MAX_ROUNDS {
+            let next = self.resolve_alias_and_application_round(current);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        current
+    }
+
+    /// The indexable base constraint of an indexed-access base `B` for the
+    /// TS2574 rest-element check: a deferred conditional yields its branch-union
+    /// constraint (tsc's `getConstraintOfIndexedAccessType`), while a (readonly-
+    /// unwrapped) tuple/array yields itself. Any other shape is not concretely
+    /// indexable here, so the caller treats the access as indeterminate (legal).
+    fn indexable_base_constraint(&self, base: tsz_solver::TypeId) -> Option<tsz_solver::TypeId> {
+        use crate::query_boundaries::common as q;
+        if q::is_conditional_type(self.ctx.types, base) {
+            return q::conditional_branch_union_constraint(self.ctx.types, base);
+        }
+        let base = q::unwrap_readonly_or_noinfer(self.ctx.types, base).unwrap_or(base);
+        (q::is_tuple_type(self.ctx.types, base) || q::is_array_type(self.ctx.types, base))
+            .then_some(base)
+    }
+
     /// Apparent type of a deferred indexed access `B[K1]` whose base `B` is a
-    /// deferred conditional, for the TS2574 rest-element array-like check. Indexes
-    /// the conditional's branch-union constraint with `K1` (tsc's
-    /// `getConstraintOfIndexedAccessType`) and returns the evaluated result.
+    /// deferred conditional or a type parameter, for the TS2574 rest-element
+    /// array-like check. Resolves `B`'s base constraint (tsc's
+    /// `getConstraintOfIndexedAccessType` / `getBaseConstraintOfType`), indexes
+    /// it with `K1`, and returns the evaluated result.
+    ///
+    /// Two base shapes are handled:
+    /// - a deferred conditional (`Cond<T>['suffix']`), whose base constraint is
+    ///   its branch-union constraint; and
+    /// - a type parameter (`T[0]`), whose base constraint is the parameter's
+    ///   declared constraint resolved through any generic alias to a concrete
+    ///   tuple/array (e.g. `T extends Pair<unknown[], unknown[]>` → `[unknown[],
+    ///   unknown[]]`). Indexing that tuple at `K1` yields the element type whose
+    ///   array-like-ness `tsc` uses for the rest-element check.
+    ///
     /// Returns `None` when `type_id` is not such a deferred indexed access or the
     /// apparent type cannot be reduced concretely, leaving the caller to treat the
     /// type as indeterminate (legal).
@@ -877,29 +933,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common as q;
         let (base, index) = q::index_access_types(self.ctx.types, type_id)?;
-        // Only handle a still-generic conditional base; concrete indexed accesses
-        // already reduce through `evaluate_type` above. An alias-wrapped base
-        // (`Application(Lazy(Cond), [T])`) is expanded to its conditional first so
-        // both `Cond<T>[k]` and inline `(T extends ... ? ... : ...)[k]` are
-        // covered.
-        let conditional = if q::is_conditional_type(self.ctx.types, base) {
-            base
-        } else if q::is_generic_application(self.ctx.types, base) {
-            let env = self.ctx.type_environment.borrow();
-            let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
-                self.ctx.types,
-                &env,
-                base,
-            );
-            if q::is_conditional_type(self.ctx.types, expanded) {
-                expanded
-            } else {
-                return None;
-            }
+        // Resolve the base's base constraint. Concrete indexed accesses already
+        // reduce through `evaluate_type` above; here we only handle a still-generic
+        // base — a deferred conditional, or (after `evaluate_type` rewrote the
+        // type-parameter base to its constraint) a type parameter / generic
+        // alias-application that resolves to a tuple/array.
+        let base_constraint = if q::is_conditional_type(self.ctx.types, base) {
+            self.indexable_base_constraint(base)?
         } else {
-            return None;
+            // The base constraint we want to index. A type parameter (`T[K]`)
+            // indexes its declared constraint; an application/alias indexes its
+            // resolved shape (this also covers the case where `evaluate_type`
+            // already substituted `T` with its constraint application, e.g.
+            // `Pair<unknown[], unknown[]>[0]`). Resolve the candidate through any
+            // generic type alias (`Lazy(DefId)` / `Application`) so element `K`'s
+            // array-like-ness is decided from the constraint's element rather than
+            // left opaque (which would spuriously fire TS2574).
+            let candidate = match q::type_param_info(self.ctx.types, base) {
+                Some(info) => info.constraint?,
+                None => base,
+            };
+            let resolved = self.resolve_alias_and_application(candidate);
+            self.indexable_base_constraint(resolved)?
         };
-        let base_constraint = q::conditional_branch_union_constraint(self.ctx.types, conditional)?;
         if q::is_conditional_type(self.ctx.types, base_constraint)
             || q::is_index_access_type(self.ctx.types, base_constraint)
         {

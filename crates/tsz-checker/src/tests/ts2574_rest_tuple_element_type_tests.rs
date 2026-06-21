@@ -358,3 +358,90 @@ type Spread<T extends ReadonlyArray<unknown>> = [...Shape<T>["val"]];
         "TS2574 expected for `[...Shape<T>[\"val\"]]` with string-literal branches: {codes:?}"
     );
 }
+
+// ── Indexed-access of a type parameter constrained by a generic-alias tuple ──
+// A spread of `T[K]` (K a concrete numeric-literal index) where `T`'s constraint
+// resolves through a generic type alias to a tuple looks through the constraint
+// to element `K` and classifies array-like-ness from it (tsc's
+// `getBaseConstraintOfType`). Array elements are accepted; non-array elements
+// still flag. Binder names vary so no fixture name drives the decision.
+
+/// `[...T[0]]` where `T extends Pair<unknown[], unknown[]>` and `Pair` is a
+/// generic-alias tuple — element `0` is `unknown[]`, so no TS2574. Matches tsc.
+#[test]
+fn rest_type_param_alias_tuple_array_element_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Pair<A, B> = [A, B];
+type SpreadFirst<T extends Pair<unknown[], unknown[]>> = [...T[0]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for `[...T[0]]` with alias-tuple array element: {codes:?}"
+    );
+}
+
+/// Both indices spread (`[...T[0], ...T[1]]`) — each element is an array. The
+/// binder name (`Couple`) differs from the case above so no fixture name drives
+/// the decision.
+#[test]
+fn rest_type_param_alias_tuple_both_indices_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Couple<A, B> = [A, B];
+type SpreadBoth<S extends Couple<string[], number[]>> = [...S[0], ...S[1]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for `[...S[0], ...S[1]]` with alias-tuple array elements: {codes:?}"
+    );
+}
+
+/// Alias-of-alias constraint (`Wrap<number[]>` → `Pair<number[], number[][]>`)
+/// — element `1` resolves through both aliases to an array; no TS2574.
+#[test]
+fn rest_type_param_nested_alias_tuple_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Pair<A, B> = [A, B];
+type Wrap<X> = Pair<X, X[]>;
+type Spread<T extends Wrap<number[]>> = [...T[1]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for nested-alias tuple array element spread: {codes:?}"
+    );
+}
+
+/// `readonly` alias-tuple constraint — element `0` is still an array; no TS2574.
+#[test]
+fn rest_type_param_readonly_alias_tuple_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Spread<T extends Readonly<[string[], number[]]>> = [...T[0]];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for readonly alias-tuple array element spread: {codes:?}"
+    );
+}
+
+/// Negative: `[...T[0]]` where element `0` of the alias tuple is a *non-array*
+/// (`string`) must STILL flag TS2574. Guards against over-suppression.
+#[test]
+fn rest_type_param_alias_tuple_nonarray_element_emits_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Pair<A, B> = [A, B];
+type SpreadBad<T extends Pair<string, unknown[]>> = [...T[0]];
+"#,
+    );
+    assert!(
+        codes.contains(&2574),
+        "TS2574 expected for `[...T[0]]` with non-array alias-tuple element: {codes:?}"
+    );
+}
