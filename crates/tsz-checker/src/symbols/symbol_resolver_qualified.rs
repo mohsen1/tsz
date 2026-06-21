@@ -282,6 +282,24 @@ impl<'a> CheckerState<'a> {
             Some(qn) => qn,
             None => return TypeSymbolResolution::NotFound,
         };
+
+        // `globalThis.X` in type position: `globalThis` is the synthetic global
+        // namespace anchor with no binder symbol, so resolving it as the left
+        // qualifier fails and `globalThis.RegExp` reports a false TS2339 (typebox).
+        // Resolve the member `X` as a global type, matching tsc. Guarded on the
+        // left being the *unshadowed* `globalThis` identifier (a user binding
+        // named `globalThis` resolves to a real symbol and keeps the normal
+        // path), and an unknown member still fails through the global type
+        // lookup. (#14227)
+        if let Some(left_node) = self.ctx.arena.get(qn.left)
+            && left_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(left_node)
+            && ident.escaped_text == "globalThis"
+            && self.resolve_identifier_symbol(qn.left).is_none()
+        {
+            return self.resolve_identifier_symbol_in_type_position(qn.right);
+        }
+
         let mut left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
             qn.left,
             visited_aliases,
