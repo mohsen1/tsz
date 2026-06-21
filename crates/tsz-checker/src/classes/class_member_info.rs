@@ -100,6 +100,23 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Entity-name property accesses (`globalThis.Symbol.hasInstance`,
+        // `Consts.KEY`) are late-bindable when the expression's type is usable as
+        // a property name — a unique symbol or a string/number literal — matching
+        // tsc's `isLateBindableName`. A widened type (plain `string`) stays dynamic
+        // and falls through to the `true` below.
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && self.is_entity_name_expression(expression_idx)
+        {
+            let expr_type = self.get_type_of_node(expression_idx);
+            if crate::query_boundaries::checkers::property::is_type_usable_as_property_name(
+                self.ctx.types,
+                expr_type,
+            ) {
+                return false;
+            }
+        }
+
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(expr_node)
         {

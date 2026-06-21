@@ -414,6 +414,32 @@ impl<'a> FlowAnalyzer<'a> {
         ty.filter(|&ty| !contains_free_type_parameters(self.interner, ty))
     }
 
+    /// Returns `true` when `expr` is a syntactic form that always evaluates to a
+    /// definitely non-nullish value, regardless of how (or whether) the full
+    /// checker pipeline managed to cache its type.
+    ///
+    /// These node kinds construct a fresh value on evaluation — an object/array
+    /// literal, a `new` expression, or a function/arrow/class expression — so the
+    /// result can never be `null` or `undefined`. Call expressions are excluded:
+    /// a call's return type is not knowable from syntax alone and may itself be
+    /// nullable (e.g. `t = maybeUndef()`), so killing-definition narrowing for
+    /// calls stays on the type-driven path.
+    pub(super) fn is_syntactically_non_nullish_expression(&self, expr: NodeIndex) -> bool {
+        let expr = self.skip_parens_and_assertions(expr);
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+        )
+    }
+
     fn fallback_call_expression_type(&self, call_expr: NodeIndex) -> Option<TypeId> {
         self.reject_unresolved_generic_result(self.fallback_call_expression_type_inner(call_expr))
     }

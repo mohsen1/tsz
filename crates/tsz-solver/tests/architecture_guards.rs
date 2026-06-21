@@ -13,14 +13,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            walk_rs_files(&path, &mut *files);
+            walk_rs_files(&path, files);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             files.push(path);
         }
@@ -42,6 +41,18 @@ fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
 /// APIs that perform semantic validation.
 #[test]
 fn emitter_must_not_use_semantic_validation_apis() {
+    // These are solver relation/compatibility APIs that the emitter must never use.
+    // Using them would mean the emitter is performing semantic type validation.
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        "CompatChecker",
+        "SubtypeChecker",
+        "is_assignable",
+        "is_subtype_of",
+        "RelationResult",
+        "check_assignability",
+        "tsz_checker::",
+    ];
+
     let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -55,18 +66,6 @@ fn emitter_must_not_use_semantic_validation_apis() {
     let mut files = Vec::new();
     walk_rs_files(&emitter_src, &mut files);
 
-    // These are solver relation/compatibility APIs that the emitter must never use.
-    // Using them would mean the emitter is performing semantic type validation.
-    const FORBIDDEN_PATTERNS: &[&str] = &[
-        "CompatChecker",
-        "SubtypeChecker",
-        "is_assignable",
-        "is_subtype_of",
-        "RelationResult",
-        "check_assignability",
-        "tsz_checker::",
-    ];
-
     let mut violations = Vec::new();
 
     for path in &files {
@@ -76,9 +75,8 @@ fn emitter_must_not_use_semantic_validation_apis() {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
         };
 
         for (line_num, line) in src.lines().enumerate() {
@@ -124,6 +122,13 @@ fn emitter_must_not_use_semantic_validation_apis() {
 /// a source-level belt-and-suspenders check and clearer error messages.
 #[test]
 fn binder_must_not_import_solver_or_checker() {
+    const FORBIDDEN_IMPORTS: &[&str] = &[
+        "tsz_solver::",
+        "tsz_checker::",
+        "use tsz_solver",
+        "use tsz_checker",
+    ];
+
     let binder_src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -136,13 +141,6 @@ fn binder_must_not_import_solver_or_checker() {
     let mut files = Vec::new();
     walk_rs_files(&binder_src, &mut files);
 
-    const FORBIDDEN_IMPORTS: &[&str] = &[
-        "tsz_solver::",
-        "tsz_checker::",
-        "use tsz_solver",
-        "use tsz_checker",
-    ];
-
     let mut violations = Vec::new();
 
     for path in &files {
@@ -152,9 +150,8 @@ fn binder_must_not_import_solver_or_checker() {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
         };
 
         for (line_num, line) in src.lines().enumerate() {
@@ -272,5 +269,69 @@ fn narrowing_engine_keeps_request_stage_boundary() {
     assert!(
         !core_rs.contains("compiler_flags: u8"),
         "narrowing/core.rs must not own the anonymous packed compiler-flags byte — use NarrowingOptions"
+    );
+}
+
+// =============================================================================
+// Identity bridge guard — DefId-as-SymbolId raw-symbol fallback budget (#14344)
+// =============================================================================
+
+/// Guard the solver-side `DefId`-as-`SymbolId` reinterpretation surface.
+///
+/// `TypeEnvironment::raw_symbol_fallback_def` recovers a real `DefId` when a
+/// `Lazy(DefId)` actually wrapped a raw `SymbolId.0`. The two are independent
+/// identity spaces that happen to collide on a raw `u32` (see
+/// `crates/tsz-solver/src/def/resolver.rs` and
+/// `docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md`). It is a
+/// compatibility path for the non-canonical identity model tracked by
+/// tsz-org/tsz#14344, and the documented intent is to keep this fallback budget
+/// from growing.
+///
+/// This mirrors the checker's zero `.reference(...)` construction guard on the
+/// solver side: it pins the number of call sites that reinterpret a `DefId` as a
+/// `SymbolId` so the surface cannot GROW. The migration toward content-canonical
+/// identity (#14344) should ratchet `BUDGET` DOWN to 0 as callers are retired; it
+/// must never be raised. Counting `.raw_symbol_fallback_def(` (the method-call
+/// form) excludes the `fn` definition and doc comments.
+#[test]
+fn solver_raw_symbol_fallback_def_budget_does_not_grow() {
+    const BUDGET: usize = 4;
+    const PATTERN: &str = ".raw_symbol_fallback_def(";
+
+    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files(&solver_src, &mut files);
+
+    let mut sites = Vec::new();
+    for path in &files {
+        let rel = path
+            .strip_prefix(&solver_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
+        };
+        for (line_num, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(PATTERN) {
+                sites.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        sites.len() <= BUDGET,
+        "Solver `raw_symbol_fallback_def` call sites grew to {} (budget {}). \
+         Each reinterprets a `DefId` as a `SymbolId`; this surface must not grow \
+         while the content-canonical identity migration (tsz-org/tsz#14344) is \
+         retiring it. New code should resolve a real `DefId` and `lazy(def_id)` \
+         instead. See docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md.\n\
+         Call sites:\n{}",
+        sites.len(),
+        BUDGET,
+        sites.join("\n"),
     );
 }

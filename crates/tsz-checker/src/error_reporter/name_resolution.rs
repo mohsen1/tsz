@@ -1564,12 +1564,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A missing-namespace "did you mean?" candidate must itself carry a
+        // namespace meaning (`SymbolFlags.Namespace`: enum / value-module /
+        // namespace-module, or a symbol merged with one). tsc never offers a pure
+        // type (interface / class / type alias) as a namespace suggestion, so
+        // including `TYPE` here wrongly suggested e.g. the DOM `Node` interface for
+        // a missing `NodeJS` namespace (TS2833) where tsc emits plain TS2503.
         if !self.has_syntax_parse_errors()
-            && let Some(suggestions) = self.find_similar_identifiers(
-                name,
-                idx,
-                symbol_flags::NAMESPACE | symbol_flags::TYPE,
-            )
+            && let Some(suggestions) =
+                self.find_similar_identifiers(name, idx, symbol_flags::NAMESPACE)
             && let Some(suggestion) = suggestions.first()
         {
             self.error_at_node_msg(
