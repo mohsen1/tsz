@@ -747,6 +747,20 @@ impl<'a> CheckerState<'a> {
                                     let is_valid_base = if self.is_constructor_type(evaluated_type)
                                     {
                                         true
+                                    } else if self.heritage_base_is_constructor_via_flow_narrowing(
+                                        expr_idx,
+                                        symbol_type,
+                                    ) {
+                                        // The declared symbol type can be wider than the
+                                        // flow-narrowed type at the heritage position — e.g.
+                                        // `klass?: Ctor` narrowed to `Ctor` inside
+                                        // `klass ? class extends klass {} : null`. tsc types the
+                                        // base via the narrowed expression type, so a value whose
+                                        // declared type is `Ctor | undefined` still extends cleanly
+                                        // once narrowing removes the nullish arm (#14260). This is
+                                        // additive: it only accepts a base the narrowed type proves
+                                        // constructable, never introduces a new TS2507.
+                                        true
                                     } else {
                                         // For types that don't directly report as constructors,
                                         // let the general type system handle validation rather
@@ -1441,6 +1455,35 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Whether the heritage base expression resolves to a constructor type once
+    /// flow narrowing is applied at its position.
+    ///
+    /// The declared type of the base symbol can be wider than the narrowed type
+    /// at the `extends` position. A class extending a guarded value
+    /// (`klass?: Ctor` used as `klass ? class extends klass {} : null`, or after
+    /// an early `if (!klass) return`) is constructable at that point even though
+    /// the declared type `Ctor | undefined` is not (#14260). tsc types the base
+    /// via the narrowed expression type; mirror that here. Returns `true` only
+    /// when the narrowed expression type is genuinely a constructor type and is
+    /// strictly narrower than `declared_type`, so this can never introduce a new
+    /// `TS2507` — it only suppresses a false positive the declared type caused.
+    fn heritage_base_is_constructor_via_flow_narrowing(
+        &mut self,
+        expr_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> bool {
+        let narrowed = self.get_type_of_node(expr_idx);
+        if narrowed == declared_type
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::UNKNOWN
+            || narrowed == TypeId::ANY
+        {
+            return false;
+        }
+        let evaluated = self.evaluate_type_for_assignability(narrowed);
+        self.is_constructor_type(evaluated)
     }
 
     /// Check heritage clauses for primitive type keywords only (TS2863/TS2864).

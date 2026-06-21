@@ -1591,6 +1591,9 @@ path = "tests/class_expression_implements_display_tests.rs"
 name = "class_expression_heritage_ts2416_tests"
 path = "tests/class_expression_heritage_ts2416_tests.rs"
 [[test]]
+name = "class_extends_flow_narrowed_base_tests"
+path = "tests/class_extends_flow_narrowed_base_tests.rs"
+[[test]]
 name = "predicate_alias_generic_inference_tests"
 path = "tests/predicate_alias_generic_inference_tests.rs"
 [[test]]
