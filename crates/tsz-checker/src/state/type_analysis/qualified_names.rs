@@ -258,8 +258,48 @@ impl<'a> CheckerState<'a> {
                         self.resolve_qualified_name(qn.left)
                     } else if left_node.kind == SyntaxKind::Identifier as u16 {
                         // globalThis is a synthetic namespace in TSC (flags = ValueModule | NamespaceModule)
-                        // with exports pointing to the global scope. Suppress TS2503 for it.
+                        // with exports pointing to the global scope. Its members
+                        // are the ambient global types, so `globalThis.X` in type
+                        // position resolves `X` to the global type of that name
+                        // (e.g. `globalThis.RegExp` -> the global `RegExp`
+                        // interface). The left anchor has no user symbol to
+                        // navigate, so it lands here as NotFound; recover the
+                        // member from the global type table instead of collapsing
+                        // to ERROR (which silently dropped the qualified name and
+                        // could collapse, e.g., a type-predicate false branch).
+                        // Guarded by `is_global_this_expression` so a same-file
+                        // local named `globalThis` is not treated as the global.
                         if left_name == "globalThis" {
+                            if self.is_global_this_expression(qn.left) {
+                                if let Some(member_sym) =
+                                    self.resolve_global_this_type_member_symbol(&right_name)
+                                {
+                                    if self.member_symbol_is_value_only_in_type_position(
+                                        member_sym,
+                                        &right_name,
+                                    ) {
+                                        self.report_wrong_meaning(
+                                            &right_name,
+                                            idx,
+                                            member_sym,
+                                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                                        );
+                                        return TypeId::ERROR;
+                                    }
+                                    return self.type_reference_symbol_type(member_sym);
+                                }
+                                // Negative control: `globalThis.NotAType` — tsc
+                                // reports TS2694 ("Namespace 'globalThis' has no
+                                // exported member 'X'").
+                                if !self.ctx.has_parse_errors {
+                                    self.error_namespace_no_export(
+                                        "globalThis",
+                                        &right_name,
+                                        qn.right,
+                                    );
+                                }
+                            }
                             return TypeId::ERROR;
                         }
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
@@ -441,7 +481,14 @@ impl<'a> CheckerState<'a> {
                 // find namespace"). Accept the UMD alias here so the
                 // member-resolution failure below routes through the TS2694
                 // branch.
-                || symbol.is_umd_export)
+                || symbol.is_umd_export
+                // A named import bound to an `export * as NS` re-export is a
+                // type-position namespace anchor too: a missing member is
+                // TS2694, not TS2503.
+                || self
+                    .ctx
+                    .namespace_reexport_anchor_backing_file(left_sym_id)
+                    .is_some())
         {
             // If the left symbol is a pure interface (no namespace meaning) and a
             // local declaration shadows an outer namespace, the member might exist
@@ -778,6 +825,18 @@ impl<'a> CheckerState<'a> {
                 && let Some(resolved) =
                     self.ctx
                         .resolve_alias_import_member(alias_id, module_specifier, member_name)
+            {
+                return Some(resolved);
+            }
+            // Named import bound to an `export * as NS` namespace re-export: the
+            // member lives in the re-exported module, not in the importing
+            // module's own export surface, so neither lookup above can find it.
+            // Follow the named export to the namespace re-export and resolve the
+            // member through its backing module.
+            if let Some(alias_id) = sym_id
+                && let Some(resolved) = self
+                    .ctx
+                    .resolve_member_via_namespace_reexport(alias_id, member_name)
             {
                 return Some(resolved);
             }

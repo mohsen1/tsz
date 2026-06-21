@@ -941,6 +941,7 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,
         Some(TypeData::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
+        Some(TypeData::Substitution { constraint, .. }) => classify_array_like(db, constraint),
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.map_or(ArrayLikeKind::Other, |constraint| {
                 classify_array_like(db, constraint)

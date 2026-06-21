@@ -799,6 +799,7 @@ impl TypeInterner {
             TypeData::NoInfer(_) => 31,
             TypeData::Error => 32,
             TypeData::UnresolvedTypeName(_) => 33,
+            TypeData::Substitution { .. } => 34,
         }
     }
 
@@ -1499,6 +1500,61 @@ impl TypeInterner {
     /// Wrap a type in a `NoInfer` marker.
     pub fn no_infer(&self, inner: TypeId) -> TypeId {
         self.intern(TypeData::NoInfer(inner))
+    }
+
+    /// Create a substitution type `base_type` narrowed by `constraint`,
+    /// mirroring `tsc`'s `getSubstitutionType`.
+    ///
+    /// The substitution is only retained while the narrowing is still
+    /// meaningful: a trivial constraint (`any`/`unknown`/the base itself) or a
+    /// fully concrete base-and-constraint pair collapses back to `base_type`, so
+    /// substitution types never leak into non-generic positions where they would
+    /// perturb identity or display.
+    pub fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        if constraint == base_type
+            || constraint == TypeId::ANY
+            || constraint == TypeId::UNKNOWN
+            || constraint == TypeId::ERROR
+            || base_type == TypeId::ERROR
+        {
+            return base_type;
+        }
+        // Avoid stacking substitutions: a substitution over a substitution
+        // composes the constraints (the intersection observed by relations is
+        // associative), keeping a single layer over the underlying variable.
+        if let Some(TypeData::Substitution {
+            base_type: inner_base,
+            constraint: inner_constraint,
+        }) = self.lookup(base_type)
+        {
+            let combined = self.intersection2(inner_constraint, constraint);
+            return self.substitution(inner_base, combined);
+        }
+        // Keep the substitution only while at least one side is still generic;
+        // otherwise the narrowing is fully determined (`tsc`: return baseType
+        // when neither baseType nor constraint is generic).
+        let keep = crate::type_queries::contains_type_parameters_db(self, base_type)
+            || crate::type_queries::contains_type_parameters_db(self, constraint);
+        if !keep {
+            return base_type;
+        }
+        self.intern(TypeData::Substitution {
+            base_type,
+            constraint,
+        })
+    }
+
+    /// The "substitution intersection" `base_type & constraint` observed by
+    /// relations and base-constraint computation for a substitution type.
+    /// Returns `None` when `type_id` is not a substitution type.
+    pub fn substitution_intersection(&self, type_id: TypeId) -> Option<TypeId> {
+        match self.lookup(type_id) {
+            Some(TypeData::Substitution {
+                base_type,
+                constraint,
+            }) => Some(self.intersection2(base_type, constraint)),
+            _ => None,
+        }
     }
 
     /// Create a `unique symbol` type for a symbol declaration.

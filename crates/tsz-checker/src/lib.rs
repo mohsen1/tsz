@@ -286,6 +286,9 @@ mod global_this_typeof_surface_tests;
 #[path = "tests/heritage_constraint_structural_name_lookup_arch_tests.rs"]
 mod heritage_constraint_structural_name_lookup_arch_tests;
 #[cfg(test)]
+#[path = "tests/heritage_flow_narrowed_base_tests.rs"]
+mod heritage_flow_narrowed_base_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
@@ -406,6 +409,9 @@ mod override_incompatibility_elaboration_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
+mod private_field_no_spelling_suggestion_tests;
+#[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
 #[cfg(test)]
@@ -426,6 +432,9 @@ mod spread_rest_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
+#[cfg(test)]
+#[path = "tests/spurious_suggestion_suppression_tests.rs"]
+mod spurious_suggestion_suppression_tests;
 #[cfg(test)]
 #[path = "../tests/stability_validation_tests.rs"]
 mod stability_validation_tests;
@@ -735,6 +744,9 @@ mod conditional_break_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/conditional_constraint_relation_routing_arch_tests.rs"]
 mod conditional_constraint_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/conditional_flow_substitution_ts2344_tests.rs"]
+mod conditional_flow_substitution_ts2344_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
@@ -1483,11 +1495,17 @@ mod variadic_tuple_elaboration_tests;
 #[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
 mod variadic_tuple_readonly_relation_tests;
 #[cfg(test)]
+#[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
+mod variadic_tuple_spread_element_inference_tests;
+#[cfg(test)]
 #[path = "../tests/variadic_tuple_tail_arity_inference_tests.rs"]
 mod variadic_tuple_tail_arity_inference_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
+#[cfg(test)]
+#[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
+mod void_undefined_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;

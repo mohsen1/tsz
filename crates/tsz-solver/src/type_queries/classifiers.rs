@@ -439,6 +439,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeData::TypeQuery(_)
         | TypeData::ReadonlyType(_)
         | TypeData::NoInfer(_)
+        | TypeData::Substitution { .. }
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
         | TypeData::UnresolvedTypeName(_)

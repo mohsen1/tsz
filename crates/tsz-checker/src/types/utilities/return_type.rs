@@ -755,10 +755,31 @@ impl<'a> CheckerState<'a> {
         // TypeQuery(SymbolRef), which correctly resolves to the constructor type.
         let result = self.resolve_lazy_class_to_constructor(result);
 
-        // Before rollback, identify closures that had TS7006 emitted during this
-        // speculation. After rollback, these diagnostics will be lost. Record the
-        // closures so `recheck_deferred_implicit_any_closures` can re-emit TS7006
-        // for any that truly lack contextual parameter types.
+        // Closures newly added to `implicit_any_checked_closures` during this
+        // speculation. The rollback below restores the set to its pre-speculation
+        // snapshot, so each of these marks must be handled explicitly across the
+        // rollback boundary. The membership in `implicit_any_contextual_closures`
+        // (which is not speculation-scoped and survives the rollback) partitions
+        // them:
+        //   - NOT contextually typed -> recorded so
+        //     `recheck_deferred_implicit_any_closures` can re-emit the TS7006 that
+        //     the rollback discards, but only if they truly lack contextual types.
+        //   - contextually typed -> their "already checked" mark is re-applied
+        //     after the rollback, so an authoritative re-check that re-enters the
+        //     closure WITHOUT re-deriving its contextual signature (e.g. the inner
+        //     method of a curried `(a) => (): T => ({ m: (x, y) => ... })`, whose
+        //     contextual type comes from the inner arrow's annotation but is not
+        //     re-established on the outer arrow's authoritative body pass) does not
+        //     spuriously re-emit TS7006. A closure's contextual typing is
+        //     independent of the speculative return context, so preserving the mark
+        //     is sound and mirrors tsc, which resolves a node's contextual type
+        //     once and caches it.
+        let newly_checked_closures: Vec<_> = self
+            .ctx
+            .implicit_any_checked_closures
+            .difference(&snap.full.implicit_any_checked_closures)
+            .copied()
+            .collect();
         {
             use crate::diagnostics::diagnostic_codes;
             let speculative_diags = self
@@ -771,21 +792,20 @@ impl<'a> CheckerState<'a> {
                     || d.code == diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
             });
             if has_implicit_any_diags {
-                // Find closures checked during this speculation that did NOT receive
-                // contextual parameter types. These are candidates for TS7006 re-emission.
-                let new_checked: Vec<_> = self
-                    .ctx
-                    .implicit_any_checked_closures
-                    .difference(&snap.full.implicit_any_checked_closures)
-                    .filter(|idx| !self.ctx.implicit_any_contextual_closures.contains(idx))
-                    .copied()
-                    .collect();
-                self.ctx
-                    .speculative_implicit_any_closures
-                    .extend(new_checked);
+                self.ctx.speculative_implicit_any_closures.extend(
+                    newly_checked_closures
+                        .iter()
+                        .copied()
+                        .filter(|idx| !self.ctx.implicit_any_contextual_closures.contains(idx)),
+                );
             }
         }
         snap.rollback(&mut self.ctx.speculation_state());
+        for idx in newly_checked_closures {
+            if self.ctx.implicit_any_contextual_closures.contains(&idx) {
+                self.ctx.implicit_any_checked_closures.insert(idx);
+            }
+        }
 
         // Widening of inferred return types is performed per-return-expression
         // during collection (`maybe_widen_return_contribution`), so that

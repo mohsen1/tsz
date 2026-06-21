@@ -306,6 +306,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
                         .or_else(|| target_binder.file_locals.get(segment))
                         .inspect(|sym_id| self.ctx.register_symbol_file_target(*sym_id, target_idx))
+                })
+                .or_else(|| {
+                    // Named import bound to an `export * as NS from '<m>'`
+                    // namespace re-export: the member lives in the re-exported
+                    // module `<m>`, not in the importing module's own export
+                    // surface, so every branch above misses. Resolve `segment`
+                    // through the namespace's backing module.
+                    self.ctx
+                        .resolve_member_via_namespace_reexport(current_sym, segment)
                 })?;
         }
 
@@ -1400,6 +1409,121 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         Some(def_id)
     }
 
+    /// Look up `member_name` among the exported members of a namespace / module /
+    /// enum `container` symbol.
+    ///
+    /// Checks the container's `exports` and `members` tables first. When both
+    /// miss, falls back to the binder's parent linkage: the member symbol records
+    /// its owning namespace in `Symbol::parent` even when the namespace's
+    /// `exports` table does not surface it. That gap appears when a user
+    /// namespace whose name collides with a global builtin type (`Iterator`,
+    /// `Array`, …) is merged with the lib symbol: the merge keeps the member's
+    /// `parent` pointer but drops the namespace's `exports` entry, so a plain
+    /// `exports` lookup would miss the member. The parent-linkage scan is bounded
+    /// by the number of same-named symbols and only runs after the direct lookup
+    /// fails.
+    fn namespace_member_symbol(
+        &self,
+        container: tsz_binder::SymbolId,
+        member_name: &str,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<tsz_binder::SymbolId> {
+        let container_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(container, lib_binders)?;
+        if let Some(member) = container_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(member_name))
+            .or_else(|| {
+                container_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(member_name))
+            })
+        {
+            return Some(member);
+        }
+        self.ctx
+            .binder
+            .symbols
+            .find_all_by_name(member_name)
+            .iter()
+            .copied()
+            .find(|&candidate| {
+                self.ctx
+                    .binder
+                    .get_symbol(candidate)
+                    .is_some_and(|symbol| symbol.parent == container)
+            })
+    }
+
+    /// Resolve an entity-name node (identifier or qualified name) to the binder
+    /// symbol bound by lexical scope, following nested namespace members.
+    ///
+    /// Unlike [`resolve_type_symbol`], this does not require the `TYPE` flag, so
+    /// it returns namespace / module declarations. It is used to locate a local
+    /// namespace that owns a qualified-name member even when a same-named global
+    /// builtin type would otherwise win the type-symbol race.
+    fn entity_name_scope_symbol(
+        &self,
+        node_idx: NodeIndex,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<tsz_binder::SymbolId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx);
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            let left_sym = self.entity_name_scope_symbol(qn.left, lib_binders)?;
+            let resolved_left = self
+                .ctx
+                .binder
+                .resolve_import_symbol(left_sym)
+                .unwrap_or(left_sym);
+            let right_name = self.ctx.arena.get_identifier_text(qn.right)?;
+            return self.namespace_member_symbol(resolved_left, right_name, lib_binders);
+        }
+        None
+    }
+
+    /// For `N.X` in type position, resolve `X` through a local namespace / module
+    /// declaration `N` reachable by lexical scope, returning its registered
+    /// `DefId`. Returns `None` (deferring to the broader walk) unless `N` resolves
+    /// to a namespace/module/enum that actually owns `X`, keeping import-alias and
+    /// lib-only cases on their existing paths.
+    fn qualified_name_member_def_via_local_namespace(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<tsz_solver::def::DefId> {
+        use tsz_binder::symbol_flags;
+
+        let left_sym = self.entity_name_scope_symbol(left, lib_binders)?;
+        let resolved_left = self
+            .ctx
+            .binder
+            .resolve_import_symbol(left_sym)
+            .unwrap_or(left_sym);
+        let resolved_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_left, lib_binders)?;
+        // Only namespace-like containers own qualified-name type members. Type
+        // parameters and bare type aliases/interfaces are handled elsewhere.
+        if !resolved_symbol.has_any_flags(symbol_flags::NAMESPACE) {
+            return None;
+        }
+        let right_name = self.ctx.arena.get_identifier_text(right)?;
+        let member_sym_id = self.namespace_member_symbol(resolved_left, right_name, lib_binders)?;
+        Some(self.ensure_def_id_with_alias(member_sym_id))
+    }
+
     /// Resolve a DefId with support for qualified names (e.g., `AnimalType.cat`).
     ///
     /// Used by the `compute_type` fallback path where template literal types may
@@ -1478,6 +1602,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .iter()
                 .map(|ctx| std::sync::Arc::clone(&ctx.binder))
                 .collect();
+
+            // The leftmost segment of a qualified type name may name a namespace /
+            // module, which carries no `TYPE` flag. `resolve_type_symbol` only
+            // returns `TYPE`/`ENUM` symbols, so for `N.X` where a user namespace
+            // `N` shares its name with a global builtin type (`Iterator`, `Array`,
+            // …) it skips the local namespace and the ad-hoc walk below binds `N`
+            // to the global lib symbol, whose exports never contain `X`. Resolve
+            // `N` through the binder's lexical scope first: a local namespace /
+            // module declaration that exports `X` wins, matching how the global
+            // namespace merges with (and the lexical declaration shadows) the
+            // same-named builtin.
+            if let Some(member_def_id) =
+                self.qualified_name_member_def_via_local_namespace(qn.left, qn.right, &lib_binders)
+            {
+                return Some(member_def_id);
+            }
             // For the left part of a qualified name (e.g., `Lib` in `Lib.Base`),
             // we need to also consider ALIAS symbols because import declarations
             // like `import Lib = require('./helper')` create ALIAS-flagged symbols.

@@ -868,10 +868,42 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // union/intersection contexts) to match tsc's parser-level detection.
         self.check_nested_function_types_in_type(func_data.type_annotation);
 
+        // A signature's value parameters are in scope for every type position of
+        // that signature, including a type-predicate's asserted type. Seed
+        // `typeof_param_scope` from this function type's value parameters so that
+        // `typeof param` inside the asserted type (e.g.
+        // `type Guard = (a: { z: string }) => a is typeof a & { y: boolean }`)
+        // resolves to the parameter's declared type instead of fabricating a
+        // false `TS2304` during lowering. This mirrors
+        // `resolve_return_type_with_params_in_scope`, which seeds the scope when
+        // lowering an ordinary return-type annotation; the predicate's asserted
+        // type is just another type position of the same signature. The `this`
+        // parameter is skipped (its name node is not an identifier, so it is
+        // naturally excluded).
+        let mut seeded_typeof_params: Vec<(String, NodeIndex)> = Vec::new();
+        for &param_idx in &func_data.parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
+                && param_data.type_annotation.is_some()
+                && let Some(name) = self.ctx.arena.get_identifier_text(param_data.name)
+                && name != "this"
+            {
+                seeded_typeof_params.push((name.to_string(), param_data.type_annotation));
+            }
+        }
+        for (name, annotation) in &seeded_typeof_params {
+            let param_type = self.check(*annotation);
+            self.ctx.typeof_param_scope.insert(name.clone(), param_type);
+        }
+
         // Delegate to TypeLowering with standard resolvers.
         // Enable qualified name resolution so return types like `Ns.Type<T>`
         // resolve correctly (QUALIFIED_NAME nodes need the extended resolver).
         let result = self.lower_with_resolvers(idx, true, true);
+
+        for (name, _) in &seeded_typeof_params {
+            self.ctx.typeof_param_scope.remove(name);
+        }
 
         // TS2677: Check that a type predicate's type is assignable to its parameter's type.
         self.check_type_predicate_assignability(idx, func_data.type_annotation, result);
@@ -908,6 +940,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         else {
             return;
         };
+
+        // A signature's value parameters are in scope for *every* type position of
+        // that signature, including a type-predicate's asserted type. Seed
+        // `typeof_param_scope` from the lowered function type's parameters so that
+        // `typeof param` inside the predicate's asserted type (and inside the
+        // parameter annotations re-checked below) resolves to the parameter's
+        // declared type instead of fabricating a TS2304. This mirrors
+        // `resolve_return_type_with_params_in_scope`, which already seeds the scope
+        // when lowering an ordinary return-type annotation; the predicate's asserted
+        // type is just another type position of the same signature.
+        let predicate_param_shape =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, lowered_type);
+        if let Some(shape) = &predicate_param_shape {
+            for param in &shape.params {
+                if let Some(atom) = param.name {
+                    self.ctx
+                        .typeof_param_scope
+                        .insert(self.ctx.types.resolve_atom(atom), param.type_id);
+                }
+            }
+        }
 
         let mut predicate_type = self.check(pred_data.type_node);
 
@@ -952,13 +1005,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        if let Some(shape) = &predicate_param_shape {
+            for param in &shape.params {
+                if let Some(atom) = param.name {
+                    self.ctx
+                        .typeof_param_scope
+                        .remove(&*self.ctx.types.resolve_atom_ref(atom));
+                }
+            }
+        }
+
         let (predicate_type, param_type) = if let Some(param_type) = param_type {
             (predicate_type, param_type)
         } else {
-            let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                self.ctx.types,
-                lowered_type,
-            ) else {
+            let Some(shape) = &predicate_param_shape else {
                 return;
             };
             let Some(ref predicate) = shape.type_predicate else {
@@ -1855,132 +1915,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         None
-    }
-
-    /// Extract parameter information from a signature.
-    fn extract_params_from_signature(
-        &mut self,
-        sig: &tsz_parser::parser::node::SignatureData,
-    ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
-        use tsz_solver::ParamInfo;
-
-        let mut params: Vec<ParamInfo> = Vec::new();
-        let mut this_type = None;
-
-        if let Some(ref param_list) = sig.parameters {
-            for &param_idx in &param_list.nodes {
-                let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
-                    continue;
-                };
-
-                // Get parameter name
-                let name = self.get_param_name(param_data.name);
-
-                // Check for 'this' parameter
-                if name == "this" {
-                    this_type = (param_data.type_annotation.is_some())
-                        .then(|| self.check(param_data.type_annotation));
-                    continue;
-                }
-
-                // Later parameter annotations can reference earlier value
-                // parameters via `typeof`.
-                for param in &params {
-                    if let Some(name_atom) = param.name {
-                        let name = self.ctx.types.resolve_atom(name_atom);
-                        self.ctx.typeof_param_scope.insert(name, param.type_id);
-                    }
-                }
-                let type_id = if param_data.type_annotation.is_some() {
-                    self.check(param_data.type_annotation)
-                } else {
-                    TypeId::ANY
-                };
-                for param in &params {
-                    if let Some(name_atom) = param.name {
-                        let name = self.ctx.types.resolve_atom(name_atom);
-                        self.ctx.typeof_param_scope.remove(&name);
-                    }
-                }
-
-                let optional = param_data.question_token || param_data.initializer.is_some();
-                let rest = param_data.dot_dot_dot_token;
-
-                let sig_type_id = if param_data.question_token
-                    && type_id != TypeId::ANY
-                    && type_id != TypeId::UNKNOWN
-                    && type_id != TypeId::ERROR
-                    && !crate::query_boundaries::common::type_contains_undefined(
-                        self.ctx.types,
-                        type_id,
-                    ) {
-                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
-                } else {
-                    type_id
-                };
-                params.push(ParamInfo {
-                    name: Some(self.ctx.types.intern_string(&name)),
-                    type_id: sig_type_id,
-                    optional,
-                    rest,
-                });
-            }
-        }
-
-        (params, this_type)
-    }
-
-    /// Resolve return type annotation with parameter names in scope for `typeof`.
-    ///
-    /// Pushes parameter names into `typeof_param_scope` so that `typeof paramName`
-    /// in the return type annotation resolves to the parameter's declared type.
-    fn resolve_return_type_with_params_in_scope(
-        &mut self,
-        type_annotation: NodeIndex,
-        params: &[tsz_solver::ParamInfo],
-    ) -> TypeId {
-        if type_annotation.is_none() {
-            return TypeId::ANY;
-        }
-
-        // Push param names into typeof_param_scope
-        for param in params {
-            if let Some(name_atom) = param.name {
-                let name = self.ctx.types.resolve_atom(name_atom);
-                self.ctx.typeof_param_scope.insert(name, param.type_id);
-            }
-        }
-
-        let return_type = self.check(type_annotation);
-
-        // Clear typeof_param_scope
-        for param in params {
-            if let Some(name_atom) = param.name {
-                let name = self.ctx.types.resolve_atom(name_atom);
-                self.ctx.typeof_param_scope.remove(&name);
-            }
-        }
-
-        return_type
-    }
-
-    /// Get parameter name from a binding name node.
-    fn get_param_name(&self, name_idx: NodeIndex) -> String {
-        if self
-            .ctx
-            .arena
-            .get(name_idx)
-            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
-        {
-            return "this".to_string();
-        }
-        if let Some(ident) = self.ctx.arena.get_identifier_at(name_idx) {
-            return ident.escaped_text.to_string();
-        }
-        "_".to_string()
     }
 }
 

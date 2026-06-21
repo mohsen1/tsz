@@ -511,6 +511,16 @@ pub trait TypeWidenCache {
     fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
 }
 
+/// Construction hook for conditional-flow substitution wrapper types.
+///
+/// Kept separate from [`TypeDatabase`] so the broad storage/query trait stays
+/// within its method cap (#8205). `TypeDatabase` inherits this capability, so
+/// existing `&dyn TypeDatabase` callers can still construct substitution
+/// wrappers without depending on concrete interners.
+pub trait TypeSubstitutionConstruction {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId;
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -522,6 +532,7 @@ pub trait TypeDatabase:
     + TypeCompilerOptions
     + TypeApplicationEvalCache
     + TypeWidenCache
+    + TypeSubstitutionConstruction
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -1018,6 +1029,12 @@ impl TypeWidenCache for TypeInterner {
 
     fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
         Self::set_widen_type_memo(self, type_id, result);
+    }
+}
+
+impl TypeSubstitutionConstruction for TypeInterner {
+    fn substitution(&self, base_type: TypeId, constraint: TypeId) -> TypeId {
+        Self::substitution(self, base_type, constraint)
     }
 }
 

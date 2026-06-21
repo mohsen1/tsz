@@ -174,6 +174,9 @@ path = "tests/for_await_type_parameter_iterability_tests.rs"
 name = "async_iterable_type_param_element_tests"
 path = "tests/async_iterable_type_param_element_tests.rs"
 [[test]]
+name = "generic_generator_member_substitution_tests"
+path = "tests/generic_generator_member_substitution_tests.rs"
+[[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 [[test]]
@@ -295,6 +298,9 @@ path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 name = "optional_chain_indexed_unknown_tests"
 path = "tests/optional_chain_indexed_unknown_tests.rs"
 [[test]]
+name = "recursive_annotated_arrow_self_reference_tests"
+path = "tests/recursive_annotated_arrow_self_reference_tests.rs"
+[[test]]
 name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 [[test]]
@@ -410,6 +416,9 @@ path = "tests/ts2307_per_site_dedup_tests.rs"
 name = "ts2769_anchor_disagreeing_overloads_tests"
 path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
 [[test]]
+name = "ts2749_export_alias_local_class_collision_tests"
+path = "tests/ts2749_export_alias_local_class_collision_tests.rs"
+[[test]]
 name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
 [[test]]
@@ -451,6 +460,9 @@ path = "tests/ts2636_method_bivariance_tests.rs"
 [[test]]
 name = "function_bivariance"
 path = "tests/function_bivariance.rs"
+[[test]]
+name = "curried_annotated_return_object_member_implicit_any_tests"
+path = "tests/curried_annotated_return_object_member_implicit_any_tests.rs"
 [[test]]
 name = "function_expression_excess_param_implicit_any_tests"
 path = "tests/function_expression_excess_param_implicit_any_tests.rs"
@@ -584,8 +596,14 @@ path = "tests/ambient_module_value_export_tests.rs"
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
+name = "export_star_as_named_import_type_anchor_tests"
+path = "tests/export_star_as_named_import_type_anchor_tests.rs"
+[[test]]
 name = "deferred_conditional_arithmetic_operand_tests"
 path = "tests/deferred_conditional_arithmetic_operand_tests.rs"
+[[test]]
+name = "keyof_type_param_default_conditional_repro"
+path = "tests/keyof_type_param_default_conditional_repro.rs"
 [[test]]
 name = "hkt_self_augmentation_keyof_repro"
 path = "tests/hkt_self_augmentation_keyof_repro.rs"
@@ -610,6 +628,9 @@ path = "tests/ts2303_tests.rs"
 [[test]]
 name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
+[[test]]
+name = "namespace_builtin_collision_indexed_access_tests"
+path = "tests/namespace_builtin_collision_indexed_access_tests.rs"
 [[test]]
 name = "class_reserved_word_diagnostics_tests"
 path = "tests/class_reserved_word_diagnostics_tests.rs"
@@ -815,6 +836,9 @@ path = "tests/contextual_tuple_tests.rs"
 name = "contextual_return_tuple_generic_member_tests"
 path = "tests/contextual_return_tuple_generic_member_tests.rs"
 [[test]]
+name = "contextual_return_value_arg_pinned_tests"
+path = "tests/contextual_return_value_arg_pinned_tests.rs"
+[[test]]
 name = "contextual_ts2345_conformance_tests"
 path = "tests/contextual_ts2345_conformance_tests.rs"
 [[test]]
@@ -832,6 +856,9 @@ path = "tests/keyof_array_literal_diagnostic_tests.rs"
 [[test]]
 name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
+[[test]]
+name = "override_computed_entity_name_ts4127_tests"
+path = "tests/override_computed_entity_name_ts4127_tests.rs"
 [[test]]
 name = "keyof_well_known_symbol_key_tests"
 path = "tests/keyof_well_known_symbol_key_tests.rs"
@@ -1597,6 +1624,9 @@ path = "tests/class_expression_heritage_ts2416_tests.rs"
 name = "predicate_alias_generic_inference_tests"
 path = "tests/predicate_alias_generic_inference_tests.rs"
 [[test]]
+name = "predicate_bare_target_nested_param_inference_tests"
+path = "tests/predicate_bare_target_nested_param_inference_tests.rs"
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 [[test]]
@@ -1901,6 +1931,9 @@ workspace = true
 name = "type_only_import_value_use_attribution_tests"
 path = "tests/type_only_import_value_use_attribution_tests.rs"
 [[test]]
+name = "callable_interface_index_tests"
+path = "tests/callable_interface_index_tests.rs"
+[[test]]
 name = "distributive_callable_branch_tests"
 path = "tests/distributive_callable_branch_tests.rs"
 [[test]]
@@ -1973,3 +2006,17 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+
+[[test]]
+name = "global_this_type_position_member_tests"
+path = "tests/global_this_type_position_member_tests.rs"
+
+[[test]]
+name = "generic_callable_as_assertion_overlap_tests"
+path = "tests/generic_callable_as_assertion_overlap_tests.rs"
+[[test]]
+name = "function_type_predicate_typeof_param_tests"
+path = "tests/function_type_predicate_typeof_param_tests.rs"
+[[test]]
+name = "object_keyword_any_index_tests"
+path = "tests/object_keyword_any_index_tests.rs"
