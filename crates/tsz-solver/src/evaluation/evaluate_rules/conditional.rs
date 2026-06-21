@@ -172,20 +172,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends_type: TypeId,
     ) -> bool {
         use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-        let mut params = self.extract_type_params_from_type(check_type);
-        for param in self.extract_type_params_from_type(extends_type) {
-            if !params.iter().any(|existing| existing.name == param.name) {
-                params.push(param);
-            }
-        }
-        if params.is_empty() {
-            // No named parameters to widen: the failed relation already used
-            // the most permissive forms available.
+        // Widen every *free* type parameter (and `infer` variable) that occurs
+        // anywhere in either operand to `any` — tsc's
+        // `getPermissiveInstantiation`. Use the canonical free-parameter walker
+        // rather than `extract_type_params_from_type`: the walker reaches
+        // parameters nested in any shape (tuple elements, index signatures,
+        // string-intrinsic arguments, …), whereas
+        // `extract_type_params_from_type` is positional-arity machinery for
+        // instantiation and deliberately reports a narrower set. Missing a
+        // nested parameter here would make a generic operand look concrete and
+        // wrongly mark the false branch definitive (e.g. `[] extends
+        // [T, ...T[]]`, whose `T` lives inside a tuple).
+        let param_ids = crate::visitors::visitor_predicates::free_type_parameter_ids_in(
+            self.interner(),
+            [check_type, extends_type],
+        );
+        if param_ids.is_empty() {
+            // No free parameters to widen: the failed relation already used the
+            // most permissive forms available.
             return true;
         }
         let mut substitution = TypeSubstitution::new();
-        for param in &params {
-            substitution.insert(param.name, TypeId::ANY);
+        for &param_id in &param_ids {
+            if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
+                self.interner().lookup(param_id)
+            {
+                substitution.insert(info.name, TypeId::ANY);
+            }
         }
         let permissive_check =
             self.evaluate(instantiate_type(self.interner(), check_type, &substitution));
@@ -1068,14 +1081,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
-            } else if extends_has_type_params
-                // tsc parity (`getConditionalType`): a conditional whose
-                // effective check type is still generic — instantiable flags,
-                // or a type reference/tuple/template whose arguments are
-                // generic — only resolves to the false branch when the
-                // relation also fails under the permissive instantiation
-                // (every type parameter replaced by `any`, tsc's
-                // `getPermissiveInstantiation` gate); otherwise it stays
+            } else if (extends_has_type_params
+                // tsc parity (`getConditionalType`): when the relation fails
+                // and the extends type carries a type parameter, the failure is
+                // only indeterminate while instantiation could still flip it.
+                //   * Depth-detection pass: keep deferring so unconditionally
+                //     recursive aliases still drive their recursive branch and
+                //     surface TS2589.
+                //   * Generic check type: instantiation could change the check
+                //     side too (`checkTypeInstantiable` in tsc never resolves),
+                //     so defer.
+                //   * Concrete check type: resolve to the false branch as soon
+                //     as the relation *also* fails under the permissive
+                //     instantiation (every type parameter replaced by `any`,
+                //     tsc's `getPermissiveInstantiation` gate). The empty tuple
+                //     can never satisfy `[T, ...T[]]` for any `T`, and an object
+                //     missing a required key can never satisfy `{ …; k: T }`, so
+                //     tsc takes the false branch instead of leaving the
+                //     conditional opaque. Only when the permissive form could
+                //     still match (`[string] extends [T]`) does it stay deferred.
+                && (self.is_depth_detection_pass()
+                    || crate::type_queries::is_generic_conditional_check_type(
+                        self.interner(),
+                        check_type,
+                    )
+                    || !self.permissive_false_branch_is_definitive(check_type, extends_type)))
+                // A conditional whose effective check type is still generic only
+                // resolves to the false branch when the relation also fails
+                // under the permissive instantiation; otherwise it stays
                 // deferred until instantiation makes the check type concrete.
                 // This also covers deferred wrappers over *unresolved*
                 // references (`keyof Lazy(D)`), which under parallel fresh

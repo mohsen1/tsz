@@ -1967,3 +1967,7 @@ path = "tests/nullable_union_missing_property_tests.rs"
 [[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
+
+[[test]]
+name = "conditional_concrete_check_generic_extends_tests"
+path = "tests/conditional_concrete_check_generic_extends_tests.rs"
