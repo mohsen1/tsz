@@ -522,7 +522,6 @@ jobs:
       always() &&
       (needs.bench-prepare.outputs.should_run == 'true' ||
        (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
-        !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
         !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
         needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
       !contains(needs.*.result, 'failure') &&
