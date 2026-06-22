@@ -710,6 +710,9 @@ path = "tests/accessor_assignment_read_surface_tests.rs"
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
+name = "object_literal_set_only_accessor_type_tests"
+path = "tests/object_literal_set_only_accessor_type_tests.rs"
+[[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
 [[test]]
@@ -941,6 +944,9 @@ path = "tests/this_relative_infer_member_constraint_14385_tests.rs"
 name = "conditional_alias_lib_application_tests"
 path = "tests/conditional_alias_lib_application_tests.rs"
 [[test]]
+name = "conditional_wrapper_alias_infer_extends_tests"
+path = "tests/conditional_wrapper_alias_infer_extends_tests.rs"
+[[test]]
 name = "recursive_conditional_mapped_infer_tests"
 path = "tests/recursive_conditional_mapped_infer_tests.rs"
 [[test]]
@@ -1021,6 +1027,9 @@ path = "tests/kysely_callback_context_tests.rs"
 [[test]]
 name = "inline_mapped_array_return_tests"
 path = "tests/inline_mapped_array_return_tests.rs"
+[[test]]
+name = "overload_constraint_fallback_applicability_tests"
+path = "tests/overload_constraint_fallback_applicability_tests.rs"
 [[test]]
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"

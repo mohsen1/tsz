@@ -1,4 +1,5 @@
 mod computed_property_names;
+mod conditional_wrapper_alias_infer_14489;
 mod const_initializer_widening;
 mod cross_module_unique_symbol;
 mod defaults;
@@ -14,6 +15,7 @@ mod indexed_callable_member_param_tests;
 mod interface_merge_alias_application_2322;
 mod membership_semantics;
 mod narrowing;
+mod noinfer_intersection_transparency_14499;
 mod optional_chain;
 mod predicate_alias_typeof_2677_2304;
 mod spread_param_constraint_2345;

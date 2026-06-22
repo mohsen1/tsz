@@ -1526,15 +1526,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Bounds peel/reduce walks against pathological alias chains.
     pub(crate) const MAX_ALIAS_REDUCTION_STEPS: u32 = 8;
 
+    /// Resolve an application/reference base (`Lazy(DefId)` or
+    /// `TypeQuery(SymbolRef)`) to its defining [`DefId`]. Returns `None` for any
+    /// other base shape, or a `TypeQuery` whose symbol has no `DefId` yet.
+    pub(crate) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        match self.interner().lookup(base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            _ => None,
+        }
+    }
+
     /// Decode `Application(Lazy(DefId)/TypeQuery, args)` and substitute the
     /// alias's type-parameter args into its resolved body. Returns `None`
-    /// when the base isn't a resolvable DefId, arities disagree, or the
-    /// substitution is a no-op (so callers don't need their own fixed-point
-    /// guard for the substituted form).
-    ///
-    /// Used by `peel_alias_application` (requires body to be `Application`)
-    /// and by `reduce_alias_body_to_application_form` (also accepts
-    /// `Conditional` body for one infer-match step).
+    /// when the base isn't a resolvable `DefId`, arities disagree, or the
+    /// substitution is a no-op.
     pub(crate) fn alias_application_substituted_body(&self, ty: TypeId) -> Option<TypeId> {
         let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
             return None;
@@ -1556,33 +1562,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (substituted != ty).then_some(substituted)
     }
 
-    /// Decode the `base` of an `Application` to the `DefId` it names: a direct
-    /// `Lazy(DefId)` or a `TypeQuery` resolved through the resolver. `None` when
-    /// the base names no def.
-    fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
-        match self.interner().lookup(base)? {
-            TypeData::Lazy(def_id) => Some(def_id),
-            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
-            _ => None,
-        }
-    }
-
-    /// Cheap structural gate for the wrapper-alias head-only pattern reduction:
-    /// whether `base` is a generic type *alias* whose resolved body is itself an
-    /// `Application` (`type AB<T> = Promise<T[]>`), rather than an interface /
-    /// class constructor (`Promise`) whose body is an object shape. Resolving
-    /// the lazy body and inspecting its head is O(1) (cached); it lets the caller
-    /// skip the `instantiate`-bearing `alias_application_substituted_body` on the
-    /// `Promise<infer U>` hot path, where the source-peeling loop matches the
-    /// base positionally and no pattern reduction is needed (#14330).
-    fn application_base_is_application_alias(&self, base: TypeId) -> bool {
-        self.application_base_def_id(base)
-            .and_then(|def_id| self.resolver().resolve_lazy(def_id, self.interner()))
-            .is_some_and(|body| {
-                matches!(self.interner().lookup(body), Some(TypeData::Application(_)))
-            })
-    }
-
     /// Peel one alias layer off an `Application` whose body is itself an
     /// `Application(...)`. We do not gate on `get_def_kind`: zombie `DefId`s
     /// from `interner.reference` are not tagged with `DefKind` in the
@@ -1595,6 +1574,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::Application(_))
         )
         .then_some(substituted)
+    }
+
+    /// Whether `base` names a generic *wrapper alias* — a `Lazy`/`TypeQuery`
+    /// reference whose resolved body is itself an `Application` (e.g.
+    /// `AB<T> = Promise<T[]>` or `Nest<T> = Promise<Promise<T[]>>`).
+    ///
+    /// Such a base does not participate in the covariant positional
+    /// type-argument correspondence that a genuine interface/class hierarchy
+    /// does (`Promise<T> <: PromiseLike<T>`): its single alias parameter maps
+    /// through the alias body, not onto the wrapped interface's positional
+    /// arguments. An infer-pattern whose base is a wrapper alias must therefore
+    /// be *reduced* to its application form before structural matching, never
+    /// matched positionally against a structurally-different concrete source
+    /// base — doing the latter binds the `infer` one wrapper level early.
+    pub(crate) fn is_wrapper_alias_base(&self, base: TypeId) -> bool {
+        let Some(def_id) = self.application_base_def_id(base) else {
+            return false;
+        };
+        self.resolver()
+            .resolve_lazy(def_id, self.interner())
+            .is_some_and(|body| {
+                matches!(self.interner().lookup(body), Some(TypeData::Application(_)))
+            })
     }
 
     /// Recover an `Application` form from a non-`Application` type via the
@@ -1628,6 +1630,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         source: &TypeApplication,
         pattern: &TypeApplication,
+        pattern_base_is_wrapper_alias: bool,
         bindings: &mut FxHashMap<Atom, TypeId>,
         visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
@@ -1635,8 +1638,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if source.args.len() != pattern.args.len() {
             return None;
         }
-        if source.base != pattern.base && !checker.is_subtype_of(source.base, pattern.base) {
-            return None;
+        if source.base != pattern.base {
+            // A wrapper-alias pattern base (`Nest<T> = Promise<Promise<T[]>>`)
+            // shares neither the identity nor the covariant positional
+            // correspondence the base-subtype shortcut assumes for interface
+            // hierarchies: matching its lone alias argument against a
+            // structurally-different concrete source base binds the `infer` one
+            // wrapper level early (e.g. `U = Promise<number[]>` instead of
+            // `number`). Refuse the shortcut so the pattern is instead reduced to
+            // its application form (caller's pattern-side alias-reduction step)
+            // before the structural arguments are matched.
+            if pattern_base_is_wrapper_alias {
+                return None;
+            }
+            if !checker.is_subtype_of(source.base, pattern.base) {
+                return None;
+            }
         }
         for (source_arg, pattern_arg) in source.args.iter().zip(pattern.args.iter()) {
             if !self.match_infer_pattern(*source_arg, *pattern_arg, bindings, visited, checker) {
@@ -1965,6 +1982,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     );
                 }
+                // `pattern_app.base` is invariant across both the source-peeling
+                // loop and the display-alias recovery below, so classify it once.
+                // A wrapper-alias base (its resolved body is itself an
+                // `Application`, e.g. `Nest<T> = Promise<Promise<T[]>>`) must be
+                // reduced to its application form before matching: the positional
+                // base-subtype shortcuts below would otherwise bind the `infer`
+                // one wrapper level early.
+                let pattern_base_is_wrapper_alias = self.is_wrapper_alias_base(pattern_app.base);
 
                 // Normalize a *generic wrapper-alias* pattern to its structural
                 // application form before the positional matching below. When the
@@ -1983,7 +2008,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // hot path; the `(source, pattern)` visited guard bounds alias
                 // cycles. `tsc` likewise reduces an alias-pattern to its
                 // application form before infer matching.
-                if self.application_base_is_application_alias(pattern_app.base)
+                if pattern_base_is_wrapper_alias
                     && let Some(reduced_pattern) = self.peel_alias_application(pattern)
                 {
                     let mut reduced_bindings = bindings.clone();
@@ -2010,13 +2035,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(result) = self.try_match_application_args_to_pattern(
                             &source_app,
                             &pattern_app,
+                            pattern_base_is_wrapper_alias,
                             bindings,
                             visited,
                             checker,
                         ) {
                             return result;
                         }
-                        if source_app.args.len() == pattern_app.args.len() {
+                        // Rebuilding the wrapper alias over the *source's*
+                        // arguments and accepting it by subtyping has the same
+                        // early-binding hazard described above (the
+                        // recursive-Promise relation accepts the rebuilt alias
+                        // leniently), so skip this positional shortcut for wrapper
+                        // bases and let the pattern-side reduction below peel them.
+                        if source_app.args.len() == pattern_app.args.len()
+                            && !pattern_base_is_wrapper_alias
+                        {
                             let candidate_pattern = self
                                 .interner()
                                 .application(pattern_app.base, source_app.args.clone());
@@ -2054,6 +2088,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(result) = self.try_match_application_args_to_pattern(
                         &recovered_app,
                         &pattern_app,
+                        pattern_base_is_wrapper_alias,
                         bindings,
                         visited,
                         checker,

@@ -368,14 +368,14 @@ impl<'a> CheckerState<'a> {
                     &prop_info,
                 );
             } else {
-                // Single accessor so far: getter-only is readonly.
-                // Set-only: read type is `undefined`.
+                // Single accessor so far. A getter-only property is readonly;
+                // a set-only property is writable. Either way the property type
+                // is the accessor type — the getter return type, or for a
+                // set-only property the setter's parameter type (tsc
+                // `getTypeOfSetAccessor`), not `undefined`. Mirrors the
+                // class/interface/type-literal paths' `getter.or(setter)`.
                 let readonly = is_getter;
-                let (read_type, write_type) = if is_getter {
-                    (accessor_type, accessor_type)
-                } else {
-                    (TypeId::UNDEFINED, accessor_type)
-                };
+                let (read_type, write_type) = (accessor_type, accessor_type);
                 let order = *prop_order;
                 *prop_order += 1;
                 let prop_info = PropertyInfo {
