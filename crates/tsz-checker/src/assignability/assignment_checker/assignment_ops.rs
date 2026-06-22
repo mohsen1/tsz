@@ -2,20 +2,17 @@
 //! polymorphic this checking, tuple/array destructuring bounds, and arithmetic checks.
 
 use crate::context::TypingRequest;
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use crate::state_checking::readonly::ReadonlyAssignmentDiagnostic;
 use tsz_binder::symbol_flags;
+use tsz_common::diagnostics::get_message_template;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Assignment Operator Utilities
-    // =========================================================================
-
     /// Check if a token is an assignment operator (=, +=, -=, etc.)
     pub(crate) const fn is_assignment_operator(&self, operator: u16) -> bool {
         crate::query_boundaries::common::is_assignment_operator(operator)
@@ -1244,7 +1241,6 @@ impl<'a> CheckerState<'a> {
         // Get the concrete class type for property lookup
         let concrete_this = self.current_this_type()?;
 
-        // Resolve the raw property type (with ThisType preserved)
         let raw_result = crate::query_boundaries::property_access::resolve_property_access_raw_this(
             self.ctx.types,
             concrete_this,
@@ -1258,7 +1254,6 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
 
-        // Check if the raw property type IS ThisType (bare polymorphic this)
         if !crate::query_boundaries::common::is_this_type(self.ctx.types, raw_type) {
             return None;
         }
@@ -1274,7 +1269,6 @@ impl<'a> CheckerState<'a> {
             return Some(false); // Compatible - both are this-typed
         }
 
-        // The RHS is not this-typed — emit TS2322
         let source_display =
             self.raw_this_property_assignment_rhs_display(right_idx)
                 .or_else(|| {
@@ -1285,11 +1279,17 @@ impl<'a> CheckerState<'a> {
                     .map(|head| self.format_type_for_assignability_message(head))
                 })
                 .unwrap_or_else(|| self.format_type_for_assignability_message(right_type));
-        self.error_at_node_msg(
-            left_idx,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_display, "this"],
-        );
+        let template = get_message_template(diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .unwrap_or("Unexpected checker diagnostic code.");
+        let message = format_message(template, &[&source_display, "this"]);
+        if let Some((start, end)) = self.get_node_span(left_idx) {
+            self.push_error_at(
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
         Some(true)
     }
 

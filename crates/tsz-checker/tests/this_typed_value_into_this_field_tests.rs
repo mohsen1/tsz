@@ -14,7 +14,9 @@
 //! Found during the #14512 investigation (distinct mechanism from #14512/#14516,
 //! which is the `Array<this>.push` receiver path).
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{
+    DiagnosticShape, assert_diagnostic_shape, check_source_codes, check_source_diagnostics,
+};
 
 fn ts2322(source: &str) -> usize {
     check_source_codes(source)
@@ -169,5 +171,30 @@ class Loop {
         0,
         "a `this`-returning accessor read via property access must assign into a `this`-typed field: {:?}",
         check_source_codes(source)
+    );
+}
+
+#[test]
+fn conformance_this_property_read_reports_class_source_at_lhs() {
+    let source = "// @target: es2015
+class C {
+    self = this;
+    c = new C();
+    foo() {
+        return this;
+    }
+    f1() {
+        this.c = this.self;
+        this.self = this.c;  // Error
+    }
+}
+";
+    let diagnostics = check_source_diagnostics(source);
+    assert_diagnostic_shape(
+        source,
+        &diagnostics,
+        &DiagnosticShape::code(2322)
+            .at(10, 9)
+            .with_message_fragment("Type 'C' is not assignable to type 'this'."),
     );
 }
