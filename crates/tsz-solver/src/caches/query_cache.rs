@@ -980,6 +980,15 @@ impl TypeExtractParamsCache for QueryCache<'_> {
     fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
         self.interner.set_extract_type_params_memo(type_id, params);
     }
+
+    fn contravariant_infer_names_memo(&self, type_id: TypeId) -> Option<Arc<[Atom]>> {
+        self.interner.contravariant_infer_names_memo(type_id)
+    }
+
+    fn set_contravariant_infer_names_memo(&self, type_id: TypeId, names: Arc<[Atom]>) {
+        self.interner
+            .set_contravariant_infer_names_memo(type_id, names);
+    }
 }
 
 impl TypeDatabase for QueryCache<'_> {
