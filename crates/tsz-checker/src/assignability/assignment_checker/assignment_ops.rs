@@ -1263,9 +1263,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // The RHS is this-typed if its computed type is canonical polymorphic
-        // `ThisType`, or syntactically `this`/`this.prop` with a `this`-typed property.
-        if crate::query_boundaries::common::is_this_type(self.ctx.types, right_type)
+        // RHS is this-typed if its computed type is canonical `ThisType` and is
+        // not a property access (excluded: a concrete field flow-narrows to
+        // `this`, still related by tsc against its declared type), or `this`.
+        let rhs_prop = self.ctx.arena.get(right_idx).map(|n| n.kind)
+            == Some(syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION);
+        if (!rhs_prop && crate::query_boundaries::common::is_this_type(self.ctx.types, right_type))
             || self.expression_has_this_type(right_idx)
         {
             return Some(false); // Compatible - both are this-typed

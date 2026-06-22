@@ -121,3 +121,53 @@ class Square extends Shape {
         check_source_codes(source)
     );
 }
+
+/// Negative control (the `typeRelationships.ts` conformance case): a concrete
+/// field whose declared type is the class — not `this` — must STILL be rejected
+/// when assigned into a `this`-typed field, EVEN AFTER it was flow-narrowed to
+/// `this` by an earlier `field = <this-typed value>`. tsc relates the read
+/// against the field's *declared* type (`Holder`), which is wider than `this`.
+/// Acceptance keyed on the RHS's *current* (flow-narrowed) `this` type would
+/// wrongly suppress this error — the fix excludes property-access RHS from the
+/// type-based acceptance for exactly this reason.
+#[test]
+fn flow_narrowed_concrete_field_into_this_field_still_errors() {
+    let source = r#"
+class Holder {
+  mirror = this;
+  peer = new Holder();
+  swap(): void {
+    this.peer = this.mirror;
+    this.mirror = this.peer;
+  }
+}
+"#;
+    assert!(
+        ts2322(source) >= 1,
+        "a concrete field flow-narrowed to `this` must still be rejected against a `this`-typed field: {:?}",
+        check_source_codes(source)
+    );
+}
+
+/// A `this`-returning accessor read through a property access stays accepted —
+/// its property's *declared* type is `this`, recognized by the syntactic path,
+/// so the property-access exclusion (which targets flow-narrowed concrete
+/// fields) does not regress this genuine positive.
+#[test]
+fn this_returning_getter_property_access_assigns_into_this_field() {
+    let source = r#"
+class Loop {
+  next!: this;
+  get current(): this { return this; }
+  advance(): void {
+    this.next = this.current;
+  }
+}
+"#;
+    assert_eq!(
+        ts2322(source),
+        0,
+        "a `this`-returning accessor read via property access must assign into a `this`-typed field: {:?}",
+        check_source_codes(source)
+    );
+}
