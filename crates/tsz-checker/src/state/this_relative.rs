@@ -1,7 +1,7 @@
 use super::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeData, TypeId};
+use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
     /// Choose the binding for `this`-at-return-position substitution given a
@@ -42,70 +42,11 @@ impl CheckerState<'_> {
     /// exempt: substituting `this -> this` is an identity no-op, so the existing
     /// direct-`this`-receiver paths are preserved.
     pub(crate) fn type_is_compound_this_relative(&self, type_id: TypeId) -> bool {
-        type_id != self.ctx.types.this_type()
-            && self.type_has_surface_this_relative_wrapper(type_id)
-    }
-
-    fn type_has_surface_this_relative_wrapper(&self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-
-        let this_type = self.ctx.types.this_type();
-        let mut stack = vec![type_id];
-        let mut fuel = 64usize;
-        while let Some(current) = stack.pop() {
-            if current == this_type {
-                return true;
-            }
-            if current.is_intrinsic() || fuel == 0 {
-                continue;
-            }
-            fuel -= 1;
-
-            match self.ctx.types.lookup(current) {
-                Some(TypeData::Array(element))
-                | Some(TypeData::ReadonlyType(element))
-                | Some(TypeData::NoInfer(element))
-                | Some(TypeData::KeyOf(element)) => stack.push(element),
-                Some(TypeData::Tuple(elements)) => {
-                    stack.extend(
-                        self.ctx
-                            .types
-                            .tuple_list(elements)
-                            .iter()
-                            .map(|element| element.type_id),
-                    );
-                }
-                Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
-                    stack.extend(self.ctx.types.type_list(list).iter().copied());
-                }
-                Some(TypeData::Application(application)) => {
-                    stack.extend(
-                        self.ctx
-                            .types
-                            .type_application(application)
-                            .args
-                            .iter()
-                            .copied(),
-                    );
-                }
-                Some(TypeData::IndexAccess(object, index)) => {
-                    stack.push(object);
-                    stack.push(index);
-                }
-                Some(TypeData::StringIntrinsic { type_arg, .. }) => stack.push(type_arg),
-                Some(TypeData::Substitution {
-                    base_type,
-                    constraint,
-                }) => {
-                    stack.push(base_type);
-                    stack.push(constraint);
-                }
-                _ => {}
-            }
-        }
-        false
+        crate::query_boundaries::common::is_compound_this_relative_surface_type(
+            self.ctx.types,
+            type_id,
+            self.ctx.types.this_type(),
+        )
     }
 
     pub(crate) fn receiver_expr_is_this_relative(&self, idx: NodeIndex) -> bool {
