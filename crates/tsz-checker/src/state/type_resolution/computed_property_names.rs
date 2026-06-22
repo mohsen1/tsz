@@ -229,6 +229,23 @@ impl<'a> CheckerState<'a> {
         {
             return Some(name);
         }
+        // A computed key `[K]` whose `K` is a string/number `const` — `const K =
+        // '$_TSR'` or `declare const K: '$R'` — keys the member under the literal
+        // value, exactly as the current-file value-position path
+        // (`resolve_local_computed_property_name`) does through type evaluation.
+        // The cross-arena path cannot run `get_type_of_node` against a foreign
+        // arena, so resolve the binding in the AUGMENTATION arena's own binder
+        // (where `[K]` is written) and read the literal syntactically from the
+        // declaration, following an import-type alias to its declaring file.
+        // Without this leg a `declare global { interface Window { [K]?: T } }`
+        // augmentation declared in one file drops its computed-const member when
+        // the member is accessed from a DIFFERENT file (false TS2339 on
+        // `self.$_TSR` / `window.$_TSR`).
+        if let Some(literal_name) =
+            self.cross_arena_const_literal_key_name(arena, computed.expression)
+        {
+            return Some(literal_name);
+        }
         let sym_id = self.resolve_computed_property_symbol_in_arena(arena, computed.expression)?;
         // Canonicalize to the declaring binder's symbol id so a cross-file
         // interface member keyed here agrees with the same `const`'s key reached
@@ -381,6 +398,91 @@ impl<'a> CheckerState<'a> {
             return crate::types_domain::queries::core::get_literal_property_name(arena, expr_idx);
         }
         None
+    }
+
+    /// Resolve a bare-identifier computed-key expression `[K]` written in
+    /// `arena` (the augmentation's own, possibly cross-file, arena) to the
+    /// string/number literal name of the `const` it binds. The identifier is
+    /// resolved in `arena`'s own binder — not the checker's current-file binder —
+    /// then an import-type alias is followed to the declaring file, and the
+    /// literal is read from THAT file's own arena. Handles both an initializer
+    /// literal (`const K = '$_TSR'`) and a declared literal-type annotation
+    /// (`declare const K: '$R'`). Returns `None` for non-`const` bindings,
+    /// non-identifier expressions, or keys that do not denote a string/number
+    /// literal — those fall through to the symbol-identity (`__unique_<id>`)
+    /// path, matching tsc, which keys such members by literal name only when the
+    /// key type is a string/number literal.
+    fn cross_arena_const_literal_key_name(
+        &self,
+        arena: &NodeArena,
+        mut expr_idx: NodeIndex,
+    ) -> Option<String> {
+        while let Some(node) = arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            expr_idx = arena.get_parenthesized(node)?.expression;
+        }
+        let ident_name = arena.get_identifier_text(expr_idx)?.to_string();
+        let aug_binder = self.ctx.get_binder_for_arena(arena)?;
+        let local_sym_id = aug_binder
+            .resolve_identifier(arena, expr_idx)
+            .or_else(|| aug_binder.file_locals.get(&ident_name))?;
+        // Follow an import alias (including a type-only `import type { K }`) to
+        // the `const` in its declaring file. `resolve_import_alias_and_register`
+        // follows the module specifier cross-file; the in-binder
+        // `follow_import_aliases` covers same-binder re-export hops.
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .map(|target| {
+                crate::types_domain::computed_names::follow_import_aliases(&self.ctx, target)
+            })
+            .unwrap_or_else(|| {
+                crate::types_domain::computed_names::follow_import_aliases(&self.ctx, local_sym_id)
+            });
+        let symbol =
+            crate::types_domain::computed_names::symbol_from_any_context(&self.ctx, sym_id)?;
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return None;
+        }
+        let owner_arena = if symbol.decl_file_idx == u32::MAX {
+            arena
+        } else {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        };
+        if !owner_arena.is_const_variable_declaration(decl) {
+            return None;
+        }
+        let var_decl = owner_arena
+            .get(decl)
+            .and_then(|node| owner_arena.get_variable_declaration(node))?;
+
+        // Initializer literal: `const K = '$_TSR'` / `const K = 1`.
+        if let Some(name) = owner_arena
+            .get(var_decl.initializer)
+            .and_then(|init| owner_arena.get_literal(init))
+            .map(|lit| lit.text.clone())
+        {
+            return Some(name);
+        }
+
+        // Declared literal-type annotation: `declare const K: '$R'`.
+        let mut ann_idx = var_decl.type_annotation;
+        if let Some(ann) = owner_arena.get(ann_idx)
+            && ann.kind == syntax_kind_ext::LITERAL_TYPE
+            && let Some(lit_type) = owner_arena.get_literal_type(ann)
+        {
+            ann_idx = lit_type.literal;
+        }
+        owner_arena
+            .get(ann_idx)
+            .filter(|n| {
+                n.kind == SyntaxKind::StringLiteral as u16
+                    || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || n.kind == SyntaxKind::NumericLiteral as u16
+            })
+            .and_then(|_| get_literal_property_name(owner_arena, ann_idx))
     }
 
     fn resolve_computed_property_symbol_in_arena(
