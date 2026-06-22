@@ -32,3 +32,5 @@ fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
 mod part_00;
 #[path = "conditional_infer_tests/part_01.rs"]
 mod part_01;
+#[path = "conditional_infer_tests/part_02.rs"]
+mod part_02;

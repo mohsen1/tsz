@@ -11,6 +11,7 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
+use crate::def::DefId;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
@@ -1539,11 +1540,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         };
         let app = self.interner().type_application(app_id);
-        let def_id = match self.interner().lookup(app.base)? {
-            TypeData::Lazy(def_id) => def_id,
-            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref)?,
-            _ => return None,
-        };
+        let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver().get_lazy_type_params(def_id)?;
         if type_params.len() != app.args.len() {
             return None;
@@ -1557,6 +1554,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             &app.args,
         );
         (substituted != ty).then_some(substituted)
+    }
+
+    /// Decode the `base` of an `Application` to the `DefId` it names: a direct
+    /// `Lazy(DefId)` or a `TypeQuery` resolved through the resolver. `None` when
+    /// the base names no def.
+    fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        match self.interner().lookup(base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            _ => None,
+        }
+    }
+
+    /// Cheap structural gate for the wrapper-alias head-only pattern reduction:
+    /// whether `base` is a generic type *alias* whose resolved body is itself an
+    /// `Application` (`type AB<T> = Promise<T[]>`), rather than an interface /
+    /// class constructor (`Promise`) whose body is an object shape. Resolving
+    /// the lazy body and inspecting its head is O(1) (cached); it lets the caller
+    /// skip the `instantiate`-bearing `alias_application_substituted_body` on the
+    /// `Promise<infer U>` hot path, where the source-peeling loop matches the
+    /// base positionally and no pattern reduction is needed (#14330).
+    fn application_base_is_application_alias(&self, base: TypeId) -> bool {
+        self.application_base_def_id(base)
+            .and_then(|def_id| self.resolver().resolve_lazy(def_id, self.interner()))
+            .is_some_and(|body| {
+                matches!(self.interner().lookup(body), Some(TypeData::Application(_)))
+            })
     }
 
     /// Peel one alias layer off an `Application` whose body is itself an
@@ -1941,6 +1965,42 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     );
                 }
+
+                // Normalize a *generic wrapper-alias* pattern to its structural
+                // application form before the positional matching below. When the
+                // pattern base is a generic type alias whose parameter threads
+                // through a *nested* body position (`type AB<T> = Promise<T[]>`,
+                // pattern `AB<infer U>`), the alias base does NOT positionally
+                // correspond to the source's structural base (`Promise`), so the
+                // positional source-peeling / base-subtype paths would bind the
+                // `infer` one structural level too shallow (`U = Promise<number[]>`
+                // instead of `number`) — the "stops one Promise level early"
+                // divergence (#14489). Peeling the pattern head-only (infer-
+                // preserving: `AB<infer U>` -> `Promise<(infer U)[]>`) gives the
+                // real structural base, so re-matching binds at the correct depth
+                // and recurses through each nested wrapper level. The gate keeps
+                // `peel_alias_application`'s `instantiate` off the `Promise<infer>`
+                // hot path; the `(source, pattern)` visited guard bounds alias
+                // cycles. `tsc` likewise reduces an alias-pattern to its
+                // application form before infer matching.
+                if self.application_base_is_application_alias(pattern_app.base)
+                    && let Some(reduced_pattern) = self.peel_alias_application(pattern)
+                {
+                    let mut reduced_bindings = bindings.clone();
+                    let reduced_checkpoint = visited.checkpoint();
+                    if self.match_infer_pattern(
+                        source,
+                        reduced_pattern,
+                        &mut reduced_bindings,
+                        visited,
+                        checker,
+                    ) {
+                        *bindings = reduced_bindings;
+                        return true;
+                    }
+                    visited.rollback_to(reduced_checkpoint);
+                }
+
                 let mut current_source = source;
                 for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
                     if let Some(TypeData::Application(source_app_id)) =

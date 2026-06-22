@@ -1,0 +1,152 @@
+//! Contiguous test shard split out of the parent module to satisfy the
+//! source-file line cap.
+//!
+//! Regression coverage for #14489: a conditional whose `extends`-type is a
+//! generic *wrapper alias* carrying an `infer` (`type AB<T> = Promise<T[]>`,
+//! pattern `AB<infer U>`) must bind `U` when the check-type is the alias's
+//! *expanded* structural form (`Promise<number[]>`). The alias base (`AB`) does
+//! not positionally correspond to the structural base (`Promise`) — the alias's
+//! type parameter threads through a nested position of the body — so matching
+//! through the positional source-peeling / base-subtype shortcut bound the
+//! `infer` one structural level too shallow (`U = Promise<number[]>` instead of
+//! `number`), or collapsed the conditional to its false branch (`never`),
+//! producing a false TS2322 at the use site. The fix reduces a generic
+//! wrapper-alias pattern to its structural application form (infer-preserving
+//! head-only substitution) before positional matching.
+
+use super::*;
+
+/// Assert that the source produces at least one TS2322 (used by the
+/// negative-control cases where the false branch must stay selected and its
+/// literal type must be enforced).
+fn assert_has_ts2322(source: &str, label: &str) {
+    let diags = tsz_checker::test_utils::check_source_strict(source);
+    let has = diags.iter().any(|d| d.code == 2322);
+    assert!(
+        has,
+        "[{label}] expected a TS2322 (false branch must stay selected), got:\n{:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+fn assert_no_ts2322_with_libs(source: &str, label: &str) {
+    let diags = check_source_strict_with_default_libs(source);
+    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        errors.is_empty(),
+        "[{label}] expected no TS2322, got:\n{:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// #14489 — generic wrapper-alias `infer` over an expanded structural source.
+// =============================================================================
+
+#[test]
+fn promise_wrapper_alias_infer_binds_through_expanded_source() {
+    // The exact issue repro: `AB<T> = Promise<T[]>`, pattern `AB<infer U>`,
+    // check-type the *expanded* `Promise<number[]>`. tsc infers `U = number`.
+    assert_no_ts2322_with_libs(
+        r#"
+type AB<T> = Promise<T[]>;
+type Ex<X> = X extends AB<infer U> ? U : never;
+type R = Ex<Promise<number[]>>;
+const a: R = 7;
+export {};
+"#,
+        "AB<T> = Promise<T[]> ; Ex<Promise<number[]>> = number",
+    );
+}
+
+#[test]
+fn promise_wrapper_alias_infer_object_payload_shape() {
+    // Wrapper body carries the param inside a nested object position.
+    assert_no_ts2322_with_libs(
+        r#"
+type Envelope<T> = Promise<{ payload: T[] }>;
+type Unwrap<X> = X extends Envelope<infer U> ? U : never;
+type R = Unwrap<Promise<{ payload: number[] }>>;
+const a: R = 7;
+export {};
+"#,
+        "Envelope<T> = Promise<{payload:T[]}> ; Unwrap = number",
+    );
+}
+
+#[test]
+fn promise_wrapper_alias_infer_returntype_over_async_fn() {
+    // `ReturnType<typeof asyncFn>` yields the expanded `Promise<number[]>`.
+    assert_no_ts2322_with_libs(
+        r#"
+type AB<T> = Promise<T[]>;
+async function asyncFn(): Promise<number[]> { return [1]; }
+type Ex<X> = X extends AB<infer U> ? U : never;
+type R = Ex<ReturnType<typeof asyncFn>>;
+const a: R = 7;
+export {};
+"#,
+        "Ex<ReturnType<typeof asyncFn>> = number",
+    );
+}
+
+#[test]
+fn user_interface_wrapper_alias_infer_binds_at_correct_depth() {
+    // Lib-free, with binders renamed away from the issue text: a generic
+    // *user interface* `Box<T>` as the wrapper base. Single nesting level.
+    assert_no_ts2322(
+        r#"
+interface Box<T> { value: T; }
+type Wrap<P> = Box<P[]>;
+type Pull<X> = X extends Wrap<infer Out> ? Out : never;
+type R = Pull<Box<number[]>>;
+const ok: R = 7;
+export {};
+"#,
+        "Wrap<P> = Box<P[]> ; Pull<Box<number[]>> = number",
+    );
+}
+
+#[test]
+fn nested_user_interface_wrapper_alias_infer_binds_at_correct_depth() {
+    // Two-level nesting through a user interface: the previous "stops one level
+    // early" divergence (`Z` bound to `Cell<string[]>` instead of `string`).
+    // Binders renamed again so the fix cannot key off any identifier.
+    assert_no_ts2322(
+        r#"
+interface Cell<V> { cell: V; }
+type DeepWrap<Q> = Cell<Cell<Q[]>>;
+type DeepPull<Y> = Y extends DeepWrap<infer Z> ? Z : never;
+type R = DeepPull<Cell<Cell<string[]>>>;
+const ok: R = "s";
+export {};
+"#,
+        "DeepWrap<Q> = Cell<Cell<Q[]>> ; DeepPull = string",
+    );
+}
+
+#[test]
+fn wrapper_alias_infer_false_branch_preserved_when_source_shape_differs() {
+    // Negative control: the source genuinely does not match the wrapper shape
+    // (`Box<number>` is not `Box<number[]>`), so the conditional must take its
+    // false branch and the literal type `"MISS"` must be enforced — assigning a
+    // number is a real TS2322, not suppressed by the reduction path.
+    assert_has_ts2322(
+        r#"
+interface Box<T> { value: T; }
+type Wrap<P> = Box<P[]>;
+type PullOr<X> = X extends Wrap<infer Out> ? Out : "MISS";
+type R = PullOr<Box<number>>;
+const ok: R = "MISS";
+const bad: R = 7;
+export {};
+"#,
+        "PullOr<Box<number>> = \"MISS\" (false branch); number is not assignable",
+    );
+}
