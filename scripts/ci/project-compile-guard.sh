@@ -418,25 +418,32 @@ install_application_deps() {
     echo "warn: application install dir missing: $dir" >&2
     return 1
   fi
-  # Make the package manager runnable. `corepack enable` installs yarn/pnpm
-  # shims into Node's bin dir, but on the Cloud Run runner that dir is not
-  # always on PATH, so a bare `yarn install` died with "yarn: command not
-  # found" and every yarn-based app row (excalidraw, medusa, outline, joplin,
-  # cal-com, affine, rocketchat) lost its dep graph. Run the install through
-  # `corepack <pm>` when the PM isn't directly on PATH — corepack resolves the
-  # version from the app's `packageManager` field and runs it without needing
-  # the global shim. Non-interactive so a missing pin can't hang. A failed install
-  # returns non-zero; the caller maps that to a "fixture invalid" (gray) row.
+  # Make the app's package manager runnable. Only `npm` is guaranteed on the
+  # runner — the canary/guard jobs set up no Node toolchain — so every yarn (7),
+  # pnpm (10), and bun (1) app row failed with "<pm>: command not found" and went
+  # gray, leaving only the 2 npm rows measured (this is what emptied the
+  # compatibility dashboard to mostly-gray). corepack ships with Node and runs
+  # the app's pinned yarn/pnpm version without a global install, but it must be
+  # enabled and was itself absent here (so the old `&& command -v corepack`
+  # guard skipped routing and ran the missing PM directly). Ensure corepack
+  # (install via npm if missing), enable it, and route yarn/pnpm through it
+  # unconditionally; fetch bun via npm since it is not a corepack PM. All
+  # best-effort (|| true) — a still-missing PM falls through to the run below and
+  # is recorded fixture-invalid (gray), never a false tsz regression.
   echo "Installing application deps: (cd $dir && $cmd)"
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-  command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
   local pm="${cmd%% *}"
   case "$pm" in
-    yarn | pnpm | npm)
-      if ! command -v "$pm" >/dev/null 2>&1 && command -v corepack >/dev/null 2>&1; then
-        echo "info: package manager $pm not on PATH; routing install through corepack" >&2
+    yarn | pnpm)
+      command -v corepack >/dev/null 2>&1 || npm i -g corepack >/dev/null 2>&1 || true
+      corepack enable >/dev/null 2>&1 || true
+      if command -v corepack >/dev/null 2>&1; then
+        echo "info: routing $pm install through corepack (resolves the app's pinned version)" >&2
         cmd="corepack $cmd"
       fi
+      ;;
+    bun)
+      command -v bun >/dev/null 2>&1 || npm i -g bun >/dev/null 2>&1 || true
       ;;
   esac
   if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
