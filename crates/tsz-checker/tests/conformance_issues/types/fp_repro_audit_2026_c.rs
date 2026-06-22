@@ -220,7 +220,6 @@ export { useType, useValue }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14230"]
 fn issue_14230_mapped_index_by_symbol_no_ts2536() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -324,8 +323,15 @@ export {};
 // shadowing the global in call position (typebox). Multi-file.
 // ---------------------------------------------------------------------------
 
+// Fixed in production (verified 2026-06-22): the global-value recovery in
+// `resolved_identifier_meaning_guards` excludes import `ALIAS` symbols, and
+// `declare_symbol` shadows lib globals for `ALIAS` declarations in external
+// modules. This guard runs through the **production-faithful** multi-file
+// harness (`..._stamped`), which wires `global_symbol_file_index` and stamps
+// each binder's `decl_file_idx` exactly like the CLI driver — the un-stamped
+// harness left the imported value's provenance ambiguous and produced a
+// harness-only TS2348.
 #[test]
-#[ignore = "reproduces #14263 (issue closed but minimal repro still emits TS2348)"]
 fn issue_14263_imported_value_shadows_global_ctor_no_ts2348() {
     if !lib_files_available() {
         return;
@@ -348,11 +354,53 @@ export { a, b }
 "#,
         ),
     ];
-    let diags =
-        compile_named_files_get_diagnostics_with_lib_and_options(files, "main.ts", strict_opts());
+    let diags = compile_named_files_get_diagnostics_with_lib_and_options_stamped(
+        files,
+        "main.ts",
+        strict_opts(),
+    );
     assert!(
         !has_error(&diags, 2348),
         "no TS2348 — imported `Promise`/`Map` values must shadow the global ctor in call position. Actual: {diags:#?}"
+    );
+}
+
+/// Adjacent to #14263: the shadowing is structural (by symbol provenance), not
+/// keyed on `Promise`/`Map`. Other global-constructor names re-exported through
+/// a barrel hop must shadow the global in call position just the same, so a
+/// `string`-returning imported value is callable without TS2348.
+#[test]
+fn imported_value_shadows_global_ctor_through_reexport_no_ts2348() {
+    if !lib_files_available() {
+        return;
+    }
+    let files = &[
+        (
+            "origin.ts",
+            r#"
+export function Set(x: number): string { return "" }
+export function Date(x: number): string { return "" }
+"#,
+        ),
+        ("barrel.ts", "export { Set, Date } from './origin'"),
+        (
+            "entry.ts",
+            r#"
+import { Set, Date } from './barrel'
+const s: string = Set(1)
+const d: string = Date(2)
+export { s, d }
+"#,
+        ),
+    ];
+    let diags = compile_named_files_get_diagnostics_with_lib_and_options_stamped(
+        files,
+        "entry.ts",
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2348),
+        "no TS2348 — re-exported `Set`/`Date` values must shadow the global ctor in call position. Actual: {diags:#?}"
     );
 }
 
