@@ -326,3 +326,17 @@ pub fn record_eval_dropped_aux_entries(count: u64) {
         .eval_dropped_aux_entries
         .fetch_add(count, Ordering::Relaxed);
 }
+
+/// Record which guard cut a `TypeEvaluator::evaluate` walk short (#14346).
+///
+/// The firing-order signal the issue flags: which bound a runaway recursive
+/// walk hits first. Measurement only — the evaluator's bail outcome (the
+/// returned `TypeId`) is unchanged whether or not this fires. Zero atomic
+/// traffic and a single predictable branch when `TSZ_PERF_COUNTERS` is off.
+#[inline]
+pub fn record_eval_termination_guard(guard: EvaluationTerminationGuard) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().eval_termination_guard_fires[guard.as_index()].fetch_add(1, Ordering::Relaxed);
+}

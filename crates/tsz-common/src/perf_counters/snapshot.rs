@@ -584,6 +584,13 @@ pub struct EvaluatorMemoCounters {
     /// Auxiliary memo entries (conditional-subtype / contains-infer)
     /// discarded at evaluator drop; never drained anywhere.
     pub dropped_aux_entries: u64,
+    /// Which guard cut an `evaluate` walk short, bucketed by
+    /// [`EvaluationTerminationGuard`] (#14346). The firing-order signal: which
+    /// bound a runaway recursive walk hits first. Always
+    /// `EVALUATION_TERMINATION_GUARD_COUNT` long, in
+    /// `EVALUATION_TERMINATION_GUARD_NAMES` order, so consumers can index by
+    /// position; a zero count means "not hit", not "unwired".
+    pub termination_guard_fires: Vec<NamedCount>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -852,6 +859,12 @@ impl PerfCounters {
                 lost_memo_recomputes_other: load(&c.eval_lost_memo_recomputes_other),
                 dropped_memo_entries: load(&c.eval_dropped_memo_entries),
                 dropped_aux_entries: load(&c.eval_dropped_aux_entries),
+                termination_guard_fires: (0..EVALUATION_TERMINATION_GUARD_COUNT)
+                    .map(|i| NamedCount {
+                        name: EVALUATION_TERMINATION_GUARD_NAMES[i],
+                        count: load(&c.eval_termination_guard_fires[i]),
+                    })
+                    .collect(),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {
