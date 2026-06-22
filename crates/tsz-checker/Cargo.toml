@@ -2052,6 +2052,10 @@ name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
 
 [[test]]
+name = "typeof_function_union_object_narrowing_tests"
+path = "tests/typeof_function_union_object_narrowing_tests.rs"
+
+[[test]]
 name = "function_type_predicate_alias_tests"
 path = "tests/function_type_predicate_alias_tests.rs"
 
