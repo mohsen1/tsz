@@ -1821,15 +1821,7 @@ impl<'a> CheckerState<'a> {
             for &member in members.iter() {
                 if member == TypeId::BOOLEAN {
                     for boolean_member in ["false", "true"] {
-                        let message = format_message(
-                            diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                            &[boolean_member],
-                        );
-                        self.error_at_index_type_span(
-                            error_anchor,
-                            &message,
-                            diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                        );
+                        self.emit_index_type_not_usable(error_anchor, boolean_member);
                     }
                     emitted_any = true;
                     continue;
@@ -1851,15 +1843,7 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            let message = format_message(
-                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                &["any"],
-            );
-            self.error_at_index_type_span(
-                error_anchor,
-                &message,
-                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-            );
+            self.emit_index_type_not_usable(error_anchor, "any");
             return true;
         }
 
@@ -1868,15 +1852,7 @@ impl<'a> CheckerState<'a> {
             index_type,
         ) {
             let index_type_str = self.format_type(invalid_member);
-            let message = format_message(
-                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                &[&index_type_str],
-            );
-            self.error_at_index_type_span(
-                error_anchor,
-                &message,
-                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-            );
+            self.emit_index_type_not_usable(error_anchor, &index_type_str);
             return true;
         }
 
@@ -1987,6 +1963,47 @@ impl<'a> CheckerState<'a> {
             return wants_string || wants_number;
         }
 
+        // tsc's `getPropertyTypeForIndexType` final message selection: a *concrete*
+        // object indexed by a valid index *kind* that is neither a string/number
+        // signature kind (TS2537, emitted above) nor a literal key (TS2339, emitted
+        // above / by the caller) reports TS2538 "Type 'X' cannot be used as an index
+        // type". The only kind that reaches here is the `symbol` / `unique symbol`
+        // (ESSymbolLike) family: a matching symbol index would have been accepted by
+        // the key-space check before this path runs, so reaching here means the
+        // concrete object has no symbol index for the key. tsc reserves TS2536
+        // ("cannot be used to index type") for generic / type-parameter object
+        // types, which the generic guard above already returns `false` for; without
+        // this branch a concrete `symbol` index fell through to the caller's terminal
+        // TS2536, diverging from tsc on the code (#14230 family).
+        if (object_has_shape || object_is_array_like)
+            && !object_is_type_parameter_ref
+            && crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                self.ctx.types,
+                index_type,
+            )
+        {
+            let index_type_str = self.format_type(index_type);
+            self.emit_index_type_not_usable(error_anchor, &index_type_str);
+            return true;
+        }
+
         false
+    }
+
+    /// Emit TS2538 ("Type 'X' cannot be used as an index type") anchored at the
+    /// index node. `index_type_display` is the already-formatted index type (e.g.
+    /// `"any"`, `"symbol"`, or a `format_type` result) so callers control how the
+    /// offending member is rendered.
+    fn emit_index_type_not_usable(&mut self, error_anchor: NodeIndex, index_type_display: &str) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let message = format_message(
+            diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            &[index_type_display],
+        );
+        self.error_at_index_type_span(
+            error_anchor,
+            &message,
+            diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+        );
     }
 }
