@@ -1261,14 +1261,19 @@ impl<'a> CheckerState<'a> {
     /// class's properties and methods, aggregating getter/setter types.
     pub(super) fn class_instance_process_deferred_accessors(
         &mut self,
+        class_idx: NodeIndex,
         b: &mut ClassInstanceBuilder<'_>,
     ) {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
         if !b.deferred_accessors.is_empty() {
-            let mut partial_props: Vec<PropertyInfo> =
+            // Base members (own fields + own methods) shared by every accessor's
+            // partial `this`. Built once; accessor placeholders are layered on
+            // per iteration so a getter body that reads an *earlier* accessor
+            // observes its already-resolved type rather than an `any`
+            // placeholder.
+            let mut base_props: Vec<PropertyInfo> =
                 Vec::with_capacity(b.properties.len() + b.methods.len());
-            partial_props.extend(b.properties.values().cloned());
+            base_props.extend(b.properties.values().cloned());
             for (&name, method) in &b.methods {
                 let (signatures, optional) = if !method.overload_signatures.is_empty() {
                     (&method.overload_signatures, method.overload_optional)
@@ -1278,7 +1283,7 @@ impl<'a> CheckerState<'a> {
                 if signatures.is_empty() {
                     continue;
                 }
-                let type_id = factory.callable(CallableShape {
+                let type_id = self.ctx.types.factory().callable(CallableShape {
                     call_signatures: signatures.clone(),
                     construct_signatures: Vec::new(),
                     properties: Vec::new(),
@@ -1287,7 +1292,7 @@ impl<'a> CheckerState<'a> {
                     symbol: None,
                     is_abstract: false,
                 });
-                partial_props.push(PropertyInfo {
+                base_props.push(PropertyInfo {
                     name,
                     type_id,
                     write_type: type_id,
@@ -1304,27 +1309,84 @@ impl<'a> CheckerState<'a> {
                     non_widening: false,
                 });
             }
-            let partial_type = factory.object_with_index(ObjectShape {
-                properties: partial_props,
-                string_index: b.string_index,
-                number_index: b.number_index,
-                symbol: current_sym,
-                ..ObjectShape::default()
-            });
-            self.ctx.this_type_stack.push(partial_type);
+            let deferred_accessors = std::mem::take(&mut b.deferred_accessors);
 
-            // Update enclosing_class.cached_instance_this_type to the current
-            // partial type so that `this` evaluation inside getter/setter bodies
-            // (via class_member_this_type → cached_instance_this) sees the
-            // up-to-date type including properties and methods — not the stale
-            // prescan type from Phase 0.  Without this, `get y() { return this; }`
-            // infers a return type that doesn't match partial_type, preventing the
-            // ThisType rewrite and causing false TS2339 on the accessor property.
-            if let Some(ref mut info) = self.ctx.enclosing_class {
-                info.cached_instance_this_type = Some(partial_type);
+            // Distinct accessor names to layer onto each partial `this`, deduped
+            // once (against the base members and each other) rather than per
+            // iteration. Every accessor member stays present in every partial so
+            // a forward reference (`get a() { return this.b; }` before `b`) never
+            // draws a false TS2339; its type is read fresh from `b.accessors`
+            // each iteration so an already-processed accessor contributes its
+            // resolved type while the rest stay `any`.
+            let mut placeholder_accessors: Vec<&DeferredAccessor> = Vec::new();
+            let mut placeholder_seen: FxHashSet<Atom> =
+                base_props.iter().map(|prop| prop.name).collect();
+            for ad in &deferred_accessors {
+                if placeholder_seen.insert(ad.name_atom) {
+                    placeholder_accessors.push(ad);
+                }
             }
 
-            for deferred in std::mem::take(&mut b.deferred_accessors) {
+            let mut pushed_this = false;
+            for deferred in &deferred_accessors {
+                // (Re)build the partial `this` reflecting accessor types resolved
+                // so far. The accurate field types keep `class_member_this_type`
+                // from falling back to a prescan partial that degrades an
+                // unannotated field to `any`, and an accessor already processed in
+                // this loop contributes its resolved type, so a getter reading an
+                // earlier getter (`get b() { return this.a; }`) sees `a`'s real
+                // type (#14511).
+                let mut props = base_props.clone();
+                for ad in &placeholder_accessors {
+                    let resolved = b
+                        .accessors
+                        .get(&ad.name_atom)
+                        .and_then(|a| a.getter.or(a.setter))
+                        .unwrap_or(TypeId::ANY);
+                    props.push(PropertyInfo {
+                        name: ad.name_atom,
+                        type_id: resolved,
+                        write_type: resolved,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: true,
+                        visibility: ad.visibility,
+                        parent_id: current_sym,
+                        declaration_order: ad.declaration_order,
+                        is_string_named: false,
+                        is_symbol_named: ad.is_symbol_named,
+                        single_quoted_name: false,
+                        non_widening: false,
+                    });
+                }
+                let partial_type = self.ctx.types.factory().object_with_index(ObjectShape {
+                    properties: props,
+                    string_index: b.string_index,
+                    number_index: b.number_index,
+                    symbol: current_sym,
+                    ..ObjectShape::default()
+                });
+                if pushed_this {
+                    self.ctx.this_type_stack.pop();
+                }
+                self.ctx.this_type_stack.push(partial_type);
+                pushed_this = true;
+
+                // Publish the partial as the in-progress instance type so a
+                // re-entrant `this` resolution during body inference observes the
+                // up-to-date field types (mirrors the phase-2 deferred-method
+                // caching), and keep `cached_instance_this_type` in sync so
+                // `class_member_this_type` returns the current construction state
+                // rather than the stale Phase-0 prescan type.
+                self.ctx
+                    .class_instance_type_cache
+                    .borrow_mut()
+                    .insert(class_idx, partial_type);
+                if let Some(ref mut info) = self.ctx.enclosing_class {
+                    info.cached_instance_this_type = Some(partial_type);
+                }
+
                 if deferred.is_getter {
                     let getter_type = if deferred.accessor.type_annotation.is_some() {
                         self.get_type_from_type_node(deferred.accessor.type_annotation)
@@ -1333,7 +1395,10 @@ impl<'a> CheckerState<'a> {
                     {
                         jsdoc_type
                     } else {
-                        let t = self.infer_getter_return_type(deferred.accessor.body);
+                        let t = self.infer_getter_return_type_for_node(
+                            deferred.member_idx,
+                            deferred.accessor.body,
+                        );
                         self.ctx.node_types.insert(deferred.member_idx.0, t);
                         // When a getter without an explicit return type annotation
                         // infers its return type from the body and the result is the
@@ -1411,7 +1476,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.ctx.this_type_stack.pop();
+            if pushed_this {
+                self.ctx.this_type_stack.pop();
+            }
         }
 
         if let RestoreEnclosingClass::To(prev_enclosing_class) =
