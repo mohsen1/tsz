@@ -217,10 +217,10 @@ mod tests {
 
     #[test]
     fn identifier_start_admits_underscore_dollar_and_letters_only() {
-        for b in [b'_', b'$', b'a', b'Z'] {
+        for b in *b"_$aZ" {
             assert!(is_ascii_identifier_start(b));
         }
-        for b in [b'0', b'9', b' ', b'.', b'-'] {
+        for b in *b"09 .-" {
             assert!(!is_ascii_identifier_start(b));
         }
         // Non-ASCII bytes are never identifier-start under the ASCII fast path.
@@ -229,10 +229,10 @@ mod tests {
 
     #[test]
     fn identifier_continue_additionally_admits_digits() {
-        for b in [b'_', b'$', b'a', b'Z', b'0', b'9'] {
+        for b in *b"_$aZ09" {
             assert!(is_ascii_identifier_continue(b));
         }
-        for b in [b' ', b'.', b'-', b'('] {
+        for b in *b" .-(" {
             assert!(!is_ascii_identifier_continue(b));
         }
     }
