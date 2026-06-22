@@ -252,10 +252,12 @@ fn has_surface_this_relative_wrapper(
         fuel -= 1;
 
         match db.lookup(current) {
-            Some(TypeData::Array(element))
-            | Some(TypeData::ReadonlyType(element))
-            | Some(TypeData::NoInfer(element))
-            | Some(TypeData::KeyOf(element)) => stack.push(element),
+            Some(
+                TypeData::Array(element)
+                | TypeData::ReadonlyType(element)
+                | TypeData::NoInfer(element)
+                | TypeData::KeyOf(element),
+            ) => stack.push(element),
             Some(TypeData::Tuple(elements)) => {
                 stack.extend(
                     db.tuple_list(elements)
