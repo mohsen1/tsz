@@ -1264,6 +1264,52 @@ fn annotation_widen_array_string_element_but_not_number_element() {
 }
 
 #[test]
+fn widen_array_of_four_member_literal_union_to_string_array() {
+    // tsc widens an array-literal element union to its primitive base
+    // regardless of member count: `['A','B','C','D']` is `string[]`, not
+    // `('A'|'B'|'C'|'D')[]`. The generic union arm only widens "small" (<=3)
+    // literal unions as a RequiresWidening proxy, so the array arm must widen
+    // literal element unions of any size via `widen_literal_type`.
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![
+        interner.literal_string("A"),
+        interner.literal_string("B"),
+        interner.literal_string("C"),
+        interner.literal_string("D"),
+    ]);
+    let arr = interner.array(union);
+    let widened = widen_type(&interner as &dyn crate::construction::TypeDatabase, arr);
+    assert_eq!(
+        widened,
+        interner.array(TypeId::STRING),
+        "4-member literal element union widens to string[] like the 3-member case"
+    );
+}
+
+#[test]
+fn widen_array_of_literal_union_with_null_not_force_widened() {
+    // A mixed literal+null element union is NOT a pure literal-bearing union;
+    // `array_element_union_widens_literals` returns false, so the array arm
+    // does not force-widen it to `string[]` (conservative baseline that keeps
+    // the literal members available for downstream narrowing).
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![
+        interner.literal_string("A"),
+        interner.literal_string("B"),
+        interner.literal_string("C"),
+        interner.literal_string("D"),
+        TypeId::NULL,
+    ]);
+    let arr = interner.array(union);
+    let widened = widen_type(&interner as &dyn crate::construction::TypeDatabase, arr);
+    assert_ne!(
+        widened,
+        interner.array(TypeId::STRING),
+        "literal+null element union must not collapse to string[]"
+    );
+}
+
+#[test]
 fn annotation_widen_union_first_display_member() {
     let interner = TypeInterner::new();
     let prop_type = interner.union(vec![

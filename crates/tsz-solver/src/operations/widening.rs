@@ -674,16 +674,31 @@ fn widen_type_cached(
 
         // Arrays: recursively widen element type
         Some(TypeData::Array(element_type)) => {
-            let widened = widen_type_cached(
-                db,
-                element_type,
-                cache,
-                widen_boolean_intrinsics,
-                widen_functions,
-                widen_object_union_members,
-                preserve_booleans_in_rest_tuples,
-                respect_object_freshness,
-            );
+            // An array literal's element type is always a fresh expression type
+            // (tsc's RequiresWidening), so a literal element union widens to its
+            // primitive base regardless of member count — `['A','B','C','D']`
+            // (4 fresh members) widens to `string[]` exactly like the 3-member
+            // case. The general `Union` arm below only widens "small" (≤3) literal
+            // unions as a RequiresWidening proxy, which wrongly preserves larger
+            // fresh element unions. Widen array-element literal unions directly
+            // here via `widen_literal_type`, which has no count threshold and is
+            // gated on `array_element_union_widens_literals` (a literal-bearing
+            // union of only literals/already-widened primitives — never an alias
+            // union that mixes in objects/null/undefined).
+            let widened = if crate::visitor::array_element_union_widens_literals(db, element_type) {
+                widen_literal_type(db, element_type)
+            } else {
+                widen_type_cached(
+                    db,
+                    element_type,
+                    cache,
+                    widen_boolean_intrinsics,
+                    widen_functions,
+                    widen_object_union_members,
+                    preserve_booleans_in_rest_tuples,
+                    respect_object_freshness,
+                )
+            };
             if widened != element_type {
                 let widened_arr = db.array(widened);
                 propagate_display_alias(db, type_id, widened_arr);
