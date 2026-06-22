@@ -182,13 +182,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         if params.is_empty() {
-            // No named parameters to widen — *unless* the check is a still-deferred
-            // reducible meta-type (indexed access / `keyof` / conditional) whose
-            // match failure is resolver-state dependent, not a definitive false:
-            // committing wrongly collapses `Parameters<Atom['read']>` to `never`
-            // while `Atom['read']` is an unreduced `IndexAccess` (#14164). Only the
-            // check side is gated, so `[] extends [T, ...T[]]` stays false (#14232).
-            if crate::type_queries::is_generic_conditional_check_type(self.interner(), check_type) {
+            // No named parameters to widen unless the check is an unresolved
+            // operator. Do not use the broader generic-marker predicate: string
+            // mappings like `Lowercase<T>` are evaluated through constraints.
+            if matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Conditional(_))
+            ) {
                 return false;
             }
             return true;
