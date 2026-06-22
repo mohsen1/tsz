@@ -1,8 +1,94 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Recover a non-generic `readonly` array / `readonly` tuple type-alias name
+    /// from an argument expression's declared annotation, for the `TS2345`
+    /// argument-mismatch diagnostic.
+    ///
+    /// tsz interns array and `readonly` array/tuple types purely structurally, so
+    /// a shared `readonly number[]` `TypeId` carries no per-reference
+    /// `aliasSymbol`; the diagnostic formatter's reverse `find_def_for_type`
+    /// lookup deliberately excludes `Array`/`ReadonlyType` because that lookup is
+    /// unsound for structurally-interned ids (many aliases share one id). `tsc`
+    /// renders such a source by the alias name it was *referenced through*, which
+    /// is recoverable only from the source expression's declared annotation —
+    /// exactly as the `TS2322` `AssignmentSource` role already does. A *generic*
+    /// alias (`Immutable<number>`) survives as an `Application` and keeps its name
+    /// already, so only the non-generic collapse is repaired here.
+    ///
+    /// `source_expr_idx` is the source/argument expression node; the annotation is
+    /// resolved through its declaring identifier, so a non-identifier source (an
+    /// array literal, a call, an assertion) yields `None` and keeps the existing
+    /// structural display.
+    pub(in crate::error_reporter) fn readonly_array_alias_source_display(
+        &mut self,
+        source_expr_idx: NodeIndex,
+        source_type: TypeId,
+    ) -> Option<String> {
+        // Scope strictly to the `readonly` array / `readonly` tuple forms that
+        // lose their alias on interning; every other source keeps its display.
+        crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source_type)?;
+
+        // Resolve the annotation as a reference to a registered type alias; this
+        // validates the `TYPE_REFERENCE` kind and the alias binding in one step.
+        let annotation_idx = self.declared_source_type_annotation_node(source_expr_idx)?;
+        let def_id = self.annotation_type_reference_alias_def_id(self.ctx.arena, annotation_idx)?;
+
+        // Only a bare, non-generic alias collapses to the shared structural id and
+        // loses its name; a generic alias (`Immutable<number>`) keeps its name via
+        // the `Application` path, so reject a reference with type arguments or an
+        // alias with type parameters.
+        let reference_has_type_arguments = self
+            .ctx
+            .arena
+            .get(annotation_idx)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            .is_some_and(|type_ref| type_ref.type_arguments.is_some());
+        if reference_has_type_arguments
+            || self
+                .ctx
+                .definition_store
+                .get(def_id)
+                .is_none_or(|def| !def.type_params.is_empty())
+        {
+            return None;
+        }
+
+        // Defer to the structural fallback in the same cases the `TS2322` source
+        // path does, reusing the already-resolved `annotation_idx`/`def_id`:
+        //  - a source identifier declared `unknown`/`any` but flow-narrowed to a
+        //    concrete type renders its narrowed type, not its declared annotation;
+        //  - a `typeof`-bodied alias keeps its own display policy;
+        //  - a computed-body alias (a conditional / indexed-access / `keyof` /
+        //    intrinsic body that tsc renders by its underlying type) drops its
+        //    `aliasSymbol` and must not be repainted with the alias name.
+        let ident_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(source_expr_idx);
+        if self.source_identifier_narrowed_from_unknown_or_any(ident_idx, source_type) {
+            return None;
+        }
+        if self.annotation_names_type_query_alias(self.ctx.arena, annotation_idx) {
+            return None;
+        }
+        if crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            def_id,
+        )
+        .is_some()
+        {
+            return None;
+        }
+
+        let annotation_text = self.declared_type_annotation_text_for_expression(source_expr_idx)?;
+        Some(self.format_declared_annotation_for_diagnostic(&annotation_text))
+    }
+
     pub(in crate::error_reporter) fn declared_source_annotation_names_type_query_alias(
         &self,
         expr_idx: NodeIndex,

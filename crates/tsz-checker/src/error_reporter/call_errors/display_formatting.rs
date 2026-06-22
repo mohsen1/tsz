@@ -1861,6 +1861,12 @@ impl<'a> CheckerState<'a> {
         {
             return "IArguments".to_string();
         }
+        // Preserve the declared alias display for readonly array/tuple
+        // arguments before structural fallbacks collapse it.
+        if let Some(alias) = self.readonly_array_alias_source_display(expr_idx, arg_type) {
+            return alias;
+        }
+
         if query_common::tuple_elements(self.ctx.types, arg_type).is_some()
             && self
                 .ctx
