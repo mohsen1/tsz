@@ -200,9 +200,9 @@ implement the documented priority tiers (the doc-comment in `emit_helpers`):
 
 ```text
 priority 0 : __extends, __makeTemplateObject
-priority 1 : __assign, __createBinding
+priority 1 : __assign, __createBinding, __setModuleDefault
 priority 2 : __decorate, __esDecorate/__runInitializers, __propKey,
-             __importStar (+__setModuleDefault), __exportStar
+             __importStar, __exportStar
 priority 3 : __metadata
 priority 4 : __param
 priority 5 : __awaiter
@@ -234,8 +234,11 @@ Two intra-tier tiebreaks are encoded as separate flags rather than position:
   `fallback_class_private_order` both consult it.
 
 `__setModuleDefault` is not a `HelpersNeeded` flag — `emit_helpers` emits it
-unconditionally *just before* `__importStar` whenever `import_star` is set,
-because the star helper's body calls it. `__setFunctionName` floats: it is emitted
+whenever `import_star` is set, because the star helper's body calls it. It is a
+priority-1 helper in `tsc`'s `compareEmitHelpers` table
+(`typescript:commonjscreatevalue`), so it is emitted in the priority-1 tier
+(right after `__createBinding`), before any priority-2 helper — not bundled with
+`__importStar`. `__setFunctionName` floats: it is emitted
 right after the priority-6 block when paired with `es_decorate` (TC39), but with
 the unprioritized helpers otherwise — `needed_names` mirrors this with the two
 `set_function_name` pushes around `push_unprioritized_names`.
