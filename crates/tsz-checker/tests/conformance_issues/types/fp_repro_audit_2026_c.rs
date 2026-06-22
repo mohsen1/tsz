@@ -52,7 +52,6 @@ export { c }
 }
 
 #[test]
-#[ignore = "reproduces #14164"]
 fn issue_14164_extracted_method_callable_no_ts2349() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -68,6 +67,51 @@ export { viaIndex }
     assert!(
         !has_error(&diags, 2349),
         "no TS2349 — extracted method type must keep its call signature. Actual: {diags:#?}"
+    );
+}
+
+/// #14164 adjacent: the same shape with non-canonical binder names and a
+/// non-generic interface. The fix follows the *shape* (a still-deferred indexed
+/// access as a conditional check type), not the `Atom`/`Getter` spellings, so an
+/// extracted function-typed parameter stays callable here too.
+#[test]
+fn issue_14164_extracted_method_callable_renamed_binders() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Widget<Payload> { handler: (cb: Sink) => Payload }
+type Sink = <Z>(w: Widget<Z>) => Z
+declare const wq: Widget<string>
+type SinkFromIndex = Parameters<Widget<unknown>['handler']>[0]
+function run(cb: SinkFromIndex) { return cb(wq) }
+export { run }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2349),
+        "no TS2349 — extracted method type stays callable regardless of binder names. Actual: {diags:#?}"
+    );
+}
+
+/// #14164 adjacent (negative control): `Parameters<T>` over a check that
+/// genuinely resolves to a non-callable concrete type must still report the
+/// `(...args: any) => any` constraint violation (TS2344) — the deferral only
+/// applies while the indexed access is unreduced, never to a resolved concrete
+/// non-function. Guards against the fix over-deferring into a silent pass.
+#[test]
+fn issue_14164_parameters_over_concrete_non_callable_still_ts2344() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Holder { count: number }
+type Bad = Parameters<Holder['count']>
+export type { Bad }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&diags, 2344),
+        "TS2344 expected — `Holder['count']` resolves to `number`, which violates the \
+         `(...args: any) => any` constraint. Actual: {diags:#?}"
     );
 }
 

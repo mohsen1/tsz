@@ -182,8 +182,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         if params.is_empty() {
-            // No named parameters to widen: the failed relation already used
-            // the most permissive forms available.
+            // No named parameters to widen — *unless* the check is a still-deferred
+            // reducible meta-type (indexed access / `keyof` / conditional) whose
+            // match failure is resolver-state dependent, not a definitive false:
+            // committing wrongly collapses `Parameters<Atom['read']>` to `never`
+            // while `Atom['read']` is an unreduced `IndexAccess` (#14164). Only the
+            // check side is gated, so `[] extends [T, ...T[]]` stays false (#14232).
+            if crate::type_queries::is_generic_conditional_check_type(self.interner(), check_type) {
+                return false;
+            }
             return true;
         }
         let mut substitution = TypeSubstitution::new();
