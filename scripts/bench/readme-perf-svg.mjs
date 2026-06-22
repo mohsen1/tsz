@@ -238,11 +238,28 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+// Mirror the bench harness's slowdown-failure policy (default 1.5x; see
+// scripts/bench/project-fixtures.sh tsz_project_slowdown_failure_factor): a row
+// where tsz is >=1.5x slower than tsgo is a failure and must not count toward the
+// README headline chart, matching the website chart which drops these rows.
+const SLOWDOWN_FAILURE_FACTOR = 1.5;
+
 function hasSuccessfulTimingPair(row) {
   return !row?.status
     && row?.winner !== "error"
     && finiteNumber(row?.tsz_ms) > 0
     && finiteNumber(row?.tsgo_ms) > 0;
+}
+
+// A row counts toward the README headline only if it has a valid timing pair AND
+// tsz is within the slowdown-failure threshold of tsgo (i.e. not a >=1.5x-slower
+// failure). Matches the site chart and the perf gate so the three never diverge.
+function countsTowardReadmeChart(row) {
+  if (!hasSuccessfulTimingPair(row)) return false;
+  const tszMs = finiteNumber(row?.tsz_ms);
+  const tsgoMs = finiteNumber(row?.tsgo_ms);
+  if (tszMs === null || tsgoMs === null || tsgoMs <= 0) return false;
+  return tszMs < SLOWDOWN_FAILURE_FACTOR * tsgoMs;
 }
 
 function isProjectBenchmark(row) {
@@ -254,7 +271,7 @@ function benchmarkRowsForReadme(data) {
   // no longer excluded, so the README total matches the site's micro chart.
   return Array.isArray(data?.results)
     ? data.results.filter((row) => (
-      hasSuccessfulTimingPair(row)
+      countsTowardReadmeChart(row)
         && !isProjectBenchmark(row)
     ))
     : [];
@@ -263,7 +280,7 @@ function benchmarkRowsForReadme(data) {
 function projectRowsForReadme(data) {
   return Array.isArray(data?.results)
     ? data.results.filter((row) => (
-      hasSuccessfulTimingPair(row)
+      countsTowardReadmeChart(row)
         && isProjectBenchmark(row)
     ))
     : [];
