@@ -446,6 +446,78 @@ fn array_isarray_keeps_mutable_and_readonly_array_members() {
     );
 }
 
+/// A union of two *distinct* mutable arrays must keep both members with their
+/// concrete element types: each is a subtype of the predicate `any[]`, so tsc
+/// keeps it rather than substituting `any[]`. Guards the regression where a
+/// mutable array `number[]` was collapsed to `any[]` because
+/// `any[] <: number[]` (its element `any <: number`) tripped the
+/// any-array-compat substitution that is meant only for non-array members.
+#[test]
+fn array_isarray_keeps_multiple_distinct_mutable_arrays() {
+    let interner = TypeInterner::new();
+    let mutable_numbers = interner.array(TypeId::NUMBER);
+    let mutable_strings = interner.array(TypeId::STRING);
+    let union = interner.union(vec![mutable_numbers, mutable_strings, TypeId::BOOLEAN]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    let expected = interner.union2(mutable_numbers, mutable_strings);
+    let any_array = interner.array(TypeId::ANY);
+
+    assert_eq!(
+        narrowed, expected,
+        "Array.isArray should keep both distinct mutable array members, not \
+         collapse them to any[]"
+    );
+    assert_ne!(
+        narrowed, any_array,
+        "the mutable array members must not be substituted with any[]"
+    );
+}
+
+/// A mutable array alongside a non-array, any-array-compatible member: tsc
+/// keeps the genuine array (`number[] <: any[]`) and substitutes the predicate
+/// `any[]` only for the structurally-array-like-but-not-array member
+/// (`{ [k: string]: any }`). The fix must preserve the concrete `number[]`
+/// element type while still substituting the index-signature member.
+#[test]
+fn array_isarray_substitutes_only_nonarray_any_compat_member() {
+    let interner = TypeInterner::new();
+    let mutable_numbers = interner.array(TypeId::NUMBER);
+    let any_string_index = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![mutable_numbers, any_string_index, TypeId::BOOLEAN]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    let any_array = interner.array(TypeId::ANY);
+
+    let members = match interner.lookup(narrowed) {
+        Some(TypeData::Union(list)) => interner.type_list(list).to_vec(),
+        _ => vec![narrowed],
+    };
+    assert!(
+        members.contains(&mutable_numbers),
+        "the concrete mutable array `number[]` must be preserved, got {members:?}"
+    );
+    assert!(
+        members.contains(&any_array),
+        "the non-array `{{ [k: string]: any }}` member must be substituted with any[], \
+         got {members:?}"
+    );
+}
+
 // =============================================================================
 // `in`-operator narrowing of the `object` intrinsic chained with `typeof`
 // =============================================================================
