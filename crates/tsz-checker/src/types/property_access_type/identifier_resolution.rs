@@ -845,8 +845,24 @@ impl<'a> CheckerState<'a> {
                 // instead of D, causing assignment mismatches in polymorphic
                 // `this` checks (e.g., `this.self = this.self2` would fail
                 // because D_subst != D even though they're semantically equal).
-                if crate::query_boundaries::common::contains_this_type(self.ctx.types, prop_type)
-                    && prop_type != this_substitution_target
+                // When the substitution target is itself a *compound* `this`-relative
+                // type (e.g. accessing a member on `this.children: this[]` inside the
+                // class body), the apparent type's own `this` was already bound to the
+                // receiver by the solver, and any `this` remaining in `prop_type` is
+                // element-derived — it is the *same* polymorphic `this` and must stay
+                // polymorphic. Substituting it with the this-bearing receiver would
+                // spuriously nest `this` (e.g. `push(...items: this[])` would become
+                // `this[][]`, drawing a false TS2345). The empty branch also
+                // short-circuits the raw-recovery `else if` below, which would
+                // otherwise re-introduce the same nesting.
+                if self.receiver_expr_is_this_relative(access.expression)
+                    && self.type_is_compound_this_relative(this_substitution_target)
+                {
+                    // Leave `prop_type` as the solver produced it.
+                } else if crate::query_boundaries::common::contains_this_type(
+                    self.ctx.types,
+                    prop_type,
+                ) && prop_type != this_substitution_target
                 {
                     prop_type = crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,
