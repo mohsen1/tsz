@@ -10,7 +10,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-impl<'a> DeclarationEmitter<'a> {
+impl DeclarationEmitter<'_> {
     pub(in crate::declaration_emitter) fn function_body_preferred_return_type_text(
         &self,
         body_idx: NodeIndex,

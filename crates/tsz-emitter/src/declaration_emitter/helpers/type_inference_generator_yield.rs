@@ -17,7 +17,7 @@ struct YieldOperand {
     is_fresh_literal: bool,
 }
 
-impl<'a> DeclarationEmitter<'a> {
+impl DeclarationEmitter<'_> {
     pub(in crate::declaration_emitter) fn generator_yield_return_type_text(
         &self,
         is_async: bool,

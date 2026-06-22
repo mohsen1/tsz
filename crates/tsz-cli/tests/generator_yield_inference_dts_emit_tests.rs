@@ -136,7 +136,7 @@ fn mixed_kind_literal_yields_do_not_collapse_to_any() {
         "mixed-kind literal yields must not fall back to Generator<any>:\n{dts}"
     );
     assert!(
-        dts.contains("\"go\"") && dts.contains("7"),
+        dts.contains("\"go\"") && dts.contains('7'),
         "both literal operands must survive the union:\n{dts}"
     );
     assert!(
