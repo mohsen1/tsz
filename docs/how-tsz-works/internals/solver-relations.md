@@ -268,9 +268,13 @@ dispatch. It runs, in order:
    keyed by a `RelationCacheKey`. Three values: `True`, `False`, and the
    budget-conditional `LimitTrue { fuel_band }` (honest only when the current
    `remaining_global_subtype_fuel() <= fuel_band`). Skipped under
-   `identity_cycle_check` (the key cannot encode identity mode) and for
-   context-dependent pairs (polymorphic `this`, class-check context), which use
-   the instance-local `local_relation_cache` instead.
+   `identity_cycle_check` (the key cannot encode identity mode) and for a
+   polymorphic-`this` pair with no resolvable receiver binding, which uses the
+   instance-local `local_relation_cache` instead. A class-check context is *not*
+   skipped: it is discriminated in the key by `RelationFlags::CLASS_CHECK_CONTEXT`
+   and a `this`-bearing pair with a resolvable binding by
+   `RelationCacheKey::this_context`, so both share the cross-checker cache in
+   their own partition (#13828).
 4. **Structural-identity fast path** — `QueryDatabase::canonical_id(source) ==
    canonical_id(target)` ⇒ `True` (graph-isomorphism canonicalization, after
    the cheap cache check).
@@ -506,8 +510,8 @@ solver lacks, so the checker injects them through the
 
 | Cache | Scope / owner | Key | Invalidation |
 | --- | --- | --- | --- |
-| Cross-checker relation cache | shared `QueryDatabase` | `RelationCacheKey` (source, target, behavior flags, `this_context`) | dropped with the query DB; never written for undetermined or context-dependent results |
-| `local_relation_cache` | one `SubtypeChecker` instance | `RelationCacheKey` | cleared by `reset`; for polymorphic-`this` / class-check pairs only |
+| Cross-checker relation cache | shared `QueryDatabase` | `RelationCacheKey` (source, target, behavior flags incl. `CLASS_CHECK_CONTEXT`, `this_context`) | dropped with the query DB; never written for undetermined results |
+| `local_relation_cache` | one `SubtypeChecker` instance | `RelationCacheKey` | cleared by `reset`; for polymorphic-`this` pairs with no resolvable receiver binding only |
 | `eval_cache` | one `SubtypeChecker` instance | `(TypeId, no_unchecked_indexed_access)` | cleared by `reset`; memoizes `evaluate_type` results + stability |
 | `CompatChecker::cache` | one `CompatChecker` | `(TypeId, TypeId)` | cleared by every policy-affecting setter |
 | `DefaultJudge::subtype_cache` / `eval_cache` | one `DefaultJudge` | `(TypeId, TypeId)` / `TypeId` | `clear_caches` |
@@ -523,13 +527,18 @@ Several **cache-honesty invariants** are essential to tsc parity:
 - **Weak-sensitivity is never cached across enforcement states.** The
   flag-agnostic `RelationCacheKey` cannot encode weak-type enforcement, so a
   result whose computation read `note_weak_type_sensitivity` is excluded.
-- **Context-dependent pairs stay local.** A pair carrying polymorphic `this`, or
-  checked inside a class-check context, depends on the resolver's current `this`
-  binding and the `is_class_symbol` closure — neither is in the key — so it uses
-  the instance-local memo, valid only for the checker's lifetime (one top-level
-  query). When a concrete `this` binding *is* available, `make_cache_key`
-  discriminates the shared key by it (`RelationCacheKey::this_context`,
-  issue 13828) so the pair can safely re-enter the shared cache.
+- **Context-dependent pairs are discriminated, not dropped.** A class-check
+  context is a behavior-affecting input (the `is_class_symbol` classifier can
+  make a no-`DefId` class-flagged symbol nominal), but it is a pure function of
+  the program binder, fixed for the whole compilation, so whether it is active is
+  encoded as one bit in the key (`RelationFlags::CLASS_CHECK_CONTEXT`, issue
+  13828); class-context verdicts then share the cross-checker cache in their own
+  partition. A pair carrying polymorphic `this` depends on the resolver's current
+  `this` binding; when a concrete binding is available `make_cache_key`
+  discriminates the shared key by it (`RelationCacheKey::this_context`, issue
+  13828) so the pair re-enters the shared cache. Only a `this`-bearing pair with
+  *no* resolvable receiver binding stays on the instance-local memo, valid for
+  the checker's lifetime (one top-level query).
 - **`maybe_keys` (tsc `maybeKeys` parity, issue 13241).** A
   `CycleDetected`/`DepthExceeded` verdict is a *Maybe*: it is recorded in the
   `maybe_keys` stack and only **promoted** to a definitive cache entry when the
