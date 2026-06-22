@@ -281,6 +281,22 @@ pub struct TypeInterner {
     /// sibling `extract_type_params_cache` / `widen_type_cache` pure-function
     /// memos.
     pub(super) contains_type_by_id_cache: DashMap<(TypeId, TypeId), bool, FxBuildHasher>,
+    /// Result memo for `prune_impossible_object_union_members(type_id)`, keyed by
+    /// the union `TypeId`.
+    ///
+    /// Pruning impossible object members from a union is a pure function of the
+    /// immutable interned type `DAG`: it inspects only structural predicates
+    /// (literal-discriminant conflicts in intersection members, never-typed or
+    /// impossible-unit required object properties) over resolver-free
+    /// `evaluate_type` / `is_subtype_of` walks, threading no resolver, substitution
+    /// environment, or compiler option. The pruned result is therefore stable per
+    /// input union `TypeId` within one interner. Object-union property access asks
+    /// it for the same union `TypeId` on every property read against a
+    /// discriminated union (`property_visitor.rs`), and the checker re-asks it via
+    /// `prune_impossible_object_union_members_with_env`; memoizing on the interner
+    /// collapses the repeated O(N-member) prune walks to O(1), exactly like the
+    /// sibling `contains_type_by_id_cache` / `widen_type_cache` pure-function memos.
+    pub(super) prune_union_members_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Result memo for `collect_contravariant_infer_names`, keyed by the pattern
     /// `TypeId`.
     ///
@@ -483,6 +499,8 @@ pub struct TypePredicateCacheStatistics {
     pub contains_file_relative_cache_entries: usize,
     /// Number of memoized structural `contains_type_by_id(root, target)` results.
     pub contains_type_by_id_cache_entries: usize,
+    /// Number of memoized `prune_impossible_object_union_members(type_id)` results.
+    pub prune_union_members_cache_entries: usize,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -525,6 +543,7 @@ impl TypeInterner {
             contains_file_relative_cache_entries: self
                 .predicate_cache_entries_for(PredicateCacheKind::ContainsFileRelative),
             contains_type_by_id_cache_entries: self.contains_type_by_id_cache.len(),
+            prune_union_members_cache_entries: self.prune_union_members_cache.len(),
         }
     }
 
@@ -589,6 +608,7 @@ impl TypeInterner {
             widen_type_cache: DashMap::with_hasher(FxBuildHasher),
             extract_type_params_cache: DashMap::with_hasher(FxBuildHasher),
             contains_type_by_id_cache: DashMap::with_hasher(FxBuildHasher),
+            prune_union_members_cache: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
@@ -875,6 +895,19 @@ impl TypeInterner {
     pub fn set_contains_type_by_id_memo(&self, root: TypeId, target: TypeId, result: bool) {
         self.contains_type_by_id_cache
             .insert((root, target), result);
+    }
+
+    /// Look up the memoized `prune_impossible_object_union_members(type_id)`
+    /// result.
+    #[inline]
+    pub fn prune_union_members_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        self.prune_union_members_cache.get(&type_id).map(|v| *v)
+    }
+
+    /// Record the `prune_impossible_object_union_members(type_id)` result.
+    #[inline]
+    pub fn set_prune_union_members_memo(&self, type_id: TypeId, result: TypeId) {
+        self.prune_union_members_cache.insert(type_id, result);
     }
 
     /// Look up the memoized `collect_contravariant_infer_names` name list for a
