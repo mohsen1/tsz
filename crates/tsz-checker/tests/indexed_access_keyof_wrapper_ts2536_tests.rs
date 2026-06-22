@@ -118,6 +118,35 @@ fn key_remapping_wrapper_still_reports_ts2536() {
 }
 
 #[test]
+fn direct_keyof_intersection_index_still_reports_ts2536() {
+    // tsc distinguishes a *type-parameter* index `K extends keyof (T & {})`
+    // (allowed) from a *direct* keyof value `k: keyof (T & {})` (still TS2536),
+    // even though both reduce to `keyof T`. Mirrors
+    // `conformance/types/unknown/unknownControlFlow.ts` `ff3`. The suppression
+    // must not extend to the direct-value form.
+    let src = "function ff3<T>(t: T, k: keyof (T & {})) { t[k]; }";
+    assert_eq!(
+        count(src, 2536),
+        1,
+        "a direct transformed-keyof value index must keep erroring: {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn direct_keyof_of_own_object_index_no_ts2536() {
+    // Control: indexing by the object's *own* `keyof T` (not a transform) is
+    // valid in tsc (`unknownControlFlow.ts` `ff1`), and unaffected.
+    let src = "function ff1<T>(t: T, k: keyof T) { t[k]; }";
+    assert_eq!(
+        count(src, 2536),
+        0,
+        "indexing by the object's own keyof is valid: {:?}",
+        codes(src)
+    );
+}
+
+#[test]
 fn foreign_type_parameter_keys_body_indexing_still_reports_ts2536() {
     // Expression-path negative control: the gate must not over-suppress. `keyof U`
     // (U extends T) is not assignable to keyof T, so `o[k]` keeps erroring.

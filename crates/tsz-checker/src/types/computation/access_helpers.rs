@@ -991,12 +991,24 @@ impl<'a> CheckerState<'a> {
     /// `TS2536` on this relation-backed query. Returns true when the index key
     /// space genuinely indexes `object_param` and the diagnostic must be
     /// suppressed.
+    ///
+    /// Suppression is restricted to a **type-parameter** index `K extends keyof
+    /// F<T>`. tsc allows an unconstrained generic `T` to be indexed by a *key
+    /// parameter* whose constraint reduces to `keyof T`, but a **direct**
+    /// transformed-keyof value such as `k: keyof (T & {})` still draws TS2536
+    /// even though `keyof (T & {})` reduces to `keyof T` (see
+    /// `conformance/types/unknown/unknownControlFlow.ts` `ff3`). Only the
+    /// type-parameter form is suppressed here; a direct keyof expression keeps
+    /// the heuristic's diagnostic.
     pub(crate) fn transformed_index_key_space_indexes_object(
         &mut self,
         index_type: TypeId,
         index_constraint: Option<TypeId>,
         object_param: TypeId,
     ) -> bool {
+        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type) {
+            return false;
+        }
         let constraint = index_constraint
             .or_else(|| {
                 crate::query_boundaries::common::type_parameter_constraint(
