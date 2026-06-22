@@ -265,6 +265,7 @@ mod type_inference_fallback_types;
 mod type_inference_flat_map;
 mod type_inference_foreign_names;
 mod type_inference_function_text;
+mod type_inference_generator_yield;
 mod type_inference_imported_calls;
 mod type_inference_imported_indexed_access;
 mod type_inference_instantiation;

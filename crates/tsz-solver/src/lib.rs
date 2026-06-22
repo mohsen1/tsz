@@ -186,13 +186,15 @@ pub mod computation {
     // Operations
     pub use crate::inference::infer_type_arguments_from_param_args;
     pub use crate::operations::infer_generic_function;
+    pub use crate::operations::widening::widen_literal_type;
     pub use crate::operations::{
         AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
         GenericCallRequest, GenericCallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
-        get_contextual_signature_cached_with_compat_checker,
+        get_async_iterable_element_type, get_contextual_signature_cached_with_compat_checker,
         get_contextual_signature_for_arity_cached_with_compat_checker,
         get_contextual_signature_for_arity_with_compat_checker,
-        get_contextual_signature_with_compat_checker, overload_failure_return_type,
+        get_contextual_signature_with_compat_checker, get_iterator_info,
+        overload_failure_return_type,
     };
 }
 
