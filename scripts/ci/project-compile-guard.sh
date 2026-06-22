@@ -418,60 +418,84 @@ install_application_deps() {
     echo "warn: application install dir missing: $dir" >&2
     return 1
   fi
-  # Make the app's package manager runnable. Only `npm` is guaranteed on the
-  # runner — the canary/guard jobs set up no Node toolchain — so every yarn (7),
-  # pnpm (10), and bun (1) app row failed with "<pm>: command not found" and went
-  # gray, leaving only the 2 npm rows measured (this is what emptied the
-  # compatibility dashboard to mostly-gray). corepack ships with Node and runs
-  # the app's pinned yarn/pnpm version without a global install, but it must be
-  # enabled and was itself absent here (so the old `&& command -v corepack`
-  # guard skipped routing and ran the missing PM directly). Ensure corepack
-  # (install via npm if missing), enable it, and route yarn/pnpm through it
-  # unconditionally; fetch bun via npm since it is not a corepack PM. All
-  # best-effort (|| true) — a still-missing PM falls through to the run below and
-  # is recorded fixture-invalid (gray), never a false tsz regression.
-  echo "Installing application deps: (cd $dir && $cmd)"
-  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-  # The self-hosted Cloud Run runner ships only npm — corepack/yarn/pnpm/bun are
-  # not on PATH, and npm's DEFAULT global prefix is neither writable nor on PATH,
-  # so a bare `npm i -g corepack` neither installs nor becomes invocable and every
-  # yarn/pnpm/bun app fell to "<pm>: command not found" -> gray. Install global
-  # tooling into a runner-writable prefix that we also put on PATH (the runner can
-  # reach the registry — npm ci already works for the npm apps). corepack then
-  # runs each app's pinned yarn/pnpm version; bun is fetched directly. Exports
-  # persist across rows via the function's shared shell env. Best-effort: a
-  # still-missing PM falls through and the row is recorded fixture-invalid (gray).
-  local pm_prefix="${TSZ_PM_PREFIX:-${HOME:-/tmp}/.tsz-pm}"
-  export NPM_CONFIG_PREFIX="$pm_prefix"
-  mkdir -p "$pm_prefix/bin" 2>/dev/null || true
-  case ":$PATH:" in
-    *":$pm_prefix/bin:"*) ;;
-    *) export PATH="$pm_prefix/bin:$PATH" ;;
-  esac
+  setup_application_package_managers
   local pm="${cmd%% *}"
+  # Pick a working entrypoint for the app's package manager. The bootstrap above
+  # tries to put a real `yarn`/`pnpm`/`bun` on PATH; if the direct binary still
+  # isn't there, fall back through independent mechanisms so one PM family's
+  # failure doesn't blank the rest:
+  #   - corepack (on PATH from the bootstrap) runs the app's pinned yarn/pnpm.
+  #   - Yarn Berry projects vendor their release in `.yarn/releases/*.cjs`; run
+  #     that directly with node when no yarn entrypoint resolved at all.
   case "$pm" in
     yarn | pnpm)
-      command -v corepack >/dev/null 2>&1 || npm i -g corepack >/dev/null 2>&1 || true
-      # Install the yarn/pnpm shims into our on-PATH prefix (the default
-      # install-directory is the unwritable/off-PATH Node bin dir).
-      corepack enable --install-directory "$pm_prefix/bin" >/dev/null 2>&1 \
-        || corepack enable >/dev/null 2>&1 || true
-      if command -v corepack >/dev/null 2>&1; then
-        echo "info: routing $pm install through corepack (resolves the app's pinned version)" >&2
-        cmd="corepack $cmd"
-      else
-        echo "warn: corepack still unavailable after bootstrap; $pm install will fail" >&2
+      if ! command -v "$pm" >/dev/null 2>&1; then
+        if command -v corepack >/dev/null 2>&1; then
+          echo "info: $pm not on PATH; running via corepack" >&2
+          cmd="corepack $cmd"
+        elif [ "$pm" = "yarn" ]; then
+          local vendored
+          vendored="$(ls "$dir"/.yarn/releases/yarn-*.cjs 2>/dev/null | head -1 || true)"
+          if [ -n "$vendored" ]; then
+            echo "info: yarn not on PATH; using the project's vendored release $vendored" >&2
+            cmd="node $vendored ${cmd#yarn }"
+          fi
+        fi
       fi
       ;;
-    bun)
-      command -v bun >/dev/null 2>&1 || npm i -g bun >/dev/null 2>&1 || true
-      ;;
   esac
+  echo "Installing application deps: (cd $dir && $cmd)"
   if ! ( cd "$dir" && run_with_timeout "${TSZ_APP_INSTALL_TIMEOUT:-360}" bash -c "$cmd" ); then
     echo "warn: application dep install failed: $dir" >&2
     return 1
   fi
   return 0
+}
+
+# Provision the package managers the application fixtures need, once per job. The
+# self-hosted Cloud Run runner ships only npm — yarn (7 rows), pnpm (10), and bun
+# (1) are not on PATH, and npm's DEFAULT global prefix is neither writable nor on
+# PATH, so a bare `npm i -g corepack` neither installs nor becomes invocable.
+# That left the whole application set "<pm>: command not found" -> fixture-invalid
+# (gray), which is what emptied the compatibility dashboard. Provision into a
+# runner-writable prefix we also put on PATH, using INDEPENDENT mechanisms so no
+# single failure blocks a whole PM family:
+#   - corepack (ships with Node; installed to our prefix if absent) + `enable
+#     --install-directory` drops real yarn/pnpm shims on PATH that resolve each
+#     app's pinned version.
+#   - pnpm and bun also ship standalone static-binary installers that need
+#     neither npm-global nor corepack, fetched directly as fallbacks.
+# The runner reaches the registry/CDNs (the npm apps' `npm ci` already works).
+# Exports persist across rows via the shared shell env. Best-effort throughout: a
+# still-missing PM leaves the row fixture-invalid (gray), never a false tsz
+# regression. The `[pm-setup]` line surfaces exactly what resolved in the CI log.
+_TSZ_PM_SETUP_DONE="${_TSZ_PM_SETUP_DONE:-0}"
+setup_application_package_managers() {
+  [ "$_TSZ_PM_SETUP_DONE" = "1" ] && return 0
+  _TSZ_PM_SETUP_DONE=1
+  local pm_home="${TSZ_PM_HOME:-${HOME:-/tmp}/.tsz-pm}"
+  mkdir -p "$pm_home/bin" 2>/dev/null || true
+  case ":$PATH:" in *":$pm_home/bin:"*) ;; *) export PATH="$pm_home/bin:$PATH" ;; esac
+  export NPM_CONFIG_PREFIX="$pm_home"
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  export COREPACK_HOME="$pm_home/corepack"
+
+  # corepack -> yarn + pnpm at each app's pinned version.
+  command -v corepack >/dev/null 2>&1 || npm i -g corepack >/dev/null 2>&1 || true
+  corepack enable --install-directory "$pm_home/bin" >/dev/null 2>&1 \
+    || corepack enable >/dev/null 2>&1 || true
+
+  # Standalone fallbacks (static binaries; no npm-global / corepack needed).
+  if ! command -v pnpm >/dev/null 2>&1; then
+    curl -fsSL https://get.pnpm.io/install.sh 2>/dev/null \
+      | env PNPM_HOME="$pm_home/bin" SHELL=bash sh - >/dev/null 2>&1 || true
+  fi
+  if ! command -v bun >/dev/null 2>&1; then
+    curl -fsSL https://bun.sh/install 2>/dev/null \
+      | env BUN_INSTALL="$pm_home" bash >/dev/null 2>&1 || true
+  fi
+
+  echo "[pm-setup] node=$(command -v node || echo -) npm=$(command -v npm || echo -) corepack=$(command -v corepack || echo -) yarn=$(command -v yarn || echo -) pnpm=$(command -v pnpm || echo -) bun=$(command -v bun || echo -)" >&2
 }
 
 # Generic handler for category:"application" canary rows: clone the pinned
