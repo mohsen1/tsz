@@ -786,7 +786,9 @@ impl<'a> CheckerState<'a> {
                 // `this[][]`, drawing a false TS2345). The empty branch also
                 // short-circuits the raw-recovery `else if` below, which would
                 // otherwise re-introduce the same nesting.
-                if self.type_is_compound_this_relative(this_substitution_target) {
+                if self.receiver_expr_is_this_relative(access.expression)
+                    && self.type_is_compound_this_relative(this_substitution_target)
+                {
                     // Leave `prop_type` as the solver produced it.
                 } else if crate::query_boundaries::common::contains_this_type(
                     self.ctx.types,

@@ -139,6 +139,57 @@ class Frozen {
     );
 }
 
+/// A generic receiver constrained to a class with `self(): this` is not a
+/// `this`-rooted receiver expression. Its return `this` must bind to the
+/// receiver type parameter, not remain raw polymorphic `this`.
+#[test]
+fn generic_constraint_receiver_still_binds_this_to_type_parameter() {
+    let source = r#"
+class A {
+  self() {
+    return this;
+  }
+}
+function f<T extends A>(x: T) {
+  x = x.self();
+}
+"#;
+    assert_eq!(
+        ts2322(source),
+        0,
+        "`x.self()` for `x: T extends A` must return `T`"
+    );
+}
+
+/// Ordinary union receivers whose member signatures mention `this` must still
+/// substitute `this` with the union receiver. Only `this`-rooted receiver
+/// expressions get the compound-this preservation rule.
+#[test]
+fn union_receiver_call_return_still_binds_this_to_union() {
+    let source = r#"
+class Foo {
+  doThing(): Promise<this> {
+    return Promise.resolve(this);
+  }
+}
+class Bar extends Foo {
+  bar: number = 0;
+}
+class Baz extends Foo {
+  baz: number = 0;
+}
+declare const a: Bar | Baz;
+a.doThing().then((result: Bar | Baz) => {
+  result;
+});
+"#;
+    assert_eq!(
+        ts2345(source),
+        0,
+        "`Promise<this>` from a union receiver must resolve to `Promise<Bar | Baz>`"
+    );
+}
+
 /// `sort(): this` read through a `this[]` receiver must still return the
 /// *array* `this[]` (the Array's own `this`), not collapse to the element
 /// `this`. Assigning the result to a `this[]` annotation must not draw

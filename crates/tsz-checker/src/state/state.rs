@@ -772,7 +772,7 @@ impl<'a> CheckerState<'a> {
                 return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
-                    self.this_substitution_target_for_receiver(receiver_type),
+                    self.this_substitution_target_for_receiver(access.expression, receiver_type),
                 );
             }
             if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
@@ -781,7 +781,10 @@ impl<'a> CheckerState<'a> {
                     return substitute_this_type_at_return_position(
                         self.ctx.types,
                         return_type,
-                        self.this_substitution_target_for_receiver(receiver_type),
+                        self.this_substitution_target_for_receiver(
+                            access.expression,
+                            receiver_type,
+                        ),
                     );
                 }
             }
@@ -793,7 +796,7 @@ impl<'a> CheckerState<'a> {
                 return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
-                    self.this_substitution_target_for_receiver(receiver_type),
+                    self.this_substitution_target_for_receiver(call_expression, receiver_type),
                 );
             }
         }
