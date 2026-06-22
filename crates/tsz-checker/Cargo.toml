@@ -803,6 +803,9 @@ path = "tests/enum_discriminant_excess_property_tests.rs"
 name = "inherited_constructor_defaulted_type_arg_tests"
 path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
 [[test]]
+name = "intersection_infer_last_member_tests"
+path = "tests/intersection_infer_last_member_tests.rs"
+[[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
 [[test]]
