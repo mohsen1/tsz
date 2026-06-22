@@ -58,11 +58,30 @@ fn lib_def_monotone_publish_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("TSZ_DISABLE_LIB_DEF_MONOTONE").is_ok_and(|v| v == "1"))
 }
 
+/// Whether the #14344 content-addressed canonical-identity work is active.
+///
+/// Default-OFF: `TSZ_CANONICAL_DEFID=1` opts in. This gates the Stage-5
+/// content-election machinery (cross-arena declaring-module-path table + the
+/// post-merge representative election that extends `alias_forwards`). Flag-OFF,
+/// the `file_canonical_paths` table is never populated and the election pass
+/// never runs, so `canonical_def_id` and every downstream key are byte-identical
+/// to today. Gated behind a `OnceLock` read of the env var, mirroring
+/// [`lib_def_monotone_publish_enabled`].
+pub fn canonical_defid_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_CANONICAL_DEFID").is_ok_and(|v| v == "1"))
+}
+
 type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
 type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
+
+const fn fx_build_hasher() -> FxBuildHasher {
+    FxBuildHasher
+}
 
 /// Rough per-entry overhead for a `DashMap`/`DashSet` bucket (key + value +
 /// shard bookkeeping), used by the store's `estimated_size_bytes` reporting.
@@ -393,6 +412,23 @@ pub struct DefinitionStore {
     /// scanning the entire definition store.
     file_to_defs: DefDashMap<u32, Vec<DefId>>,
 
+    /// `file_idx` -> declaring-module canonical-path `Atom` (#14344 Stage 5).
+    ///
+    /// `DefinitionInfo.file_id` is an arena-local file index; on its own it
+    /// cannot tell whether two defs from different per-file binders denote the
+    /// same DECLARING module (the cross-arena convergence #14344 needs — and the
+    /// bug that sank registration-time content hashing, which keyed off the
+    /// *importing* file). The program/driver, which alone knows module
+    /// resolution, populates this table (`set_file_canonical_path`) so the
+    /// solver-side content-election pass can join `file_id -> canonical module
+    /// path` and group genuinely-same declarations across arenas.
+    ///
+    /// Empty unless the driver opts in (gated by `canonical_defid_enabled`,
+    /// `TSZ_CANONICAL_DEFID=1`), so flag-off builds never populate or read it and
+    /// are byte-identical. This is pure observability/identity metadata: it never
+    /// affects `DefId` allocation, bodies, or any resolver answer on its own.
+    file_canonical_paths: DefDashMap<u32, Atom>,
+
     /// Reverse index: `ObjectShape` hash -> `DefId` for shape-based lookups.
     ///
     /// Populated when `instance_shape` is set (via `register()` or
@@ -512,6 +548,10 @@ impl DefinitionStore {
             state_flags: DefStateFlags::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
+            file_canonical_paths: DefDashMap::with_capacity_and_hasher(
+                file_capacity,
+                fx_build_hasher(),
+            ),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
                 id_capacity / 2,
                 Default::default(),
@@ -1007,6 +1047,30 @@ impl DefinitionStore {
             }
         }
         current
+    }
+
+    /// Record the declaring-module canonical-path `Atom` for an arena file index
+    /// (#14344 Stage 5). Populated by the program/driver, which alone resolves
+    /// module identity, so the solver-side content-election pass can join
+    /// `DefinitionInfo.file_id -> canonical module path`. Pure identity metadata
+    /// — it affects no `DefId` allocation, body, or resolver answer; it is only
+    /// consulted by the (flag-gated, default-off) election pass.
+    pub fn set_file_canonical_path(&self, file_idx: u32, path: Atom) {
+        self.file_canonical_paths.insert(file_idx, path);
+    }
+
+    /// Look up the declaring-module canonical-path `Atom` for a file index, if
+    /// the program populated one (#14344 Stage 5). `None` whenever the
+    /// content-addressing flag is off (the table is never populated) or the file
+    /// index was not registered.
+    pub fn file_canonical_path(&self, file_idx: u32) -> Option<Atom> {
+        self.file_canonical_paths.get(&file_idx).map(|p| *p)
+    }
+
+    /// Number of file indices with a recorded canonical path (observability /
+    /// tests). Zero when the content-addressing flag is off.
+    pub fn file_canonical_path_count(&self) -> usize {
+        self.file_canonical_paths.len()
     }
 
     /// Mark a type-alias `DefId` as having an unconditionally-infinite
