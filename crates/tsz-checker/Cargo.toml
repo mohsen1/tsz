@@ -794,6 +794,9 @@ path = "tests/ts2353_tests.rs"
 name = "template_intrinsic_infer_tests"
 path = "tests/template_intrinsic_infer_tests.rs"
 [[test]]
+name = "enum_discriminant_excess_property_tests"
+path = "tests/enum_discriminant_excess_property_tests.rs"
+[[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
 [[test]]
@@ -2112,7 +2115,9 @@ path = "tests/object_keyword_any_index_tests.rs"
 [[test]]
 name = "conditional_initializer_preserves_narrowing_tests"
 path = "tests/conditional_initializer_preserves_narrowing_tests.rs"
-
 [[test]]
 name = "readonly_array_alias_argument_display_tests"
 path = "tests/readonly_array_alias_argument_display_tests.rs"
+[[test]]
+name = "try_finally_pre_try_narrowing_tests"
+path = "tests/try_finally_pre_try_narrowing_tests.rs"

@@ -593,6 +593,43 @@ fn test_noinfer_member_of_intersection_is_preserved() {
 }
 
 #[test]
+fn test_noinfer_disjoint_intersection_collapses_to_never() {
+    // `NoInfer<T>` is transparent for reduction, so an intersection that is
+    // disjoint *through* a concrete `NoInfer` member collapses to `never`, just
+    // as it would without the wrapper. tsc: `"a" & NoInfer<"b">` is `never`.
+    let interner = TypeInterner::new();
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let noinfer_b = interner.intern(TypeData::NoInfer(lit_b));
+    let result = interner.intersection(vec![lit_a, noinfer_b]);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "\"a\" & NoInfer<\"b\"> must reduce to never, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_noinfer_any_intersection_collapses_to_any() {
+    // `T & NoInfer<any>` collapses to `any` (any absorbs through the transparent
+    // wrapper). This is the reduction behind the `0 extends 1 & NoInfer<T>`
+    // "IsAny" idiom: for `T = any` the intersection is `any`, so `0 extends any`
+    // is `true`.
+    let interner = TypeInterner::new();
+    let foo = interner.intern_string("foo");
+    let obj = interner.object(vec![PropertyInfo::new(foo, TypeId::STRING)]);
+    let noinfer_any = interner.intern(TypeData::NoInfer(TypeId::ANY));
+    let result = interner.intersection(vec![obj, noinfer_any]);
+    assert_eq!(
+        result,
+        TypeId::ANY,
+        "{{ foo }} & NoInfer<any> must reduce to any, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_noinfer_in_function_param_position() {
     // function foo<T>(a: T, b: NoInfer<T>): T
     // When called as foo("hello", value), inference comes only from 'a'

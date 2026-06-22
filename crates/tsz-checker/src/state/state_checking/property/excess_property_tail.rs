@@ -977,12 +977,25 @@ impl<'a> CheckerState<'a> {
             if explicit_property_names.is_some_and(|names| !names.contains(&prop_atom)) {
                 continue;
             }
-            let Some(lit_type) = self.literal_type_from_initializer(prop.initializer) else {
+            // Prefer the purely-syntactic literal value (string/number/bigint/
+            // boolean/`undefined`/const-assertion). When that misses — most
+            // commonly an enum member reference like `Kind.A`, a
+            // PropertyAccessExpression the syntactic query does not resolve —
+            // fall back to the node's computed type, which yields the *nominal*
+            // enum-literal unit type (`Kind.A`) that matches the target union
+            // member's discriminant. Both paths are gated on `is_unit_type`, so
+            // non-discriminant initializers (e.g. `obj.x: number`) are ignored
+            // and the precise-excess path is not entered for them.
+            let lit_type = self
+                .literal_type_from_initializer(prop.initializer)
+                .filter(|&t| query::is_unit_type(self.ctx.types, t))
+                .or_else(|| {
+                    let computed = self.get_type_of_node(prop.initializer);
+                    query::is_unit_type(self.ctx.types, computed).then_some(computed)
+                });
+            let Some(lit_type) = lit_type else {
                 continue;
             };
-            if !query::is_unit_type(self.ctx.types, lit_type) {
-                continue;
-            }
             discriminants.push((prop_atom, lit_type));
         }
 

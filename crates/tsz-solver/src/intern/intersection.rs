@@ -138,6 +138,59 @@ impl TypeInterner {
     }
 
     pub(super) fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
+        // `NoInfer<T>` is transparent for every relation and reduction purpose;
+        // it only changes inference, and only when it wraps an inferable type
+        // parameter (`infer_matching` blocks inference when a *member* of the
+        // target is `NoInfer`). A `NoInfer` member whose inner type is concrete
+        // (carries no free type parameter) is therefore semantically identical
+        // to that inner type everywhere, so unwrap it before reduction. This
+        // lets intersection reduction see through it the way `tsc` does — e.g.
+        // `1 & NoInfer<2>` collapses to `never`, `1 & NoInfer<any>` to `any`,
+        // and `{ a: 1 } & NoInfer<{ b: 2 }>` becomes a plain object
+        // intersection that a value can satisfy structurally. A generic
+        // `T & NoInfer<U>` keeps its marker (its inner still mentions `U`), so
+        // the inference block survives; once `U` is substituted the
+        // re-normalized intersection unwraps the now-concrete member.
+        // `NoInfer<T>` is transparent for type relations and reduction, but tsc
+        // keeps it visible as an intersection *member* for display, and uses it
+        // to block inference (`infer_matching` stops at a `NoInfer` member). So
+        // the wrapper must NOT simply be peeled off the stored members. The only
+        // reductions where it legitimately disappears are the *total* collapses
+        // to `never` (disjoint members) or `any` (an `any` inner) — tsc collapses
+        // there too, and the wrapper vanishes with the result. Probe the
+        // concrete-`NoInfer`-unwrapped view for exactly those collapses; any
+        // non-collapsing result is discarded so the original members (and thus
+        // tsc-faithful display + inference blocking) survive. A generic
+        // `T & NoInfer<U>` is never unwrapped (its inner mentions `U`); once `U`
+        // is substituted this re-runs and can collapse.
+        let concrete_no_infer_inner = |id: TypeId| match self.lookup(id) {
+            Some(TypeData::NoInfer(inner))
+                if !crate::type_queries::contains_type_parameters_db(self, inner) =>
+            {
+                Some(inner)
+            }
+            _ => None,
+        };
+        if flat.iter().any(|&id| concrete_no_infer_inner(id).is_some()) {
+            let mut unwrapped: TypeListBuffer = SmallVec::new();
+            for &id in &flat {
+                match concrete_no_infer_inner(id) {
+                    // Inner may itself be an intersection; keep the view flat.
+                    Some(inner) => match self.lookup(inner) {
+                        Some(TypeData::Intersection(list)) => {
+                            unwrapped.extend(self.type_list(list).iter().copied());
+                        }
+                        _ => unwrapped.push(inner),
+                    },
+                    None => unwrapped.push(id),
+                }
+            }
+            let probe = self.normalize_intersection(unwrapped);
+            if probe == TypeId::NEVER || probe == TypeId::ANY {
+                return probe;
+            }
+        }
+
         // Single-pass scan for special sentinel types instead of multiple contains() calls.
         let mut has_error = false;
         let mut has_never = false;
