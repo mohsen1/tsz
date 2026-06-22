@@ -655,10 +655,20 @@ jobs:
           cloudbuild_status() {
             local build_id="$1"
             [[ -n "$build_id" ]] || return 0
-            gcloud builds describe "$build_id" \
+            # gcloud can take a transient SIGPIPE from its internal pipes during
+            # Cloud Build polling; under pipefail that escapes as a fatal step
+            # exit 141 that kills the wait before the signed artifact is fetched,
+            # leaving an unsigned stale JSON that merge-results rejects (so
+            # bench-publish fails). Ignore SIGPIPE and capture with pipefail off
+            # so a poll hiccup yields an empty status (the caller retries).
+            # (Same SIGPIPE-fix family as #14449 / #14476.)
+            trap '' PIPE
+            local out
+            out="$(set +o pipefail; gcloud builds describe "$build_id" \
               --project=tsz-ci \
               --region=us-central1 \
-              --format='value(status)' 2>/dev/null || true
+              --format='value(status)' 2>/dev/null)" || out=""
+            printf '%s\n' "$out"
           }
           capture_cloudbuild_log() {
             local build_id="$1"
@@ -853,10 +863,20 @@ jobs:
           cloudbuild_status() {
             local build_id="$1"
             [[ -n "$build_id" ]] || return 0
-            gcloud builds describe "$build_id" \
+            # gcloud can take a transient SIGPIPE from its internal pipes during
+            # Cloud Build polling; under pipefail that escapes as a fatal step
+            # exit 141 that kills the wait before the signed artifact is fetched,
+            # leaving an unsigned stale JSON that merge-results rejects (so
+            # bench-publish fails). Ignore SIGPIPE and capture with pipefail off
+            # so a poll hiccup yields an empty status (the caller retries).
+            # (Same SIGPIPE-fix family as #14449 / #14476.)
+            trap '' PIPE
+            local out
+            out="$(set +o pipefail; gcloud builds describe "$build_id" \
               --project=tsz-ci \
               --region=us-central1 \
-              --format='value(status)' 2>/dev/null || true
+              --format='value(status)' 2>/dev/null)" || out=""
+            printf '%s\n' "$out"
           }
           capture_cloudbuild_log() {
             local build_id="$1"
@@ -1092,10 +1112,20 @@ jobs:
             timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
           }
           cloudbuild_status() {
-            gcloud builds describe "${{ steps.cloudbuild-submit.outputs.build_id }}" \
+            # gcloud can take a transient SIGPIPE from its internal pipes during
+            # Cloud Build polling; under pipefail that escapes as a fatal step
+            # exit 141 that kills the shard wait before the signed shard JSON is
+            # downloaded, leaving an unsigned stale JSON that merge-results
+            # rejects (so bench-publish fails). Ignore SIGPIPE and capture with
+            # pipefail off so a poll hiccup yields an empty status (caller
+            # retries). (Same SIGPIPE-fix family as #14449 / #14476.)
+            trap '' PIPE
+            local out
+            out="$(set +o pipefail; gcloud builds describe "${{ steps.cloudbuild-submit.outputs.build_id }}" \
               --project=tsz-ci \
               --region=us-central1 \
-              --format='value(status)' 2>/dev/null || true
+              --format='value(status)' 2>/dev/null)" || out=""
+            printf '%s\n' "$out"
           }
           capture_cloudbuild_log() {
             gcloud builds log "${{ steps.cloudbuild-submit.outputs.build_id }}" \
