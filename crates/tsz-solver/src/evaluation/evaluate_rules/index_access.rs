@@ -20,6 +20,7 @@ use crate::visitor::{
 };
 
 use super::super::evaluate::TypeEvaluator;
+use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
 use crate::objects::apparent::literal_value_intrinsic_kind;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
@@ -1867,21 +1868,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.mark_depth_exceeded();
                 return TypeId::ERROR;
             }
+            // TS2590 union-complexity bail (parity with tsc's `getUnionType`,
+            // which returns `errorType` once a union reaches ~100k constituents).
+            // Distributing an index union over an object whose members are
+            // themselves large unions — e.g. a recursive mapped/template
+            // distribution `{ [K in T]: `${K}${Rec<Exclude<T, K>>}` }[T]` — grows
+            // the assembled union factorially. Stop accumulating once the running
+            // member total crosses the limit instead of materializing the whole
+            // union (CPU-bound non-termination, #13508); the sticky
+            // `union_too_complex` flag then drives TS2590 in the checker. A
+            // nested distribution that already overflowed (cascade) is detected
+            // via the pre-loop flag snapshot so deeper keys are not re-expanded.
+            let union_complex_before_index = self.interner().is_union_too_complex();
+            let mut cumulative_members: usize = 0;
             let mut results = Vec::new();
             for &member in members.iter() {
                 if self.is_depth_exceeded() {
                     return TypeId::ERROR;
+                }
+                if !union_complex_before_index && self.interner().is_union_too_complex() {
+                    break;
                 }
                 let result = self.recurse_index_access(object_type, member);
                 if result == TypeId::ERROR && self.is_depth_exceeded() {
                     return TypeId::ERROR;
                 }
                 if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
+                    cumulative_members =
+                        cumulative_members.saturating_add(self.count_union_members(result));
                     results.push(result);
+                    if cumulative_members >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner().mark_union_too_complex();
+                        break;
+                    }
                 }
             }
             if results.is_empty() {
                 return TypeId::UNDEFINED;
+            }
+            // When the distribution overflowed the union-complexity budget and
+            // every collected result is string-typed — the recursive
+            // template-literal family (e.g. route-path parsing) — widen to
+            // `string` instead of interning the oversized literal union. This
+            // mirrors the template-literal expansion cap's widening, keeps the
+            // already-marked TS2590 flag visible to the checker, and collapses
+            // the result so an enclosing recursion does not re-expand it
+            // (terminating the otherwise factorial growth, #13508).
+            if cumulative_members >= TEMPLATE_LITERAL_EXPANSION_LIMIT
+                && results.iter().all(|&r| self.index_result_is_string_like(r))
+            {
+                return TypeId::STRING;
             }
             return self.interner().union(results);
         }
@@ -1898,6 +1934,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // For other types, keep as IndexAccess (deferred)
         self.interner().index_access(object_type, index_type)
+    }
+
+    /// Whether an index-distribution result is a string-domain type (possibly a
+    /// union all of whose members are string-domain). Used by the TS2590
+    /// union-complexity bail to decide it is sound to widen an oversized result
+    /// union to `string` rather than materialize it. The leaf check reuses the
+    /// shared `is_string_like_type` (string / string-literal / template /
+    /// string-mapping); only the union-recursion is local.
+    fn index_result_is_string_like(&self, ty: TypeId) -> bool {
+        if let Some(TypeData::Union(list_id)) = self.interner().lookup(ty) {
+            return self
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .all(|&m| self.index_result_is_string_like(m));
+        }
+        crate::type_queries::is_string_like_type(self.interner(), ty)
     }
 
     fn evaluate_index_access_result(&mut self, result: TypeId) -> TypeId {
