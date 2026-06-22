@@ -105,7 +105,10 @@ impl PerfCounters {
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n\
              Stable identity:\n  \
-             raw SymbolRef lazy fallback{:>12}\n",
+             raw SymbolRef lazy fallback{:>12}\n  \
+             wrong-decl collisions      {:>12}\n  \
+             symbol_def_index hits      {:>12}\n  \
+             symbol_def_index misses    {:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -190,6 +193,9 @@ impl PerfCounters {
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
             snap.identity.type_environment_raw_symbol_lazy_fallbacks,
+            snap.identity.identity_collision_wrong_decl_suppressed,
+            snap.identity.symbol_def_index_lookup_hits,
+            snap.identity.symbol_def_index_lookup_misses,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_shared_instantiation_cache(&snap)
             + &Self::dump_relation_limit_cache(&snap)

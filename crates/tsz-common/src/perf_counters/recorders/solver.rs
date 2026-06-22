@@ -1,3 +1,39 @@
+/// #14344 identity-collision observability. Record that the
+/// `raw_symbol_fallback_def` `#13862` guard suppressed a *genuine* content
+/// collision: a store-registered `DefId(N)` whose raw value `N`, reread as a
+/// `SymbolId`, would resolve to a DIFFERENT def whose canonical decl name
+/// differs from `DefId(N)`'s own (the `HTMLDivElement` -> `FileSystemEntry`
+/// class). Callers MUST establish content-difference before calling — mere
+/// raw-`u32` overlap is ~100% by construction and must never be counted here.
+/// Measurement only: never feeds back into resolution (the guard already
+/// returns `None`).
+#[inline]
+pub fn record_identity_collision_wrong_decl_suppressed() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .identity_collision_wrong_decl_suppressed
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// #14344 denominator context. Record a `symbol_def_index` composite-key
+/// `(symbol, file)` resolution attempt, partitioned by whether it hit.
+#[inline]
+pub fn record_symbol_def_index_lookup(hit: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    if hit {
+        c.symbol_def_index_lookup_hits
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        c.symbol_def_index_lookup_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Record a budget-conditional `LimitTrue` relation cache hit (a limit-hit
 /// relation verdict was reused instead of re-burning the relation chain).
 #[inline]

@@ -794,8 +794,14 @@ path = "tests/binding_pattern_inference_tests.rs"
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 [[test]]
+name = "template_intrinsic_infer_tests"
+path = "tests/template_intrinsic_infer_tests.rs"
+[[test]]
 name = "enum_discriminant_excess_property_tests"
 path = "tests/enum_discriminant_excess_property_tests.rs"
+[[test]]
+name = "inherited_constructor_defaulted_type_arg_tests"
+path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
 [[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
@@ -1024,6 +1030,9 @@ path = "tests/kysely_callback_context_tests.rs"
 [[test]]
 name = "inline_mapped_array_return_tests"
 path = "tests/inline_mapped_array_return_tests.rs"
+[[test]]
+name = "overload_constraint_fallback_applicability_tests"
+path = "tests/overload_constraint_fallback_applicability_tests.rs"
 [[test]]
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"
