@@ -556,9 +556,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// This mirrors tsc's `inferTypes`, where a type variable with any
     /// contravariant occurrence produces an intersection of its candidates.
     pub(crate) fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
+        // An intrinsic pattern carries no `infer` names; skip the memo round-trip.
+        if pattern.is_intrinsic() {
+            return FxHashSet::default();
+        }
+        // Project-wide memo: the contravariant-`infer`-name set is a pure function
+        // of the immutable interned pattern structure (the variance walk consults
+        // neither the resolver nor the substitution environment), so the answer is
+        // stable per `TypeId`. Recursive conditional/`infer` matching re-asks it
+        // for the same pattern across many fresh evaluators (#14330).
+        if let Some(cached) = self.interner().contravariant_infer_names_memo(pattern) {
+            // The empty set is the dominant case (most patterns have no
+            // contravariant `infer`); return it without iterating the slice.
+            if cached.is_empty() {
+                return FxHashSet::default();
+            }
+            return cached.iter().copied().collect();
+        }
         let mut result = FxHashSet::default();
         let mut visited = FxHashSet::default();
         self.collect_variance_infer_names(pattern, false, &mut result, &mut visited);
+        self.interner().set_contravariant_infer_names_memo(
+            pattern,
+            result.iter().copied().collect::<Vec<_>>().into(),
+        );
         result
     }
 

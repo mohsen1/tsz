@@ -539,6 +539,16 @@ pub trait TypeExtractParamsCache {
     /// Record the `extract_type_params_from_type` result for `type_id`.
     /// Default no-op.
     fn set_extract_type_params_memo(&self, _type_id: TypeId, _params: Arc<[TypeParamInfo]>) {}
+
+    /// Look up the memoized `collect_contravariant_infer_names` name list for a
+    /// pattern `type_id`. Default `None` (no caching).
+    fn contravariant_infer_names_memo(&self, _type_id: TypeId) -> Option<Arc<[Atom]>> {
+        None
+    }
+
+    /// Record the `collect_contravariant_infer_names` name list for a pattern
+    /// `type_id`. Default no-op.
+    fn set_contravariant_infer_names_memo(&self, _type_id: TypeId, _names: Arc<[Atom]>) {}
 }
 
 /// Cache for the pure structural `contains_type_by_id(root, target)` transitive
@@ -1087,6 +1097,14 @@ impl TypeExtractParamsCache for TypeInterner {
 
     fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
         Self::set_extract_type_params_memo(self, type_id, params);
+    }
+
+    fn contravariant_infer_names_memo(&self, type_id: TypeId) -> Option<Arc<[Atom]>> {
+        Self::contravariant_infer_names_memo(self, type_id)
+    }
+
+    fn set_contravariant_infer_names_memo(&self, type_id: TypeId, names: Arc<[Atom]>) {
+        Self::set_contravariant_infer_names_memo(self, type_id, names);
     }
 }
 
