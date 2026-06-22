@@ -593,6 +593,7 @@ fn test_conditional_infer_object_string_index_signature() {
     let (_r_name, infer_r) = test_infer_param(&interner, "R");
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -605,6 +606,7 @@ fn test_conditional_infer_object_string_index_signature() {
         number_index: None,
     });
     let pattern = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -873,6 +875,7 @@ fn test_index_access_object_with_string_index_signature() {
     let key_y = interner.literal_string("y");
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(key_x, TypeId::STRING)],
@@ -909,6 +912,7 @@ fn test_index_access_object_with_string_index_signature_optional_property() {
     let key_y = interner.literal_string("y");
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::opt(key_x, TypeId::NUMBER)],
@@ -940,6 +944,7 @@ fn test_index_access_object_with_string_index_signature_optional_property_no_unc
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::opt(
@@ -983,6 +988,7 @@ fn test_no_unchecked_object_index_signature_evaluate() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1008,6 +1014,7 @@ fn test_index_access_object_with_number_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1033,6 +1040,7 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1163,6 +1171,7 @@ fn test_index_access_with_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1194,6 +1203,7 @@ fn test_index_access_with_options_helper_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),

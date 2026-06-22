@@ -643,6 +643,7 @@ fn test_property_access_index_signature_no_unchecked() {
     let mut evaluator = PropertyAccessEvaluator::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -691,6 +692,7 @@ fn test_property_access_object_with_index_optional_property() {
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::opt(

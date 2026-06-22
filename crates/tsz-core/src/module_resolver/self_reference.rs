@@ -8,6 +8,7 @@ use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::cached_is_file;
 use crate::span::Span;
 use std::path::Path;
+use tsz_common::module_resolution::TargetMatch;
 
 /// Result of trying to resolve a self-reference
 pub(super) enum SelfReferenceResultV2 {
@@ -70,42 +71,52 @@ impl ModuleResolver {
                         };
 
                         let target_pt = self.target_package_type_from_json(&package_json, None);
-                        if let Some((resolved, resolved_using_ts_extension)) = self
-                            .resolve_package_exports_with_conditions(
-                                &current,
-                                exports,
-                                &subpath_key,
-                                conditions,
-                                false,
-                                target_pt,
-                            )
-                        {
-                            // Self-reference resolved successfully via exports.
-                            // This includes .ts files found via .js -> .ts extension
-                            // substitution, which is the standard Node16/NodeNext
-                            // behavior for source-to-output mapping.
-                            //
-                            // `resolved_using_ts_extension` is propagated from the
-                            // matched export pattern key: when the package author
-                            // wrote `"./*.ts": ...` in exports, the import path's
-                            // `.ts` was consumed by the exports map (rather than
-                            // preserved through to the resolved file), suppressing
-                            // TS2877 in the checker's import-extension gate.
-                            return SelfReferenceResultV2::Resolved(ResolvedModule {
-                                resolved_path: resolved.clone(),
-                                resolved_using_ts_extension,
-                                is_external: false,
-                                package_name: Some(package_name.to_string()),
-                                original_specifier: original_specifier.to_string(),
-                                extension: ModuleExtension::from_path(&resolved),
-                            });
+                        match self.resolve_package_exports_with_conditions(
+                            &current,
+                            exports,
+                            &subpath_key,
+                            conditions,
+                            false,
+                            target_pt,
+                        ) {
+                            TargetMatch::Resolved((resolved, resolved_using_ts_extension)) => {
+                                // Self-reference resolved successfully via exports.
+                                // This includes .ts files found via .js -> .ts extension
+                                // substitution, which is the standard Node16/NodeNext
+                                // behavior for source-to-output mapping.
+                                //
+                                // `resolved_using_ts_extension` is propagated from the
+                                // matched export pattern key: when the package author
+                                // wrote `"./*.ts": ...` in exports, the import path's
+                                // `.ts` was consumed by the exports map (rather than
+                                // preserved through to the resolved file), suppressing
+                                // TS2877 in the checker's import-extension gate.
+                                return SelfReferenceResultV2::Resolved(ResolvedModule {
+                                    resolved_path: resolved.clone(),
+                                    resolved_using_ts_extension,
+                                    is_external: false,
+                                    package_name: Some(package_name.to_string()),
+                                    original_specifier: original_specifier.to_string(),
+                                    extension: ModuleExtension::from_path(&resolved),
+                                });
+                            }
+                            // An explicit JSON `null` block is a definitive
+                            // "not exported" (TS2307), never the ambiguous-root
+                            // diagnostic (TS2209): the author opted the specifier
+                            // out, so the result does not depend on `rootDir`.
+                            TargetMatch::Blocked => {
+                                return SelfReferenceResultV2::ExportsFailed;
+                            }
+                            TargetMatch::NotApplicable => {
+                                // Self-reference detected but exports didn't resolve to
+                                // an existing file. Check if this is due to ambiguous
+                                // project root (TS2209).
+                                if self.root_dir.is_none() && self.out_dir.is_none() {
+                                    return SelfReferenceResultV2::AmbiguousRoot;
+                                }
+                                return SelfReferenceResultV2::ExportsFailed;
+                            }
                         }
-                        // Self-reference detected but exports didn't resolve to an existing file
-                        // Check if this is due to ambiguous project root (TS2209)
-                        if self.root_dir.is_none() && self.out_dir.is_none() {
-                            return SelfReferenceResultV2::AmbiguousRoot;
-                        }
-                        return SelfReferenceResultV2::ExportsFailed;
                     }
                     // Name matches but no exports field - not a self-reference for Node16+
                     // Fall through to NotSelfReference

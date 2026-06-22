@@ -1140,6 +1140,7 @@ export default new Enhanced();
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: binder
             .get_node_symbol(class_data.name)
             .or_else(|| binder.get_node_symbol(class_idx)),
@@ -1243,6 +1244,7 @@ const value = new Mixed();
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: binder
             .get_node_symbol(class_data.name)
             .or_else(|| binder.get_node_symbol(class_idx)),
@@ -1344,6 +1346,7 @@ export const o = (p1: typeof nImported, p2: typeof nNotImported, p3: typeof nPri
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let function_type = interner.function(FunctionShape::new(Vec::new(), return_type));

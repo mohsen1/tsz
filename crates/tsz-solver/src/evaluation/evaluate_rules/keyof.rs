@@ -40,7 +40,7 @@ fn resolve_index_signature_key_alias(
             return current;
         };
         match resolver.resolve_lazy(def_id, interner) {
-            Some(resolved) if resolved != current => current = resolved,
+            Some(next_key) if next_key != current => current = next_key,
             _ => return current,
         }
     }
@@ -127,6 +127,7 @@ fn extend_keyof_with_index_signature_keys(
     key_types: &mut Vec<TypeId>,
     string_or_symbol_index: Option<&IndexSignature>,
     number_index: Option<&IndexSignature>,
+    symbol_index: Option<&IndexSignature>,
     is_enum_namespace: bool,
     suppress_string_numeric: bool,
 ) {
@@ -141,6 +142,13 @@ fn extend_keyof_with_index_signature_keys(
     } else {
         false
     };
+
+    // A dedicated `symbol` index signature (`[k: symbol]: V`) contributes the
+    // `symbol` key space. `union` below dedupes if the string slot already
+    // legacy-encoded a symbol key.
+    if symbol_index.is_some() {
+        key_types.push(TypeId::SYMBOL);
+    }
 
     if number_index.is_some() && !is_enum_namespace && !string_slot_contributed_number {
         key_types.push(TypeId::NUMBER);
@@ -314,6 +322,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index: _,
                 } => {
                     for prop in properties {
                         let source_key = self.property_name_to_key_type(&prop);
@@ -670,8 +679,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner(),
                         self.resolver(),
                         &mut key_types,
-                        shape.string_index.as_ref(),
+                        shape.string_index_signature(),
                         shape.number_index.as_ref(),
+                        shape.symbol_index_signature(),
                         shape.flags.contains(ObjectFlags::ENUM_NAMESPACE),
                         shape.flags.contains(ObjectFlags::MAPPED_CONSTRAINT_KEYS),
                     );
@@ -701,6 +711,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
+                        None,
                         false,
                         false,
                     );

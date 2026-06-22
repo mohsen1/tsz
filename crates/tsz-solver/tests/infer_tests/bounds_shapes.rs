@@ -8,6 +8,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -21,6 +22,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -60,6 +62,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -73,6 +76,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),

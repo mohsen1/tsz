@@ -178,6 +178,7 @@ fn class_decl_object_with_index_returns_object_shape_via_shared_arm() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     assert!(
@@ -664,6 +665,7 @@ fn base_instance_merge_object_with_index_shares_object_arm() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     assert!(

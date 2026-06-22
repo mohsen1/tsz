@@ -757,10 +757,12 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
             } => Some(std::sync::Arc::new(tsz_solver::ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 ..tsz_solver::ObjectShape::default()
             })),
             _ => None,

@@ -213,6 +213,7 @@ fn string_index_record(interner: &TypeInterner, value: TypeId) -> TypeId {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     })
 }

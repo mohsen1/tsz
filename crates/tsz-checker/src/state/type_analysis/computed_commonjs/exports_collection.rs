@@ -754,6 +754,7 @@ impl<'a> CheckerState<'a> {
             properties: properties.into_values().collect(),
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: shape.symbol,
         })
     }

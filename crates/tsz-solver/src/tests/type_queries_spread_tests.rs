@@ -793,6 +793,7 @@ fn readonly_string_and_number_index_signatures_detected() {
     let db = TypeInterner::new();
     // `{ readonly [x: string]: string }`
     let ro_string_index = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -811,6 +812,7 @@ fn readonly_string_and_number_index_signatures_detected() {
 
     // `{ readonly [n: number]: number }`
     let ro_number_index = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -829,6 +831,7 @@ fn readonly_string_and_number_index_signatures_detected() {
 
     // `{ [x: string]: string }` (mutable index) — not detected.
     let mutable_index = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

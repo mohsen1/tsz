@@ -94,3 +94,38 @@ const x: string = o;
         "concrete generic interface source should keep its concrete argument, got: {diag:?}"
     );
 }
+
+/// A *named* generic conditional alias used as the source of an assignability
+/// error must display by its alias application (`Branch<U>`), not collapse to
+/// the union of its branches. `tsc` keeps the alias spelling for a deferred
+/// conditional that carries its own `aliasSymbol`; only an anonymous deferred
+/// conditional renders as the branch union. Binder names are deliberately
+/// non-canonical so the assertion checks structure, not spellings. Regression
+/// for the `conditionalTypes1` fixture (#14141): `T95<U>` was rendered as
+/// `number | boolean`.
+#[test]
+fn named_conditional_alias_source_display_keeps_alias_not_branch_union() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Target<Q> = Q extends string ? true : 42;
+type Branch<Q> = Q extends string ? boolean : number;
+function f<U>(value: Branch<U>): Target<U> {
+    return value;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        diag.message_text
+            .contains("Type 'Branch<U>' is not assignable to type 'Target<U>'."),
+        "named conditional alias source should display its alias application, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("number | boolean"),
+        "named conditional alias source must not collapse to its branch union, got: {diag:?}"
+    );
+}

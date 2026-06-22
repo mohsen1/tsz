@@ -421,11 +421,13 @@ impl<'a> TypeLowering<'a> {
         }
 
         if !parts.call_signatures.is_empty() || !parts.construct_signatures.is_empty() {
+            // `CallableShape` keeps the single-slot index convention: a `symbol`
+            // index rides in `string_index` (its `key_type` discriminates it).
             return self.interner.callable(CallableShape {
                 call_signatures: parts.call_signatures,
                 construct_signatures: parts.construct_signatures,
                 properties,
-                string_index: parts.string_index,
+                string_index: parts.string_index.or(parts.symbol_index),
                 number_index: parts.number_index,
                 symbol: symbol_id,
                 is_abstract: false,
@@ -438,7 +440,10 @@ impl<'a> TypeLowering<'a> {
             ObjectFlags::empty()
         };
 
-        if parts.string_index.is_some() || parts.number_index.is_some() {
+        if parts.string_index.is_some()
+            || parts.number_index.is_some()
+            || parts.symbol_index.is_some()
+        {
             if !self.index_signature_properties_compatible(
                 &properties,
                 parts.string_index.as_ref(),
@@ -450,6 +455,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
+                symbol_index: parts.symbol_index,
                 symbol: symbol_id,
                 flags,
             });

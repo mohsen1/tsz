@@ -11,6 +11,7 @@ use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::*;
 use crate::span::Span;
 use std::path::{Component, Path, PathBuf};
+use tsz_common::module_resolution::TargetMatch;
 
 /// Returns true when an exports/imports pattern key literally ends with a
 /// TypeScript source extension. This mirrors tsc's `resolvedUsingTsExtension`
@@ -233,8 +234,14 @@ impl ModuleResolver {
             && !key.contains('*')
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(key);
+            // An exact key is authoritative — no pattern fallthrough. A `null`
+            // block and an empty miss both collapse to "no candidates" here
+            // (both terminate the `#imports` resolution as NotFound, which has
+            // no further fallback to fall through to), so `into_option` is safe.
             return self
                 .resolve_export_targets_to_strings(value, conditions, false)
+                .into_option()
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(target, is_types)| (target, resolved_using_ts_extension, is_types))
                 .collect();
@@ -250,6 +257,8 @@ impl ModuleResolver {
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
             return self
                 .resolve_export_targets_to_strings(value, conditions, false)
+                .into_option()
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(target, is_types)| {
                     (
@@ -279,49 +288,70 @@ impl ModuleResolver {
         value: &PackageExports,
         conditions: &[String],
         is_types_condition: bool,
-    ) -> Vec<(String, bool)> {
+    ) -> TargetMatch<Vec<(String, bool)>> {
         match value {
-            PackageExports::String(s) => vec![(s.clone(), is_types_condition)],
+            PackageExports::String(s) => {
+                TargetMatch::Resolved(vec![(s.clone(), is_types_condition)])
+            }
+            // An explicit JSON `null` reached through a matching condition or
+            // array element blocks the whole `#imports` resolution: it must not
+            // fall through to a sibling condition or an outer fallback. The
+            // earlier `return Vec::new()` only blocked at the exact nesting
+            // level, so a *nested* null still let the enclosing conditional pick
+            // a later sibling — the bug this `Blocked` propagation fixes.
+            PackageExports::Null => TargetMatch::Blocked,
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order.
                 //
-                // The imports path now resolves collected targets through the
-                // spec'd runtime probe (`try_export_target`), which refuses to
-                // add an extension to an extensionless target under
+                // Disk probing is deferred to the caller, so — unlike the
+                // exports path — matching conditions are accumulated in order
+                // (the caller probes them in order, which yields the same
+                // first-existing-wins result as Node resolving each in turn and
+                // continuing past a missing file). A matching `null`, however,
+                // short-circuits the whole collection.
+                //
+                // The imports path resolves collected targets through the spec'd
+                // runtime probe (`try_export_target`), which refuses to add an
+                // extension to an extensionless target under
                 // Node16/NodeNext/Bundler. So — exactly like the exports path —
-                // it must thread `is_types_condition` so a versioned-types
-                // branch (`types`/`types@<range>`) keeps declaration-aware
-                // probing for an extensionless target.
+                // it threads `is_types_condition` so a versioned-types branch
+                // (`types`/`types@<range>`) keeps declaration-aware probing for
+                // an extensionless target.
                 let mut results = Vec::new();
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
-                        if matches!(nested, PackageExports::Null) {
-                            return Vec::new();
-                        }
                         let nested_is_types = is_types_condition || is_types_condition_key(key);
-                        results.extend(self.resolve_export_targets_to_strings(
+                        match self.resolve_export_targets_to_strings(
                             nested,
                             conditions,
                             nested_is_types,
-                        ));
+                        ) {
+                            TargetMatch::Resolved(found) => results.extend(found),
+                            TargetMatch::Blocked => return TargetMatch::Blocked,
+                            TargetMatch::NotApplicable => {}
+                        }
                     }
                 }
-                results
+                TargetMatch::from_candidates(results)
             }
             PackageExports::Array(elements) => {
                 // Array of fallback targets — preserve order so the caller can
                 // probe each syntactically applicable target.
                 let mut results = Vec::new();
                 for element in elements {
-                    results.extend(self.resolve_export_targets_to_strings(
+                    match self.resolve_export_targets_to_strings(
                         element,
                         conditions,
                         is_types_condition,
-                    ));
+                    ) {
+                        TargetMatch::Resolved(found) => results.extend(found),
+                        TargetMatch::Blocked => return TargetMatch::Blocked,
+                        TargetMatch::NotApplicable => {}
+                    }
                 }
-                results
+                TargetMatch::from_candidates(results)
             }
-            PackageExports::Map(_) | PackageExports::Null => Vec::new(), // Subpath maps not valid here
+            PackageExports::Map(_) => TargetMatch::NotApplicable, // Subpath maps not valid here
         }
     }
 
@@ -415,24 +445,27 @@ impl ModuleResolver {
         conditions: &[String],
         is_types_condition: bool,
         target_package_type: Option<super::PackageType>,
-    ) -> Option<(PathBuf, bool)> {
+    ) -> TargetMatch<(PathBuf, bool)> {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
-                    let resolved = package_relative_target_path(package_dir, s)?;
-                    if is_types_condition {
-                        if let Some(r) = self
-                            .try_types_entry(&resolved, target_package_type)
+                    let Some(resolved) = package_relative_target_path(package_dir, s) else {
+                        return TargetMatch::NotApplicable;
+                    };
+                    let probed = if is_types_condition {
+                        self.try_types_entry(&resolved, target_package_type)
                             .or_else(|| self.try_export_target(&resolved, target_package_type))
-                        {
-                            return Some((r, false));
-                        }
-                    } else if let Some(r) = self.try_export_target(&resolved, target_package_type) {
-                        return Some((r, false));
+                    } else {
+                        self.try_export_target(&resolved, target_package_type)
+                    };
+                    if let Some(r) = probed {
+                        return TargetMatch::Resolved((r, false));
                     }
                 }
-                None
+                TargetMatch::NotApplicable
             }
+            // A bare `"exports": null` blocks the package entirely.
+            PackageExports::Null => TargetMatch::Blocked,
             PackageExports::Map(map) => {
                 // First try exact match.
                 // Keys containing '*' are pattern keys and must not be treated as exact matches.
@@ -440,6 +473,9 @@ impl ModuleResolver {
                     && !key.contains('*')
                 {
                     let key_uses_ts = key_ends_with_ts_extension(key);
+                    // An exact subpath key is authoritative: its result (resolved,
+                    // blocked, or miss) is returned without pattern fallthrough,
+                    // matching Node `PACKAGE_IMPORTS_EXPORTS_RESOLVE`.
                     return self
                         .resolve_export_value_with_conditions(
                             package_dir,
@@ -466,29 +502,25 @@ impl ModuleResolver {
                     let substituted_value =
                         substitute_wildcard_in_exports(value, &wildcard, is_directory_match);
                     let key_uses_ts = key_ends_with_ts_extension(pattern);
-                    if let Some(resolved) = self.resolve_export_value_with_conditions(
-                        package_dir,
-                        &substituted_value,
-                        conditions,
-                        is_types_condition,
-                        target_package_type,
-                    ) {
-                        return Some((resolved, key_uses_ts));
-                    }
+                    return self
+                        .resolve_export_value_with_conditions(
+                            package_dir,
+                            &substituted_value,
+                            conditions,
+                            is_types_condition,
+                            target_package_type,
+                        )
+                        .map(|p| (p, key_uses_ts));
                 }
 
-                None
+                TargetMatch::NotApplicable
             }
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order (not our conditions order)
                 for (key, value) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
                         let is_types = is_types_condition || is_types_condition_key(key);
-                        // null means explicitly blocked - stop here
-                        if matches!(value, PackageExports::Null) {
-                            return None;
-                        }
-                        if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                        match self.resolve_package_exports_with_conditions(
                             package_dir,
                             value,
                             subpath,
@@ -496,16 +528,18 @@ impl ModuleResolver {
                             is_types,
                             target_package_type,
                         ) {
-                            return Some(resolved);
+                            // Resolved or Blocked both stop the search.
+                            TargetMatch::NotApplicable => {}
+                            stop => return stop,
                         }
                     }
                 }
-                None
+                TargetMatch::NotApplicable
             }
             PackageExports::Array(elements) => {
                 // Array of fallback targets — try each element in order
                 for element in elements {
-                    if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                    match self.resolve_package_exports_with_conditions(
                         package_dir,
                         element,
                         subpath,
@@ -513,12 +547,12 @@ impl ModuleResolver {
                         is_types_condition,
                         target_package_type,
                     ) {
-                        return Some(resolved);
+                        TargetMatch::NotApplicable => {}
+                        stop => return stop,
                     }
                 }
-                None
+                TargetMatch::NotApplicable
             }
-            PackageExports::Null => None,
         }
     }
 
@@ -526,6 +560,12 @@ impl ModuleResolver {
     ///
     /// This walks the value side of an exports entry only — it does not touch
     /// subpath keys, so it does not contribute to `resolved_using_ts_extension`.
+    ///
+    /// Returns a [`TargetMatch`]: a probed path, an explicit-`null` block, or
+    /// "not applicable" (condition unmatched / file missing). A block produced
+    /// by a JSON `null` reached through a matching condition or array element
+    /// short-circuits every enclosing arm so resolution never falls through to
+    /// a sibling, matching Node `PACKAGE_TARGET_RESOLVE` / tsc.
     pub(super) fn resolve_export_value_with_conditions(
         &self,
         package_dir: &Path,
@@ -533,54 +573,62 @@ impl ModuleResolver {
         conditions: &[String],
         is_types_condition: bool,
         target_package_type: Option<super::PackageType>,
-    ) -> Option<PathBuf> {
+    ) -> TargetMatch<PathBuf> {
         match value {
             PackageExports::String(s) => {
-                let resolved = package_relative_target_path(package_dir, s)?;
-                if is_types_condition {
+                let Some(resolved) = package_relative_target_path(package_dir, s) else {
+                    return TargetMatch::NotApplicable;
+                };
+                let probed = if is_types_condition {
                     self.try_types_entry(&resolved, target_package_type)
                         .or_else(|| self.try_export_target(&resolved, target_package_type))
                 } else {
                     self.try_export_target(&resolved, target_package_type)
+                };
+                match probed {
+                    Some(path) => TargetMatch::Resolved(path),
+                    None => TargetMatch::NotApplicable,
                 }
             }
+            // An explicit JSON `null` reached through a matching condition or
+            // array element blocks the whole resolution.
+            PackageExports::Null => TargetMatch::Blocked,
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
                         let is_types = is_types_condition || is_types_condition_key(key);
-                        // null means explicitly blocked - stop here
-                        if matches!(nested, PackageExports::Null) {
-                            return None;
-                        }
-                        if let Some(resolved) = self.resolve_export_value_with_conditions(
+                        match self.resolve_export_value_with_conditions(
                             package_dir,
                             nested,
                             conditions,
                             is_types,
                             target_package_type,
                         ) {
-                            return Some(resolved);
+                            // Resolved or Blocked both stop the search.
+                            TargetMatch::NotApplicable => {}
+                            stop => return stop,
                         }
                     }
                 }
-                None
+                TargetMatch::NotApplicable
             }
             PackageExports::Array(elements) => {
                 for element in elements {
-                    if let Some(resolved) = self.resolve_export_value_with_conditions(
+                    match self.resolve_export_value_with_conditions(
                         package_dir,
                         element,
                         conditions,
                         is_types_condition,
                         target_package_type,
                     ) {
-                        return Some(resolved);
+                        TargetMatch::NotApplicable => {}
+                        stop => return stop,
                     }
                 }
-                None
+                TargetMatch::NotApplicable
             }
-            PackageExports::Map(_) | PackageExports::Null => None,
+            PackageExports::Map(_) => TargetMatch::NotApplicable,
         }
     }
 

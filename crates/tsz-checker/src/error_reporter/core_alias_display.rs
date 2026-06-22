@@ -143,6 +143,29 @@ impl<'a> CheckerState<'a> {
         if !branches_are_concrete {
             return None;
         }
+        // A *named* generic conditional alias deferred on an UNCONSTRAINED type
+        // parameter (`T95<U>` from `type T95<T> = T extends string ? boolean :
+        // number`) keeps its alias spelling in tsc. The branch union is shown
+        // only for an anonymous conditional or one whose check parameter carries
+        // a real constraint that makes the branch genuinely ambiguous
+        // (`IsArray<T extends object>` → `boolean`). Defer such named,
+        // unconstrained applications to the alias-application display instead of
+        // collapsing them to their branch union.
+        let check_param_unconstrained = param_info
+            .constraint
+            .is_none_or(|c| c == TypeId::UNKNOWN || c == TypeId::ANY);
+        if check_param_unconstrained
+            && self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
+                crate::query_boundaries::diagnostics::type_application(self.ctx.types, alias)
+                    .is_some()
+                    && crate::query_boundaries::diagnostics::contains_type_parameters(
+                        self.ctx.types,
+                        alias,
+                    )
+            })
+        {
+            return None;
+        }
         let constraint = match param_info.constraint {
             Some(c) => c,
             None => return Some(self.ctx.types.union2(cond.true_type, cond.false_type)),

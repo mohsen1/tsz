@@ -72,6 +72,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     readonly,
                     param_name: None,
                 }),
+                symbol_index: None,
                 symbol: None,
             }));
         }

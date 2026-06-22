@@ -420,12 +420,18 @@ pub(crate) fn substitute_exact_type_db(
                 changed |= sig_changed;
                 sig
             });
+            let symbol_index = shape.symbol_index.as_ref().map(|idx| {
+                let (sig, sig_changed) = substitute_index_signature_db(db, idx, from, to, memo);
+                changed |= sig_changed;
+                sig
+            });
             if changed {
                 db.object_with_index(ObjectShape {
                     flags: shape.flags,
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: shape.symbol,
                 })
             } else {

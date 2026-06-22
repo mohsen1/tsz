@@ -129,6 +129,10 @@ pub(super) struct ObjectTypeParts {
     /// in `finish_object_type_parts`, where the type interner is available.
     pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    /// Symbol-keyed index signature (`[k: symbol]: V`). Tracked separately so a
+    /// type can carry a `symbol` index alongside `string`/`number` ones
+    /// (e.g. `{ [k: string]: A; [k: symbol]: B }`) without the two colliding.
+    pub(super) symbol_index: Option<IndexSignature>,
     /// True when at least one member has a computed property name that could not
     /// be resolved to a literal string/symbol key (e.g. `[sym]` where `sym` has
     /// type `symbol` rather than a unique-symbol type).  The resulting object
@@ -176,6 +180,7 @@ impl ObjectTypeParts {
             string_index: None,
             extra_string_indices: Vec::new(),
             number_index: None,
+            symbol_index: None,
             has_late_bound_members: false,
             current_pass_base: 0,
             // 1-based: declaration_order 0 is the interner constructors'
@@ -338,6 +343,18 @@ impl ObjectTypeParts {
                 }
             } else {
                 self.number_index = Some(index);
+            }
+            return;
+        }
+
+        if index.key_type == TypeId::SYMBOL {
+            if let Some(existing) = self.symbol_index.as_mut() {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                self.symbol_index = Some(index);
             }
             return;
         }

@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "qualified_typeof_member_deferred_tests"
+path = "tests/qualified_typeof_member_deferred_tests.rs"
+[[test]]
 name = "as_const_object_property_inference_tests"
 path = "tests/as_const_object_property_inference_tests.rs"
 [[test]]
@@ -1132,6 +1135,9 @@ path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
 [[test]]
 name = "homomorphic_mapped_symbol_iterator_tests"
 path = "tests/homomorphic_mapped_symbol_iterator_tests.rs"
+[[test]]
+name = "homomorphic_mapped_never_source_tests"
+path = "tests/homomorphic_mapped_never_source_tests.rs"
 [[test]]
 name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"

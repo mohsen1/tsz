@@ -6,6 +6,7 @@ use crate::config::{ModuleResolutionKind, ResolvedCompilerOptions};
 use crate::fs::is_valid_module_file;
 use tsz::emitter::ModuleKind;
 use tsz::module_resolver::PackageType;
+use tsz_common::module_resolution::TargetMatch;
 
 #[allow(unused_imports)]
 use super::*;
@@ -198,18 +199,24 @@ pub(crate) fn resolve_node_module_specifier(
                             Some(value) => format!("./{value}"),
                             None => ".".to_string(),
                         };
+                        // A best-effort output-to-source remap: an explicit-null
+                        // block or a miss both mean "no remap here", so collapse
+                        // with `into_option`.
                         if let Some(target) = resolve_exports_subpath(
                             exports,
                             &subpath_key,
                             &conditions,
                             types_versions_compiler_version(options),
-                        ) && let Some(resolved) = try_remap_output_to_source(
-                            dir,
-                            &target,
-                            from_file,
-                            options,
-                            resolution_cache,
-                        ) {
+                        )
+                        .into_option()
+                            && let Some(resolved) = try_remap_output_to_source(
+                                dir,
+                                &target,
+                                from_file,
+                                options,
+                                resolution_cache,
+                            )
+                        {
                             return Some(resolved);
                         }
                     }
@@ -478,19 +485,30 @@ pub(crate) fn resolve_package_specifier(
                 Some(value) => format!("./{value}"),
                 None => ".".to_string(),
             };
-            if let Some(target) = resolve_exports_subpath(
+            match resolve_exports_subpath(
                 exports,
                 &subpath_key,
                 conditions,
                 types_versions_compiler_version(options),
-            ) && let Some(resolved) = resolve_export_entry(
-                package_root,
-                &target,
-                options,
-                package_type,
-                resolution_cache,
             ) {
-                return Some(resolved);
+                TargetMatch::Resolved(target) => {
+                    if let Some(resolved) = resolve_export_entry(
+                        package_root,
+                        &target,
+                        options,
+                        package_type,
+                        resolution_cache,
+                    ) {
+                        return Some(resolved);
+                    }
+                    // Target present but its file is missing — fall through to
+                    // the `typesVersions` fallback below (existing behavior).
+                }
+                // An explicit JSON `null` block is authoritative: the specifier
+                // is not exported, so `typesVersions`/file fallback must not be
+                // consulted. This matches Node `PACKAGE_TARGET_RESOLVE` / tsc.
+                TargetMatch::Blocked => return None,
+                TargetMatch::NotApplicable => {}
             }
             if let Some(types_versions) = package_json.types_versions.as_ref() {
                 let types_subpath = subpath.unwrap_or("index");

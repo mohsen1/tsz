@@ -413,7 +413,8 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
     // Try the exports map first
     let compiler_version = types_versions_compiler_version(options);
     if let Some(exports) = &package_json.exports
-        && let Some(target) = resolve_exports_subpath(exports, ".", &conditions, compiler_version)
+        && let Some(target) =
+            resolve_exports_subpath(exports, ".", &conditions, compiler_version).into_option()
         && let Some(target_path) = package_relative_target_path(package_root, &target)
     {
         // Try to find a declaration file at the target

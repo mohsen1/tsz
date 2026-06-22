@@ -143,6 +143,7 @@ fn test_explain_object_to_tuple_missing_property() {
         }),
         string_index: None,
         flags: ObjectFlags::empty(),
+        symbol_index: None,
         symbol: None,
     });
 
