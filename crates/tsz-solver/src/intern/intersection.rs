@@ -173,7 +173,7 @@ impl TypeInterner {
         };
         if flat.iter().any(|&id| concrete_no_infer_inner(id).is_some()) {
             let mut unwrapped: TypeListBuffer = SmallVec::new();
-            for &id in flat.iter() {
+            for &id in &flat {
                 match concrete_no_infer_inner(id) {
                     // Inner may itself be an intersection; keep the view flat.
                     Some(inner) => match self.lookup(inner) {
