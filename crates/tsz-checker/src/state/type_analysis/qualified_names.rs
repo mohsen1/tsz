@@ -3,6 +3,7 @@
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -401,6 +402,14 @@ impl<'a> CheckerState<'a> {
                                     .or_else(|| {
                                         self.resolve_effective_module_exports(module)
                                             .and_then(|e| e.get(&right_name))
+                                    })
+                                    .or_else(|| {
+                                        self.resolve_member_through_namespace_import_chain(
+                                            alias_sym.import_module(),
+                                            alias_sym.import_name(),
+                                            alias_sym.escaped_name.as_str(),
+                                            &right_name,
+                                        )
                                     });
                             }
                         }
@@ -644,6 +653,73 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Resolve `member_name` for a qualified-type-name anchor that is an import
+    /// alias re-importing a namespace (`import * as Ns`), walking the import
+    /// chain across module boundaries by `(file, name)` rather than by raw
+    /// `SymbolId` (which is only unique within a single file's binder).
+    ///
+    /// `import { Ns } from "./reexporter"` where `./reexporter` has
+    /// `import * as Ns from "./ns"; export { Ns }` makes `Ns` the namespace of
+    /// `./ns`, so `Ns.Member` resolves `Member` from `./ns`'s exports even when a
+    /// same-named local `type`/`interface` shadows `Ns` in type space. The walk
+    /// is purely file-and-name based so it is immune to per-binder `SymbolId`
+    /// collisions when the same numeric id denotes different symbols in two
+    /// files.
+    pub(crate) fn resolve_member_through_namespace_import_chain(
+        &self,
+        import_module: Option<&str>,
+        import_name: Option<&str>,
+        alias_escaped_name: &str,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        // Bound the re-export walk; chains this long are pathological (mirrors
+        // `namespace_anchor_alias_partner`'s guard).
+        const MAX_REEXPORT_HOPS: usize = 32;
+
+        let mut module = import_module?.to_string();
+        let mut name = import_name.unwrap_or(alias_escaped_name).to_string();
+        let mut cur_file = self.ctx.current_file_idx;
+        let mut visited: FxHashSet<(usize, String)> = FxHashSet::default();
+        for _ in 0..MAX_REEXPORT_HOPS {
+            let target_file = self
+                .ctx
+                .resolve_import_target_from_file(cur_file, &module)?;
+            let mut visited_exports = FxHashSet::default();
+            if name == "*" {
+                // The current binding is the whole namespace of `target_file`'s
+                // module, so the member is a direct (re-)export of that module.
+                return self.ctx.resolve_export_in_target_file(
+                    target_file,
+                    member_name,
+                    &mut visited_exports,
+                );
+            }
+            if !visited.insert((target_file, name.clone())) {
+                return None;
+            }
+            let export_sym =
+                self.ctx
+                    .resolve_export_in_target_file(target_file, &name, &mut visited_exports)?;
+            // Read the resolved export's import metadata from ITS OWN binder: the
+            // symbol id is only meaningful within the file it was resolved in.
+            let export_file = self
+                .ctx
+                .resolve_symbol_file_index(export_sym)
+                .unwrap_or(target_file);
+            let export_binder = self.ctx.get_binder_for_file(export_file)?;
+            let export_symbol = export_binder.get_symbol(export_sym)?;
+            // Only an import alias can carry the walk to a further module; a
+            // concrete declaration is not a namespace anchor for `Member`.
+            name = export_symbol
+                .import_name()
+                .unwrap_or(export_symbol.escaped_name.as_str())
+                .to_string();
+            module = export_symbol.import_module()?.to_string();
+            cur_file = export_file;
+        }
+        None
     }
 
     /// Walk a qualified-name chain leftward to find the root identifier and return

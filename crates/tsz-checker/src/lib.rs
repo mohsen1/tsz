@@ -670,6 +670,9 @@ mod as_const_nested_literal_display_tests;
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
+#[path = "tests/assign_to_import_shadowing_local_tests.rs"]
+mod assign_to_import_shadowing_local_tests;
+#[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
@@ -1473,6 +1476,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/type_position_resolution_cache_tests.rs"]
 mod type_position_resolution_cache_tests;
+#[cfg(test)]
+#[path = "tests/type_predicate_alias_relation_tests.rs"]
+mod type_predicate_alias_relation_tests;
 #[cfg(test)]
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;

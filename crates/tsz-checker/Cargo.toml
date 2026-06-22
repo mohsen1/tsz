@@ -863,6 +863,9 @@ path = "tests/contextual_ts2345_conformance_tests.rs"
 name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
 [[test]]
+name = "issue_14261_indexed_access_param_inference_tests"
+path = "tests/issue_14261_indexed_access_param_inference_tests.rs"
+[[test]]
 name = "keyof_type_param_target_diagnostic_tests"
 path = "tests/keyof_type_param_target_diagnostic_tests.rs"
 [[test]]
@@ -1821,6 +1824,9 @@ path = "tests/flow_passthrough_run_narrowing_tests.rs"
 [[test]]
 name = "array_mutation_unrelated_narrowing_tests"
 path = "tests/array_mutation_unrelated_narrowing_tests.rs"
+[[test]]
+name = "array_mutation_same_array_join_narrowing_tests"
+path = "tests/array_mutation_same_array_join_narrowing_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
@@ -1930,6 +1936,9 @@ path = "tests/class_interface_self_merge_implements_tests.rs"
 [[test]]
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
+[[test]]
+name = "reexported_symbol_keyed_member_tests"
+path = "tests/reexported_symbol_keyed_member_tests.rs"
 [[test]]
 name = "polymorphic_this_display_tests"
 path = "tests/polymorphic_this_display_tests.rs"

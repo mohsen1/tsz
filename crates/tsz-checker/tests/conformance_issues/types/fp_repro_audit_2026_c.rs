@@ -52,7 +52,6 @@ export { c }
 }
 
 #[test]
-#[ignore = "reproduces #14164"]
 fn issue_14164_extracted_method_callable_no_ts2349() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -68,6 +67,56 @@ export { viaIndex }
     assert!(
         !has_error(&diags, 2349),
         "no TS2349 — extracted method type must keep its call signature. Actual: {diags:#?}"
+    );
+}
+
+// #14164 adjacent matrix: the defect is a conditional whose check type references
+// an unresolved user-interface `Lazy` collapsing to its false branch. Vary the
+// binders/shape to prove the fix is structural, not witness-shaped, and pin the
+// negative control so a genuinely non-callable member still reports TS2349.
+
+/// Renamed binders + a non-generic extracted method (no `<V>` on the callback
+/// alias). Still routes through `Parameters<Store<unknown>['select']>[0]` whose
+/// `Store` base is an unresolved `Lazy` while the enclosing function's type is
+/// computed; the call must stay callable.
+#[test]
+fn issue_14164_extracted_method_non_generic_renamed_callable() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Store<State> { select: (read: Reader) => State }
+type Reader = (store: Store<number>) => number
+declare const s: Store<number>
+type ReaderFromIndex = Parameters<Store<unknown>['select']>[0]
+function viaIndex(read: ReaderFromIndex) { return read(s) }
+export { viaIndex }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2349),
+        "no TS2349 — non-generic extracted method (renamed binders) stays callable. Actual: {diags:#?}"
+    );
+}
+
+/// Negative control: an extracted member that is genuinely NOT callable (a
+/// `number`-typed property reached the same way) must still report TS2349 —
+/// the deferral only applies while a referenced `Lazy` is unresolved, never to
+/// a resolved non-callable member.
+#[test]
+fn issue_14164_extracted_non_callable_member_still_ts2349() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Atom<Value> { read: (get: Getter) => Value; size: number }
+type Getter = <V>(atom: Atom<V>) => V
+declare const sz: Atom<unknown>['size']
+const r = sz()
+export { r }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&diags, 2349),
+        "TS2349 expected — a number-typed indexed member is not callable. Actual: {diags:#?}"
     );
 }
 
@@ -149,7 +198,6 @@ export type { A };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14225 (issue closed but minimal repro still emits TS2503)"]
 fn issue_14225_reimported_namespace_qualified_type_no_ts2503() {
     if !lib_files_available() {
         return;
