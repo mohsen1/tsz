@@ -385,14 +385,14 @@ mod tests {
 
     impl TempDir {
         fn new(tag: &str) -> Self {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
+            static NEXT_TEMP_DIR: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let unique = NEXT_TEMP_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut dir = std::env::temp_dir();
             dir.push(format!(
-                "tsz_lsp_evict_{tag}_{}_{nanos}",
-                std::process::id()
+                "tsz_lsp_evict_{tag}_{}_{}",
+                std::process::id(),
+                unique
             ));
             std::fs::create_dir_all(&dir).expect("create temp dir");
             Self(dir)
