@@ -497,6 +497,9 @@ path = "tests/private_brands.rs"
 name = "lazy_class_constructor_type_tests"
 path = "tests/lazy_class_constructor_type_tests.rs"
 [[test]]
+name = "this_array_field_method_call_tests"
+path = "tests/this_array_field_method_call_tests.rs"
+[[test]]
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
