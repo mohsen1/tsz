@@ -58,30 +58,11 @@ fn lib_def_monotone_publish_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("TSZ_DISABLE_LIB_DEF_MONOTONE").is_ok_and(|v| v == "1"))
 }
 
-/// Whether the #14344 content-addressed canonical-identity work is active.
-///
-/// Default-OFF: `TSZ_CANONICAL_DEFID=1` opts in. This gates the Stage-5
-/// content-election machinery (cross-arena declaring-module-path table + the
-/// post-merge representative election that extends `alias_forwards`). Flag-OFF,
-/// the `file_canonical_paths` table is never populated and the election pass
-/// never runs, so `canonical_def_id` and every downstream key are byte-identical
-/// to today. Gated behind a `OnceLock` read of the env var, mirroring
-/// [`lib_def_monotone_publish_enabled`].
-pub fn canonical_defid_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TSZ_CANONICAL_DEFID").is_ok_and(|v| v == "1"))
-}
-
 type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
 type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
-
-const fn fx_build_hasher() -> FxBuildHasher {
-    FxBuildHasher
-}
 
 /// Rough per-entry overhead for a `DashMap`/`DashSet` bucket (key + value +
 /// shard bookkeeping), used by the store's `estimated_size_bytes` reporting.
@@ -412,23 +393,6 @@ pub struct DefinitionStore {
     /// scanning the entire definition store.
     file_to_defs: DefDashMap<u32, Vec<DefId>>,
 
-    /// `file_idx` -> declaring-module canonical-path `Atom` (#14344 Stage 5).
-    ///
-    /// `DefinitionInfo.file_id` is an arena-local file index; on its own it
-    /// cannot tell whether two defs from different per-file binders denote the
-    /// same DECLARING module (the cross-arena convergence #14344 needs — and the
-    /// bug that sank registration-time content hashing, which keyed off the
-    /// *importing* file). The program/driver, which alone knows module
-    /// resolution, populates this table (`set_file_canonical_path`) so the
-    /// solver-side content-election pass can join `file_id -> canonical module
-    /// path` and group genuinely-same declarations across arenas.
-    ///
-    /// Empty unless the driver opts in (gated by `canonical_defid_enabled`,
-    /// `TSZ_CANONICAL_DEFID=1`), so flag-off builds never populate or read it and
-    /// are byte-identical. This is pure observability/identity metadata: it never
-    /// affects `DefId` allocation, bodies, or any resolver answer on its own.
-    file_canonical_paths: DefDashMap<u32, Atom>,
-
     /// Reverse index: `ObjectShape` hash -> `DefId` for shape-based lookups.
     ///
     /// Populated when `instance_shape` is set (via `register()` or
@@ -548,10 +512,6 @@ impl DefinitionStore {
             state_flags: DefStateFlags::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
-            file_canonical_paths: DefDashMap::with_capacity_and_hasher(
-                file_capacity,
-                fx_build_hasher(),
-            ),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
                 id_capacity / 2,
                 Default::default(),
@@ -1047,136 +1007,6 @@ impl DefinitionStore {
             }
         }
         current
-    }
-
-    /// Record the declaring-module canonical-path `Atom` for an arena file index
-    /// (#14344 Stage 5). Populated by the program/driver, which alone resolves
-    /// module identity, so the solver-side content-election pass can join
-    /// `DefinitionInfo.file_id -> canonical module path`. Pure identity metadata
-    /// — it affects no `DefId` allocation, body, or resolver answer; it is only
-    /// consulted by the (flag-gated, default-off) election pass.
-    pub fn set_file_canonical_path(&self, file_idx: u32, path: Atom) {
-        self.file_canonical_paths.insert(file_idx, path);
-    }
-
-    /// Look up the declaring-module canonical-path `Atom` for a file index, if
-    /// the program populated one (#14344 Stage 5). `None` whenever the
-    /// content-addressing flag is off (the table is never populated) or the file
-    /// index was not registered.
-    pub fn file_canonical_path(&self, file_idx: u32) -> Option<Atom> {
-        self.file_canonical_paths.get(&file_idx).map(|p| *p)
-    }
-
-    /// Number of file indices with a recorded canonical path (observability /
-    /// tests). Zero when the content-addressing flag is off.
-    pub fn file_canonical_path_count(&self) -> usize {
-        self.file_canonical_paths.len()
-    }
-
-    /// #14344 Stage 5: post-merge content-election. Group every type-level
-    /// definition by a CROSS-ARENA content key
-    /// `(kind, name, declaring-module canonical path, decl-span)` and, for each
-    /// group with more than one member, forward every non-representative to the
-    /// elected representative via `set_alias_forward`. The existing
-    /// `canonical_def_id` chase then converges all variants — zero key-type
-    /// change, zero read-site edits.
-    ///
-    /// The representative is elected DETERMINISTICALLY: prefer a member that
-    /// carries a body (the heritage-complete form; cross-arena alias variants are
-    /// intentionally body-less), then the MINIMUM program-order ordinal
-    /// `(file_id, decl-span-start)` — the BFS-discovery file index plus in-file
-    /// byte offset, which is stable across thread / file-arrival reorder — then
-    /// `DefId.0` as a final total-order tie-break. Electing by raw `DefId.0` /
-    /// `SymbolId` alone would reintroduce allocation-order dependence (the rec#1
-    /// `moduleResolution` regression), so the program-order ordinal is the
-    /// primary key.
-    ///
-    /// Only runs under `canonical_defid_enabled()` (`TSZ_CANONICAL_DEFID=1`); a
-    /// no-op otherwise, so flag-off is byte-identical. Idempotent: re-running
-    /// after the graph is settled forwards nothing new (a non-rep already chases
-    /// to the rep, and `set_alias_forward` refuses self/cycle links). Returns the
-    /// number of forward links added, for observability and tests.
-    ///
-    /// Eligible kinds are the type-level identities that participate in
-    /// cross-arena `Lazy(DefId)` convergence — `Interface`, `Class`, `TypeAlias`,
-    /// `Enum`. `Namespace` / `ClassConstructor` / value-space kinds are excluded
-    /// (distinct merge / value semantics). A def with no recorded
-    /// `file_canonical_path` for its `file_id` is skipped — its declaring-module
-    /// identity is unknown, so it cannot be safely grouped cross-arena (the
-    /// importing-file trap that sank registration-time hashing).
-    pub fn elect_content_representatives(&self) -> usize {
-        if !canonical_defid_enabled() {
-            return 0;
-        }
-        self.elect_content_representatives_unchecked()
-    }
-
-    /// The flag-independent election body for [`Self::elect_content_representatives`].
-    ///
-    /// Kept separate so the election + convergence logic can be unit-tested
-    /// directly without depending on the process-wide `TSZ_CANONICAL_DEFID`
-    /// `OnceLock`. Production callers MUST go through the gated public method;
-    /// this runs the pass unconditionally.
-    pub fn elect_content_representatives_unchecked(&self) -> usize {
-        // Group key: (kind, name, declaring-module canonical path, decl-span-start).
-        let mut groups: FxHashMap<(DefKind, Atom, Atom, u32), Vec<DefId>> = FxHashMap::default();
-        for entry in &self.definitions {
-            let def_id = *entry.key();
-            let info = entry.value();
-            if !matches!(
-                info.kind,
-                DefKind::Interface | DefKind::Class | DefKind::TypeAlias | DefKind::Enum
-            ) {
-                continue;
-            }
-            let Some(file_id) = info.file_id else {
-                continue;
-            };
-            // Declaring-module identity must be known to group cross-arena.
-            let Some(path) = self.file_canonical_paths.get(&file_id).map(|p| *p) else {
-                continue;
-            };
-            let span_start = info.span.map_or(0, |(start, _)| start);
-            groups
-                .entry((info.kind, info.name, path, span_start))
-                .or_default()
-                .push(def_id);
-        }
-
-        let mut links_added = 0usize;
-        for members in groups.values() {
-            if members.len() < 2 {
-                continue;
-            }
-            // Elect: body-bearing first, then min program-order ordinal
-            // (file_id, span_start), then min DefId.0 (total-order tie-break).
-            let rep = *members
-                .iter()
-                .min_by_key(|&&def_id| {
-                    let has_body = self.get_body(def_id).is_none(); // false (0) sorts first
-                    let (file_id, span_start) = self
-                        .get(def_id)
-                        .map(|i| (i.file_id.unwrap_or(u32::MAX), i.span.map_or(0, |(s, _)| s)))
-                        .unwrap_or((u32::MAX, 0));
-                    (has_body, file_id, span_start, def_id.0)
-                })
-                .expect("group has >= 2 members");
-            for &variant in members {
-                if variant != rep {
-                    let before = self.alias_forwards_len();
-                    self.set_alias_forward(variant, rep);
-                    if self.alias_forwards_len() != before {
-                        links_added += 1;
-                    }
-                }
-            }
-        }
-        links_added
-    }
-
-    /// Number of recorded import-alias forward links (observability / tests).
-    pub fn alias_forwards_len(&self) -> usize {
-        self.alias_forwards.len()
     }
 
     /// Mark a type-alias `DefId` as having an unconditionally-infinite
