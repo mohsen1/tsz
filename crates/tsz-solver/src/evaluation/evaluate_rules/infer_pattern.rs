@@ -1559,6 +1559,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (substituted != ty).then_some(substituted)
     }
 
+    /// Whether `ty` is an alias `Application` whose *resolved* body (before
+    /// argument substitution) is structurally an `Application` — i.e. a
+    /// "wrapper" alias such as `type AsyncBox<T> = Promise<...>`.
+    ///
+    /// This distinguishes wrapper aliases (whose body is a plain interface
+    /// application that can be peeled head-only) from conditional-body aliases
+    /// such as `ReturnType<F>` or a self-recursive `DeepUnwrap<T>`, whose
+    /// reduction is load-bearing: substituting those bodies via
+    /// [`Self::alias_application_substituted_body`] eagerly reduces the
+    /// conditional and can yield a different (residual) `Application` than full
+    /// evaluation, so they must stay on the evaluate + last-chance-recovery
+    /// path rather than being peeled.
+    pub(crate) fn alias_application_has_application_body(&self, ty: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
+            return false;
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            Some(TypeData::TypeQuery(sym_ref)) => match self.resolver().symbol_to_def_id(sym_ref) {
+                Some(def_id) => def_id,
+                None => return false,
+            },
+            _ => return false,
+        };
+        let Some(body) = self.resolver().resolve_lazy(def_id, self.interner()) else {
+            return false;
+        };
+        matches!(self.interner().lookup(body), Some(TypeData::Application(_)))
+    }
+
     /// Peel one alias layer off an `Application` whose body is itself an
     /// `Application(...)`. We do not gate on `get_def_kind`: zombie `DefId`s
     /// from `interner.reference` are not tagged with `DefKind` in the
