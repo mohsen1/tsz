@@ -433,7 +433,7 @@ mod tests {
 
         let mut project = Project::new();
         project.set_file(a.clone(), "export const a = 1;\n".to_string());
-        project.set_file(b.clone(), "export const b = 2;\n".to_string());
+        project.set_file(b, "export const b = 2;\n".to_string());
         assert_eq!(project.file_count(), 2);
 
         // Budget below the current footprint forces eviction. Neither file is
@@ -457,10 +457,7 @@ mod tests {
         let a = tmp.write("a.ts", "export const a = 1;\n");
 
         let mut project = Project::new();
-        project.set_file(
-            a.clone(),
-            "export const a = 999; // unsaved edit\n".to_string(),
-        );
+        project.set_file(a, "export const a = 999; // unsaved edit\n".to_string());
 
         project.set_memory_budget(Some(0));
         let result = project.evict_if_over_budget();
