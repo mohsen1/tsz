@@ -1886,4 +1886,87 @@ fn test_all_definition_names_qualifies_namespace_exports() {
     );
 }
 
+/// #14344 Stage 4: the generation-validated `canonical_def_id` memo must NOT
+/// return a stale canonical after the alias chain is EXTENDED past a cached
+/// entry. This is the correctness blocker the design hinges on: cache `A -> B`,
+/// then add `B -> C`, and the next resolve of `A` must return `C` (the chain is
+/// mutable; `set_alias_forward` bumps the store generation, invalidating the
+/// stamped memo entry so it re-chases).
+#[test]
+fn canonical_def_id_memo_rechase_after_chain_extension() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let a = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("A"),
+        vec![],
+        TypeId::NUMBER,
+    ));
+    let b = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("B"),
+        vec![],
+        TypeId::STRING,
+    ));
+    let c = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("C"),
+        vec![],
+        TypeId::BOOLEAN,
+    ));
+
+    // Chain A -> B, then prime the memo so an entry `A -> (B, gen)` exists.
+    store.set_alias_forward(a, b);
+    assert_eq!(store.canonical_def_id_memoized(a), b);
+
+    // Extend the chain B -> C. `set_alias_forward` bumps the generation, so the
+    // stamped `A -> B` memo entry is no longer trusted.
+    store.set_alias_forward(b, c);
+    assert_eq!(
+        store.canonical_def_id_memoized(a),
+        c,
+        "memo must re-chase after the chain was extended, not return stale B"
+    );
+    // And the uncached chase agrees (the memo result is never invented).
+    assert_eq!(store.canonical_def_id_uncached(a), c);
+}
+
+/// The memo result is byte-identical to the uncached chase for a stable chain
+/// and for a non-alias identity def, across repeated calls (warm hits).
+#[test]
+fn canonical_def_id_memo_matches_uncached_for_stable_chain() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let a = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("A"),
+        vec![],
+        TypeId::NUMBER,
+    ));
+    let b = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("B"),
+        vec![],
+        TypeId::STRING,
+    ));
+    let lonely = store.register(DefinitionInfo::type_alias(
+        interner.intern_string("Lonely"),
+        vec![],
+        TypeId::BOOLEAN,
+    ));
+    store.set_alias_forward(a, b);
+
+    // Repeated calls (first a miss-then-fill, then warm hits) all agree with
+    // the uncached chase.
+    for _ in 0..3 {
+        assert_eq!(
+            store.canonical_def_id_memoized(a),
+            store.canonical_def_id_uncached(a)
+        );
+        assert_eq!(
+            store.canonical_def_id_memoized(lonely),
+            store.canonical_def_id_uncached(lonely)
+        );
+    }
+    // A non-alias def is its own canonical.
+    assert_eq!(store.canonical_def_id_memoized(lonely), lonely);
+}
+
 include!("def_tests_parts/type_to_def.rs");

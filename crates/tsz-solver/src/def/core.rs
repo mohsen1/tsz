@@ -58,6 +58,24 @@ fn lib_def_monotone_publish_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("TSZ_DISABLE_LIB_DEF_MONOTONE").is_ok_and(|v| v == "1"))
 }
 
+/// Whether the generation-validated `canonical_def_id` memo (#14344 Stage 4) is
+/// active.
+///
+/// Default-OFF: `TSZ_CANONICAL_DEFID=1` opts in. When off, `canonical_def_id`
+/// delegates straight to `canonical_def_id_uncached`, which is the verbatim
+/// pre-memo alias-forward chase — so flag-off is byte-identical to before this
+/// change. When on, repeated `canonical_def_id` calls for the same `DefId` are
+/// served from a per-`DefId` memo that is invalidated whenever the store's
+/// `generation` bumps (every `alias_forwards` mutation bumps it via
+/// `set_alias_forward`), so the memo can never return a stale canonical after a
+/// chain is extended. Gated behind a `OnceLock` read of the env var, mirroring
+/// [`lib_def_monotone_publish_enabled`].
+fn canonical_defid_memo_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_CANONICAL_DEFID").is_ok_and(|v| v == "1"))
+}
+
 type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
@@ -299,6 +317,20 @@ pub struct DefinitionStore {
     /// and an opaque application.
     alias_forwards: DefDashMap<DefId, DefId>,
 
+    /// Generation-validated memo of [`Self::canonical_def_id`] (#14344 Stage 4).
+    ///
+    /// Maps a queried `DefId` to `(canonical_def_id, generation_at_memo_time)`.
+    /// `canonical_def_id` re-chases the `alias_forwards` map on every call, and
+    /// it is consulted while building relation/eval cache keys, so a hot program
+    /// re-walks the same short chains constantly. This memo collapses the repeats
+    /// to O(1) — but the chain is MUTABLE (`set_alias_forward` can extend
+    /// `A -> B` to `A -> B -> C` after a memo entry exists), so an entry is only
+    /// trusted while its stored generation matches the store's current
+    /// `generation`. Every `alias_forwards` mutation bumps the generation (see
+    /// `set_alias_forward`), so a stale entry can never be returned: a changed
+    /// chain forces a re-chase. Only consulted when [`canonical_defid_memo_enabled`].
+    canonical_def_id_memo: DefDashMap<DefId, (DefId, u64)>,
+
     /// Reverse map: `TypeId` -> `DefId` for named types.
     ///
     /// When a class/interface instance type is computed, the checker registers it here
@@ -497,6 +529,7 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
             alias_forwards: DefDashMap::default(),
+            canonical_def_id_memo: DefDashMap::default(),
             type_to_def: DefDashMap::default(),
             type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
@@ -995,10 +1028,51 @@ impl DefinitionStore {
     }
 
     /// Resolve a `DefId` through the import-alias forwarding chain to the
-    /// declaring definition. Identity for non-alias defs. The chase is
-    /// depth-bounded so a (refused, but defensively handled) cycle cannot
-    /// loop.
+    /// declaring definition. Identity for non-alias defs.
+    ///
+    /// When [`canonical_defid_memo_enabled`] (`TSZ_CANONICAL_DEFID=1`, #14344
+    /// Stage 4), repeats are served from a generation-validated memo: an entry
+    /// is trusted only while its stored generation matches the store's current
+    /// `generation`. Every `alias_forwards` mutation bumps the generation, so a
+    /// chain extended after an entry was memoized (`A -> B` becomes
+    /// `A -> B -> C`) is re-chased instead of returning the stale `B`. When the
+    /// flag is off (default), this delegates straight to
+    /// [`Self::canonical_def_id_uncached`], so behavior is byte-identical to the
+    /// pre-memo chase.
     pub fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        if canonical_defid_memo_enabled() {
+            self.canonical_def_id_memoized(def_id)
+        } else {
+            self.canonical_def_id_uncached(def_id)
+        }
+    }
+
+    /// Generation-validated memo path for [`Self::canonical_def_id`].
+    ///
+    /// Kept as a flag-independent method so the memo's correctness — in
+    /// particular its generation invalidation when an alias chain is extended
+    /// after an entry is cached — can be unit-tested directly without depending
+    /// on the process-wide `TSZ_CANONICAL_DEFID` `OnceLock`/env state.
+    fn canonical_def_id_memoized(&self, def_id: DefId) -> DefId {
+        let current_gen = self.generation();
+        if let Some(entry) = self.canonical_def_id_memo.get(&def_id)
+            && entry.1 == current_gen
+        {
+            return entry.0;
+        }
+        let canonical = self.canonical_def_id_uncached(def_id);
+        self.canonical_def_id_memo
+            .insert(def_id, (canonical, current_gen));
+        canonical
+    }
+
+    /// The verbatim alias-forward chase: resolve `def_id` through the
+    /// import-alias forwarding chain to the declaring definition. Identity for
+    /// non-alias defs. The chase is depth-bounded so a (refused, but
+    /// defensively handled) cycle cannot loop. This is the pre-memo behavior;
+    /// [`Self::canonical_def_id`] wraps it with the optional generation-validated
+    /// memo.
+    pub fn canonical_def_id_uncached(&self, def_id: DefId) -> DefId {
         let mut current = def_id;
         for _ in 0..8 {
             match self.alias_forwards.get(&current) {
