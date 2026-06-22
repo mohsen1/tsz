@@ -8,7 +8,7 @@
 //!
 //! See docs/conformance-*.md for full context.
 
-pub(crate) use rustc_hash::{FxHashMap, FxHashSet};
+pub(crate) use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 pub(crate) use std::sync::Arc;
 pub(crate) use tsz_binder::BinderState;
 pub(crate) use tsz_binder::lib_loader::LibFile;
@@ -381,7 +381,7 @@ fn compile_named_files_get_diagnostics_with_lib_files_and_options(
         // look user-declared).
         let symbol_capacity: usize = all_binders.iter().map(|b| b.symbols.len()).sum();
         let mut symbol_file_index =
-            FxHashMap::with_capacity_and_hasher(symbol_capacity, Default::default());
+            FxHashMap::with_capacity_and_hasher(symbol_capacity, FxBuildHasher);
         for (file_idx, binder) in all_binders.iter().enumerate() {
             for symbol in binder.symbols.iter() {
                 if symbol.decl_file_idx == u32::MAX {
