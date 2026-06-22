@@ -755,3 +755,87 @@ var [c4, c5, c6] = foo(1);
         diagnostic_code_messages(&diagnostics)
     );
 }
+
+/// Spreading a type parameter `P` whose constraint resolves — through a deferred
+/// conditional (`Parameters`) — to an array/tuple base constraint lands on a rest
+/// parameter and must NOT emit TS2345. tsc is clean for `fn(...params)` when
+/// `params: P`, `P extends Parameters<F>`, and `fn: F` has a rest signature.
+/// Regression for issue #14217 (mined from true-myth). Binder names are varied to
+/// keep the rule structural, not keyed on `F`/`P`/`Parameters`.
+#[test]
+fn test_no_ts2345_spread_typeparam_constrained_by_parameters_into_rest() {
+    let source = r#"
+type Callable = (...zzz: never[]) => unknown;
+type ArgsOf<Fn> = Fn extends (...inner: infer Captured) => any ? Captured : never;
+export function applyIt<TheFn extends Callable, TheArgs extends ArgsOf<TheFn>>(
+  theFn: TheFn,
+  theArgs: TheArgs,
+): unknown {
+  return theFn(...theArgs);
+}
+export {};
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diagnostics, 2345),
+        0,
+        "Spreading a type parameter constrained by a deferred-conditional parameter \
+         list into a rest parameter must not emit TS2345; got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+    assert_eq!(
+        diagnostic_count(&diagnostics, 2556),
+        0,
+        "A rest-parameter spread of an array-like generic must not emit TS2556; got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+/// Same family with a `[...Parameters<F>]` constraint (the spread is wrapped in an
+/// explicit variadic tuple). tsc is clean; the variadic-tuple-to-array relation
+/// must resolve the conditional rest element. Regression for issue #14217.
+#[test]
+fn test_no_ts2345_spread_typeparam_constrained_by_spread_parameters_into_rest() {
+    let source = r#"
+type Callable = (...zzz: never[]) => unknown;
+type ArgsOf<Fn> = Fn extends (...inner: infer Captured) => any ? Captured : never;
+export function applyIt<TheFn extends Callable, TheArgs extends [...ArgsOf<TheFn>]>(
+  theFn: TheFn,
+  theArgs: TheArgs,
+): unknown {
+  return theFn(...theArgs);
+}
+export {};
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diagnostics, 2345),
+        0,
+        "Spreading a `[...Parameters<F>]`-constrained generic into a rest parameter \
+         must not emit TS2345; got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+/// Negative control: a spread of a type parameter constrained by a non-array
+/// type (`string`) must still emit TS2345. Confirms the rest-spread acceptance is
+/// not over-broadened to any type parameter.
+#[test]
+fn test_ts2345_still_fires_for_spread_of_non_array_typeparam() {
+    let source = r#"
+type Callable = (...zzz: never[]) => unknown;
+export function applyIt<TheFn extends Callable, TheArgs extends string>(
+  theFn: TheFn,
+  theArgs: TheArgs,
+): unknown {
+  return theFn(...theArgs);
+}
+export {};
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostic_count(&diagnostics, 2345) >= 1,
+        "Spreading a `string`-constrained generic must still emit TS2345; got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}

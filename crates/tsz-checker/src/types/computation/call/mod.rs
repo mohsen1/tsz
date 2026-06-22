@@ -890,6 +890,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn finalize_call_after_argument_collection(&mut self, ctx: CallFinalizationCtx<'_>) -> TypeId {
+        use crate::query_boundaries::assignability as assign_query;
+        use crate::query_boundaries::checkers::call as call_checker;
+        use crate::query_boundaries::checkers::call::is_type_parameter_type;
+        use crate::query_boundaries::common;
+        use crate::query_boundaries::common::ContextualTypeContext;
+        use tsz_parser::parser::syntax_kind_ext;
+
         let CallFinalizationCtx {
             idx,
             callee_expr,
@@ -910,12 +917,6 @@ impl<'a> CheckerState<'a> {
             had_return_context_substitution,
             pushed_this_type_from_shape,
         } = ctx;
-        use crate::query_boundaries::assignability as assign_query;
-        use crate::query_boundaries::checkers::call as call_checker;
-        use crate::query_boundaries::checkers::call::is_type_parameter_type;
-        use crate::query_boundaries::common;
-        use crate::query_boundaries::common::ContextualTypeContext;
-        use tsz_parser::parser::syntax_kind_ext;
 
         self.ensure_callee_relation_inputs_ready(callee_type_for_resolution);
 
