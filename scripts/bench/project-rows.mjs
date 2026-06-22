@@ -813,15 +813,22 @@ export const PROJECT_ROW_DEFINITIONS = [
     family: "real-world application: secrets management dashboard (Next.js)",
     fixture_dir: "infisical",
     source_dir: "frontend",
-    app_tsconfig: "frontend/tsconfig.json",
+    // The upstream frontend/tsconfig.json is a solution-style aggregator
+    // ({"files":[],"references":[...]}) that resolves ZERO files under `-p`
+    // (references are only followed under `-b`), so it produced a phantom
+    // "0 lines, tsz 24.6x faster" benchmark. Point at the real leaf config
+    // whose `include` covers frontend/src. Demoted required -> canary: this
+    // is a strict React app and tsz's real behavior on it is unverified, so
+    // it is advisory (like the other application rows) until proven green.
+    app_tsconfig: "frontend/tsconfig.app.json",
     install_cmd: "npm ci --ignore-scripts",
     install_root: ".",
     repo_env: "INFISICAL_REPO",
     ref_env: "INFISICAL_REF",
     repo: "https://github.com/Infisical/infisical.git",
     ref: "704c8cf7e76f1ce49301a5f943e51303c0db0058",
-    guard_set: "required",
-    benchmark_set: "required",
+    guard_set: "canary",
+    benchmark_set: "canary",
     perf_timed: true,
     category: "application",
   },

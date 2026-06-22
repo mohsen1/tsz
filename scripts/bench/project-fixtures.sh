@@ -35,7 +35,6 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "vite-vanilla-ts-app"
   "nextjs-fresh-app"
   "comlink-project"
-  "infisical-project"
 )
 
 TSZ_COMPILE_GUARD_CANARY_ROWS=(
@@ -88,6 +87,7 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "affine-project"
   "immich-server-project"
   "rocketchat-project"
+  "infisical-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
