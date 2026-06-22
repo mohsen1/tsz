@@ -263,6 +263,22 @@ pub struct TypeInterner {
     /// collapses the repeats to O(1) and is shared across the many fresh
     /// `TypeEvaluator` instances created during instantiation (#14330).
     pub(super) extract_type_params_cache: DashMap<TypeId, Arc<[TypeParamInfo]>, FxBuildHasher>,
+    /// Result memo for `collect_contravariant_infer_names`, keyed by the pattern
+    /// `TypeId`.
+    ///
+    /// The set of `infer` names that occur in a contravariant (function/callable
+    /// parameter) position of a pattern is a pure function of the immutable
+    /// interned pattern structure — the variance walk never consults the resolver
+    /// or substitution environment. Infer-pattern matching nonetheless recomputes
+    /// it on every union-member distribution and every object-property match
+    /// (`match_infer_pattern_union_members` / `match_infer_object_properties`),
+    /// each time re-walking the whole pattern subtree. A recursive conditional
+    /// that re-applies itself over an alias `Application` re-asks it for the same
+    /// (often shared) pattern across the many fresh `TypeEvaluator` instances
+    /// instantiation spins up. Memoizing the result per `TypeId` collapses the
+    /// repeats to O(1); the stored `Arc<[Atom]>` is the deduplicated name list the
+    /// caller reconstructs into a set (#14330).
+    pub(super) contravariant_infer_names_cache: DashMap<TypeId, Arc<[Atom]>, FxBuildHasher>,
     /// Packed per-`TypeId` caches for immutable structural content predicates.
     ///
     /// Each bit records one predicate's known/truthy state. This preserves the
@@ -551,6 +567,7 @@ impl TypeInterner {
             predicate_cache: DashMap::with_hasher(FxBuildHasher),
             widen_type_cache: DashMap::with_hasher(FxBuildHasher),
             extract_type_params_cache: DashMap::with_hasher(FxBuildHasher),
+            contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
@@ -821,6 +838,22 @@ impl TypeInterner {
     #[inline]
     pub fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
         self.extract_type_params_cache.insert(type_id, params);
+    }
+
+    /// Look up the memoized `collect_contravariant_infer_names` name list for a
+    /// pattern `TypeId`.
+    #[inline]
+    pub fn contravariant_infer_names_memo(&self, type_id: TypeId) -> Option<Arc<[Atom]>> {
+        self.contravariant_infer_names_cache
+            .get(&type_id)
+            .map(|v| Arc::clone(&v))
+    }
+
+    /// Record the `collect_contravariant_infer_names` name list for a pattern
+    /// `TypeId`.
+    #[inline]
+    pub fn set_contravariant_infer_names_memo(&self, type_id: TypeId, names: Arc<[Atom]>) {
+        self.contravariant_infer_names_cache.insert(type_id, names);
     }
 
     /// Intern a string into an Atom.
