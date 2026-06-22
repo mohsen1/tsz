@@ -59,6 +59,35 @@ pub enum DeferredFlowEnvWrite {
 }
 
 impl DeferredFlowEnvWrite {
+    /// Build the body-registration variant for a definition, selecting
+    /// [`Self::InsertDef`] when `params` is empty and
+    /// [`Self::InsertDefWithParams`] otherwise.
+    ///
+    /// The "empty params -> non-generic insert, else generic insert" choice is
+    /// the single rule every body-registration site shares; expressing it once
+    /// here keeps the resolved-body (`register_resolved_def_in_envs`) and
+    /// flow-mirror (`mirror_def_in_type_environment`) construction paths from
+    /// drifting apart. `variances` is threaded through unchanged so callers that
+    /// already computed declared variances keep them and callers that do not
+    /// pass `None`, exactly as before.
+    pub(crate) fn insert_def_choosing_params(
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+        variances: Option<Arc<[tsz_solver::type_handles::Variance]>>,
+    ) -> Self {
+        if params.is_empty() {
+            Self::InsertDef { def_id, body }
+        } else {
+            Self::InsertDefWithParams {
+                def_id,
+                body,
+                params,
+                variances,
+            }
+        }
+    }
+
     /// Apply this deferred registration to a flow-analyzer `TypeEnvironment`.
     pub(crate) fn apply(&self, env: &mut TypeEnvironment) {
         match self {
