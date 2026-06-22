@@ -966,22 +966,55 @@ impl<'a> FlowAnalyzer<'a> {
                 } else if affects_ref {
                     current_type
                 } else if let Some(&ant) = flow.antecedent.first() {
-                    if self.antecedent_requires_defer_cached(
-                        ant,
-                        reference,
-                        symbol_id,
-                        &mut defer_memos,
-                    ) && !visited.contains(&ant)
-                        && !results.contains_key(&ant)
-                    {
-                        defer_to_antecedent(worklist, in_worklist, ant, current_flow, current_type);
-                        continue;
+                    // This mutation targets a DIFFERENT array than `reference`, so it
+                    // is a pure value pass-through for `reference` and must NOT
+                    // re-derive its narrowing. Mirror the non-targeting ASSIGNMENT
+                    // pass-through: if the antecedent carries narrowing for
+                    // `reference` and has not been resolved yet, defer so the
+                    // narrowed type reaches the dependent reader instead of the
+                    // declared type. A bare `antecedent_requires_defer` is too
+                    // narrow here — it does not recognize a prior `ARRAY_MUTATION`
+                    // node (the mutation/evolution of `reference` itself) or a
+                    // non-targeting ASSIGNMENT chain that still carries the
+                    // assignment-narrowing of `reference` (e.g.
+                    // `a = a || []; a.push(1); b.push(1); a.pop()`), so the
+                    // unrelated mutation re-widens `a` to `T | undefined` and emits
+                    // a false `TS18048`.
+                    if let Some(&ant_type) = results.get(&ant) {
+                        ant_type
+                    } else if !visited.contains(&ant) {
+                        let ant_needs_defer = self.binder.flow_nodes.get(ant).is_some_and(|f| {
+                            f.has_any_flags(
+                                flow_flags::CONDITION
+                                    | flow_flags::CALL
+                                    | flow_flags::BRANCH_LABEL
+                                    | flow_flags::LOOP_LABEL
+                                    | flow_flags::ASSIGNMENT
+                                    | flow_flags::ARRAY_MUTATION
+                                    | flow_flags::SWITCH_CLAUSE
+                                    | flow_flags::AWAIT_POINT
+                                    | flow_flags::YIELD_POINT
+                                    | flow_flags::START,
+                            )
+                        });
+                        if ant_needs_defer {
+                            defer_to_antecedent(
+                                worklist,
+                                in_worklist,
+                                ant,
+                                current_flow,
+                                current_type,
+                            );
+                            continue;
+                        }
+                        if !in_worklist.contains(&ant) {
+                            worklist.push_back((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                        *results.get(&ant).unwrap_or(&current_type)
+                    } else {
+                        current_type
                     }
-                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                        worklist.push_back((ant, current_type));
-                        in_worklist.insert(ant);
-                    }
-                    *results.get(&ant).unwrap_or(&current_type)
                 } else {
                     current_type
                 }

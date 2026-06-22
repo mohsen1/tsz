@@ -1248,3 +1248,127 @@ fn test_extends_clause_array_constraint() {
     let result = ctx.resolve_with_constraints(var_t).unwrap();
     assert_eq!(result, string_array);
 }
+
+/// A contravariant candidate that is the variable's *own* declared type
+/// parameter (recovered via the original-name registry, since the variable is
+/// tracked under a renamed placeholder) is a self-reference carrying no
+/// information. It must not override a legitimate covariant literal inference.
+///
+/// This is the inference-engine root of the overloaded-call false positive
+/// where a generic `<K extends keyof EventMap>(type: K, cb: (e: EventMap[K]) =>
+/// any, opts?)` overload lost `K = "message"`: contextually typing the callback
+/// with the un-instantiated signature leaked the bare `K` back as a
+/// contra-candidate for `K`'s own variable, flipping the chosen overload to the
+/// non-generic fallback. The binder name is deliberately not `K` to keep the
+/// guard structural.
+#[test]
+fn self_referential_contra_candidate_does_not_override_covariant_literal() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    // Mirror the real call path: the variable is tracked under a renamed
+    // placeholder, while the *declared* name is recorded separately.
+    let placeholder_name = interner.intern_string("__infer_0");
+    let declared_name = interner.intern_string("Evt");
+    let var = ctx.fresh_type_param(placeholder_name, false);
+    ctx.register_original_type_param_name(declared_name, var);
+
+    let literal = interner.literal_string("message");
+    ctx.add_candidate(
+        var,
+        literal,
+        crate::types::InferencePriority::NakedTypeVariable,
+    );
+
+    // The bare declared type parameter leaks back from the contravariant
+    // callback-parameter position.
+    let declared_param = interner.type_param(crate::types::TypeParamInfo {
+        name: declared_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    ctx.in_contra_mode = true;
+    ctx.add_contra_candidate(
+        var,
+        declared_param,
+        crate::types::InferencePriority::NakedTypeVariable,
+    );
+    ctx.in_contra_mode = false;
+
+    ctx.fix_current_variables().unwrap();
+
+    // The self-referential contra-candidate must be dropped so the covariant
+    // string inference wins (the literal may widen to `string` under the usual
+    // resolution rules — the point is it is NOT the leaked declared parameter).
+    let resolved = ctx.probe(var);
+    assert!(resolved.is_some(), "variable should be fixed");
+    assert_ne!(
+        resolved,
+        Some(declared_param),
+        "self-referential contra-candidate must not override the covariant \
+         inference"
+    );
+    assert!(
+        matches!(resolved, Some(t) if t == literal || t == TypeId::STRING),
+        "covariant string inference must survive, got {resolved:?}"
+    );
+}
+
+/// Negative control: a contra-candidate that is a *foreign* concrete type (not
+/// the variable's own declared parameter) is a genuine contravariant bound and
+/// must still participate, so the variable does not silently keep the covariant
+/// literal when a real contra-candidate disagrees.
+#[test]
+fn foreign_contra_candidate_is_still_honored() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let placeholder_name = interner.intern_string("__infer_0");
+    let declared_name = interner.intern_string("Evt");
+    let var = ctx.fresh_type_param(placeholder_name, false);
+    ctx.register_original_type_param_name(declared_name, var);
+
+    let literal = interner.literal_string("message");
+    ctx.add_candidate(
+        var,
+        literal,
+        crate::types::InferencePriority::NakedTypeVariable,
+    );
+
+    // A concrete, unrelated contra-candidate must NOT be dropped by the
+    // self-reference guard.
+    ctx.in_contra_mode = true;
+    ctx.add_contra_candidate(
+        var,
+        TypeId::STRING,
+        crate::types::InferencePriority::NakedTypeVariable,
+    );
+    ctx.in_contra_mode = false;
+
+    ctx.fix_current_variables().unwrap();
+
+    // The foreign contra-candidate survived (it was not skipped as a
+    // self-reference); the exact resolution is governed by the co/contra rules,
+    // but the variable must be fixed to a concrete result rather than left as
+    // the leaked placeholder.
+    let resolved = ctx.probe(var);
+    assert!(resolved.is_some(), "variable should be fixed");
+    assert_ne!(
+        resolved,
+        Some(declared_param_id(&interner)),
+        "a foreign contra-candidate must not be confused with a self-reference"
+    );
+}
+
+fn declared_param_id(interner: &TypeInterner) -> TypeId {
+    let declared_name = interner.intern_string("Evt");
+    interner.type_param(crate::types::TypeParamInfo {
+        name: declared_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    })
+}

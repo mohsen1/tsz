@@ -1141,6 +1141,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Application could expand to a type that `check_type` does satisfy.
                 // Defer so a later resolver pass (CheckerContext) can expand it.
                 || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
+                // A `keyof Lazy(DefId)` the resolver cannot expand keeps part of
+                // the key space opaque, so a concrete `literal extends keyof Ref`
+                // check cannot be definitively false. See
+                // `relation_has_unresolvable_keyof_lazy` (#14337).
+                || self.relation_has_unresolvable_keyof_lazy(check_type, extends_type)
             {
                 // Subtype check failed, but either side contains unresolved type
                 // parameters or lazy references. The result is indeterminate: once
