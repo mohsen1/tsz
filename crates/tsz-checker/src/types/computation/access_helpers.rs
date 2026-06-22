@@ -976,6 +976,41 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// `T[K]` where `K`'s constraint is `keyof F<T>` (a transform of the object
+    /// type parameter `T`) is still a valid index when the transformed key space
+    /// is assignable to `keyof T`. Key-preserving transforms keep
+    /// `keyof F<T> = keyof T` — a transparent alias `type Alias<T> = T`,
+    /// `NonNullable<T>` (`T & {}`), `Readonly<T>`, `Partial<T>`. Only a
+    /// key-*changing* transform (a key remap, `Pick`/`Omit`, or a *foreign* type
+    /// parameter's keys such as `keyof U` with `U extends T`) produces keys
+    /// outside `keyof T` and must keep emitting `TS2536`.
+    ///
+    /// The structural `generic_index_mentions_transformed_current_type_param`
+    /// heuristic cannot by itself tell a key-preserving transform from a
+    /// key-changing one (both merely *mention* `T`), so callers gate its
+    /// `TS2536` on this relation-backed query. Returns true when the index key
+    /// space genuinely indexes `object_param` and the diagnostic must be
+    /// suppressed.
+    pub(crate) fn transformed_index_key_space_indexes_object(
+        &mut self,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+        object_param: TypeId,
+    ) -> bool {
+        let constraint = index_constraint
+            .or_else(|| {
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    index_type,
+                )
+            })
+            .unwrap_or(index_type);
+        let index_key_space = self.evaluate_type_with_env(constraint);
+        let object_key_space = self.ctx.types.evaluate_keyof(object_param);
+        self.indexed_access_key_space_relation_outcome(index_key_space, object_key_space)
+            .related
+    }
+
     /// Return the type parameter source when `index_type` is `keyof S` or `K extends keyof S`
     /// for a type parameter `S` different from `type_param`.
     ///

@@ -1558,6 +1558,10 @@ impl<'a> CheckerState<'a> {
                 if self.generic_index_mentions_transformed_current_type_param(
                     index_type,
                     pre_resolution_object_type,
+                ) && !self.transformed_index_key_space_indexes_object(
+                    index_type,
+                    None,
+                    pre_resolution_object_type,
                 ) {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,

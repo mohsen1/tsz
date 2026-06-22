@@ -569,6 +569,11 @@ impl<'a> CheckerState<'a> {
 
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
             && self.generic_index_mentions_transformed_current_type_param(index_type, object_type)
+            && !self.transformed_index_key_space_indexes_object(
+                index_type,
+                index_constraint,
+                object_type,
+            )
         {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
