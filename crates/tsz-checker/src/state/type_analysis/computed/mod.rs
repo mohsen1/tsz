@@ -1289,10 +1289,14 @@ impl<'a> CheckerState<'a> {
                         let return_type = self.get_type_from_type_node(accessor.type_annotation);
                         return (return_type, Vec::new());
                     }
-                    // No type annotation - try to infer from body return type
-                    // Fall through to use get_type_of_node if body exists
+                    // No type annotation - infer the return type from the body
+                    // (clearing literal preservation and threading the accessor
+                    // node as the enclosing function for parity with the method
+                    // path in `call_signature_from_method`) instead of typing the
+                    // bare block node.
                     if accessor.body.is_some() {
-                        let body_type = self.get_type_of_node(accessor.body);
+                        let body_type =
+                            self.infer_getter_return_type_for_node(decl_idx, accessor.body);
                         if body_type != TypeId::ERROR && body_type != TypeId::UNKNOWN {
                             return (body_type, Vec::new());
                         }

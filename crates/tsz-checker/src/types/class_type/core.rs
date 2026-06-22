@@ -133,7 +133,7 @@ impl<'a> CheckerState<'a> {
         self.class_instance_phase2_deferred_methods(class, class_idx, &mut builder);
 
         // Process deferred accessors, then restore `enclosing_class`.
-        self.class_instance_process_deferred_accessors(&mut builder);
+        self.class_instance_process_deferred_accessors(class_idx, &mut builder);
 
         // Convert accessors/methods to properties and add the private brand.
         self.class_instance_finalize_members(class_idx, &mut builder);

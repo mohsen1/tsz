@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "noEmit": true, "target": "es2022", "lib": ["es2022","dom","dom.iterable"], "types": [], "skipLibCheck": false }, "include": ["dom_tagname.ts"] }

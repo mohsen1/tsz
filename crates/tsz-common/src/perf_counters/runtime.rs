@@ -253,6 +253,12 @@ pub struct PerfCounters {
     /// Auxiliary memo entries (conditional-subtype + contains-infer) dropped
     /// with their evaluator; these tables are never drained anywhere.
     pub eval_dropped_aux_entries: AtomicU64,
+    /// Which guard cut a `TypeEvaluator::evaluate` walk short, bucketed by
+    /// [`EvaluationTerminationGuard`] (#14346). The firing-order signal the
+    /// issue flags: which bound a runaway recursive walk hits first. Always
+    /// `EVALUATION_TERMINATION_GUARD_COUNT` long, in
+    /// `EVALUATION_TERMINATION_GUARD_NAMES` order.
+    pub eval_termination_guard_fires: [AtomicU64; EVALUATION_TERMINATION_GUARD_COUNT],
 
     // ─── interner ────────────────────────────────────────────────────────
     pub interner_intern_calls: AtomicU64,
@@ -494,6 +500,8 @@ impl PerfCounters {
             eval_lost_memo_recomputes_other: AtomicU64::new(0),
             eval_dropped_memo_entries: AtomicU64::new(0),
             eval_dropped_aux_entries: AtomicU64::new(0),
+            eval_termination_guard_fires: [const { AtomicU64::new(0) };
+                EVALUATION_TERMINATION_GUARD_COUNT],
             interner_intern_calls: AtomicU64::new(0),
             interner_intern_hits: AtomicU64::new(0),
             interner_intern_misses: AtomicU64::new(0),

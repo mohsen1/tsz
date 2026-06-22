@@ -79,6 +79,9 @@ mod dump_tests {
         c.source_file_symbol_arena_cache_eligibility_outcome
             [SourceFileSymbolArenaCacheEligibilityOutcome::CacheableDeclarationFile.as_index()]
         .fetch_add(1, Ordering::Relaxed);
+        c.eval_termination_guard_fires
+            [EvaluationTerminationGuard::SolverStackFrames.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
 
         let dump = PerfCounters::dump_string();
         for needle in [
@@ -104,6 +107,7 @@ mod dump_tests {
             "file_local_shadow",
             "sentinel_error_unknown",
             "cacheable_declaration_file",
+            "solver_stack_frames",
         ] {
             assert!(
                 dump.contains(needle),
@@ -188,5 +192,33 @@ mod dump_tests {
                 "perf counter text dump omitted scalar counter `{needle}`:\n{dump}"
             );
         }
+    }
+
+    #[test]
+    fn eval_termination_guard_recorder_targets_named_bucket() {
+        // #14346: `record_eval_termination_guard` increments exactly the
+        // bucket for the guard that fired, with counters on. Delta-based so it
+        // tolerates other tests sharing the process-wide atomics.
+        force_enable_perf_counters_for_tests();
+        let c = counters();
+        let load = |g: EvaluationTerminationGuard| {
+            c.eval_termination_guard_fires[g.as_index()].load(Ordering::Relaxed)
+        };
+
+        let before_fuel = load(EvaluationTerminationGuard::FuelExhausted);
+        let before_query = load(EvaluationTerminationGuard::QueryOpBudget);
+
+        record_eval_termination_guard(EvaluationTerminationGuard::FuelExhausted);
+
+        assert_eq!(
+            load(EvaluationTerminationGuard::FuelExhausted),
+            before_fuel + 1,
+            "the fired guard's bucket must increment by exactly one"
+        );
+        assert_eq!(
+            load(EvaluationTerminationGuard::QueryOpBudget),
+            before_query,
+            "an unrelated guard's bucket must not move"
+        );
     }
 }

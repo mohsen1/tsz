@@ -300,6 +300,31 @@ perf_counter_enum! {
 }
 
 perf_counter_enum! {
+    /// Which guard cut a `TypeEvaluator::evaluate` walk short (#14346). One
+    /// variant per bail outcome in the evaluator's guard prologue; the counter
+    /// dump shows the firing-order signal the issue flags — which bound a
+    /// runaway recursive walk actually hits first. Mirrors the typed
+    /// `crate::evaluation::result::TerminationKind` channel on the solver side;
+    /// measurement only, never fed back into evaluation.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum EvaluationTerminationGuard {
+        /// Per-evaluator recursion-depth guard already exceeded on re-entry.
+        DepthExceeded = 0 => "depth_exceeded",
+        /// Process-wide evaluation fuel counter exhausted.
+        FuelExhausted = 1 => "fuel_exhausted",
+        /// Shared cross-operation solver-stack-frame breaker bailed.
+        SolverStackFrames = 2 => "solver_stack_frames",
+        /// Cross-evaluator global-depth limit (`MAX_GLOBAL_EVAL_DEPTH`) hit.
+        CrossEvalCycle = 3 => "cross_eval_cycle",
+        /// Per-query operation budget ran out.
+        QueryOpBudget = 4 => "query_op_budget",
+    }
+
+    pub const EVALUATION_TERMINATION_GUARD_COUNT;
+    pub const EVALUATION_TERMINATION_GUARD_NAMES;
+}
+
+perf_counter_enum! {
     /// Coarse symbol-kind bucket for `compute_type_of_symbol` calls.
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub enum ComputeTypeOfSymbolKindOutcome {

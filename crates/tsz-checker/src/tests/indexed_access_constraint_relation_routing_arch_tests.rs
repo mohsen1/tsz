@@ -53,8 +53,8 @@ fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
         function
             .matches("indexed_access_key_space_relation_outcome(")
             .count(),
-        3,
-        "string-index, constrained-keyof, and union-member key-space checks should route through the named RelationRequest"
+        4,
+        "string-index, constrained-keyof, union-member, and transformed-index key-space checks should route through the named RelationRequest"
     );
     assert!(
         !function.contains("assign_relation_outcome("),
@@ -139,7 +139,7 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         helpers
             .matches("indexed_access_key_space_relation_outcome(")
             .count(),
-        11,
+        13,
         "indexed-access helper key-space probes should route through the named RelationRequest"
     );
     assert!(

@@ -219,8 +219,14 @@ path = "tests/array_declaration_display_summary_tests.rs"
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 [[test]]
+name = "return_type_literal_union_widening_tests"
+path = "tests/return_type_literal_union_widening_tests.rs"
+[[test]]
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
+[[test]]
+name = "return_literal_union_widening_tests"
+path = "tests/return_literal_union_widening_tests.rs"
 [[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
@@ -503,8 +509,14 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_typed_value_into_this_field_tests"
+path = "tests/this_typed_value_into_this_field_tests.rs"
+[[test]]
 name = "this_type_indexed_access_receiver_tests"
 path = "tests/this_type_indexed_access_receiver_tests.rs"
+[[test]]
+name = "this_array_field_method_param_14512_tests"
+path = "tests/this_array_field_method_param_14512_tests.rs"
 [[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
@@ -707,6 +719,9 @@ path = "tests/ts2322_tests.rs"
 name = "accessor_assignment_read_surface_tests"
 path = "tests/accessor_assignment_read_surface_tests.rs"
 [[test]]
+name = "inferred_getter_return_property_access_tests"
+path = "tests/inferred_getter_return_property_access_tests.rs"
+[[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
@@ -805,6 +820,9 @@ path = "tests/enum_discriminant_excess_property_tests.rs"
 [[test]]
 name = "inherited_constructor_defaulted_type_arg_tests"
 path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
+[[test]]
+name = "intersection_infer_last_member_tests"
+path = "tests/intersection_infer_last_member_tests.rs"
 [[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
@@ -1495,6 +1513,9 @@ path = "tests/union_index_access_function_application_param_tests.rs"
 [[test]]
 name = "union_index_annotation_missing_key_tests"
 path = "tests/union_index_annotation_missing_key_tests.rs"
+[[test]]
+name = "indexed_access_keyof_wrapper_ts2536_tests"
+path = "tests/indexed_access_keyof_wrapper_ts2536_tests.rs"
 [[test]]
 name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
