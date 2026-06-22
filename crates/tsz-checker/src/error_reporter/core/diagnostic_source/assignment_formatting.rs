@@ -201,6 +201,36 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(source);
         }
+        // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
+        // or indexed-access (`T["x"]`), or an `Application` of a conditional/
+        // indexed-bodied alias (`T95<U>`) — that still carries free type
+        // parameters keeps its written spelling in tsc's assignability
+        // diagnostics: the relation compares the apparent (branch-union /
+        // constraint) form, but the displayed source type is the original. This
+        // mirrors the target-side conditional and indexed-access guards in
+        // `format_assignment_target_type_for_diagnostic`; without it the widening
+        // fallbacks below collapse the source to its apparent form (e.g. `T95<U>`
+        // rendered as `number | boolean`, `T["x"]` as `string | undefined`).
+        // Scoped to a generic target: tsc only keeps the source's written
+        // spelling when the target is itself generic (a deferred conditional or
+        // type-parameter-bearing type, e.g. `T95<U>` vs `T94<U>`, `T["x"]` vs
+        // `NonNullable<T["x"]>`). Against a *concrete* target tsc instead shows
+        // the source's apparent constraint — `IsArray<T>` rendered as `boolean`
+        // for `let t: true = x`, or `ReturnType<T[M]>` left to the established
+        // application path for `x: A` — both already handled by the fallbacks
+        // below, so this guard must not intercept them.
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source)
+            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
+            && (crate::query_boundaries::common::is_conditional_type(self.ctx.types, source)
+                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, source)
+                || crate::query_boundaries::diagnostics::alias_application_body_reduces_through_conditional_or_indexed(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    source,
+                ))
+        {
+            return self.format_type_for_assignability_message(source);
+        }
         // For property-access source expressions whose underlying value type is
         // a `unique symbol` (e.g. `Symbol.toPrimitive`), tsc displays the source
         // as `typeof <expr>` rather than widening to `symbol`. Match that here
