@@ -1184,6 +1184,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A type parameter whose constraint resolves to an array/tuple — including
+        // a deferred conditional utility like `Parameters<F>` or a user conditional
+        // `T extends … ? unknown[] : never` — is iterable (its values are
+        // array-like at runtime). The plain `is_iterable_type` probe above misses
+        // this because the constraint stays a deferred conditional whose array base
+        // surfaces only after tsc's `getConstraintFromConditionalType` resolution.
+        // Mirrors the spread-of-type-parameter gate in `candidate_collection`.
+        if common::is_type_parameter_like(self.ctx.types, spread_type)
+            && let Some(constraint) = common::type_parameter_constraint(self.ctx.types, spread_type)
+            && self.spread_constraint_is_array_or_tuple_like(constraint)
+        {
+            return true;
+        }
+
         // Some recursive generic mapped/tuple spreads overflow type instantiation
         // depth during assignability-style evaluation (tsc reports TS2589 in these
         // cases instead of a follow-on TS2488 at the spread operand).

@@ -406,9 +406,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 // `rest_spread_element_type` returns its input unchanged
                                 // for a non-array-like constraint; `e != c` means the
                                 // constraint actually decomposed to an element type.
+                                 e != c && self.check_subtype(e, t_elem).is_true()
+                             })
+                         })
+                        // A deferred infer-extraction conditional spread element
+                        // (`[...Parameters<F>] <: never[]`) decomposes only after
+                        // `getConstraintFromConditionalType` resolves it to its
+                        // array base; check that base's element type against the
+                        // target.
+                        || self
+                            .infer_extraction_conditional_constraint(variadic)
+                            .is_some_and(|c| {
+                                let e = crate::type_queries::rest_spread_element_type(
+                                    self.interner,
+                                    c,
+                                );
                                 e != c && self.check_subtype(e, t_elem).is_true()
-                            })
-                        });
+                            });
                     if !ok {
                         return SubtypeResult::False;
                     }

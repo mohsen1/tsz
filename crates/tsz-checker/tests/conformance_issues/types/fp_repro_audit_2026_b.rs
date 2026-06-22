@@ -203,9 +203,9 @@ export { f };
 
 /// Inside the true branch of `CamelCase<V> extends string ? ...`, the operand
 /// `CamelCase<V>` must be seen as narrowed to `string` so `Capitalize<...>`'s
-/// constraint passes. tsz lacks a `SubstitutionType` model -> false TS2344.
+/// constraint passes. The fix wraps the structured check operand in a
+/// `SubstitutionType`. Kept as a live regression guard.
 #[test]
-#[ignore = "reproduces #14167: conditional true-branch check operand not constrained (missing SubstitutionType) -> false TS2344"]
 fn issue_14167_conditional_true_branch_constrains_check_operand() {
     if !lib_files_available() {
         return;

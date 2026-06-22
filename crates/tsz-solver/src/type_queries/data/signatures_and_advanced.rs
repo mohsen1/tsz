@@ -278,6 +278,44 @@ pub fn conditional_default_constraint_from_data(
     Some(constraint)
 }
 
+/// Substitute a deferred conditional's check-type parameter with its own base
+/// constraint, returning the substituted (still unevaluated) conditional.
+///
+/// This is the construction half of tsc's `getConstraintFromConditionalType`:
+/// for `T extends U ? X : Y` where the check type `T` is a type parameter with
+/// a constraint `C` (`C != T`), substituting `T -> C` makes the check type
+/// concrete so a subsequent (resolver-backed) evaluation can match the `extends`
+/// pattern and select a branch. For a deferred utility such as `Parameters<F>`
+/// (whose conditional is `F extends (...args: infer P) => any ? P : never`),
+/// the substituted conditional `AnyFunction extends (...args: infer P) => any ?
+/// P : never` evaluates to the concrete apparent base `never[]` — which the
+/// shallow [`get_base_constraint_of_type`] and the branch-union
+/// [`get_conditional_default_constraint`] both leave as an unresolved infer
+/// placeholder.
+///
+/// Returns `None` when `type_id` is not a deferred conditional, when the check
+/// type is not a constrained type parameter, or when the substitution is a
+/// no-op. The caller is responsible for evaluating the result (resolver-backed
+/// when the constraint references imported aliases) and for discarding a `never`
+/// collapse in favor of the branch-union default constraint.
+pub fn conditional_check_type_substituted_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+    let TypeData::TypeParameter(info) = db.lookup(cond.check_type)? else {
+        return None;
+    };
+    let constraint = get_base_constraint_of_type(db, cond.check_type);
+    if constraint == cond.check_type {
+        return None;
+    }
+    let subst = crate::instantiation::instantiate::TypeSubstitution::single(info.name, constraint);
+    let substituted = crate::instantiation::instantiate::instantiate_type(db, type_id, &subst);
+    (substituted != type_id).then_some(substituted)
+}
+
 /// Default constraint of a nested conditional whose check type matches
 /// `outer_check_type`, recursing for arbitrary Extract-chain depth.
 fn nested_conditional_default_constraint(
