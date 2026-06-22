@@ -688,8 +688,12 @@ impl HelpersNeeded {
 ///   5: awaiter
 ///   6: generator
 ///   7: disposable helpers
-///  no priority (last): rest, read, spreadArray, values, asyncValues,
-///                      importDefault, classPrivateField*
+///  no priority (last): propKey, setFunctionName, rest, read, spreadArray,
+///                      values, asyncValues, importDefault, classPrivateField*
+///
+/// `compareEmitHelpers` is a *stable* sort and treats a helper with no
+/// `priority` field as greater-than every helper that has one, so no-priority
+/// helpers all sort after the prioritized tiers in request order.
 pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     let mut output = String::new();
 
@@ -735,10 +739,6 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
-    if helpers.prop_key {
-        output.push_str(PROP_KEY_HELPER);
-        output.push('\n');
-    }
     if helpers.import_star {
         output.push_str(IMPORT_STAR_HELPER);
         output.push('\n');
@@ -769,6 +769,14 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     // Priority 6: generator
     if helpers.generator {
         output.push_str(GENERATOR_HELPER);
+        output.push('\n');
+    }
+    // No-priority helpers (sorted last by tsc's `compareEmitHelpers`, after every
+    // priority 0-7 helper). `__propKey` (`typescript:propKey`) has no priority
+    // field in tsc, so it follows the prioritized tiers and — by stable request
+    // order — precedes `__setFunctionName` and the remaining no-priority helpers.
+    if helpers.prop_key {
+        output.push_str(PROP_KEY_HELPER);
         output.push('\n');
     }
     let mut emitted_unprioritized = Vec::new();
@@ -1263,10 +1271,11 @@ mod tests {
     fn emit_helpers_order_decorators_and_async_helpers() {
         // emit_helpers source orders priority-2 helpers as:
         //   decorate, esDecorate, runInitializers,
-        //   propKey, importStar, rewriteRelativeImportExtension, exportStar
+        //   importStar, rewriteRelativeImportExtension, exportStar
         // (`__setModuleDefault` is priority 1 and emitted earlier, before any
-        // priority-2 helper) and places setFunctionName after awaiter/generator
-        // but before async-generator helpers.
+        // priority-2 helper). `__propKey` has no priority in tsc, so it sorts
+        // after every prioritized helper (including importStar/exportStar and the
+        // priority-3..6 helpers) and immediately before `__setFunctionName`.
         let helpers = HelpersNeeded {
             decorate: true,
             run_initializers: true,
@@ -1299,15 +1308,59 @@ mod tests {
 
         assert!(i_decorate < i_es_decorate);
         assert!(i_es_decorate < i_run);
-        assert!(i_run < i_prop_key);
-        assert!(i_prop_key < i_import_star);
+        // priority-2 importStar/exportStar precede the no-priority `__propKey`.
+        assert!(i_run < i_import_star);
         assert!(i_import_star < i_rewrite);
         assert!(i_rewrite < i_export_star);
         assert!(i_export_star < i_awaiter);
         assert!(i_awaiter < i_generator);
-        assert!(i_generator < i_set_name);
+        // `__propKey` (no priority) sorts after every prioritized helper and
+        // just before `__setFunctionName`.
+        assert!(i_generator < i_prop_key);
+        assert!(i_prop_key < i_set_name);
         assert!(i_set_name < i_await);
         assert!(i_await < i_async_generator);
+    }
+
+    #[test]
+    fn emit_helpers_prop_key_is_no_priority_after_every_prioritized_helper() {
+        // `__propKey` (`typescript:propKey`) has no priority field in tsc, so
+        // it sorts after every priority 0-7 helper. Previously tsz emitted it
+        // at priority 2, ahead of importStar/metadata/param/awaiter/generator.
+        //
+        // tsc (`--target ES2022 --module CommonJS --esModuleInterop`) on a
+        // namespace-import + decorated computed-key member emits __propKey last:
+        //   __createBinding, __setModuleDefault, __runInitializers,
+        //   __esDecorate, __importStar, __propKey
+        let helpers = HelpersNeeded {
+            prop_key: true,
+            import_star: true,
+            create_binding: true,
+            es_decorate: true,
+            metadata: true,
+            param: true,
+            awaiter: true,
+            generator: true,
+            ..HelpersNeeded::default()
+        };
+
+        let output = emit_helpers(&helpers);
+        let i_prop_key = find_helper(&output, "__propKey");
+        for prioritized in [
+            "__createBinding",
+            "__setModuleDefault",
+            "__esDecorate",
+            "__importStar",
+            "__metadata",
+            "__param",
+            "__awaiter",
+            "__generator",
+        ] {
+            assert!(
+                find_helper(&output, prioritized) < i_prop_key,
+                "{prioritized} (prioritized) must precede no-priority __propKey\n{output}",
+            );
+        }
     }
 
     #[test]
