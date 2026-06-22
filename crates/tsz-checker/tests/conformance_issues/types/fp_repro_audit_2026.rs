@@ -12,9 +12,10 @@ use super::super::core::*;
 
 /// #14230 (TS2536, single-file): a homomorphic-keys mapped type whose key set is
 /// `string | number | symbol` is indexable by `symbol`; `M[symbol]` must not
-/// report TS2536 ("Type 'symbol' cannot be used to index type 'M'").
+/// report TS2536 ("Type 'symbol' cannot be used to index type 'M'"). Fixed on
+/// `main` (dedicated `symbol_index` slot on `ObjectShape` + mapped lowering);
+/// kept as a live regression guard.
 #[test]
-#[ignore = "reproduces #14230; FP still present (TS2536 on `M[symbol]` for a `string | number | symbol`-keyed mapped type)"]
 fn issue_14230_mapped_over_keyof_any_indexed_by_symbol_no_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -28,19 +29,22 @@ export {};
         "no TS2536 expected — `M` is keyed by `string | number | symbol`, so `M[symbol]` \
          is a valid indexed access. Actual: {diagnostics:#?}"
     );
-    // Negative control: indexing by a key NOT in the key set must still report
-    // TS2536. `boolean` is not part of `string | number | symbol`.
+    // Negative control: `symbol` is a valid index *kind*, but a mapped type whose
+    // key set is only `string | number` carries no symbol index, so `M2[symbol]`
+    // must still report TS2536 — exactly tsc's behavior. (Indexing by a non-index
+    // type such as `boolean` is the different TS2538 family, so it is not used
+    // here.) This keeps the control on the same `symbol` axis as the positive case.
     let neg = compile_and_get_diagnostics(
         r#"
-type M = { [K in string | number]: number };
-type Bad = M[boolean];
+type M2 = { [K in string | number]: number };
+type Bad = M2[symbol];
 export {};
 "#,
     );
     assert!(
         has_error(&neg, 2536),
-        "TS2536 expected — `boolean` is not in the `string | number` key set of `M`. \
-         Actual: {neg:#?}"
+        "TS2536 expected — `M2` is keyed by `string | number` only, so it has no symbol \
+         index for `M2[symbol]`. Actual: {neg:#?}"
     );
 }
 
@@ -250,7 +254,6 @@ export function make(lazy: (...args: any) => LazyEvaluator, args: readonly unkno
 /// must not report TS2677 ("A type predicate's type must be assignable to its
 /// parameter's type").
 #[test]
-#[ignore = "reproduces #14231; FP still present (TS2677 on alias-typed type-predicate parameter in a function-type node)"]
 fn issue_14231_type_predicate_through_alias_no_ts2677() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

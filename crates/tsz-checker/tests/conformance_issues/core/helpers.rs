@@ -8,7 +8,7 @@
 //!
 //! See docs/conformance-*.md for full context.
 
-pub(crate) use rustc_hash::{FxHashMap, FxHashSet};
+pub(crate) use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 pub(crate) use std::sync::Arc;
 pub(crate) use tsz_binder::BinderState;
 pub(crate) use tsz_binder::lib_loader::LibFile;
@@ -259,7 +259,30 @@ pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
 ) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
     compile_named_files_get_diagnostics_with_lib_files_and_options(
-        files, entry_file, options, lib_files,
+        files, entry_file, options, lib_files, false,
+    )
+}
+
+/// Production-faithful variant of
+/// [`compile_named_files_get_diagnostics_with_lib_and_options`]: each binder is
+/// given its file index *before* binding (so `stamp_file_idx` records every
+/// module-local symbol's `decl_file_idx`) and the `global_symbol_file_index` is
+/// wired, exactly like the CLI driver's bind-result reducer.
+///
+/// The plain (unstamped) variant leaves `decl_file_idx == u32::MAX`, which makes
+/// a module-local symbol that shadows a lib global (e.g. an imported value named
+/// `Promise`) look like the lib symbol. Witnesses that turn on that distinction —
+/// notably lib-global shadowing in call position (#14263) — must use this helper
+/// so the harness matches production symbol provenance rather than reporting a
+/// harness-only false positive.
+pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options_stamped(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files_for_test();
+    compile_named_files_get_diagnostics_with_lib_files_and_options(
+        files, entry_file, options, lib_files, true,
     )
 }
 
@@ -271,7 +294,7 @@ pub(crate) fn compile_named_files_get_diagnostics_with_compiled_libs_and_options
 ) -> Vec<(u32, String)> {
     let lib_files = tsz_checker::test_utils::load_compiled_lib_files(lib_names);
     compile_named_files_get_diagnostics_with_lib_files_and_options(
-        files, entry_file, options, lib_files,
+        files, entry_file, options, lib_files, false,
     )
 }
 
@@ -280,6 +303,7 @@ fn compile_named_files_get_diagnostics_with_lib_files_and_options(
     entry_file: &str,
     options: CheckerOptions,
     lib_files: Vec<Arc<LibFile>>,
+    stamp: bool,
 ) -> Vec<(u32, String)> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
@@ -301,10 +325,20 @@ fn compile_named_files_get_diagnostics_with_lib_files_and_options(
         })
         .collect();
 
-    for (name, source) in files {
+    for (file_idx, (name, source)) in files.iter().enumerate() {
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
+        if stamp {
+            // Stamp the driver-assigned file index before binding so
+            // `stamp_file_idx` (run at bind end) records every module-local
+            // symbol's `decl_file_idx`, exactly as the production driver's
+            // bind-result reducer does. Without this, `decl_file_idx == u32::MAX`
+            // and a module-local symbol that shadows a lib global (e.g. an
+            // imported value named `Promise`) is misclassified as the lib symbol,
+            // producing a harness-only false positive (#14263).
+            binder.set_file_idx(file_idx as u32);
+        }
         if !raw_lib_contexts.is_empty() {
             binder.merge_lib_contexts_into_binder(&raw_lib_contexts);
         }
@@ -335,6 +369,31 @@ fn compile_named_files_get_diagnostics_with_lib_files_and_options(
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
     checker.ctx.set_current_file_idx(entry_idx);
+    if stamp {
+        // Build the immutable declaring-file index (`SymbolId -> file_idx`) like
+        // the production driver's `build_global_symbol_file_index`, so cross-file
+        // symbol provenance (and lib-global shadowing) matches the real pipeline.
+        //
+        // Only module-local symbols are mapped: `stamp_file_idx` (run at bind
+        // end) leaves lib symbols at `decl_file_idx == u32::MAX`, so they are
+        // excluded here. Mapping a merged lib symbol to a user file would
+        // mis-provenance lib globals (e.g. make `console` / node-builtin lookups
+        // look user-declared).
+        let symbol_capacity: usize = all_binders.iter().map(|b| b.symbols.len()).sum();
+        let mut symbol_file_index =
+            FxHashMap::with_capacity_and_hasher(symbol_capacity, FxBuildHasher);
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            for symbol in binder.symbols.iter() {
+                if symbol.decl_file_idx == u32::MAX {
+                    continue;
+                }
+                symbol_file_index.entry(symbol.id).or_insert(file_idx);
+            }
+        }
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::new(symbol_file_index));
+    }
     checker
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
