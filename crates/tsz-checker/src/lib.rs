@@ -676,6 +676,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[path = "tests/assign_to_import_shadowing_local_tests.rs"]
 mod assign_to_import_shadowing_local_tests;
 #[cfg(test)]
+#[path = "tests/base_type_param_default_inheritance_tests.rs"]
+mod base_type_param_default_inheritance_tests;
+#[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
