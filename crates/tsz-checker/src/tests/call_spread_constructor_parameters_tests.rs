@@ -39,7 +39,7 @@ const inst = create(MyClass2, 42);
     );
 }
 
-fn spread_relation_codes<'a>(diags: &'a [Diagnostic]) -> Vec<&'a Diagnostic> {
+fn spread_relation_codes(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags
         .iter()
         .filter(|d| d.code == 2488 || d.code == 2345 || d.code == 2322 || d.code == 2556)
