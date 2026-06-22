@@ -551,6 +551,26 @@ pub trait TypeExtractParamsCache {
     fn set_contravariant_infer_names_memo(&self, _type_id: TypeId, _names: Arc<[Atom]>) {}
 }
 
+/// Cache for the pure structural `contains_type_by_id(root, target)` transitive
+/// containment walk, keyed by the `(root, target)` pair.
+///
+/// Transitive `TypeId` containment is a pure function of the immutable interned
+/// type `DAG`, so it can be memoized project-wide and reused across the many fresh
+/// evaluators created during instantiation. Kept separate from [`TypeDatabase`]
+/// so the broad query trait stays under its method cap (#8205); `TypeDatabase`
+/// re-exposes these via the supertrait bound, so `&dyn TypeDatabase` callers are
+/// unaffected.
+pub trait TypeContainsByIdCache {
+    /// Look up the memoized `contains_type_by_id(root, target)` result.
+    /// Default `None` (no caching).
+    fn contains_type_by_id_memo(&self, _root: TypeId, _target: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the `contains_type_by_id(root, target)` result. Default no-op.
+    fn set_contains_type_by_id_memo(&self, _root: TypeId, _target: TypeId, _result: bool) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -564,6 +584,7 @@ pub trait TypeDatabase:
     + TypeWidenCache
     + TypeSubstitutionConstruction
     + TypeExtractParamsCache
+    + TypeContainsByIdCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -1084,6 +1105,16 @@ impl TypeExtractParamsCache for TypeInterner {
 
     fn set_contravariant_infer_names_memo(&self, type_id: TypeId, names: Arc<[Atom]>) {
         Self::set_contravariant_infer_names_memo(self, type_id, names);
+    }
+}
+
+impl TypeContainsByIdCache for TypeInterner {
+    fn contains_type_by_id_memo(&self, root: TypeId, target: TypeId) -> Option<bool> {
+        Self::contains_type_by_id_memo(self, root, target)
+    }
+
+    fn set_contains_type_by_id_memo(&self, root: TypeId, target: TypeId, result: bool) {
+        Self::set_contains_type_by_id_memo(self, root, target, result);
     }
 }
 

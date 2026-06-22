@@ -263,6 +263,24 @@ pub struct TypeInterner {
     /// collapses the repeats to O(1) and is shared across the many fresh
     /// `TypeEvaluator` instances created during instantiation (#14330).
     pub(super) extract_type_params_cache: DashMap<TypeId, Arc<[TypeParamInfo]>, FxBuildHasher>,
+    /// Result memo for the pure structural `contains_type_by_id(root, target)`
+    /// transitive-containment walk, keyed by the `(root, target)` pair.
+    ///
+    /// Transitive `TypeId` containment is a pure function of the immutable
+    /// interned type `DAG` — it consults neither the resolver nor the substitution
+    /// environment nor any compiler option, so the answer is permanently stable
+    /// per `(root, target)` within one interner and reusable across every
+    /// `TypeEvaluator` instance in a project run. Distributive conditional
+    /// evaluation asks it for each branch against the distribution source on
+    /// every tail-recursive iteration, and recursive utility aliases (`Exclude`,
+    /// `Diff`, `Flatten`, …) mint a fresh `TypeEvaluator` per instantiation step;
+    /// the per-evaluator memo that previously held this result is dropped on
+    /// `reset()`, so without a project-wide memo the same pair is re-walked once
+    /// per evaluator (the per-evaluator cache-discard residue, #13097 / #8356).
+    /// Memoizing on the interner collapses the repeats to O(1), exactly like the
+    /// sibling `extract_type_params_cache` / `widen_type_cache` pure-function
+    /// memos.
+    pub(super) contains_type_by_id_cache: DashMap<(TypeId, TypeId), bool, FxBuildHasher>,
     /// Result memo for `collect_contravariant_infer_names`, keyed by the pattern
     /// `TypeId`.
     ///
@@ -463,6 +481,8 @@ pub struct TypePredicateCacheStatistics {
     pub eval_contains_infer_cache_entries: usize,
     /// Number of memoized file-relative containment predicate results.
     pub contains_file_relative_cache_entries: usize,
+    /// Number of memoized structural `contains_type_by_id(root, target)` results.
+    pub contains_type_by_id_cache_entries: usize,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -504,6 +524,7 @@ impl TypeInterner {
                 .predicate_cache_entries_for(PredicateCacheKind::EvalContainsInfer),
             contains_file_relative_cache_entries: self
                 .predicate_cache_entries_for(PredicateCacheKind::ContainsFileRelative),
+            contains_type_by_id_cache_entries: self.contains_type_by_id_cache.len(),
         }
     }
 
@@ -567,6 +588,7 @@ impl TypeInterner {
             predicate_cache: DashMap::with_hasher(FxBuildHasher),
             widen_type_cache: DashMap::with_hasher(FxBuildHasher),
             extract_type_params_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_type_by_id_cache: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
@@ -838,6 +860,21 @@ impl TypeInterner {
     #[inline]
     pub fn set_extract_type_params_memo(&self, type_id: TypeId, params: Arc<[TypeParamInfo]>) {
         self.extract_type_params_cache.insert(type_id, params);
+    }
+
+    /// Look up the memoized structural `contains_type_by_id(root, target)` result.
+    #[inline]
+    pub fn contains_type_by_id_memo(&self, root: TypeId, target: TypeId) -> Option<bool> {
+        self.contains_type_by_id_cache
+            .get(&(root, target))
+            .map(|v| *v)
+    }
+
+    /// Record the structural `contains_type_by_id(root, target)` result.
+    #[inline]
+    pub fn set_contains_type_by_id_memo(&self, root: TypeId, target: TypeId, result: bool) {
+        self.contains_type_by_id_cache
+            .insert((root, target), result);
     }
 
     /// Look up the memoized `collect_contravariant_infer_names` name list for a
