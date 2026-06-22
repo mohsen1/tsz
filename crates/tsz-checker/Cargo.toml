@@ -707,6 +707,9 @@ path = "tests/ts2322_tests.rs"
 name = "accessor_assignment_read_surface_tests"
 path = "tests/accessor_assignment_read_surface_tests.rs"
 [[test]]
+name = "inferred_getter_return_property_access_tests"
+path = "tests/inferred_getter_return_property_access_tests.rs"
+[[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
