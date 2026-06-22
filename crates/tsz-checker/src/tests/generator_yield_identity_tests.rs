@@ -19,6 +19,24 @@ fn strict_codes_with_libs(source: &str) -> Vec<u32> {
     .collect()
 }
 
+fn checked_js_codes_with_libs(source: &str) -> Vec<u32> {
+    let libs = load_default_lib_files();
+    check_source_with_libs(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.code)
+    .collect()
+}
+
 #[test]
 fn local_generator_alias_does_not_contextually_type_yield_operand() {
     let codes = strict_codes_with_libs(
@@ -151,5 +169,28 @@ export {};
     assert!(
         codes.contains(&2322),
         "empty generator declaration must infer a non-any (never) yield; got: {codes:?}"
+    );
+}
+
+#[test]
+fn yield_star_generator_declaration_preserves_checked_js_implicit_any_diagnostics() {
+    // `yield*` delegation has its own unresolved inference gap in declaration
+    // signatures. The signature recovery pass must not pre-check the body and
+    // consume checked-JS implicit-any diagnostics that the real declaration
+    // body pass owns.
+    let codes = checked_js_codes_with_libs(
+        r#"
+function* stream() {
+    var bucket = []
+    while (true) {
+        bucket = yield* bucket
+    }
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&7005) && codes.contains(&7034),
+        "yield* declaration recovery must preserve checked-JS implicit-any diagnostics; got: {codes:?}"
     );
 }

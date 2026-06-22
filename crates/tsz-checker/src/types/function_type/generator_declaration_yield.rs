@@ -1,5 +1,4 @@
 use super::super::function_type_helpers::GeneratorBodyReturnCheckCtx;
-use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -40,7 +39,11 @@ impl CheckerState<'_> {
             function_is_async,
             early_yield_type,
         } = ctx;
-        let yield_diag_snapshot = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        if self.generator_body_contains_yield_star(body, true) {
+            return None;
+        }
+
+        let yield_snapshot = self.ctx.snapshot_return_type();
         let saved_cf_context = (
             self.ctx.iteration_depth,
             self.ctx.switch_depth,
@@ -74,8 +77,7 @@ impl CheckerState<'_> {
         self.ctx.switch_depth = saved_cf_context.1;
         self.ctx.label_stack.truncate(saved_cf_context.2);
         self.ctx.had_outer_loop = saved_cf_context.3;
-        self.invalidate_function_body_for_param_retyping(body);
-        yield_diag_snapshot.rollback(&mut self.ctx.diagnostic_state());
+        yield_snapshot.rollback(&mut self.ctx.speculation_state());
         final_yield
     }
 
@@ -123,5 +125,42 @@ impl CheckerState<'_> {
             .get_children(node_idx)
             .into_iter()
             .any(|child| self.generator_body_contains_yield(child, false))
+    }
+
+    /// Whether `node_idx` contains a `yield*` delegate for this generator, not
+    /// one nested inside another function or class.
+    fn generator_body_contains_yield_star(&self, node_idx: NodeIndex, is_root: bool) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if !is_root
+            && matches!(
+                node.kind,
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+            )
+        {
+            return false;
+        }
+        if node.kind == syntax_kind_ext::YIELD_EXPRESSION
+            && self
+                .ctx
+                .arena
+                .get_unary_expr_ex(node)
+                .is_some_and(|yield_expr| yield_expr.asterisk_token)
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child| self.generator_body_contains_yield_star(child, false))
     }
 }
