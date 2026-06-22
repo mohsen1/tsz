@@ -503,6 +503,9 @@ path = "tests/this_type_tests.rs"
 name = "this_type_indexed_access_receiver_tests"
 path = "tests/this_type_indexed_access_receiver_tests.rs"
 [[test]]
+name = "this_array_field_method_param_14512_tests"
+path = "tests/this_array_field_method_param_14512_tests.rs"
+[[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
