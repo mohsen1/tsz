@@ -177,8 +177,12 @@ impl CheckerState<'_> {
         // that window, not of `type_id` alone. The `env_eval_cache` is keyed
         // purely on `type_id` with no generation guard, so persisting such a
         // result lets the under-resolved answer permanently shadow the correct
-        // one. Suppress both the authoritative write and the intermediate
-        // seed/persist for the governing pass (issue #13980).
+        // one. Suppress the authoritative write for the governing pass
+        // (issue #13980). The intermediate seed/persist memo remains speed-only:
+        // `persist_env_eval_cache_entries` already filters unsafe shapes, and
+        // dropping all intermediates from a tainted pass changes established
+        // conformance in cases where later lookups depend on fully-resolved
+        // sub-terms from the same walk.
         let backstop_active =
             !crate::context::env_eval_cache::unresolved_def_cache_backstop_disabled();
 
@@ -219,12 +223,10 @@ impl CheckerState<'_> {
             }
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
             first_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
-            // Persist intermediate evaluation results to the shared cache.
-            // Skip entries whose result contains unbound `infer` types or type
-            // queries, and skip the whole batch when this pass observed an
-            // unresolved def (its intermediates share the registration-window
-            // taint — issue #13980).
-            if seed_persist && !first_pass_poisoned {
+            // Persist intermediate evaluation results to the shared cache. The
+            // helper skips entries whose result contains unbound `infer` types
+            // or type queries; the top-level poisoned root is gated below.
+            if seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             eval_result.result
@@ -335,7 +337,7 @@ impl CheckerState<'_> {
                 self.ctx.depth_exceeded.set(true);
             }
             let second_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
-            if second_pass_seed_persist && !second_pass_poisoned {
+            if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             // When the resolver pass makes no progress (`result == type_id`),
