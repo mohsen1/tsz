@@ -780,9 +780,19 @@ impl TypeInterner {
         let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
+        // Which member first contributed each index signature. When the string
+        // and number index come from *different* members the merge collapses a
+        // genuine intersection (`StringTo<any> & NumberTo<any>`) into a single
+        // dual-index shape that interns identically to a plain `{ [s]: any; [n]:
+        // any }` — but tsc relates the intersection member-by-member (the
+        // `NumberTo<any>` member alone still demands a numeric index). We stamp
+        // such a merge `INTERSECTION_MERGED` below so the relation/diagnostics can
+        // recover the per-member view even for named members.
+        let mut string_index_from: Option<usize> = None;
+        let mut number_index_from: Option<usize> = None;
         let mut merged_fresh = true;
 
-        for obj in &objects {
+        for (member_idx, obj) in objects.iter().enumerate() {
             // Freshness is only preserved when *all* intersected object members are fresh.
             if !obj.flags.contains(ObjectFlags::FRESH_LITERAL) {
                 merged_fresh = false;
@@ -870,6 +880,7 @@ impl TypeInterner {
             // Merge index signatures
             match (&obj.string_index, &merged_string_index) {
                 (Some(idx), None) => {
+                    string_index_from = Some(member_idx);
                     merged_string_index = Some(IndexSignature {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
@@ -894,6 +905,7 @@ impl TypeInterner {
 
             match (&obj.number_index, &merged_number_index) {
                 (Some(idx), None) => {
+                    number_index_from = Some(member_idx);
                     merged_number_index = Some(IndexSignature {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
@@ -957,12 +969,21 @@ impl TypeInterner {
         // Otherwise the merged object is a distinct identity diagnostics can
         // recognize as an intersection target — the disambiguation the display
         // alias alone cannot provide, since a merged object otherwise interns
-        // identically to a plain object of that shape. Only an anonymous merge
-        // can be flagged, so the properties are copied for the (rare) flagged
-        // re-intern only in that case; nominal merges consume `merged_props`
-        // with no copy.
+        // identically to a plain object of that shape.
+        //
+        // An anonymous object intersection (`{ a } & { b }`) is flagged as
+        // before. A merge whose string and number index signatures came from
+        // *different* members is ALSO flagged even when the members are named
+        // (`StringTo<any> & NumberTo<any>`): the per-member index relation tsc
+        // keeps would otherwise be lost to a shape indistinguishable from a
+        // single `{ [s]: any; [n]: any }` type. Properties are copied for the
+        // (rare) flagged re-intern in those cases; other merges consume
+        // `merged_props` with no copy.
         let all_anonymous = objects.iter().all(|obj| obj.symbol.is_none());
-        let flag_properties = all_anonymous.then(|| merged_props.clone());
+        let split_index_merge = string_index_from.is_some()
+            && number_index_from.is_some()
+            && string_index_from != number_index_from;
+        let flag_properties = (all_anonymous || split_index_merge).then(|| merged_props.clone());
         let plain_result = intern_shape(self, base_flags, merged_props);
         let result = match flag_properties {
             Some(properties) if !members.contains(&plain_result) => intern_shape(

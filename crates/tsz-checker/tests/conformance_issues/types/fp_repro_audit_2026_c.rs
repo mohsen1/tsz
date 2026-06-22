@@ -363,6 +363,27 @@ export { bad1, bad2 };
         has_error(&neg, 2322),
         "TS2322 expected — number-index-only and narrower-string-value targets still reject a named source. Actual: {neg:#?}"
     );
+
+    // The waiver is for a *single* object type. An intersection of two named
+    // single-index interfaces (`StringTo<any> & NumberTo<any>`) is related
+    // member-by-member by tsc, so the `NumberTo<any>` member alone still demands
+    // a numeric index and the named source is rejected — mirrors the
+    // `objectTypeWithStringAndNumberIndexSignatureToAny.ts` conformance `f2`.
+    let intersection = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Gadget { label?: "a" | "b"; }
+interface StringTo<T> { [k: string]: T; }
+interface NumberTo<T> { [k: number]: T; }
+declare const g: Gadget;
+const bad: StringTo<any> & NumberTo<any> = g;
+export { bad };
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&intersection, 2322),
+        "TS2322 expected — an intersection of single-index interfaces relates per-member, so the numeric member still demands a numeric index. Actual: {intersection:#?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
