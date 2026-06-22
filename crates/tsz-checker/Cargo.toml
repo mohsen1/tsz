@@ -2112,3 +2112,7 @@ path = "tests/object_keyword_any_index_tests.rs"
 [[test]]
 name = "conditional_initializer_preserves_narrowing_tests"
 path = "tests/conditional_initializer_preserves_narrowing_tests.rs"
+
+[[test]]
+name = "readonly_array_alias_argument_display_tests"
+path = "tests/readonly_array_alias_argument_display_tests.rs"

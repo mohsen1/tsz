@@ -11,6 +11,7 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
+use crate::def::DefId;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
@@ -1525,19 +1526,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Bounds peel/reduce walks against pathological alias chains.
     pub(crate) const MAX_ALIAS_REDUCTION_STEPS: u32 = 8;
 
-    /// Decode `Application(Lazy(DefId)/TypeQuery, args)` and substitute the
-    /// alias's type-parameter args into its resolved body. Returns `None`
-    /// when the base isn't a resolvable DefId, arities disagree, or the
-    /// substitution is a no-op (so callers don't need their own fixed-point
-    /// guard for the substituted form).
-    ///
-    /// Used by `peel_alias_application` (requires body to be `Application`)
-    /// and by `reduce_alias_body_to_application_form` (also accepts
-    /// `Conditional` body for one infer-match step).
     /// Resolve an application/reference base (`Lazy(DefId)` or
     /// `TypeQuery(SymbolRef)`) to its defining [`DefId`]. Returns `None` for any
     /// other base shape, or a `TypeQuery` whose symbol has no `DefId` yet.
-    pub(crate) fn application_base_def_id(&self, base: TypeId) -> Option<crate::def::DefId> {
+    pub(crate) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
         match self.interner().lookup(base)? {
             TypeData::Lazy(def_id) => Some(def_id),
             TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
@@ -1545,6 +1537,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Decode `Application(Lazy(DefId)/TypeQuery, args)` and substitute the
+    /// alias's type-parameter args into its resolved body. Returns `None`
+    /// when the base isn't a resolvable `DefId`, arities disagree, or the
+    /// substitution is a no-op.
     pub(crate) fn alias_application_substituted_body(&self, ty: TypeId) -> Option<TypeId> {
         let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
             return None;
@@ -1994,6 +1990,42 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // base-subtype shortcuts below would otherwise bind the `infer`
                 // one wrapper level early.
                 let pattern_base_is_wrapper_alias = self.is_wrapper_alias_base(pattern_app.base);
+
+                // Normalize a *generic wrapper-alias* pattern to its structural
+                // application form before the positional matching below. When the
+                // pattern base is a generic type alias whose parameter threads
+                // through a *nested* body position (`type AB<T> = Promise<T[]>`,
+                // pattern `AB<infer U>`), the alias base does NOT positionally
+                // correspond to the source's structural base (`Promise`), so the
+                // positional source-peeling / base-subtype paths would bind the
+                // `infer` one structural level too shallow (`U = Promise<number[]>`
+                // instead of `number`) — the "stops one Promise level early"
+                // divergence (#14489). Peeling the pattern head-only (infer-
+                // preserving: `AB<infer U>` -> `Promise<(infer U)[]>`) gives the
+                // real structural base, so re-matching binds at the correct depth
+                // and recurses through each nested wrapper level. The gate keeps
+                // `peel_alias_application`'s `instantiate` off the `Promise<infer>`
+                // hot path; the `(source, pattern)` visited guard bounds alias
+                // cycles. `tsc` likewise reduces an alias-pattern to its
+                // application form before infer matching.
+                if pattern_base_is_wrapper_alias
+                    && let Some(reduced_pattern) = self.peel_alias_application(pattern)
+                {
+                    let mut reduced_bindings = bindings.clone();
+                    let reduced_checkpoint = visited.checkpoint();
+                    if self.match_infer_pattern(
+                        source,
+                        reduced_pattern,
+                        &mut reduced_bindings,
+                        visited,
+                        checker,
+                    ) {
+                        *bindings = reduced_bindings;
+                        return true;
+                    }
+                    visited.rollback_to(reduced_checkpoint);
+                }
+
                 let mut current_source = source;
                 for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
                     if let Some(TypeData::Application(source_app_id)) =
