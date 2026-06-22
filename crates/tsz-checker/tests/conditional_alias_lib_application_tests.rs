@@ -109,3 +109,75 @@ const value: Result = 1;
 
     assert_clean(source, "user alias inner application");
 }
+
+// ── #14489: generic wrapper-alias `infer` in the conditional EXTENDS-type ──────
+//
+// When the conditional's extends-type is a generic wrapper alias carrying the
+// `infer` (`X extends AB<infer U>` with `type AB<T> = Promise<T[]>`) and the
+// check-source is the EXPANDED structural form (`Promise<number[]>`, not written
+// via the alias), the pattern alias must be reduced head-only to its body
+// application form (`Promise<(infer U)[]>`) so the infer binds. Previously tsz
+// failed to reduce the alias pattern, collapsed the conditional to its false
+// branch (`never`), and emitted a false TS2322 at the use site.
+
+#[test]
+fn wrapper_alias_infer_pattern_binds_on_expanded_source() {
+    // R must resolve to `number`; assigning a number is clean.
+    let source = r#"
+type AB<T> = Promise<T[]>;
+type Ex<X> = X extends AB<infer U> ? U : never;
+type R = Ex<Promise<number[]>>;
+const a: R = 7;
+"#;
+    assert_clean(source, "wrapper-alias infer pattern binds U=number");
+}
+
+#[test]
+fn wrapper_alias_infer_pattern_payload_shape_binds() {
+    let source = r#"
+type W<T> = Promise<{ payload: T[] }>;
+type Ex<X> = X extends W<infer U> ? U : never;
+type R = Ex<Promise<{ payload: string[] }>>;
+const a: R = "ok";
+"#;
+    assert_clean(source, "payload-shaped wrapper alias binds U=string");
+}
+
+#[test]
+fn wrapper_alias_infer_pattern_set_promise_binds() {
+    // The infer parameter sits one level deeper (`Set<Promise<T>>`).
+    let source = r#"
+type SW<T> = Set<Promise<T>>;
+type Ex<X> = X extends SW<infer U> ? U : never;
+type R = Ex<Set<Promise<boolean>>>;
+const a: R = true;
+"#;
+    assert_clean(source, "Set<Promise<T>> wrapper alias binds U=boolean");
+}
+
+#[test]
+fn wrapper_alias_infer_pattern_still_rejects_wrong_assignment() {
+    // With U bound to `number`, assigning a string is a real TS2322 — the fix
+    // must not over-accept.
+    let source = r#"
+type AB<T> = Promise<T[]>;
+type Ex<X> = X extends AB<infer U> ? U : never;
+type R = Ex<Promise<number[]>>;
+const b: R = "no";
+"#;
+    assert_ts2322(source, "wrong assignment to inferred U=number");
+}
+
+#[test]
+fn wrapper_alias_infer_pattern_false_branch_when_source_mismatches() {
+    // A source that genuinely does not match the wrapper must take the false
+    // branch (`never`), so assigning any value is rejected — proving the
+    // reduction did not loosen the match.
+    let source = r#"
+type AB<T> = Promise<T[]>;
+type Ex<X> = X extends AB<infer U> ? U : never;
+type R = Ex<string>;
+const a: R = "anything";
+"#;
+    assert_ts2322(source, "non-matching source stays never");
+}
