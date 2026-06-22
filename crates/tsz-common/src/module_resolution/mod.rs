@@ -41,16 +41,18 @@ pub enum TargetMatch<T> {
 impl<T> TargetMatch<T> {
     /// `true` only for [`TargetMatch::Blocked`].
     pub const fn is_blocked(&self) -> bool {
-        matches!(self, TargetMatch::Blocked)
+        matches!(self, Self::Blocked)
     }
 
     /// Map the payload of a [`TargetMatch::Resolved`], leaving the
     /// `Blocked`/`NotApplicable` control states untouched.
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> TargetMatch<U> {
+        use TargetMatch::{Blocked, NotApplicable, Resolved};
+
         match self {
-            TargetMatch::Resolved(value) => TargetMatch::Resolved(f(value)),
-            TargetMatch::Blocked => TargetMatch::Blocked,
-            TargetMatch::NotApplicable => TargetMatch::NotApplicable,
+            Resolved(value) => Resolved(f(value)),
+            Blocked => Blocked,
+            NotApplicable => NotApplicable,
         }
     }
 
@@ -59,8 +61,8 @@ impl<T> TargetMatch<T> {
     /// (both mean "this layer produced nothing").
     pub fn into_option(self) -> Option<T> {
         match self {
-            TargetMatch::Resolved(value) => Some(value),
-            TargetMatch::Blocked | TargetMatch::NotApplicable => None,
+            Self::Resolved(value) => Some(value),
+            Self::Blocked | Self::NotApplicable => None,
         }
     }
 }
@@ -72,9 +74,9 @@ impl<T> TargetMatch<Vec<T>> {
     /// block is reported separately by the caller and is never collapsed here.
     pub fn from_candidates(candidates: Vec<T>) -> Self {
         if candidates.is_empty() {
-            TargetMatch::NotApplicable
+            Self::NotApplicable
         } else {
-            TargetMatch::Resolved(candidates)
+            Self::Resolved(candidates)
         }
     }
 }
