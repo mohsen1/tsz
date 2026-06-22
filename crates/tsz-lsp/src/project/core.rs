@@ -352,6 +352,14 @@ pub struct Project {
     /// this to tie-break by file proximity. `None` when the editor has not
     /// yet announced any focus.
     pub(crate) focused_file: Option<String>,
+    /// Soft memory budget (in estimated bytes) for pressure-driven eviction.
+    ///
+    /// `None` (the default) disables eviction: the project retains every loaded
+    /// file until it is explicitly removed. When `Some(bytes)` is set,
+    /// [`Project::evict_if_over_budget`] drops cold, safely-droppable files once
+    /// the estimated footprint exceeds `bytes`. The LSP server populates this
+    /// from the `TSZ_LSP_MEMORY_BUDGET_BYTES` environment variable.
+    pub(crate) memory_budget_bytes: Option<usize>,
     /// Coarse cross-file invalidation barrier for cached pull-model
     /// diagnostics.
     ///
@@ -560,6 +568,7 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            memory_budget_bytes: None,
             diagnostics_generation: 0,
             diagnostics_result_seq: 0,
         }
@@ -587,8 +596,40 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            memory_budget_bytes: None,
             diagnostics_generation: 0,
             diagnostics_result_seq: 0,
+        }
+    }
+
+    /// Configure the soft memory budget (estimated bytes) for pressure-driven
+    /// eviction. `None` disables eviction (the default).
+    ///
+    /// See [`Project::evict_if_over_budget`] for the eviction semantics.
+    pub const fn set_memory_budget(&mut self, budget_bytes: Option<usize>) {
+        self.memory_budget_bytes = budget_bytes;
+    }
+
+    /// The configured soft memory budget, if any.
+    #[must_use]
+    pub const fn memory_budget_bytes(&self) -> Option<usize> {
+        self.memory_budget_bytes
+    }
+
+    /// Whether the in-memory contents of `file_name` are byte-identical to the
+    /// file currently on disk.
+    ///
+    /// Such a file can be evicted under memory pressure and later rehydrated
+    /// from disk without losing unsaved editor state. A file with unsaved
+    /// changes (in-memory content differs from disk) or no on-disk backing
+    /// (e.g. an untitled buffer) returns `false` and is never evicted.
+    pub(crate) fn in_memory_matches_disk(&self, file_name: &str) -> bool {
+        let Some(file) = self.files.get(file_name) else {
+            return false;
+        };
+        match std::fs::read_to_string(file_name) {
+            Ok(disk_content) => hash_source_content(&disk_content) == file.content_hash(),
+            Err(_) => false,
         }
     }
 

@@ -64,6 +64,16 @@ impl LspServer {
             ));
         }
 
+        // When memory-pressure eviction is enabled, a request may target a file
+        // that was evicted while cold. Rehydrate it from disk before dispatch so
+        // the feature handlers see it. No-op (not even a map lookup) by default.
+        if self.project.memory_budget_bytes().is_some()
+            && let Some(uri) = Self::extract_uri(&params)
+        {
+            self.project
+                .ensure_file_loaded(&Self::uri_to_file_name(&uri));
+        }
+
         self.handle_request_method(id, method, params)
     }
 
