@@ -7,7 +7,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(super) fn try_emit_concrete_index_access_error(
         &mut self,
         error_anchor: NodeIndex,
