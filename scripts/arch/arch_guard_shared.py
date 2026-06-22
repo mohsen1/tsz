@@ -1464,7 +1464,11 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # gateway helper — the same one `publish_shared_constraint_proof` already
         # uses for the sibling cross-file proof cache. No new quarantine entry.
         # Removal condition remains #8225.
-        3079,
+        #
+        # Ratcheted 3079→3073 after #14306 moved the spread constraint probe
+        # through the narrower call boundary. The merge queue picked up
+        # neighboring main changes while preserving a six-reference reduction.
+        3073,
     ),
 ]
 
