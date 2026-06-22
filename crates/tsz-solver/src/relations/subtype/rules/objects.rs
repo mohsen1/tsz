@@ -1057,11 +1057,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let Some(t_string_idx) = target
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL)
-        else {
+        let Some(t_string_idx) = target.string_index_signature() else {
             return SubtypeResult::True; // Target has no string index constraint
         };
 
@@ -1075,11 +1071,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        match source
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL)
-        {
+        match source.string_index_signature() {
             Some(s_string_idx) => {
                 // Note: tsc does NOT enforce readonly on index signatures during
                 // assignability. A readonly source index IS assignable to a writable
@@ -1577,14 +1569,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let string_index = target
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL);
-        let symbol_index = target
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        let string_index = target.string_index_signature();
+        let symbol_index = target.symbol_index_signature();
         let number_index = target.number_index.as_ref();
 
         if string_index.is_none() && number_index.is_none() && symbol_index.is_none() {
@@ -1730,6 +1716,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     properties: source.to_vec(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                 }
                 .into()

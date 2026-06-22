@@ -22,12 +22,18 @@ pub(crate) fn collected_properties_object_type<R: TypeResolver>(
             properties,
             string_index,
             number_index,
-        } if !properties.is_empty() || string_index.is_some() || number_index.is_some() => {
-            if string_index.is_some() || number_index.is_some() {
+            symbol_index,
+        } if !properties.is_empty()
+            || string_index.is_some()
+            || number_index.is_some()
+            || symbol_index.is_some() =>
+        {
+            if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
                 Some(db.object_with_index(ObjectShape {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     ..ObjectShape::default()
                 }))
             } else {

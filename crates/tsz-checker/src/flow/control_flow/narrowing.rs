@@ -1,6 +1,6 @@
 //! Control flow narrowing: assignments, predicates, discriminants, and literal comparisons.
 
-use tsz_binder::symbol_flags;
+use tsz_binder::{FlowNodeId, flow_flags, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -200,6 +200,47 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         }
         self.assignment_affects_reference(access.expression, target)
+    }
+
+    /// Whether the `ARRAY_MUTATION` flow node `antecedent` mutates the array
+    /// `reference` itself (e.g. `reference.push(x)`), so the node carries the
+    /// reference's own assignment-narrowing forward and a following CONDITION,
+    /// CALL, or merge node must defer to it rather than re-deriving the declared
+    /// type. Resolves the backing call expression the same way the worklist's
+    /// `ARRAY_MUTATION` arm does, then reuses `array_mutation_affects_reference`.
+    /// Returns `false` for a mutation that targets a *different* array (a pure
+    /// value pass-through for `reference`, already handled inside the
+    /// `ARRAY_MUTATION` arm) or for any node that is not a backing call.
+    ///
+    /// Evolving-array references (`let a = []; a.push(1)`) are deliberately
+    /// excluded: their flow type is the *evolved element type* computed by
+    /// `array_mutation_evolved_type` inside the `ARRAY_MUTATION` arm, which has
+    /// its own antecedent deferral. Forcing an additional pre-join deferral for
+    /// them re-orders that evolution and changes the join's element type, so they
+    /// keep the existing path. The fix targets the non-evolving `T[] | undefined`
+    /// assignment-narrowing case (the `undefined`-removal a post-join read must
+    /// preserve), which is orthogonal to element evolution.
+    pub(super) fn array_mutation_flow_affects_reference(
+        &self,
+        antecedent: FlowNodeId,
+        reference: NodeIndex,
+    ) -> bool {
+        if self.reference_is_evolving_array_symbol(reference) {
+            return false;
+        }
+        let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
+            return false;
+        };
+        if !ant_flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
+            return false;
+        }
+        let Some(node) = self.arena.get(ant_flow.node) else {
+            return false;
+        };
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return false;
+        };
+        self.array_mutation_affects_reference(call, reference)
     }
 
     pub(crate) fn narrow_by_call_predicate(

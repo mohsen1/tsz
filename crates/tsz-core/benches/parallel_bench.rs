@@ -220,6 +220,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             properties: props,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         let shape_id = interner.intern_object_shape(shape);
@@ -258,6 +259,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             properties: props,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         let shape_id = interner.intern_object_shape(shape);

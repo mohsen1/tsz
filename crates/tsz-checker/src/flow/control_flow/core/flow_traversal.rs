@@ -28,6 +28,12 @@ impl<'a> FlowAnalyzer<'a> {
     /// nesting; normal ternary/logical merges resolve in a handful of steps.
     const CONDITIONAL_MERGE_WALK_FUEL: u32 = 256;
 
+    /// Fuel bounding `array_mutation_chain_requires_defer`'s single-antecedent
+    /// walk over a straight-line run of `ARRAY_MUTATION` flow nodes, so a
+    /// malformed or cyclic flow graph cannot loop. Generous relative to real
+    /// interleaved-mutation runs (`a.push(); b.push(); c.push(); …`).
+    const ARRAY_MUTATION_CHAIN_WALK_FUEL: u32 = 256;
+
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
@@ -1750,6 +1756,12 @@ impl<'a> FlowAnalyzer<'a> {
                     )
                 }) || self.is_conditional_expression_merge(grandparent)
             });
+        // An `ARRAY_MUTATION` antecedent forces a defer when a
+        // `reference`-affecting mutation lies on its straight-line antecedent
+        // chain (the node itself, or behind a run of sibling-array pass-through
+        // mutations). See `array_mutation_chain_requires_defer`.
+        let ant_is_deferring_array_mutation =
+            self.array_mutation_chain_requires_defer(antecedent, reference, symbol_id);
         (ant_flags & flow_flags::CONDITION) != 0
             // Closure START nodes may carry the enclosing flow
             // that preserves narrowing for effectively-const captures.
@@ -1760,5 +1772,76 @@ impl<'a> FlowAnalyzer<'a> {
             || (ant_flags & flow_flags::SWITCH_CLAUSE) != 0
             || ant_is_targeting_assignment
             || ant_is_passthrough_assignment
+            || ant_is_deferring_array_mutation
+    }
+
+    /// Whether an `ARRAY_MUTATION` flow node `antecedent` carries narrowing of
+    /// `reference` that a following CONDITION, CALL, or merge node must defer to.
+    ///
+    /// An `ARRAY_MUTATION` is, for `reference`, either:
+    ///   - a *mutation of `reference` itself* (`reference.push(x)`), which carries
+    ///     `reference`'s own assignment-narrowing forward (it must defer); or
+    ///   - a *pure value pass-through* (it mutates a different array), which
+    ///     carries whatever narrowing its single antecedent carries — so it must
+    ///     defer exactly when that antecedent requires a defer, mirroring the
+    ///     pass-through CALL and pass-through ASSIGNMENT handling.
+    ///
+    /// This walks the straight-line single-antecedent run of pass-through array
+    /// mutations: it returns `true` as soon as one affects `reference`, and at the
+    /// first non-`ARRAY_MUTATION` antecedent it delegates to
+    /// `condition_antecedent_requires_defer` (so an upstream narrowing assignment
+    /// such as `b = b || []` behind interleaved `a.push(x); b.push(y)` reaches the
+    /// reader). Delegating to the CONDITION classifier — not the CALL/chase
+    /// `antecedent_requires_defer` — confines this array-mutation deferral to the
+    /// branch/join path and keeps it out of the linear-passthrough chase, so
+    /// straight-line loop entries (`a = a || []; a.push(x); while (…) {} a.pop()`)
+    /// are untouched. `fuel` bounds the array-mutation walk so a malformed or
+    /// cyclic flow graph cannot loop.
+    pub(super) fn array_mutation_chain_requires_defer(
+        &self,
+        antecedent: FlowNodeId,
+        reference: NodeIndex,
+        symbol_id: Option<SymbolId>,
+    ) -> bool {
+        let mut current = antecedent;
+        let mut fuel = Self::ARRAY_MUTATION_CHAIN_WALK_FUEL;
+        loop {
+            if fuel == 0 {
+                return false;
+            }
+            fuel -= 1;
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                return false;
+            };
+            if !flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
+                return false;
+            }
+            if self.array_mutation_flow_affects_reference(current, reference) {
+                return true;
+            }
+            // Pure pass-through mutation of a different array: it carries its
+            // antecedent's narrowing. Keep walking while the run stays array
+            // mutations; at the first non-mutation antecedent, defer exactly when
+            // the CONDITION classifier would defer to it (so an upstream narrowing
+            // assignment such as `b = b || []` behind interleaved
+            // `a.push(x); b.push(y)` reaches a post-join read). Delegating to the
+            // CONDITION classifier (not the CALL/chase classifier) keeps this
+            // array-mutation deferral confined to the branch/join path and out of
+            // the linear-passthrough chase, so straight-line loop entries are
+            // untouched.
+            let [ant] = flow.antecedent.as_slice() else {
+                return false;
+            };
+            let ant = *ant;
+            let ant_is_array_mutation = self
+                .binder
+                .flow_nodes
+                .get(ant)
+                .is_some_and(|f| f.has_any_flags(flow_flags::ARRAY_MUTATION));
+            if !ant_is_array_mutation {
+                return self.condition_antecedent_requires_defer(ant, reference, symbol_id);
+            }
+            current = ant;
+        }
     }
 }

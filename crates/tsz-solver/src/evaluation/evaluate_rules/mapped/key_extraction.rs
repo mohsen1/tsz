@@ -169,12 +169,13 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                     } => {
                         self.collect_props_into_keys(&mut keys, properties);
                         let (has_string, has_symbol) =
                             self.classify_non_numeric_index_slot(string_index.as_ref());
                         keys.has_string = has_string;
-                        keys.has_symbol = has_symbol;
+                        keys.has_symbol = has_symbol || symbol_index.is_some();
                         keys.has_number = number_index.is_some();
                         tracing::trace!(
                             keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
@@ -209,12 +210,13 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                                     properties,
                                     string_index,
                                     number_index,
+                                    symbol_index,
                                 } => {
                                     self.collect_props_into_keys(&mut keys, properties);
                                     let (has_string, has_symbol) =
                                         self.classify_non_numeric_index_slot(string_index.as_ref());
                                     keys.has_string = has_string;
-                                    keys.has_symbol = has_symbol;
+                                    keys.has_symbol = has_symbol || symbol_index.is_some();
                                     keys.has_number = number_index.is_some();
                                     tracing::trace!(
                                         keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
@@ -287,6 +289,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                     } => {
                         let mut members = Vec::new();
 
@@ -311,6 +314,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                             && checker.is_assignable_to(number_sig.key_type, index_type)
                         {
                             members.push(number_sig.value_type);
+                        }
+                        if let Some(symbol_sig) = symbol_index
+                            && checker.is_assignable_to(symbol_sig.key_type, index_type)
+                        {
+                            members.push(symbol_sig.value_type);
                         }
 
                         if members.is_empty() {

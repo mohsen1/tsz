@@ -1691,6 +1691,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     properties: props,
                     string_index: callable.string_index,
                     number_index: callable.number_index,
+                    symbol_index: None,
                     symbol: callable.symbol,
                 })
             } else {
@@ -1980,6 +1981,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         }
     }

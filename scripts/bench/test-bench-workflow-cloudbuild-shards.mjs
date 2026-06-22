@@ -6,6 +6,10 @@ import { PROJECT_ROW_DEFINITIONS, REQUIRED_PROJECT_ROWS } from "./project-rows.m
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
+const benchResults = fs.readFileSync(
+  "scripts/bench/lib/bench-vs-tsgo-results.sh",
+  "utf8",
+);
 const shardCloudbuild = fs.readFileSync(
   "scripts/cloudbuild/cloudbuild-bench-shard.yaml",
   "utf8",
@@ -105,6 +109,18 @@ assert.match(
   shardCloudbuild,
   /output_dir="bench-shards\/\$\{_BENCH_TARGET_SHA\}\/\$\{_BENCH_SHARD_LABEL\}"[\s\S]+mkdir -p "\$output_dir"[\s\S]+run_shard\(\)[\s\S]+apt-get update[\s\S]+hyperfine[\s\S]+pnpm config set store-dir/,
   "Cloud Build shard status directory should be prepared before setup commands that can fail, and shard images should install benchmark runtime tools",
+);
+
+assert.match(
+  benchResults,
+  /first_line\(\)[\s\S]+\$\{text%%\$'\\n'\*\}/,
+  "benchmark diagnostics should use a pipe-safe first-line helper",
+);
+
+assert.doesNotMatch(
+  benchResults,
+  /printf '%s(?:\\n)?' "\$[a-zA-Z_][a-zA-Z0-9_]*" \| head -1/,
+  "benchmark diagnostics must not pipe captured compiler output into head under pipefail",
 );
 
 assert.ok(

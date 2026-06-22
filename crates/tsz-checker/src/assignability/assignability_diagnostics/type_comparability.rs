@@ -308,7 +308,7 @@ impl<'a> CheckerState<'a> {
         let apparent = if is_type_param {
             self.get_type_param_apparent_type(ty)
         } else {
-            match crate::query_boundaries::common::conditional_default_constraint(
+            match crate::query_boundaries::conditional_constraints::conditional_default_constraint(
                 self.ctx.types,
                 ty,
             ) {

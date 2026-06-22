@@ -1398,6 +1398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties: source_props,
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
             };
             let target_shape = ObjectShape {
@@ -1405,6 +1406,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties: target_props,
                 string_index: t_callable.string_index,
                 number_index: t_callable.number_index,
+                symbol_index: None,
                 symbol: t_callable.symbol,
             };
             if !self
@@ -1701,6 +1703,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             properties: source_props,
             string_index: source.string_index,
             number_index: source.number_index,
+            symbol_index: None,
             symbol: source.symbol,
         };
         let target_shape = ObjectShape {
@@ -1708,6 +1711,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             properties: target_props,
             string_index: target.string_index,
             number_index: target.number_index,
+            symbol_index: None,
             symbol: target.symbol,
         };
         if !self

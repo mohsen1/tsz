@@ -25,8 +25,25 @@ impl CheckerState<'_> {
         node_idx: NodeIndex,
         type_arg: TypeId,
     ) -> TypeId {
+        // Two narrowing channels, both modelling `tsc`'s `getImpliedConstraint`:
+        //   * a naked type-parameter check operand (`T extends U ? …T… : …`)
+        //     narrows *occurrences* of `T` inside the type argument — a
+        //     name-keyed substitution;
+        //   * a structured check operand (`F<V> extends U ? …F<V>… : …`, where
+        //     the operand is not a bare parameter) narrows the type argument as a
+        //     whole when it *is* that operand — `tsc` compares the actual type
+        //     variable of the check type against the type itself, not only bare
+        //     parameters, so a generic-alias check operand narrows here too.
         let mut subst = TypeSubstitution::new();
-        let mut found = false;
+        // Accumulated `extends` narrowing for the whole-argument channel; stays
+        // `None` until a structured check operand matches (0 or 1 is the common
+        // case, so avoid a heap `Vec`).
+        let mut whole_constraint: Option<TypeId> = None;
+
+        let arg_actual = tsz_solver::type_queries::substitution_base_or_self(
+            self.ctx.types.as_type_database(),
+            type_arg,
+        );
 
         let mut child = node_idx;
         let mut parent = self
@@ -46,18 +63,35 @@ impl CheckerState<'_> {
             if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                 && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
                 && cond.true_type == child
-                && let Some(type_param) = self.naked_check_type_param_id(cond.check_type)
-                && let Some(info) =
-                    query_common::type_param_info(self.ctx.types.as_type_database(), type_param)
             {
-                let current = subst.get(info.name).unwrap_or(type_param);
-                let extends = self.get_type_from_type_node(cond.extends_type);
-                let constraint = self.ctx.types.intersection2(current, extends);
-                subst.insert(
-                    info.name,
-                    self.ctx.types.substitution(type_param, constraint),
-                );
-                found = true;
+                if let Some(type_param) = self.naked_check_type_param_id(cond.check_type)
+                    && let Some(info) =
+                        query_common::type_param_info(self.ctx.types.as_type_database(), type_param)
+                {
+                    let current = subst.get(info.name).unwrap_or(type_param);
+                    let extends = self.get_type_from_type_node(cond.extends_type);
+                    let constraint = self.ctx.types.intersection2(current, extends);
+                    subst.insert(
+                        info.name,
+                        self.ctx.types.substitution(type_param, constraint),
+                    );
+                } else {
+                    // Structured check operand: narrow the whole argument when it
+                    // is the conditional's check operand (compared by actual type
+                    // variable so a substitution on either side still matches).
+                    let check_t = self.get_type_from_type_node(cond.check_type);
+                    let check_actual = tsz_solver::type_queries::substitution_base_or_self(
+                        self.ctx.types.as_type_database(),
+                        check_t,
+                    );
+                    if check_actual == arg_actual {
+                        let extends = self.get_type_from_type_node(cond.extends_type);
+                        whole_constraint = Some(
+                            whole_constraint
+                                .map_or(extends, |c| self.ctx.types.intersection2(c, extends)),
+                        );
+                    }
+                }
             }
             child = parent;
             parent = self
@@ -67,11 +101,20 @@ impl CheckerState<'_> {
                 .map_or(NodeIndex::NONE, |info| info.parent);
         }
 
-        if found {
-            query_common::instantiate_type(self.ctx.types, type_arg, &subst)
-        } else {
-            type_arg
+        if subst.is_empty() && whole_constraint.is_none() {
+            return type_arg;
         }
+
+        let mut result = if subst.is_empty() {
+            type_arg
+        } else {
+            query_common::instantiate_type(self.ctx.types, type_arg, &subst)
+        };
+        if let Some(extends) = whole_constraint {
+            let constraint = self.ctx.types.intersection2(result, extends);
+            result = self.ctx.types.substitution(result, constraint);
+        }
+        result
     }
 
     /// Resolve a type node to the `TypeId` of the naked type parameter it names

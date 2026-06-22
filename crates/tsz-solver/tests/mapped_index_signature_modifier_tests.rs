@@ -40,6 +40,7 @@ fn index_object(
         properties: vec![],
         string_index,
         number_index,
+        symbol_index: None,
         symbol: None,
     })
 }

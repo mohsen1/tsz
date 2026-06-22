@@ -1824,6 +1824,9 @@ path = "tests/flow_passthrough_run_narrowing_tests.rs"
 [[test]]
 name = "array_mutation_unrelated_narrowing_tests"
 path = "tests/array_mutation_unrelated_narrowing_tests.rs"
+[[test]]
+name = "array_mutation_same_array_join_narrowing_tests"
+path = "tests/array_mutation_same_array_join_narrowing_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
@@ -1934,6 +1937,9 @@ path = "tests/class_interface_self_merge_implements_tests.rs"
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]
+name = "reexported_symbol_keyed_member_tests"
+path = "tests/reexported_symbol_keyed_member_tests.rs"
+[[test]]
 name = "polymorphic_this_display_tests"
 path = "tests/polymorphic_this_display_tests.rs"
 [[test]]
@@ -1945,6 +1951,9 @@ path = "tests/recursive_utility_alias_fanout_tests.rs"
 [[test]]
 name = "recursive_conditional_alias_concrete_fixpoint_tests"
 path = "tests/recursive_conditional_alias_concrete_fixpoint_tests.rs"
+[[test]]
+name = "conditional_true_branch_substitution_tests"
+path = "tests/conditional_true_branch_substitution_tests.rs"
 [[test]]
 name = "issue_14123_repro_tests"
 path = "tests/issue_14123_repro_tests.rs"

@@ -145,9 +145,16 @@ impl<'a> CheckerState<'a> {
         self.ctx.arena.get_identifier(expr_node)?;
 
         let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        // Follow the full import/re-export chain (across files, carrying each
+        // hop's owning binder) to the declaring binding. A single-hop resolve
+        // stops at the first cross-file re-export, so a `[s]`-style symbol key
+        // reached through `import -> export -> import` would otherwise be keyed
+        // on the intermediate alias copy instead of the declaring `const` (or
+        // fail to resolve), dropping the member — false TS2536/TS2722 on a
+        // re-exported symbol-keyed member (refs #14127/#14130).
         let sym_id = self
             .ctx
-            .resolve_import_alias_and_register(local_sym_id)
+            .resolve_import_alias_chain_and_register(local_sym_id)
             .unwrap_or(local_sym_id);
         let file_idx = self.ctx.resolve_symbol_file_index(sym_id).or_else(|| {
             self.get_cross_file_symbol(sym_id)

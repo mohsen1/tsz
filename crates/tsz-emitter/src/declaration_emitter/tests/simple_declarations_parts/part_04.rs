@@ -127,6 +127,7 @@ const obj = {
             readonly: false,
             param_name: Some(interner.intern_string("x")),
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -198,6 +199,7 @@ const obj = {
             readonly: false,
             param_name: Some(interner.intern_string("x")),
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -264,6 +266,7 @@ const obj = {
             readonly: false,
             param_name: Some(interner.intern_string("x")),
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -371,6 +374,7 @@ export const Baa = {
         properties: vec![PropertyInfo::new(banana_atom, TypeId::NUMBER)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -787,6 +791,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(c_sym),
     });
     let d_type = interner.object_with_index(ObjectShape {
@@ -794,6 +799,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(d_sym),
     });
     let e_type = interner.object_with_index(ObjectShape {
@@ -801,6 +807,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(e_sym),
     });
 

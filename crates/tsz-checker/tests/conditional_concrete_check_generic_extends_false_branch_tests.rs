@@ -102,3 +102,26 @@ export {};
         "T extends string stays deferred (not eagerly resolved)",
     );
 }
+
+#[test]
+fn string_mapping_check_uses_constraint_reduction_not_no_param_deferral() {
+    // Regression guard for `stringMappingReduction.ts`: a string-mapping check
+    // may contain a generic operand even when the no-param fast path cannot see
+    // a named parameter. It must not be treated like an unresolved indexed
+    // access; otherwise the deferred fallback leaks into function assignability.
+    assert_no_errors(
+        r#"
+type Payloads = { click: {} };
+type Known = keyof Payloads;
+type PayloadOrFallback<C> = C extends Known ? Payloads[C] : "fallback";
+type Listener<T extends string> = {
+  bivarianceHack(event: PayloadOrFallback<Lowercase<T>>): void
+}["bivarianceHack"];
+declare const onKnown: (listener: Listener<Known>) => void;
+export const onAny = <Name extends string>(listener: Listener<Name>) => {
+  onKnown(listener);
+};
+"#,
+        "Lowercase<T> extends key union reduces through constraints",
+    );
+}

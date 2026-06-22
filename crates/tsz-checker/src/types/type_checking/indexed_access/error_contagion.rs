@@ -29,10 +29,12 @@ impl CheckerState<'_> {
         index_type_for_check: TypeId,
         index_type: TypeId,
     ) -> bool {
-        let Some(constraint) = crate::query_boundaries::common::conditional_default_constraint(
-            self.ctx.types,
-            object_type,
-        ) else {
+        let Some(constraint) =
+            crate::query_boundaries::conditional_constraints::conditional_default_constraint(
+                self.ctx.types,
+                object_type,
+            )
+        else {
             return false;
         };
         let evaluated_constraint = self.evaluate_type_with_env(constraint);
@@ -139,7 +141,7 @@ impl CheckerState<'_> {
                     return false;
                 }
                 let Some(constraint) =
-                    crate::query_boundaries::common::conditional_default_constraint(
+                    crate::query_boundaries::conditional_constraints::conditional_default_constraint(
                         self.ctx.types,
                         current,
                     )
@@ -164,7 +166,7 @@ impl CheckerState<'_> {
                 // generic application.
                 if peeled_index
                     && let Some(constraint) =
-                        crate::query_boundaries::common::conditional_default_constraint(
+                        crate::query_boundaries::conditional_constraints::conditional_default_constraint(
                             self.ctx.types,
                             current,
                         )

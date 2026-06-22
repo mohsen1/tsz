@@ -169,6 +169,7 @@ fn mapped_surface_with_optional_undefined_inner(
                 properties,
                 string_index: shape.string_index,
                 number_index: shape.number_index,
+                symbol_index: shape.symbol_index,
                 symbol: shape.symbol,
             })
         } else {

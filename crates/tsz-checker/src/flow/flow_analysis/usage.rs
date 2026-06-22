@@ -645,6 +645,19 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip definite assignment check if this identifier is the target of a
+        // logical compound assignment (`x ??= v`, `x ||= v`, `x &&= v`).
+        // tsc treats the target of these operators as definitely assigned: the
+        // implicit read of the target is the conditioning test, and the operator
+        // guarantees the target holds a value on every reachable continuation
+        // (assigned `v` when the condition selects it, otherwise retaining the
+        // value the condition already proved present). Arithmetic/bitwise
+        // compound assignments (`+=`, `**=`, ...) are NOT excluded — tsc still
+        // reports TS2454 for an unassigned target there.
+        if self.is_logical_compound_assignment_target(idx) {
+            return false;
+        }
+
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             if std::env::var_os("TSZ_DAA_DEBUG").is_some() {
@@ -1322,6 +1335,31 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check whether `idx` is the direct target (left operand) of a logical
+    /// compound assignment (`&&=`, `||=`, `??=`).
+    ///
+    /// Only a bare identifier directly on the left of the operator qualifies;
+    /// nested member/element targets and the right operand do not. tsc does not
+    /// report TS2454 for the read of such a target.
+    pub(crate) fn is_logical_compound_assignment_target(&self, idx: NodeIndex) -> bool {
+        let Some(info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(info.parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+        bin.left == idx
+            && crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
+                bin.operator_token,
+            )
+    }
+
     /// Check if a variable is definitely assigned at a given point,
     /// optionally using a known symbol to pre-seed the flow analyzer's
     /// reference symbol cache. This is needed when `binder.resolve_identifier`
@@ -1449,11 +1487,21 @@ impl<'a> CheckerState<'a> {
                 && unary.operand == ident_idx;
         }
 
-        // Compound assignment operators (+=, -=, *=, /=, %=, **=, <<=, >>=, >>>=, &=, |=, ^=, &&=, ||=, ??=)
+        // Arithmetic/bitwise compound assignment operators (+=, -=, *=, /=, %=,
+        // **=, <<=, >>=, >>>=, &=, |=, ^=). These read the target before writing,
+        // so the target is still "used before assigned": resolve the LHS read at
+        // the pre-assignment (antecedent) flow state.
+        //
+        // Logical compound assignments (&&=, ||=, ??=) are deliberately excluded:
+        // tsc treats their target as definitely assigned (see
+        // `is_logical_compound_assignment` / `check_definite_assignment`), so the
+        // LHS read must resolve at the assignment flow node, not its antecedent.
         if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
         {
             return crate::query_boundaries::operator_wrappers::is_compound_assignment_operator(
+                bin.operator_token,
+            ) && !crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
                 bin.operator_token,
             ) && bin.left == ident_idx;
         }

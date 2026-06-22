@@ -969,6 +969,7 @@ fn test_infer_from_index_signature_value() {
 
     // Pattern: { [k: string]: infer V }
     let pattern = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -983,6 +984,7 @@ fn test_infer_from_index_signature_value() {
 
     // Input: { [k: string]: number }
     let input = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1192,6 +1194,7 @@ fn test_infer_with_keyof_constraint() {
 
     // Pattern: { [key: infer K]: number } where K extends string
     let pattern = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1206,6 +1209,7 @@ fn test_infer_with_keyof_constraint() {
 
     // Input: { [key: string]: number }
     let input = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

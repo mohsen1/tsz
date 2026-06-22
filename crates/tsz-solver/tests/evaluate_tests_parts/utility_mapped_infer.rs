@@ -1049,6 +1049,7 @@ fn test_record_string_keys() {
 
     // Record with string keys creates an index signature
     let record = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1080,6 +1081,7 @@ fn test_record_number_keys() {
     let interner = TypeInterner::new();
 
     let record = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1137,6 +1139,7 @@ fn test_record_with_object_value() {
     let inner_obj = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
 
     let record = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1661,6 +1664,7 @@ fn test_record_with_union_value() {
     let value_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let record = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

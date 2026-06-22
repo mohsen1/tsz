@@ -524,6 +524,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 properties: reverse_properties,
                 string_index: reverse_string_index,
                 number_index: reverse_number_index,
+                symbol_index: None,
                 symbol: None,
             })
         } else if source_is_fresh {
@@ -1247,6 +1248,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             properties: reverse_properties,
                             string_index: reverse_string_index,
                             number_index: reverse_number_index,
+                            symbol_index: None,
                             symbol: None,
                         }));
                     }

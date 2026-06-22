@@ -773,12 +773,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if shape.string_index.is_some() || shape.number_index.is_some() {
+            if shape.string_index.is_some()
+                || shape.number_index.is_some()
+                || shape.symbol_index.is_some()
+            {
                 return self.ctx.types.factory().object_with_index(ObjectShape {
                     flags: shape.flags,
                     properties: merged_props,
                     string_index: shape.string_index,
                     number_index: shape.number_index,
+                    symbol_index: shape.symbol_index,
                     symbol: shape.symbol,
                 });
             }

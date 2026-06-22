@@ -249,6 +249,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return Some(tuple_type);
             }
 
+            if let Some((_, symbol_ref)) =
+                crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                    self.ctx,
+                    |idx| value_resolver(idx).map(tsz_binder::SymbolId),
+                    expr_name_idx,
+                )
+            {
+                return Some(self.ctx.types.unique_symbol(symbol_ref));
+            }
+
             let const_symbol_type_query = || -> Option<TypeId> {
                 let sym_id = tsz_binder::SymbolId(value_resolver(expr_name_idx)?);
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;

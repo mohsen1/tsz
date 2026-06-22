@@ -202,11 +202,15 @@ impl JsExportSurface {
                 properties: merged_props,
                 string_index: shape.string_index,
                 number_index: shape.number_index,
+                symbol_index: shape.symbol_index,
                 symbol: shape.symbol,
             };
 
             return Some(
-                if shape.string_index.is_some() || shape.number_index.is_some() {
+                if shape.string_index.is_some()
+                    || shape.number_index.is_some()
+                    || shape.symbol_index.is_some()
+                {
                     checker.ctx.types.factory().object_with_index(merged_shape)
                 } else {
                     checker.ctx.types.factory().object_with_flags_and_symbol(

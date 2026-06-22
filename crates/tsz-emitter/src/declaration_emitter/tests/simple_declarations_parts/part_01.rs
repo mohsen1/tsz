@@ -214,6 +214,7 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let func_type = interner.function(FunctionShape::new(

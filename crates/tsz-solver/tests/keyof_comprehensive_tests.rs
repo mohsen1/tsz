@@ -395,6 +395,7 @@ fn test_keyof_tuple_includes_numeric_indices() {
 fn test_keyof_object_with_string_index_includes_string_and_number() {
     let interner = TypeInterner::new();
     let obj_with_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -434,6 +435,7 @@ fn test_keyof_object_with_collapsed_string_symbol_index_includes_symbol() {
     let interner = TypeInterner::new();
     let string_or_symbol = interner.union2(TypeId::STRING, TypeId::SYMBOL);
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -468,6 +470,7 @@ fn test_keyof_template_index_signature_preserves_template_key() {
         TemplateSpan::Type(TypeId::STRING),
     ]);
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -497,6 +500,7 @@ fn test_keyof_template_index_signature_with_fixed_property_excludes_plain_string
     ]);
     let fixed_key = interner.literal_string("fixed");
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -535,6 +539,7 @@ fn test_keyof_template_and_number_index_signature_includes_number() {
         TemplateSpan::Type(TypeId::STRING),
     ]);
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -570,6 +575,7 @@ fn test_keyof_template_and_number_index_signature_includes_number() {
 fn test_keyof_object_with_number_index_includes_number() {
     let interner = TypeInterner::new();
     let obj_with_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
