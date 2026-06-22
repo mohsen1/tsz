@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
         // imported aliases). A `never` collapse is discarded in favor of the
         // branch-union default below.
         if let Some(substituted) =
-            crate::query_boundaries::common::conditional_check_type_substituted_constraint(
+            crate::query_boundaries::conditional::check_type_substituted_constraint(
                 self.ctx.types,
                 evaluated,
             )
