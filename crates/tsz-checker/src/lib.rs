@@ -175,6 +175,9 @@ mod class_property_typed_const_initializer_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
 mod comlink_row_regression_tests;
 #[cfg(test)]
+#[path = "../tests/comparability_indexed_access_reduce_tests.rs"]
+mod comparability_indexed_access_reduce_tests;
+#[cfg(test)]
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
 #[cfg(test)]
@@ -372,6 +375,9 @@ mod literal_application_alias_display_tests;
 #[cfg(test)]
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
+#[cfg(test)]
+#[path = "tests/member_assignment_narrowing_join_tests.rs"]
+mod member_assignment_narrowing_join_tests;
 #[cfg(test)]
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
@@ -606,6 +612,9 @@ mod ts7057_yield_implicit_any;
 #[cfg(test)]
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
+#[cfg(test)]
+#[path = "tests/type_parameter_default_identity_tests.rs"]
+mod type_parameter_default_identity_tests;
 #[cfg(test)]
 #[path = "../tests/typeof_operator_result_union_tests.rs"]
 mod typeof_operator_result_union_tests;

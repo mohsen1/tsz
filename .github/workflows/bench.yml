@@ -1422,7 +1422,7 @@ jobs:
       - id: app-compat-source
         name: Resolve application compile compatibility CI run
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1443,15 +1443,47 @@ jobs:
                 break
               fi
             done < <(
-              gh run list \
-                --repo "${GITHUB_REPOSITORY}" \
-                --workflow CI \
-                --branch main \
-                --event push \
-                --status success \
-                --limit 50 \
-                --json databaseId,headSha,url \
-                --jq '.[] | [.databaseId, .headSha, .url] | @tsv'
+              node -e '
+                const https = require("node:https");
+                const repo = process.env.GITHUB_REPOSITORY;
+                const token = process.env.GITHUB_TOKEN;
+                if (!repo) {
+                  console.error("GITHUB_REPOSITORY is required to resolve CI runs");
+                  process.exit(1);
+                }
+                const requestPath = `/repos/${repo}/actions/runs?branch=main&event=push&status=success&per_page=50`;
+                const request = https.request({
+                  hostname: "api.github.com",
+                  path: requestPath,
+                  method: "GET",
+                  headers: {
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "tsz-bench-publish",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+                  },
+                }, (response) => {
+                  let body = "";
+                  response.setEncoding("utf8");
+                  response.on("data", (chunk) => body += chunk);
+                  response.on("end", () => {
+                    if (response.statusCode < 200 || response.statusCode >= 300) {
+                      console.error(`GitHub Actions runs API returned ${response.statusCode}: ${body}`);
+                      process.exit(1);
+                    }
+                    const payload = JSON.parse(body);
+                    for (const run of payload.workflow_runs || []) {
+                      if (run.name !== "CI") continue;
+                      console.log([run.id, run.head_sha, run.html_url].join("\t"));
+                    }
+                  });
+                });
+                request.on("error", (error) => {
+                  console.error(error.message);
+                  process.exit(1);
+                });
+                request.end();
+              '
             )
 
             if [[ -z "${run_id}" ]]; then
@@ -1510,15 +1542,29 @@ jobs:
             printf '%s\n' "${json_files[@]}" | grep -Ev '/bench-results-bench-(canaries|applications)\.json$' || true
           )
           expected_shards=9
-          echo "json_count=${#required_files[@]}" >> "$GITHUB_OUTPUT"
+          # A required shard that exits non-zero writes only an error stub
+          # ({"results":[],"error":...}) per cloudbuild-bench-shard.yaml, which
+          # merge-results.mjs drops from the published artifact. Count required
+          # shards that actually produced result rows — not merely the stub
+          # files present — so a failed required shard yields complete=false
+          # instead of publishing silently-incomplete data marked complete.
+          required_present=0
+          for shard_json in "${required_files[@]}"; do
+            if node -e 'const fs=require("fs");try{const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")).results;process.exit(Array.isArray(r)&&r.length>0?0:1)}catch{process.exit(1)}' "${shard_json}"; then
+              required_present=$((required_present + 1))
+            else
+              echo "::warning::Required benchmark shard $(basename "${shard_json}") produced no result rows (failed/partial shard); excluding it from the required-shard completeness count."
+            fi
+          done
+          echo "json_count=${required_present}" >> "$GITHUB_OUTPUT"
           echo "expected_json_count=${expected_shards}" >> "$GITHUB_OUTPUT"
-          if [[ "${#required_files[@]}" -eq 0 ]]; then
-            echo "No required benchmark result JSON files found."
+          if [[ "${required_present}" -eq 0 ]]; then
+            echo "No required benchmark shard produced result rows."
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#required_files[@]}" -ne "${expected_shards}" ]]; then
-            echo "::warning::Expected ${expected_shards} required benchmark shard JSON files, found ${#required_files[@]}; merging partial artifact for diagnosis, but public publish will fail."
+          if [[ "${required_present}" -ne "${expected_shards}" ]]; then
+            echo "::warning::Expected ${expected_shards} required benchmark shards with results, found ${required_present}; merging partial artifact for diagnosis, but public publish will fail."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true

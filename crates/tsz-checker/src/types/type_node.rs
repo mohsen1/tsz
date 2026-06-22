@@ -1035,6 +1035,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             };
             (predicate_type, param.type_id)
         };
+        // Resolve alias/application spellings before the type-parameter
+        // normalization below. For `type To<T> = T`, the asserted side is the
+        // bare `T` while the parameter side is `Application(To, [T])`; both must
+        // become the same type parameter before unconstrained parameters are
+        // normalized to `unknown`.
+        let predicate_type = self.resolve_type_predicate_alias_side(predicate_type);
+        let param_type = self.resolve_type_predicate_alias_side(param_type);
         // Skip the check when the predicate type is an unevaluable Application
         // (e.g., NonNullable<T> where T is a free type parameter). Our evaluator
         // can't resolve all lib.d.ts type aliases yet, so the Application stays
@@ -1078,14 +1085,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let types = self.ctx.types;
-        if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
-            types,
-            resolved_predicate,
-            resolved_param,
-        )
-        .related
-            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
-        {
+        // Run the predicate relation with the checker's `DefId`-resolving resolver
+        // (rather than a `NoopResolver`) so an aliased predicate or parameter type
+        // is resolved to its body during the relation walk. See the boundary's doc
+        // comment (issue #14231).
+        let related =
+            crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
+                types,
+                &*self.ctx,
+                resolved_predicate,
+                resolved_param,
+            )
+            .related;
+        if !related && let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
             self.ctx.error(
                 type_node.pos,
                 type_node.end - type_node.pos,
@@ -1093,6 +1105,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 2677,
             );
         }
+    }
+
+    /// Resolve an alias-written predicate side before TS2677's type-parameter
+    /// normalization. The final relation still runs through the predicate query
+    /// boundary with the checker's resolver; this pre-pass only makes aliases
+    /// that evaluate to a type parameter behave like the bare type parameter.
+    fn resolve_type_predicate_alias_side(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() || type_id == TypeId::ERROR {
+            return type_id;
+        }
+
+        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &*self.ctx,
+            type_id,
+            std::iter::empty(),
+            false,
+            crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+                expand_application_display_alias_args: false,
+                query_db: Some(self.ctx.types),
+                authoritative: true,
+                cache_entry_collection:
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+            },
+        )
+        .result
     }
 
     /// Check if a type contains an Application that can't be evaluated (e.g., `NonNullable<T>`
