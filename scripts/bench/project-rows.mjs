@@ -814,7 +814,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     fixture_dir: "infisical",
     source_dir: "frontend",
     // The upstream frontend/tsconfig.json is a solution-style aggregator
-    // ({"files":[],"references":[...]}) that resolves ZERO files under `-p`
+    // with empty files plus project references; it resolves ZERO files under `-p`
     // (references are only followed under `-b`), so it produced a phantom
     // "0 lines, tsz 24.6x faster" benchmark. Point at the real leaf config
     // whose `include` covers frontend/src. Demoted required -> canary: this
