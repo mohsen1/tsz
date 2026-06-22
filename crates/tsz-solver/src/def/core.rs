@@ -79,6 +79,10 @@ type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
 type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 
+const fn fx_build_hasher() -> FxBuildHasher {
+    FxBuildHasher
+}
+
 /// Rough per-entry overhead for a `DashMap`/`DashSet` bucket (key + value +
 /// shard bookkeeping), used by the store's `estimated_size_bytes` reporting.
 /// Shared by the store core and its sub-store size estimators.
@@ -546,7 +550,7 @@ impl DefinitionStore {
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             file_canonical_paths: DefDashMap::with_capacity_and_hasher(
                 file_capacity,
-                Default::default(),
+                fx_build_hasher(),
             ),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
                 id_capacity / 2,
