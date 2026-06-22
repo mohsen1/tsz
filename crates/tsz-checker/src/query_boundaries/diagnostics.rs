@@ -141,6 +141,23 @@ pub(crate) fn alias_application_body_reduces_through_conditional_or_indexed(
         })
 }
 
+pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    super::common::contains_type_parameters(db, source)
+        && super::common::contains_type_parameters(db, target)
+        && (super::common::is_conditional_type(db, source)
+            || super::common::is_index_access_type(db, source)
+            || alias_application_body_reduces_through_conditional_or_indexed(
+                db,
+                definitions,
+                source,
+            ))
+}
+
 pub(crate) fn evaluated_alias_application_has_concrete_display(
     db: &dyn TypeDatabase,
     candidate: TypeId,

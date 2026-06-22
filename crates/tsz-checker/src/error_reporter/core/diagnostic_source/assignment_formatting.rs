@@ -219,15 +219,12 @@ impl<'a> CheckerState<'a> {
         // for `let t: true = x`, or `ReturnType<T[M]>` left to the established
         // application path for `x: A` — both already handled by the fallbacks
         // below, so this guard must not intercept them.
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source)
-            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
-            && (crate::query_boundaries::common::is_conditional_type(self.ctx.types, source)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, source)
-                || crate::query_boundaries::diagnostics::alias_application_body_reduces_through_conditional_or_indexed(
-                    self.ctx.types,
-                    &self.ctx.definition_store,
-                    source,
-                ))
+        if crate::query_boundaries::diagnostics::generic_deferred_source_keeps_spelling_against_generic_target(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            source,
+            target,
+        )
         {
             return self.format_type_for_assignability_message(source);
         }
