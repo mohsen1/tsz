@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ResolvedCompilerOptions;
 use tsz::module_resolver::PackageType;
+use tsz_common::module_resolution::TargetMatch;
 use tsz_common::module_resolution::types_versions;
 
 #[allow(unused_imports)]
@@ -51,45 +52,50 @@ pub(crate) fn resolve_exports_subpath(
     subpath_key: &str,
     conditions: &[&str],
     compiler_version: SemVer,
-) -> Option<String> {
+) -> TargetMatch<String> {
     match exports {
-        serde_json::Value::String(value) => (subpath_key == ".").then(|| value.clone()),
+        serde_json::Value::String(value) => {
+            if subpath_key == "." {
+                TargetMatch::Resolved(value.clone())
+            } else {
+                TargetMatch::NotApplicable
+            }
+        }
+        // A bare `"exports": null` blocks the package entirely.
+        serde_json::Value::Null => TargetMatch::Blocked,
         serde_json::Value::Array(list) => {
             for entry in list {
-                if let Some(resolved) =
-                    resolve_exports_subpath(entry, subpath_key, conditions, compiler_version)
-                {
-                    return Some(resolved);
+                match resolve_exports_subpath(entry, subpath_key, conditions, compiler_version) {
+                    TargetMatch::NotApplicable => {}
+                    stop => return stop,
                 }
             }
-            None
+            TargetMatch::NotApplicable
         }
         serde_json::Value::Object(map) => {
             let has_subpath_keys = map.keys().any(|key| key.starts_with('.'));
             if has_subpath_keys {
-                if let Some(value) = map.get(subpath_key)
-                    && let Some(target) =
-                        resolve_exports_target(value, conditions, compiler_version)
-                {
-                    return Some(target);
+                // An exact subpath key is authoritative — its result (resolved,
+                // blocked, or miss) is returned without pattern fallthrough.
+                if let Some(value) = map.get(subpath_key) {
+                    return resolve_exports_target(value, conditions, compiler_version);
                 }
 
                 if let Some((wildcard, value)) =
                     find_best_subpath_pattern(map, |key| match_exports_subpath(key, subpath_key))
-                    && let Some(target) =
-                        resolve_exports_target(value, conditions, compiler_version)
                 {
-                    return Some(apply_exports_subpath(&target, &wildcard));
+                    return resolve_exports_target(value, conditions, compiler_version)
+                        .map(|target| apply_exports_subpath(&target, &wildcard));
                 }
 
-                None
+                TargetMatch::NotApplicable
             } else if subpath_key == "." {
                 resolve_exports_target(exports, conditions, compiler_version)
             } else {
-                None
+                TargetMatch::NotApplicable
             }
         }
-        _ => None,
+        _ => TargetMatch::NotApplicable,
     }
 }
 
@@ -97,44 +103,48 @@ pub(crate) fn resolve_exports_target(
     target: &serde_json::Value,
     conditions: &[&str],
     compiler_version: SemVer,
-) -> Option<String> {
+) -> TargetMatch<String> {
     match target {
-        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::String(value) => TargetMatch::Resolved(value.clone()),
+        // An explicit JSON `null` reached through a matching condition or array
+        // element blocks the whole resolution (Node `PACKAGE_TARGET_RESOLVE`):
+        // it must not fall through to a sibling condition or an outer fallback.
+        serde_json::Value::Null => TargetMatch::Blocked,
         serde_json::Value::Array(list) => {
             for entry in list {
-                if let Some(resolved) = resolve_exports_target(entry, conditions, compiler_version)
-                {
-                    return Some(resolved);
+                match resolve_exports_target(entry, conditions, compiler_version) {
+                    TargetMatch::NotApplicable => {}
+                    stop => return stop,
                 }
             }
-            None
+            TargetMatch::NotApplicable
         }
         serde_json::Value::Object(map) => {
             // Process keys in insertion order (Node.js spec). For each key:
             // 1. Check if it's a plain condition match
             // 2. Check if it's a versioned condition like "types@>=1"
             for (key, value) in map {
-                // Check for versioned condition (e.g., "types@>=1")
-                if let Some(at_pos) = key.find('@') {
+                let matched = if let Some(at_pos) = key.find('@') {
                     let base_condition = &key[..at_pos];
                     let version_range = &key[at_pos + 1..];
-                    if conditions.contains(&base_condition)
+                    conditions.contains(&base_condition)
                         && types_versions_range_matches(version_range, compiler_version)
-                        && let Some(resolved) =
-                            resolve_exports_target(value, conditions, compiler_version)
-                    {
-                        return Some(resolved);
+                } else {
+                    conditions.contains(&key.as_str())
+                };
+                if matched {
+                    // A matching condition (including one mapping to `null`)
+                    // stops the search: Resolved and Blocked both short-circuit;
+                    // only NotApplicable continues to the next condition.
+                    match resolve_exports_target(value, conditions, compiler_version) {
+                        TargetMatch::NotApplicable => {}
+                        stop => return stop,
                     }
-                } else if conditions.contains(&key.as_str())
-                    && let Some(resolved) =
-                        resolve_exports_target(value, conditions, compiler_version)
-                {
-                    return Some(resolved);
                 }
             }
-            None
+            TargetMatch::NotApplicable
         }
-        _ => None,
+        _ => TargetMatch::NotApplicable,
     }
 }
 
@@ -158,14 +168,21 @@ pub(crate) fn resolve_imports_subpath_candidates_with_flavor(
         return Vec::new();
     }
 
+    // An exact key is authoritative (no pattern fallthrough). A `null` block and
+    // an empty miss both collapse to "no candidates" here — `#imports`
+    // resolution has no further fallback, so both terminate as NotFound.
     if let Some(value) = map.get(subpath_key) {
-        return resolve_target_candidates_with_flavor(value, conditions, compiler_version, false);
+        return resolve_target_candidates_with_flavor(value, conditions, compiler_version, false)
+            .into_option()
+            .unwrap_or_default();
     }
 
     if let Some((wildcard, value)) =
         find_best_subpath_pattern(map, |key| match_imports_subpath(key, subpath_key))
     {
         return resolve_target_candidates_with_flavor(value, conditions, compiler_version, false)
+            .into_option()
+            .unwrap_or_default()
             .into_iter()
             .map(|(target, is_types)| (apply_exports_subpath(&target, &wildcard), is_types))
             .collect();
@@ -184,57 +201,68 @@ fn resolve_target_candidates_with_flavor(
     conditions: &[&str],
     compiler_version: SemVer,
     is_types_condition: bool,
-) -> Vec<(String, bool)> {
+) -> TargetMatch<Vec<(String, bool)>> {
     match target {
-        serde_json::Value::String(value) => vec![(value.clone(), is_types_condition)],
+        serde_json::Value::String(value) => {
+            TargetMatch::Resolved(vec![(value.clone(), is_types_condition)])
+        }
+        // An explicit JSON `null` reached through a matching condition or array
+        // element blocks the whole `#imports` resolution: it must not fall
+        // through to a sibling condition or an outer fallback. The earlier
+        // `return Vec::new()` only blocked at the exact nesting level, so a
+        // *nested* null still let the enclosing conditional pick a later
+        // sibling — the bug this `Blocked` propagation fixes.
+        serde_json::Value::Null => TargetMatch::Blocked,
         serde_json::Value::Array(list) => {
+            // Disk probing is deferred to the caller, so matching targets are
+            // accumulated in order (the caller probes them in order). A matching
+            // `null` short-circuits the whole collection.
             let mut candidates = Vec::new();
             for entry in list {
-                candidates.extend(resolve_target_candidates_with_flavor(
+                match resolve_target_candidates_with_flavor(
                     entry,
                     conditions,
                     compiler_version,
                     is_types_condition,
-                ));
+                ) {
+                    TargetMatch::Resolved(found) => candidates.extend(found),
+                    TargetMatch::Blocked => return TargetMatch::Blocked,
+                    TargetMatch::NotApplicable => {}
+                }
             }
-            candidates
+            TargetMatch::from_candidates(candidates)
         }
         serde_json::Value::Object(map) => {
             let mut candidates = Vec::new();
             for (key, value) in map {
-                if let Some(at_pos) = key.find('@') {
+                let (matched, nested_is_types) = if let Some(at_pos) = key.find('@') {
                     let base_condition = &key[..at_pos];
                     let version_range = &key[at_pos + 1..];
-                    if conditions.contains(&base_condition)
-                        && types_versions_range_matches(version_range, compiler_version)
-                    {
-                        if value.is_null() {
-                            return Vec::new();
-                        }
-                        let nested_is_types = is_types_condition || base_condition == "types";
-                        candidates.extend(resolve_target_candidates_with_flavor(
-                            value,
-                            conditions,
-                            compiler_version,
-                            nested_is_types,
-                        ));
-                    }
-                } else if conditions.contains(&key.as_str()) {
-                    if value.is_null() {
-                        return Vec::new();
-                    }
-                    let nested_is_types = is_types_condition || key == "types";
-                    candidates.extend(resolve_target_candidates_with_flavor(
+                    let matched = conditions.contains(&base_condition)
+                        && types_versions_range_matches(version_range, compiler_version);
+                    (matched, is_types_condition || base_condition == "types")
+                } else {
+                    (
+                        conditions.contains(&key.as_str()),
+                        is_types_condition || key == "types",
+                    )
+                };
+                if matched {
+                    match resolve_target_candidates_with_flavor(
                         value,
                         conditions,
                         compiler_version,
                         nested_is_types,
-                    ));
+                    ) {
+                        TargetMatch::Resolved(found) => candidates.extend(found),
+                        TargetMatch::Blocked => return TargetMatch::Blocked,
+                        TargetMatch::NotApplicable => {}
+                    }
                 }
             }
-            candidates
+            TargetMatch::from_candidates(candidates)
         }
-        _ => Vec::new(),
+        _ => TargetMatch::NotApplicable,
     }
 }
 
@@ -421,6 +449,112 @@ mod tests {
         patch: 0,
     };
 
+    // --- JSON-`null` target blocking (Node `PACKAGE_TARGET_RESOLVE`) ---------
+    //
+    // A `null` reached through a *matching* condition / array element / exact
+    // subpath key blocks the whole resolution; it must not fall through to a
+    // sibling. A `null` on an UNMATCHED condition is never reached. Verified
+    // against bundled `tsc` 6.0.2. CommonJS conditions used here:
+    // `["require", "types", "node", "default"]`.
+    const CJS_CONDS: &[&str] = &["require", "types", "node", "default"];
+
+    #[test]
+    fn exports_target_nested_matching_null_blocks_outer_default() {
+        // node -> require:null blocks; neither the inner `default` nor the outer
+        // `default` is reached.
+        let exports = serde_json::json!({
+            "node": { "require": null, "default": "./inner.js" },
+            "default": "./outer.js"
+        });
+        assert_eq!(
+            resolve_exports_target(&exports, CJS_CONDS, TEST_VERSION),
+            TargetMatch::Blocked,
+        );
+    }
+
+    #[test]
+    fn exports_target_top_level_matching_null_blocks_sibling() {
+        let exports = serde_json::json!({ "node": null, "default": "./fallback.js" });
+        assert_eq!(
+            resolve_exports_target(&exports, CJS_CONDS, TEST_VERSION),
+            TargetMatch::Blocked,
+        );
+    }
+
+    #[test]
+    fn exports_target_null_on_unmatched_condition_resolves_default() {
+        // `import` is not a CommonJS condition, so its null is never reached.
+        let exports = serde_json::json!({ "import": null, "default": "./present.js" });
+        assert_eq!(
+            resolve_exports_target(&exports, CJS_CONDS, TEST_VERSION),
+            TargetMatch::Resolved("./present.js".to_string()),
+        );
+    }
+
+    #[test]
+    fn exports_target_null_array_element_blocks_remaining() {
+        let exports = serde_json::json!([null, "./real.js"]);
+        assert_eq!(
+            resolve_exports_target(&exports, CJS_CONDS, TEST_VERSION),
+            TargetMatch::Blocked,
+        );
+    }
+
+    #[test]
+    fn exports_subpath_exact_null_key_blocks_without_pattern_fallthrough() {
+        // `"./blocked": null` blocks even though `"./*"` would otherwise match;
+        // a different subpath still resolves through the wildcard.
+        let exports = serde_json::json!({ "./blocked": null, "./*": "./impl/*.js" });
+        assert_eq!(
+            resolve_exports_subpath(&exports, "./blocked", &["default"], TEST_VERSION),
+            TargetMatch::Blocked,
+        );
+        assert_eq!(
+            resolve_exports_subpath(&exports, "./allowed", &["default"], TEST_VERSION)
+                .into_option()
+                .as_deref(),
+            Some("./impl/allowed.js"),
+        );
+    }
+
+    #[test]
+    fn imports_candidates_nested_matching_null_blocks_and_yields_no_candidates() {
+        // The `#imports` twin: a nested matching null blocks the collection, so
+        // the outer `default` is never accumulated and the import is unresolved.
+        let imports = serde_json::json!({
+            "#feature": {
+                "node": { "require": null, "default": "./inner.js" },
+                "default": "./outer.js"
+            }
+        });
+        assert!(
+            resolve_imports_subpath_candidates_with_flavor(
+                &imports,
+                "#feature",
+                CJS_CONDS,
+                TEST_VERSION,
+            )
+            .is_empty(),
+            "nested matching null must yield no #imports candidates"
+        );
+    }
+
+    #[test]
+    fn imports_candidates_null_on_unmatched_condition_resolves_default() {
+        let imports = serde_json::json!({
+            "#feature": { "import": null, "default": "./present.js" }
+        });
+        assert_eq!(
+            resolve_imports_subpath_candidates_with_flavor(
+                &imports,
+                "#feature",
+                CJS_CONDS,
+                TEST_VERSION,
+            ),
+            vec![("./present.js".to_string(), false)],
+        );
+    }
+
     #[test]
     fn exports_subpath_specificity_uses_prefix_then_suffix_tuple() {
         // Covers each branch of the algorithm plus the regression cases:
@@ -460,6 +594,7 @@ mod tests {
         ] {
             assert_eq!(
                 resolve_exports_subpath(&exports, "./abc/abc", &["default"], TEST_VERSION)
+                    .into_option()
                     .as_deref(),
                 Some("./by-abc-star.js"),
             );
@@ -476,7 +611,9 @@ mod tests {
             "./b/*": "./second.js"
         });
         assert_eq!(
-            resolve_exports_subpath(&exports, "./a/x", &["default"], TEST_VERSION).as_deref(),
+            resolve_exports_subpath(&exports, "./a/x", &["default"], TEST_VERSION)
+                .into_option()
+                .as_deref(),
             Some("./first.js"),
         );
 
@@ -486,6 +623,7 @@ mod tests {
         });
         assert_eq!(
             resolve_exports_subpath(&exports_reversed, "./b/x", &["default"], TEST_VERSION)
+                .into_option()
                 .as_deref(),
             Some("./second.js"),
         );
@@ -522,7 +660,9 @@ mod tests {
         // TARGET resolves with no literal `*` left behind.
         let exports = serde_json::json!({ "./*": "./dist/*/*.js" });
         assert_eq!(
-            resolve_exports_subpath(&exports, "./button", &["default"], TEST_VERSION).as_deref(),
+            resolve_exports_subpath(&exports, "./button", &["default"], TEST_VERSION)
+                .into_option()
+                .as_deref(),
             Some("./dist/button/button.js"),
         );
     }
