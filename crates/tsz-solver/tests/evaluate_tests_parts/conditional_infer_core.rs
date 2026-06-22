@@ -21,6 +21,67 @@ fn evaluator_cache_statistics_report_entries_and_size() {
     );
 }
 
+/// `contains_type_by_id` is a pure function of the immutable interned `DAG`, so its
+/// memo is published project-wide on the interner and reused across `TypeEvaluator`
+/// instances — the fresh-evaluator-per-instantiation-step shape that previously
+/// re-walked the same `(root, target)` pair after each evaluator was dropped
+/// (#13097 / #8356). This pins both the byte-identical value and the sharing.
+#[test]
+fn contains_type_by_id_memo_is_project_wide_across_evaluators() {
+    let interner = TypeInterner::new();
+    // `root` structurally contains NUMBER (a union member) but not BOOLEAN.
+    let root = interner.union2(TypeId::STRING, TypeId::NUMBER);
+
+    // Cold: nothing memoized yet for either pair.
+    assert_eq!(interner.contains_type_by_id_memo(root, TypeId::NUMBER), None);
+    assert_eq!(interner.contains_type_by_id_memo(root, TypeId::BOOLEAN), None);
+
+    // First evaluator computes both answers and publishes them to the interner.
+    let first = {
+        let eval_a = TypeEvaluator::new(&interner);
+        (
+            eval_a.cached_contains_type_by_id(root, TypeId::NUMBER),
+            eval_a.cached_contains_type_by_id(root, TypeId::BOOLEAN),
+        )
+    };
+    assert_eq!(first, (true, false));
+
+    // The memoized values equal the uncached structural walk (byte-identical).
+    assert!(crate::visitor::contains_type_by_id(
+        &interner,
+        root,
+        TypeId::NUMBER
+    ));
+    assert!(!crate::visitor::contains_type_by_id(
+        &interner,
+        root,
+        TypeId::BOOLEAN
+    ));
+
+    // Published to the interner, so a *fresh* evaluator (the dropped-and-recreated
+    // case) reuses them rather than re-walking.
+    assert_eq!(
+        interner.contains_type_by_id_memo(root, TypeId::NUMBER),
+        Some(true)
+    );
+    assert_eq!(
+        interner.contains_type_by_id_memo(root, TypeId::BOOLEAN),
+        Some(false)
+    );
+
+    let eval_b = TypeEvaluator::new(&interner);
+    assert!(eval_b.cached_contains_type_by_id(root, TypeId::NUMBER));
+    assert!(!eval_b.cached_contains_type_by_id(root, TypeId::BOOLEAN));
+
+    // Identity short-circuit is never memoized (root == target is structural).
+    assert!(eval_b.cached_contains_type_by_id(root, root));
+    assert_eq!(interner.contains_type_by_id_memo(root, root), None);
+
+    // Observability counter reflects exactly the two memoized pairs.
+    let stats = interner.type_predicate_cache_statistics();
+    assert_eq!(stats.contains_type_by_id_cache_entries, 2);
+}
+
 #[test]
 fn test_conditional_true_branch() {
     let interner = TypeInterner::new();
