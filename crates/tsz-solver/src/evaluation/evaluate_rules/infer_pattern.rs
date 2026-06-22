@@ -2002,6 +2002,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
+                // Wrapper-alias pattern reduction: when the pattern is a
+                // generic *wrapper* alias carrying the `infer`
+                // (`AB<infer U>` with `AB<T> = Promise<T[]>`) and the source is
+                // the expanded structural form (`Promise<number[]>`, not
+                // written via the alias), reduce the pattern head-only to its
+                // body application form (`Promise<(infer U)[]>`), preserving the
+                // `infer`, and match the source against that. The structural
+                // `evaluate_for_infer_match` fallback below does not reduce an
+                // infer-bearing application, so without this the alias pattern
+                // never aligns with the expanded source and the conditional
+                // wrongly collapses to its false branch (#14489). Gated to
+                // aliases whose substituted body is itself an `Application`
+                // (true wrappers) so conditional-/structural-body aliases stay
+                // on the structural-expansion path.
+                if let Some(reduced_pattern) = self.alias_application_substituted_body(pattern)
+                    && reduced_pattern != pattern
+                    && matches!(
+                        self.interner().lookup(reduced_pattern),
+                        Some(TypeData::Application(_))
+                    )
+                {
+                    let mut reduced_bindings = bindings.clone();
+                    let reduced_checkpoint = visited.checkpoint();
+                    if self.match_infer_pattern(
+                        source,
+                        reduced_pattern,
+                        &mut reduced_bindings,
+                        visited,
+                        checker,
+                    ) && reduced_bindings.len() >= bindings.len()
+                    {
+                        *bindings = reduced_bindings;
+                        return true;
+                    }
+                    visited.rollback_to(reduced_checkpoint);
+                }
+
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
