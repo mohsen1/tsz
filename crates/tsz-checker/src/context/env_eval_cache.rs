@@ -39,6 +39,38 @@ pub(crate) fn env_eval_seed_cap_disabled() -> bool {
     })
 }
 
+/// Kill-switch: set `TSZ_DISABLE_UNRESOLVED_DEF_CACHE_BACKSTOP` to a non-empty,
+/// non-`0` value to restore the legacy behavior of persisting an `env_eval_cache`
+/// result even when the evaluation observed an unresolved `Lazy(DefId)`.
+///
+/// The backstop (issue #13980) suppresses the authoritative `env_eval_cache`
+/// write — and the intermediate seed/persist entries — for any evaluation pass
+/// whose result is a *registration-window artifact*: the solver reports it via
+/// [`tsz_solver::EvaluateResult::unresolved_def_seen`] when an `Application`'s
+/// base `DefId` had no resolvable body (mid-registration, resolves to `unknown`,
+/// or self-`Lazy`). Such a result is a function of which refs happened to be
+/// resolved when the pass ran, not of the input `TypeId`, so caching it keyed
+/// purely on the `TypeId` (with no generation guard) lets the under-resolved
+/// answer permanently shadow the correct one once the def registers.
+///
+/// Under the legacy eager `ensure_refs_resolved` pre-walk the flag stayed
+/// `false` (every ref was forced up front), so the backstop was inert. Under the
+/// on-demand-forcing default (issue #12101) the flag can now be `true`, which is
+/// why the previously-documented-but-unwired backstop became load-bearing. The
+/// kill-switch lets the two modes be compared byte-for-byte: with it set, output
+/// must match the legacy path on every input that never trips the flag.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn unresolved_def_cache_backstop_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_UNRESOLVED_DEF_CACHE_BACKSTOP")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerContext<'a> {
     /// Whether the per-evaluation intermediate seed/persist memo should run.
     ///

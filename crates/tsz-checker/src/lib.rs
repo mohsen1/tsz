@@ -1528,6 +1528,9 @@ mod unique_symbol_assignment_ts2322_tests;
 #[path = "tests/unique_symbol_member_lookup_family_tests.rs"]
 mod unique_symbol_member_lookup_family_tests;
 #[cfg(test)]
+#[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
+mod unresolved_def_eval_cache_backstop_tests;
+#[cfg(test)]
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;
 #[cfg(test)]
