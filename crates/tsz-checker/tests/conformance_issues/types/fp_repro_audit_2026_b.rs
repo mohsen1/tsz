@@ -62,9 +62,9 @@ export { c }
 /// call signatures -> false TS2349 "not callable". Fixed: a conditional whose
 /// check type referenced an unresolved user-interface `Lazy` (here the `Atom`
 /// base of `Atom<unknown>['read']`) collapsed to its `never` false branch
-/// instead of deferring, so `Parameters<…>` reduced to `never`; the call path
-/// now readies the callee's refs and the conditional defers rather than
-/// collapsing (#14164).
+/// instead of deferring. The still-deferred indexed access now defers rather
+/// than committing the false branch, so `Parameters<...>` keeps the extracted
+/// parameter callable (#14164).
 #[test]
 fn issue_14164_indexed_method_type_stays_callable() {
     if !lib_files_available() {

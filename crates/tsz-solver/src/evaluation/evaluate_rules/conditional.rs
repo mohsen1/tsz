@@ -182,8 +182,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         if params.is_empty() {
-            // No named parameters to widen: the failed relation already used
-            // the most permissive forms available.
+            // No named parameters to widen unless the check is an unresolved
+            // operator. Do not use the broader generic-marker predicate: string
+            // mappings like `Lowercase<T>` are evaluated through constraints.
+            if matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Conditional(_))
+            ) {
+                return false;
+            }
             return true;
         }
         let mut substitution = TypeSubstitution::new();
