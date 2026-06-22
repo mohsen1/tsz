@@ -10,6 +10,17 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+/// A single `yield` operand contribution to a generator's inferred yield type.
+struct YieldOperand {
+    /// The operand's declaration-emit type (fresh object/array operands already
+    /// have their member positions widened).
+    type_id: tsz_solver::types::TypeId,
+    /// Whether the operand is a fresh primitive literal (a bare literal token,
+    /// not a const/type assertion). A *single* fresh literal widens to its base;
+    /// a union of distinct literals is preserved.
+    is_fresh_literal: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn function_body_preferred_return_type_text(
         &self,
@@ -424,24 +435,69 @@ impl<'a> DeclarationEmitter<'a> {
         is_async: bool,
         body_idx: NodeIndex,
     ) -> Option<String> {
-        let mut yield_type = None;
-        if !self.collect_unique_yield_type_text_from_node(body_idx, is_async, &mut yield_type, 0) {
-            return None;
-        }
-        let yield_type = yield_type.unwrap_or_else(|| "undefined".to_string());
+        let interner = self.type_interner?;
         let generator_name = if is_async {
             "AsyncGenerator"
         } else {
             "Generator"
         };
-        Some(format!("{generator_name}<{yield_type}, void, unknown>"))
+
+        let mut operands: Vec<YieldOperand> = Vec::new();
+        if !self.collect_generator_yield_operands(body_idx, is_async, &mut operands, 0) {
+            return None;
+        }
+
+        // No `yield` operands at all (an empty generator, or one whose only
+        // value-bearing path never yields). tsc infers `never` as the yield type
+        // — there is no value the generator can produce. (A bare `yield;`
+        // contributes `undefined` and is collected as an operand, so it does not
+        // reach this branch.)
+        if operands.is_empty() {
+            return Some(format!("{generator_name}<never, void, unknown>"));
+        }
+
+        // tsc computes the inferred yield type as
+        // `getWidenedType(getUnionType(<yield operand types>))`. The union
+        // regularizes the operand literal types, so a union of two or more
+        // *distinct* literals is preserved verbatim (`yield "x"; yield "y"` ->
+        // `"x" | "y"`; `yield 1; yield 2` -> `1 | 2`). Only a single fresh literal
+        // widens to its base (`yield "x"` -> `string`); a const-asserted or
+        // otherwise non-fresh single literal keeps its literal type. Fresh
+        // object/array operands already widened their member positions per
+        // operand in `collect_generator_yield_operands`.
+        // `union_literal_reduce` matches tsc's default `UnionReduction.Literal`
+        // for `getUnionType`: it preserves source order and absorbs literals into
+        // their primitive (`"x" | string` -> `string`) without removing structural
+        // subtypes — the same reduction the explicit-annotation union path uses.
+        let any_fresh_literal = operands.iter().any(|operand| operand.is_fresh_literal);
+        let union_ty =
+            interner.union_literal_reduce(operands.iter().map(|operand| operand.type_id).collect());
+
+        let yield_ty =
+            if any_fresh_literal && tsz_solver::query::is_literal_type(interner, union_ty) {
+                // A single fresh literal value across every yield — widen to its base.
+                tsz_solver::operations::widening::widen_literal_type(interner, union_ty)
+            } else {
+                union_ty
+            };
+
+        let yield_text = self.print_type_id_for_inferred_declaration(yield_ty);
+        if yield_text.is_empty() || yield_text == "any" {
+            return None;
+        }
+        Some(format!("{generator_name}<{yield_text}, void, unknown>"))
     }
 
-    fn collect_unique_yield_type_text_from_node(
+    /// Collect the type of each `yield` operand in `node_idx`'s body for
+    /// declaration-emit yield-type inference. Returns `false` when an operand's
+    /// type cannot be resolved (the caller then keeps the conservative
+    /// `Generator<any, …>` fallback). Nested functions/classes are not descended
+    /// into — their yields belong to their own generator scope.
+    fn collect_generator_yield_operands(
         &self,
         node_idx: NodeIndex,
         is_async: bool,
-        preferred: &mut Option<String>,
+        operands: &mut Vec<YieldOperand>,
         depth: usize,
     ) -> bool {
         if node_idx.is_none() || depth > 128 {
@@ -463,33 +519,32 @@ impl<'a> DeclarationEmitter<'a> {
                     // that element type through the solver's iterator protocol so
                     // delegated yields participate in declaration inference instead
                     // of forcing the conservative `any` fallback.
-                    let Some(type_text) =
-                        self.yield_star_delegated_yield_type_text(yield_expr.expression, is_async)
+                    let Some(element) =
+                        self.yield_star_delegated_yield_type_id(yield_expr.expression, is_async)
                     else {
                         return false;
                     };
-                    return self.merge_unique_type_text(preferred, type_text);
+                    operands.push(YieldOperand {
+                        type_id: element,
+                        is_fresh_literal: false,
+                    });
+                    return true;
                 }
-                let type_text = if yield_expr.expression.is_none() {
-                    "undefined".to_string()
-                } else if let Some(text) = self
-                    .widened_inferred_expression_type_text(yield_expr.expression)
-                    .filter(|text| !text.is_empty() && text != "any")
-                {
-                    text
-                } else if let Some(text) = self
-                    .preferred_expression_type_text(yield_expr.expression)
-                    .filter(|text| !text.is_empty() && text != "any")
-                {
-                    text
-                } else if let Some(type_id) = self.get_node_type_or_names(&[yield_expr.expression])
-                {
-                    let type_id = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
-                    self.print_type_id_for_inferred_declaration(type_id)
-                } else {
-                    return false;
-                };
-                self.merge_unique_type_text(preferred, type_text)
+                if yield_expr.expression.is_none() {
+                    // A bare `yield;` contributes `undefined`.
+                    operands.push(YieldOperand {
+                        type_id: tsz_solver::types::TypeId::UNDEFINED,
+                        is_fresh_literal: false,
+                    });
+                    return true;
+                }
+                match self.yield_operand_type(yield_expr.expression) {
+                    Some(operand) => {
+                        operands.push(operand);
+                        true
+                    }
+                    None => false,
+                }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -508,18 +563,116 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_children(node_idx)
                 .into_iter()
                 .all(|child_idx| {
-                    self.collect_unique_yield_type_text_from_node(
-                        child_idx,
-                        is_async,
-                        preferred,
-                        depth + 1,
-                    )
+                    self.collect_generator_yield_operands(child_idx, is_async, operands, depth + 1)
                 }),
         }
     }
 
-    /// Resolve the declaration-emit text for the element type delegated by a
-    /// `yield* <iterable>` expression.
+    /// Resolve a single (non-`yield*`, non-empty) `yield` operand to its
+    /// declaration-emit type, returning `None` when the type is unavailable or
+    /// `any`/`error` (so the caller keeps the conservative fallback).
+    ///
+    /// A fresh object/array literal operand widens its member positions up front
+    /// (`yield { a: 1 }` -> `{ a: number }`), mirroring `getWidenedType`, which
+    /// widens fresh objects regardless of how many operands the union has. A bare
+    /// primitive literal is reported as fresh so that a *single* such value widens
+    /// later while a union of distinct ones is preserved.
+    fn yield_operand_type(&self, expr_idx: NodeIndex) -> Option<YieldOperand> {
+        let interner = self.type_interner?;
+        let asserted = self.explicit_asserted_type_text(expr_idx).is_some();
+        let inner_idx = self
+            .skip_parenthesized_expression(expr_idx)
+            .unwrap_or(expr_idx);
+
+        // A bare (non-asserted) primitive literal yield operand. The checker
+        // stores the *widened* type at the yield site (`yield "x"` -> `string`),
+        // so reconstruct the precise fresh literal type from the AST and report it
+        // as fresh: a single such operand widens to its base, while a union of
+        // distinct ones is preserved (matching tsc's `getWidenedType(getUnionType)`).
+        if !asserted && let Some(literal_ty) = self.yield_literal_operand_type_id(inner_idx) {
+            return Some(YieldOperand {
+                type_id: literal_ty,
+                is_fresh_literal: true,
+            });
+        }
+
+        let type_id = self.get_node_type_or_names(&[expr_idx])?;
+        if type_id == tsz_solver::types::TypeId::ANY || type_id == tsz_solver::types::TypeId::ERROR
+        {
+            return None;
+        }
+        let type_id = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+
+        // A fresh object/array literal operand widens its member positions up
+        // front (`yield { a: 1 }` -> `{ a: number }`); tsc's `getWidenedType`
+        // widens fresh objects regardless of how many operands the union has.
+        let is_fresh_compound = self.arena.get(inner_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        });
+        let type_id = if is_fresh_compound {
+            tsz_solver::operations::widening::widen_literal_type(interner, type_id)
+        } else {
+            type_id
+        };
+
+        Some(YieldOperand {
+            type_id,
+            is_fresh_literal: false,
+        })
+    }
+
+    /// Reconstruct the precise (non-widened) literal type for a fresh primitive
+    /// literal yield operand directly from its AST node, returning `None` for any
+    /// non-literal expression. Used because the checker stores a widened type at
+    /// the yield site, which would erase the literal the union must preserve.
+    fn yield_literal_operand_type_id(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        let node = self.arena.get(node_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(node)?;
+                Some(interner.literal_string(&literal.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let literal = self.arena.get_literal(node)?;
+                let value = literal
+                    .value
+                    .or_else(|| literal.text.replace('_', "").parse::<f64>().ok())?;
+                Some(interner.literal_number(value))
+            }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                let literal = self.arena.get_literal(node)?;
+                Some(interner.literal_bigint(&literal.text.replace('_', "")))
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(interner.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(interner.literal_boolean(false)),
+            k if k == SyntaxKind::NullKeyword as u16 => Some(tsz_solver::types::TypeId::NULL),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self.is_negative_literal(node) =>
+            {
+                let prefix = self.arena.get_unary_expr(node)?;
+                let operand = self.arena.get(prefix.operand)?;
+                let literal = self.arena.get_literal(operand)?;
+                if operand.kind == SyntaxKind::BigIntLiteral as u16 {
+                    Some(interner.literal_bigint_with_sign(true, &literal.text.replace('_', "")))
+                } else {
+                    let value = literal
+                        .value
+                        .or_else(|| literal.text.replace('_', "").parse::<f64>().ok())?;
+                    Some(interner.literal_number(-value))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve the element type delegated by a `yield* <iterable>` expression.
     ///
     /// The element type is the iterable's iteration (`yield`) type, e.g. `number`
     /// for `yield* [1, 2]`. Resolution goes through the solver's iterator
@@ -529,11 +682,11 @@ impl<'a> DeclarationEmitter<'a> {
     /// `None` whenever the element type cannot be resolved (or widens to `any`),
     /// so the caller keeps its conservative `Generator<any, …>` fallback rather
     /// than emitting a wrong type.
-    fn yield_star_delegated_yield_type_text(
+    fn yield_star_delegated_yield_type_id(
         &self,
         expression: NodeIndex,
         is_async: bool,
-    ) -> Option<String> {
+    ) -> Option<tsz_solver::types::TypeId> {
         let interner = self.type_interner?;
         let iterable_type = self.get_node_type_or_names(&[expression])?;
         let element = if is_async {
@@ -545,20 +698,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|info| info.yield_type)?
         };
         let element = self.widen_unique_symbol_value_type_for_dts(element, 0);
-        let type_text = self.print_type_id_for_inferred_declaration(element);
-        if type_text.is_empty() || type_text == "any" {
+        if element == tsz_solver::types::TypeId::ANY || element == tsz_solver::types::TypeId::ERROR
+        {
             return None;
         }
-        Some(type_text)
-    }
-
-    fn merge_unique_type_text(&self, preferred: &mut Option<String>, type_text: String) -> bool {
-        if let Some(existing) = preferred.as_ref() {
-            existing == &type_text
-        } else {
-            *preferred = Some(type_text);
-            true
-        }
+        Some(element)
     }
 
     pub(in crate::declaration_emitter) fn evaluated_literal_return_type_text_for_returned_identifier(
