@@ -1937,7 +1937,7 @@ fn file_canonical_path_table_records_and_reads_back() {
 /// cross-arena variants of ONE declaration onto a single representative, which
 /// is exactly what makes `canonical_def_id` agree across arenas. Models the
 /// #13862 shape: two per-file binders each minted a `DefId` for the same
-/// `interface Shared` declared in one module (different arena file_ids / DefId
+/// `interface Shared` declared in one module (different arena `file_ids` / `DefId`
 /// values), one carrying the heritage-complete body, the other a body-less
 /// cross-arena alias. After election, BOTH `canonical_def_id` to the body-
 /// bearing representative.
