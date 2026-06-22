@@ -761,6 +761,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        // A qualified value query `typeof a.b` is exactly `(typeof a)["b"]`. The
+        // earlier eager paths (value-property resolution, namespace/enum symbol
+        // resolution) have not resolved it, and the `None` type-resolver lowering
+        // below cannot resolve a qualified value name — it would collapse the query
+        // to `error`, which then leaks into an enclosing `keyof`/mapped/indexed
+        // operand (e.g. `keyof typeof a.b` rendering as `keyof error`). Defer to the
+        // indexed-access form, which resolves the member lazily — correct even when
+        // the value object's members are not materialized at the point the query is
+        // first forced — and reports TS2339 for a genuinely missing member.
+        if name_opt.is_none()
+            && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && expr_node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(deferred) = self.deferred_typeof_value_chain(type_query.expr_name)
+        {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(deferred, type_arguments);
+            }
+            return deferred;
+        }
+
         // Fall back to TypeLowering with proper value resolvers
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident = self.ctx.arena.get_identifier_at(node_idx)?;
@@ -1123,6 +1144,37 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
             );
         }
+    }
+
+    /// Build the deferred `typeof` representation of a value entity name as a
+    /// chain of indexed accesses over a base `TypeQuery`.
+    ///
+    /// `a` (identifier) lowers to `TypeQuery(a)`; `a.b` to `(typeof a)["b"]`;
+    /// `a.b.c` to `((typeof a)["b"])["c"]`. The member resolves lazily through
+    /// the indexed-access machinery, which — unlike an eager property access on
+    /// the already-resolved value object — does not depend on the object's
+    /// members being materialized at the point the query is first forced.
+    /// Returns `None` when the root does not resolve to a value symbol.
+    fn deferred_typeof_value_chain(&self, expr_name: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(expr_name)?;
+        let factory = self.ctx.types.factory();
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let sym_id = self.resolve_value_symbol_in_scope(expr_name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
+                return None;
+            }
+            return Some(factory.type_query(tsz_solver::SymbolRef(sym_id.0)));
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            let base = self.deferred_typeof_value_chain(qn.left)?;
+            let right_node = self.ctx.arena.get(qn.right)?;
+            let right_ident = self.ctx.arena.get_identifier(right_node)?;
+            let index_type = factory.literal_string(right_ident.escaped_text.as_str());
+            return Some(factory.index_access(base, index_type));
+        }
+        None
     }
 
     /// Resolve the symbol for a type query expression name.
