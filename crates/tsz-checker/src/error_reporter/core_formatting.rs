@@ -951,6 +951,28 @@ impl<'a> CheckerState<'a> {
         formatter.format(ty).into_owned()
     }
 
+    /// Format an assignability-message type while suppressing the `display_alias`
+    /// repaint on `Object` / `ObjectWithIndex` nodes.
+    ///
+    /// An evaluated structural object can carry an evaluation-origin
+    /// `display_alias` back to the `Application` it reduced from. For a
+    /// self-referential `Static<typeof X>` schema alias, the reduced object *is*
+    /// the alias body, so the alias `X` repaints it (`X[]` instead of the
+    /// structural shape). Callers that have already reduced a type to a concrete
+    /// structural shape use this entry so the shape is rendered rather than
+    /// collapsing back to the alias spelling.
+    pub(crate) fn format_type_for_assignability_message_skip_object_display_alias(
+        &mut self,
+        ty: TypeId,
+    ) -> String {
+        self.ensure_relation_input_ready(ty);
+        let mut formatter = self
+            .ctx
+            .create_assignability_type_formatter()
+            .with_skip_object_display_alias();
+        formatter.format(ty).into_owned()
+    }
+
     pub(crate) fn format_assignability_type_for_message_preserving_nullish(
         &mut self,
         ty: TypeId,

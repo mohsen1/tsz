@@ -62,6 +62,35 @@ fn scope_is_active() -> bool {
     SCOPE_DEPTH.with(|depth| depth.get() > 0)
 }
 
+/// RAII guard that temporarily suspends the active display budget so the work
+/// done while it is in scope neither consumes the budget nor observes its
+/// truncation.
+///
+/// Used for a *separately bounded* sub-computation that must not deplete the
+/// budget the enclosing render relies on — e.g. the in-place `TypeBox`
+/// `Static<…>` schema reduction, which is bounded by its own recursion-depth
+/// cap. Without this, attempting that reduction (even when it is ultimately
+/// discarded) would spend the shared eval fuel and degrade a later fallback
+/// render of the same message back to the bare alias.
+pub(crate) struct SuspendDisplayBudgetScope(u32);
+
+impl SuspendDisplayBudgetScope {
+    pub(crate) fn enter() -> Self {
+        let saved = SCOPE_DEPTH.with(|depth| {
+            let saved = depth.get();
+            depth.set(0);
+            saved
+        });
+        Self(saved)
+    }
+}
+
+impl Drop for SuspendDisplayBudgetScope {
+    fn drop(&mut self) {
+        SCOPE_DEPTH.with(|depth| depth.set(self.0));
+    }
+}
+
 /// RAII scope delimiting the rendering of one displayed type.
 ///
 /// The outermost scope installs a fresh budget; nested scopes (rendering
