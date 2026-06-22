@@ -571,6 +571,41 @@ impl<'a> CheckerState<'a> {
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
+        // Final fallback: a callee whose type is a *deferred-but-reducible* form
+        // (an indexed access `Obj['m']`, a conditional, a mapped/template type,
+        // …) is not reduced by `evaluate_application_type` + one-hop
+        // `resolve_lazy_type`, so it can reach here misclassified as
+        // `NoSignatures` even though its apparent type is callable. This surfaces
+        // when the annotation indirects through a type alias whose body is the
+        // deferred form (`type G = Atom['read']; function f(g: G) { g() }`):
+        // unlike a `const`, a parameter keeps its annotation lazy, so the call
+        // path — not the declaration — must reduce it. tsc classifies calls on
+        // the apparent type, so fully evaluate the callee and re-classify. The
+        // evaluation is *uncached* on purpose: an opaque result may have been
+        // interned earlier while a referenced interface was still unresolved, and
+        // the uncached walk forces that interface's type and recomputes the
+        // reduction. Only adopt the result when it actually reveals signatures,
+        // leaving genuinely uncallable and still-deferred-generic callees
+        // untouched (intrinsics can never become callable, so skip them).
+        let original_callee_is_union =
+            common::is_union_type(self.ctx.types, resolved_for_classification);
+        if matches!(classification, query::CallSignaturesKind::NoSignatures)
+            && !original_callee_is_union
+            && !callee_type_for_resolution.is_intrinsic()
+        {
+            let fully_evaluated = self.evaluate_type_with_env_uncached(callee_type_for_resolution);
+            let fully_evaluated = self.resolve_lazy_type(fully_evaluated);
+            let fully_classification =
+                query::classify_for_call_signatures(self.ctx.types, fully_evaluated);
+            if !matches!(
+                fully_classification,
+                query::CallSignaturesKind::NoSignatures
+            ) {
+                callee_type_for_resolution = fully_evaluated;
+                resolved_for_classification = fully_evaluated;
+                classification = fully_classification;
+            }
+        }
         trace!(
             callee_type_for_resolution = ?callee_type_for_resolution,
             classification = ?classification,

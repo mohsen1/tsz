@@ -24,6 +24,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .is_some_and(|alias| matches!(interner.lookup(alias), Some(TypeData::Application(_))))
     }
 
+    /// Whether `ty` is an `Application` whose base resolves to a *self-recursive
+    /// conditional alias* — a def whose resolved body is a `Conditional` that
+    /// re-references its own `DefId` (e.g.
+    /// `Deep<K> = K extends Promise<infer U> ? Deep<U> : K`).
+    ///
+    /// Such an application cannot serve as a structural reduction step: peeling
+    /// it ([`alias_application_substituted_body`](Self::alias_application_substituted_body))
+    /// yields the conditional body, and simulating that conditional re-enters
+    /// the same recursion, so
+    /// [`reduce_alias_body_to_application_form`](Self::reduce_alias_body_to_application_form)
+    /// must not follow a diagnostic-only `display_alias` back-reference to one.
+    ///
+    /// The body must be a `Conditional` specifically: a self-referential
+    /// *interface* body (e.g. `Promise`, whose `then`/`catch` return
+    /// `Promise<…>`) or a recursive *structural* alias body (object/union/
+    /// intersection) is not a hazard — peeling it produces a non-`Application`,
+    /// non-`Conditional` shape that terminates the reduction loop. Gating on the
+    /// conditional body (rather than the broad self-reference test used by
+    /// [`result_has_residual_recursive_alias`](Self::result_has_residual_recursive_alias)
+    /// for cache poisoning) keeps the legitimate `Promise<…>` recovery working.
+    pub(super) fn application_is_recursive_alias(&self, ty: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
+            return false;
+        };
+        let base = self.interner().type_application(app_id).base;
+        let Some(def_id) = (match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::TypeQuery(sym_ref)) => self.resolver().symbol_to_def_id(sym_ref),
+            _ => None,
+        }) else {
+            return false;
+        };
+        self.resolver()
+            .resolve_lazy(def_id, self.interner())
+            .is_some_and(|body| {
+                matches!(self.interner().lookup(body), Some(TypeData::Conditional(_)))
+                    && crate::visitor::contains_lazy_def_id(self.interner(), body, def_id)
+            })
+    }
+
     /// Reduce `ty` to its underlying `Application(...)` form by walking one
     /// alias step (Application body) or simulating one infer-match step
     /// (Conditional body with `infer` in `extends`). When `ty` isn't itself
@@ -36,7 +76,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> Option<TypeId> {
         let mut current = ty;
         for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
-            if let Some(alias) = self.try_recover_application_from_display_alias(current) {
+            // A `display_alias` back-reference whose application base is a
+            // *self-recursive conditional alias* (its resolved body is a
+            // `Conditional` that re-references its own `DefId`) is a
+            // diagnostic-only label, not a structural reduction handle:
+            // peeling/simulating it re-enters the very recursion that produced
+            // `current`, never reaching an `Application(interface)` form to read
+            // the infer slot from. For example a self-recursive
+            // `Deep<K> = K extends Promise<infer U> ? Deep<U> : K` records
+            // `{ id: 0 } -> Deep<AB<{ id: 0 }>>` on its reduced result; following
+            // that back into `Deep` spins forever (#14123/#14417). Recoveries to
+            // a non-recursive alias — including the structural `Promise` body
+            // back to `Promise<…>`, the legitimate reduction — are still
+            // followed.
+            if let Some(alias) = self.try_recover_application_from_display_alias(current)
+                && !self.application_is_recursive_alias(alias)
+            {
                 current = alias;
             }
 
@@ -70,6 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let result = self.evaluate(result);
                     let result = self
                         .try_recover_application_from_display_alias(result)
+                        .filter(|&recovered| !self.application_is_recursive_alias(recovered))
                         .unwrap_or(result);
                     if result == current {
                         break;

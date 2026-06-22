@@ -1194,6 +1194,45 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
+    /// Whether `condition_idx` is the left operand of a plain `??` binary
+    /// expression. Mirrors tsc's `narrowType` gate
+    /// (`isBinaryExpression(expr.parent) && ... === QuestionQuestionToken &&
+    /// expr.parent.left === expr`): when narrowing flows from the right operand
+    /// of `??`, the branches gate on the left being *nullish*, not *falsy*, so
+    /// such a condition narrows by optionality (`narrowTypeByOptionality`)
+    /// rather than truthiness. The right operand of `??` is reached through a
+    /// `FALSE_CONDITION` flow node recorded by the binder on the left operand,
+    /// so the condition node is exactly that left operand.
+    ///
+    /// The compound `??=` form is deliberately excluded: its post-assignment
+    /// flow type is produced through tsz's dedicated logical-assignment flow
+    /// path (a flow-assignment node plus `fallback_binary_expression_type`),
+    /// which already removes nullish from the left operand correctly. Routing
+    /// the `??=` left operand through optionality narrowing here would re-narrow
+    /// the assignment target while its own flow type is being computed, leaving
+    /// a residual self-reference in the post-assignment type. (tsc reaches the
+    /// same `narrowTypeByOptionality` result for `??=` through a different flow
+    /// shape, so excluding it here keeps parity without that interference.)
+    pub(crate) fn condition_is_nullish_coalesce_left(&self, condition_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(condition_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+        bin.operator_token == SyntaxKind::QuestionQuestionToken as u16 && bin.left == condition_idx
+    }
+
     pub(crate) fn discriminant_property(
         &self,
         expr: NodeIndex,

@@ -4,10 +4,11 @@
 
 mod contextual_retry;
 mod helpers;
+mod mismatch_helpers;
+mod retry_state;
 mod return_context;
 
 use crate::context::TypingRequest;
-use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
@@ -17,13 +18,8 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
-
-type NoReturnContextFallback = (Vec<TypeId>, TypeId, SelectedTypePredicate, FullSnapshot);
-type BestTypeMismatch = (
-    OverloadResolution,
-    crate::context::NodeTypeCache,
-    Vec<crate::diagnostics::Diagnostic>,
-);
+use crate::context::speculation::FullSnapshot;
+use retry_state::{BestTypeMismatch, NoReturnContextFallback};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn snapshot_overload_retry_state(&mut self) -> FullSnapshot {
@@ -269,6 +265,10 @@ impl<'a> CheckerState<'a> {
         // fallback pass. Single-signature calls keep today's behavior.
         let overload_two_pass = signatures.len() > 1;
         let mut assignable_pass_fallback: Option<NoReturnContextFallback> = None;
+        // tsc tries every overload before committing TS2556 for a non-tuple
+        // spread; stash the first fixed-arity rejection as the last-resort
+        // fallback in case no later rest overload accepts it (#14319).
+        let mut spread_mismatch_fallback: Option<(NodeIndex, TypeId, SelectedTypePredicate)> = None;
         // Mark arguments whose type comes from a type annotation (typed
         // identifier, `as`/`satisfies`/`as const`). The direct (non-overloaded)
         // call path computes the same markers so generic inference treats their
@@ -901,7 +901,23 @@ impl<'a> CheckerState<'a> {
                     if !did_instantiated_retry {
                         self.ctx.node_types.merge(&temp_node_types);
                     }
-                    self.validate_non_tuple_spreads_for_signature(args, func_type);
+                    // A fixed-arity overload must not win solely by accepting a
+                    // non-tuple spread; a later rest overload may still match.
+                    if let Some(spread_idx) =
+                        self.first_non_tuple_spread_rejected_by_signature(args, func_type)
+                    {
+                        if overload_two_pass {
+                            if spread_mismatch_fallback.is_none() {
+                                spread_mismatch_fallback = Some((
+                                    spread_idx,
+                                    sig.return_type,
+                                    selected_type_predicate.clone(),
+                                ));
+                            }
+                            continue;
+                        }
+                        self.error_spread_must_be_tuple_or_rest_at(spread_idx);
+                    }
 
                     // CRITICAL FIX - Check excess properties against the MATCHED signature,
                     // not the union. Using the union would allow properties that exist in other overloads
@@ -984,6 +1000,18 @@ impl<'a> CheckerState<'a> {
                 arg_types: fallback_arg_types,
                 result: CallResult::Success(fallback_return_type),
                 selected_type_predicate: fallback_predicate,
+            });
+        }
+
+        // No overload accepted the non-tuple spread, so commit the deferred
+        // TS2556 against the first fixed-arity rejection (#14319).
+        if let Some((spread_idx, recovery_return, predicate)) = spread_mismatch_fallback {
+            self.error_spread_must_be_tuple_or_rest_at(spread_idx);
+            self.ctx.node_types.merge(&temp_node_types);
+            return Some(OverloadResolution {
+                arg_types: arg_types.clone(),
+                result: CallResult::Success(recovery_return),
+                selected_type_predicate: predicate,
             });
         }
 

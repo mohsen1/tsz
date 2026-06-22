@@ -827,9 +827,14 @@ impl<'a> FlowAnalyzer<'a> {
                         current_type
                     } else {
                         // Property mutation — preserve narrowing from antecedent.
-                        // Must defer when antecedent carries narrowing (CONDITION/CALL/LOOP_LABEL)
-                        // and hasn't been computed yet, otherwise we lose facts flowing through
-                        // loop headers before entering the mutation site.
+                        // Must defer when the antecedent can carry or merge narrowing and
+                        // hasn't been computed yet, otherwise we lose facts flowing into the
+                        // mutation site. This mirrors the defer set of the sibling
+                        // pass-through path below: a property/element mutation (`m.p = …`)
+                        // does not redefine `m`, so when a control-flow join (BRANCH_LABEL)
+                        // or switch clause sits between a narrowing guard and the mutation,
+                        // failing to defer would re-read the declared (un-narrowed) type and
+                        // drop the guard's narrowing of the mutated object.
                         if let Some(&ant) = flow.antecedent.first() {
                             if let Some(&ant_type) = results.get(&ant) {
                                 ant_type
@@ -839,8 +844,10 @@ impl<'a> FlowAnalyzer<'a> {
                                         f.has_any_flags(
                                             flow_flags::CONDITION
                                                 | flow_flags::CALL
+                                                | flow_flags::BRANCH_LABEL
                                                 | flow_flags::LOOP_LABEL
                                                 | flow_flags::ASSIGNMENT
+                                                | flow_flags::SWITCH_CLAUSE
                                                 | flow_flags::AWAIT_POINT
                                                 | flow_flags::YIELD_POINT
                                                 | flow_flags::START,

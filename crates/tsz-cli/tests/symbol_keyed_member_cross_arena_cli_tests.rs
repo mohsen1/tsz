@@ -56,12 +56,14 @@ fn compile_in_order(files: &[(&str, &str)], root_order: &[&str]) -> Vec<Diagnost
 }
 
 /// Diagnostics that this family produces as false positives: assignability
-/// mismatches (TS2322/TS2345/TS2353) and the invalid-computed-key error
-/// (TS2464) that the degraded value type triggers.
+/// mismatches (TS2322/TS2345/TS2353), the invalid-computed-key error (TS2464)
+/// that the degraded value type triggers, and the possibly-`undefined`-callee
+/// error (TS2722) raised when the unresolved key fails to register the member
+/// so its access falls back to a `… | undefined` index lookup.
 fn family_false_positives(diagnostics: &[Diagnostic]) -> Vec<(u32, String)> {
     diagnostics
         .iter()
-        .filter(|d| matches!(d.code, 2322 | 2345 | 2353 | 2464 | 2536))
+        .filter(|d| matches!(d.code, 2322 | 2345 | 2353 | 2464 | 2536 | 2722))
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -331,6 +333,113 @@ export const bad: I = { [m]: 123 };
             .iter()
             .any(|d| matches!(d.code, 2322 | 2345 | 2418 | 2353)),
         "expected an assignability error for the wrong computed-property value through a barrel, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// #14130 (ts-pattern witness): the merged value+type-alias symbol is consumed
+/// through a **namespace import** (`import * as symbols`) and keyed as
+/// `[symbols.matcher]` — a *property-access* computed name rather than a bare
+/// identifier. The const value here is a plain **string literal**
+/// (`'@ts-pattern/matcher'`), not `Symbol.for(...)`, so the key is a
+/// string-literal late-bound name. Resolving `symbols.matcher` in value
+/// position must surface the const's literal VALUE, not the unevaluated
+/// `typeof matcher` type-alias body; otherwise the interface member key fails
+/// (false TS2464), the member never registers, and invoking the result of the
+/// element access reports a spurious TS2722.
+#[test]
+fn cross_file_namespace_import_string_literal_merge_computed_key() {
+    assert_clean_both_orders(&[
+        (
+            "symbols.ts",
+            r#"
+export const matcher = '@ts-pattern/matcher';
+export type matcher = typeof matcher;
+"#,
+        ),
+        (
+            "helpers.ts",
+            r#"
+import * as symbols from './symbols';
+export interface Matchable {
+  [symbols.matcher](): { match: (v: unknown) => boolean };
+}
+declare function isMatchable(x: unknown): x is Matchable;
+export function matchPattern(pattern: unknown, value: unknown) {
+  if (isMatchable(pattern)) {
+    return pattern[symbols.matcher]().match(value);
+  }
+}
+"#,
+        ),
+    ]);
+}
+
+/// Renamed-binder variant of the namespace-import case: the rule follows the
+/// merged binding's value side, not the `matcher` identifier text or the
+/// `symbols` namespace alias name.
+#[test]
+fn cross_file_namespace_import_string_literal_merge_computed_key_renamed() {
+    assert_clean_both_orders(&[
+        (
+            "keys.ts",
+            r#"
+export const wireTag = '@demo/wire-tag';
+export type wireTag = typeof wireTag;
+export const seq = 7;
+export type seq = typeof seq;
+"#,
+        ),
+        (
+            "use.ts",
+            r#"
+import * as ns from './keys';
+export interface Wire {
+  [ns.wireTag](): string;
+  [ns.seq](): number;
+}
+declare const w: Wire;
+export const a: string = w[ns.wireTag]();
+export const b: number = w[ns.seq]();
+const lit = { [ns.wireTag]: () => "x", [ns.seq]: () => 1 };
+export const ok: Wire = lit;
+"#,
+        ),
+    ]);
+}
+
+/// Negative control for the namespace-import form: the key resolves correctly,
+/// so a wrong value against the declared member type must still be rejected —
+/// the fix surfaces the value side without silencing real diagnostics.
+#[test]
+fn cross_file_namespace_import_string_literal_merge_wrong_value_still_errors() {
+    let files = &[
+        (
+            "symbols.ts",
+            r#"
+export const matcher = '@ts-pattern/matcher';
+export type matcher = typeof matcher;
+"#,
+        ),
+        (
+            "helpers.ts",
+            r#"
+import * as symbols from './symbols';
+export interface Matchable { [symbols.matcher](): number; }
+export const bad: Matchable = { [symbols.matcher]: 123 };
+"#,
+        ),
+    ];
+    let names: Vec<&str> = files.iter().map(|(name, _)| *name).collect();
+    let diags = compile_in_order(files, &names);
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d.code, 2322 | 2345 | 2418 | 2353)),
+        "expected an assignability error for the wrong computed-property value through a namespace import, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

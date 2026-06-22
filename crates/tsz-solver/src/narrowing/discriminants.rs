@@ -14,7 +14,20 @@ use std::sync::Arc;
 use crate::TypeData;
 use rustc_hash::FxHashMap;
 
-use super::{CachedPropertyType, DiscriminantInfo, NarrowingContext, union_or_single_preserve};
+use super::{
+    CachedPropertyType, DiscriminantInfo, NarrowingContext, NullishFilter, union_or_single_preserve,
+};
+
+/// Selects which fact a discriminant-property filter narrows on: the *truthy*
+/// fact (`if (x.prop)`) or the *nullish* fact (`x.prop ?? ...`). The two agree
+/// for `null`/`undefined` discriminant values but differ on the non-nullish
+/// falsy values (`""`, `0`, `false`, `0n`, `NaN`), which `??` keeps but a
+/// truthiness check would drop.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiscriminantPropertyFilter {
+    Truthiness,
+    Nullishness,
+}
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::type_queries::{
     LiteralValueKind, TypeParameterConstraintKind, UnionMembersKind, classify_for_literal_value,
@@ -796,6 +809,55 @@ impl<'a> NarrowingContext<'a> {
         property_path: &[Atom],
         sense: bool,
     ) -> TypeId {
+        self.narrow_by_property_filter(
+            union_type,
+            property_path,
+            DiscriminantPropertyFilter::Truthiness,
+            sense,
+        )
+    }
+
+    /// Narrows a union type based on whether a property is (or is not) nullish.
+    ///
+    /// Mirrors tsc's `narrowTypeByOptionality` discriminant arm, which filters
+    /// union members with `getTypeWithFacts(t, NEUndefinedOrNull)` (true /
+    /// "present" branch) or `EQUndefinedOrNull` (false / "absent" branch).
+    ///
+    /// This differs from [`Self::narrow_by_property_truthiness`] precisely on
+    /// the non-nullish-but-falsy values (`""`, `0`, `false`, `0n`, `NaN`): the
+    /// `??` operator and optional-chain roots gate on *nullishness*, not
+    /// *falsiness*, so a discriminant whose value is `string` (non-nullish) must
+    /// be excluded from the nullish/false branch even though `string` is
+    /// falsy-compatible. Used for the right operand of `a ?? b` (and `??=`):
+    /// when `a` is a discriminant property access on a union, the right operand
+    /// flows from `a` being nullish, discriminating the union to that branch.
+    pub fn narrow_by_property_nullishness(
+        &self,
+        union_type: TypeId,
+        property_path: &[Atom],
+        sense: bool,
+    ) -> TypeId {
+        self.narrow_by_property_filter(
+            union_type,
+            property_path,
+            DiscriminantPropertyFilter::Nullishness,
+            sense,
+        )
+    }
+
+    /// Shared discriminant-property filter for truthiness (`if (x.prop)`) and
+    /// nullishness (`x.prop ?? ...`) narrowing. `sense` selects the branch: for
+    /// truthiness, `true` keeps members where the property can be truthy and
+    /// `false` keeps members where it can be falsy; for nullishness, `true`
+    /// keeps members where the property can be non-nullish and `false` keeps
+    /// members where it can be nullish.
+    fn narrow_by_property_filter(
+        &self,
+        union_type: TypeId,
+        property_path: &[Atom],
+        filter: DiscriminantPropertyFilter,
+        sense: bool,
+    ) -> TypeId {
         use crate::type_queries::{
             TypeParameterConstraintKind, classify_for_type_parameter_constraint,
         };
@@ -806,7 +868,7 @@ impl<'a> NarrowingContext<'a> {
             && constraint != union_type
         {
             let narrowed_constraint =
-                self.narrow_by_property_truthiness(constraint, property_path, sense);
+                self.narrow_by_property_filter(constraint, property_path, filter, sense);
             if narrowed_constraint != constraint {
                 return self.db.intersection2(union_type, narrowed_constraint);
             }
@@ -814,7 +876,7 @@ impl<'a> NarrowingContext<'a> {
 
         let _span = span!(
             Level::TRACE,
-            "narrow_by_property_truthiness",
+            "narrow_by_property_filter",
             union_type = union_type.0,
             property_path_len = property_path.len(),
             sense
@@ -853,15 +915,23 @@ impl<'a> NarrowingContext<'a> {
                 };
 
                 let resolved_prop_type = self.resolve_type(prop_type);
-                // If it's the true branch, check if the property can be truthy
-                // If it's the false branch, check if the property can be falsy
-                if sense {
-                    let narrowed = self.narrow_by_truthiness(resolved_prop_type);
-                    narrowed != TypeId::NEVER
-                } else {
-                    let narrowed = self.narrow_to_falsy(resolved_prop_type);
-                    narrowed != TypeId::NEVER
-                }
+                // For the positive branch, check if the property can satisfy the
+                // fact (truthy / non-nullish); for the negative branch, check if
+                // it can satisfy the complement (falsy / nullish).
+                let narrowed = match (filter, sense) {
+                    (DiscriminantPropertyFilter::Truthiness, true) => {
+                        self.narrow_by_truthiness(resolved_prop_type)
+                    }
+                    (DiscriminantPropertyFilter::Truthiness, false) => {
+                        self.narrow_to_falsy(resolved_prop_type)
+                    }
+                    (DiscriminantPropertyFilter::Nullishness, true) => self
+                        .narrow_by_nullishness(resolved_prop_type, NullishFilter::ExcludeNullish),
+                    (DiscriminantPropertyFilter::Nullishness, false) => {
+                        self.narrow_by_nullishness(resolved_prop_type, NullishFilter::KeepNullish)
+                    }
+                };
+                narrowed != TypeId::NEVER
             };
 
             let matches = if let Some(ref intersection) = intersection_members {

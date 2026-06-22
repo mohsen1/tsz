@@ -118,8 +118,8 @@ export { inArray };
 /// `[] extends [T, ...T[]]` is concretely false (empty tuple can't match a
 /// non-empty tuple), so `A = "no"`. tsz deferred because the extends type
 /// carries `T`, leaving `A` opaque -> false TS2322 assigning `"no"`.
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14232).
 #[test]
-#[ignore = "reproduces #14232: concrete check vs generic extends defers instead of resolving false branch -> false TS2322"]
 fn issue_14232_concrete_check_generic_extends_resolves_false_branch() {
     let diags = compile_and_get_diagnostics(
         r#"
@@ -146,8 +146,8 @@ export { f };
 /// `T[A]` (A constrained to `'0' | '1'`) over a concrete nested tuple must
 /// expose its element's key space, so `T[A][B]` is valid. tsz left `T[A]`
 /// opaque and rejected `[B]` -> false TS2536.
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14254).
 #[test]
-#[ignore = "reproduces #14254: keyof of a deferred tuple indexed access loses its key space -> false TS2536"]
 fn issue_14254_keyof_deferred_tuple_indexed_access_keeps_key_space() {
     let diags = compile_and_get_diagnostics(
         r#"
