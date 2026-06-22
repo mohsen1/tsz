@@ -288,10 +288,29 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
         }
 
         // Directory pattern (no extension or glob at end) - expand to match all files
-        let base = pattern.trim_end_matches('/');
-        expanded.push(format!("{base}/**/*"));
+        expanded.push(directory_recursive_glob(pattern));
     }
     expanded
+}
+
+/// Expand a bare directory include entry to its recursive glob.
+///
+/// A directory spec matches every supported file beneath it, mirroring tsc's
+/// `getFileMatcherPatterns`, which appends `/**/*` to a directory. The
+/// current-directory specs `"."` and `"./"` (the latter normalized to an empty
+/// string by [`normalize_patterns`]) denote the project root: they must expand
+/// to a root-relative `**/*`, never `./**/*` or `/**/*`. The discovery walk
+/// matches files by their path relative to `base_dir` (see
+/// [`matches_discovery_patterns`]), and `globset` does not strip a leading `./`
+/// or treat a leading `/` as the walk root, so those spellings would match
+/// nothing and surface a spurious TS18003 "No inputs were found".
+fn directory_recursive_glob(pattern: &str) -> String {
+    let base = pattern.trim_end_matches('/');
+    if base.is_empty() || base == "." {
+        "**/*".to_string()
+    } else {
+        format!("{base}/**/*")
+    }
 }
 
 fn is_terminal_wildcard_pattern(pattern: &str) -> bool {
@@ -601,6 +620,61 @@ mod tests {
                 "subdir/*.tsx".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_expand_include_current_directory_is_root_recursive() {
+        // tsc expands a directory spec to `<dir>/**/*`; the current-directory
+        // spellings `"."` and `"./"` (the latter normalized to "") must become a
+        // root-relative `**/*`, not `./**/*` or `/**/*` (which globset cannot
+        // match against discovery-relative paths). See `directory_recursive_glob`.
+        assert_eq!(
+            expand_include_patterns(&normalize_patterns(&[".".to_string()])),
+            vec!["**/*".to_string()]
+        );
+        assert_eq!(
+            expand_include_patterns(&normalize_patterns(&["./".to_string()])),
+            vec!["**/*".to_string()]
+        );
+        assert_eq!(
+            expand_include_patterns(&normalize_patterns(&["./src".to_string()])),
+            vec!["src/**/*".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_discover_current_directory_include_recurses() {
+        // Regression: `include: ["."]` must discover every nested source file
+        // (matching tsc), not resolve to zero inputs / TS18003.
+        let dir = unique_temp_dir("current_dir_include");
+        fs::create_dir_all(dir.join("src/nested")).unwrap();
+        fs::write(dir.join("top.ts"), "export const top = 1;").unwrap();
+        fs::write(dir.join("src/a.ts"), "export const a = 1;").unwrap();
+        fs::write(dir.join("src/nested/b.ts"), "export const b = 1;").unwrap();
+
+        for spec in ["./", "."] {
+            let options = FileDiscoveryOptions {
+                base_dir: dir.clone(),
+                files: Vec::new(),
+                files_explicitly_set: false,
+                include: Some(vec![spec.to_string()]),
+                exclude: None,
+                out_dir: None,
+                follow_links: false,
+                allow_js: false,
+                resolve_json_module: false,
+            };
+
+            let result = discover_ts_files(&options).unwrap();
+            for expected in ["top.ts", "src/a.ts", "src/nested/b.ts"] {
+                assert!(
+                    result.iter().any(|path| path.ends_with(expected)),
+                    "include [{spec:?}] should discover {expected}, got: {result:?}"
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
