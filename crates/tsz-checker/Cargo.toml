@@ -500,6 +500,9 @@ path = "tests/this_type_indexed_access_receiver_tests.rs"
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
+name = "keyless_object_record_inference_tests"
+path = "tests/keyless_object_record_inference_tests.rs"
+[[test]]
 name = "ts2725_tests"
 path = "tests/ts2725_tests.rs"
 [[test]]
@@ -914,6 +917,9 @@ path = "tests/inline_conditional_infer_return_tests.rs"
 name = "inline_conditional_generic_ref_infer_false_branch_tests"
 path = "tests/inline_conditional_generic_ref_infer_false_branch_tests.rs"
 [[test]]
+name = "this_relative_infer_member_constraint_14385_tests"
+path = "tests/this_relative_infer_member_constraint_14385_tests.rs"
+[[test]]
 name = "conditional_alias_lib_application_tests"
 path = "tests/conditional_alias_lib_application_tests.rs"
 [[test]]
@@ -1003,6 +1009,9 @@ path = "tests/overload_inference_literal_preservation_tests.rs"
 [[test]]
 name = "overload_spread_into_rest_ts2556_tests"
 path = "tests/overload_spread_into_rest_ts2556_tests.rs"
+[[test]]
+name = "overload_nontuple_spread_rest_fallback_tests"
+path = "tests/overload_nontuple_spread_rest_fallback_tests.rs"
 [[test]]
 name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
@@ -1931,6 +1940,9 @@ path = "tests/recursive_conditional_alias_concrete_fixpoint_tests.rs"
 name = "issue_14123_repro_tests"
 path = "tests/issue_14123_repro_tests.rs"
 [[test]]
+name = "issue_14417_repro_tests"
+path = "tests/issue_14417_repro_tests.rs"
+[[test]]
 name = "recursive_alias_counter_convergence_ts2589_tests"
 path = "tests/recursive_alias_counter_convergence_ts2589_tests.rs"
 [[test]]
@@ -2032,6 +2044,10 @@ path = "tests/generic_callable_as_assertion_overlap_tests.rs"
 [[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
+
+[[test]]
+name = "function_type_predicate_alias_tests"
+path = "tests/function_type_predicate_alias_tests.rs"
 
 [[test]]
 name = "ts2367_deferred_conditional_overlap_tests"

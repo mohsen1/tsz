@@ -248,3 +248,138 @@ export type Compose<mode extends Mode = 'sync', input extends Input = 'multi'> =
         "imported string aliases should index nested maps without TS2536: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn in_module_renamed_export_does_not_shadow_string_mapping_intrinsic() {
+    // `export { Local as Capitalize }` records `Capitalize` only on the module's
+    // export surface — never as an in-module type binding — so an in-module
+    // reference to `Capitalize` resolves to the string-mapping intrinsic, not the
+    // non-generic local. tsc is clean here; tsz used to emit TS2315.
+    let diagnostics = compile_entry_file(
+        &[(
+            "hkt.ts",
+            r#"
+export type Cap = Capitalize<'a'>;
+interface Local { tag: 'kind' }
+export { Local as Capitalize };
+"#,
+        )],
+        0,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2315),
+        "renamed export must not shadow the Capitalize intrinsic in-module: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_module_type_only_renamed_export_does_not_shadow_string_mapping_intrinsic() {
+    // Same as above for the `export type { Local as Capitalize }` form: the
+    // type-only renamed export must not create an in-module type binding.
+    let diagnostics = compile_entry_file(
+        &[(
+            "hkt.ts",
+            r#"
+export type Cap = Capitalize<'a'>;
+interface Local { tag: 'kind' }
+export type { Local as Capitalize };
+"#,
+        )],
+        0,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2315),
+        "type-only renamed export must not shadow the Capitalize intrinsic: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_module_renamed_export_does_not_shadow_global_value_or_type() {
+    // A renamed export aliasing a name that also exists as a global must not
+    // shadow that global inside the same module (value or type space).
+    let diagnostics = compile_entry_file_with_es5_lib(
+        &[(
+            "shadow.ts",
+            r#"
+const x = 1;
+export { x as Array };
+export { x as parseInt };
+const list: Array<number> = [1, 2, 3];
+const parsed = parseInt("3");
+export type Use = typeof list;
+export type Use2 = typeof parsed;
+"#,
+        )],
+        0,
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2315 || *code == 2304 || *code == 2349),
+        "renamed export must not shadow global Array/parseInt in-module: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_module_renamed_export_name_is_not_an_in_module_binding() {
+    // The renamed export name is NOT introduced as a usable in-module name; an
+    // in-module reference to it (when it is not a global) is TS2304, matching tsc.
+    let diagnostics = compile_entry_file(
+        &[(
+            "rename.ts",
+            r#"
+interface Local { tag: 'kind' }
+export { Local as Renamed };
+type X = Renamed;
+"#,
+        )],
+        0,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2304),
+        "in-module use of a renamed export name must be TS2304: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn cross_file_renamed_exports_still_resolve() {
+    // The fix keeps renamed exports on the public export surface, so cross-file
+    // imports of renamed type/value/class exports continue to resolve cleanly.
+    let diagnostics = compile_entry_file(
+        &[
+            (
+                "mod.ts",
+                r#"
+interface Local { tag: 'kind' }
+const val = 42;
+class Cls { m() {} }
+export { Local as RenamedType };
+export { val as renamedVal };
+export { Cls as RenamedCls };
+export type { Local as TypeOnlyRenamed };
+"#,
+            ),
+            (
+                "consumer.ts",
+                r#"
+import { RenamedType, renamedVal, RenamedCls, TypeOnlyRenamed } from './mod';
+const a: RenamedType = { tag: 'kind' };
+const b: number = renamedVal;
+const c: RenamedCls = new RenamedCls();
+const d: TypeOnlyRenamed = { tag: 'kind' };
+export { a, b, c, d };
+"#,
+            ),
+        ],
+        1,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "cross-file imports of renamed exports must resolve cleanly: {diagnostics:#?}"
+    );
+}

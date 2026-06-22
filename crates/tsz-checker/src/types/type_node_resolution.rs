@@ -63,12 +63,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .resolve_symbol_file_index(sym_id)
             .unwrap_or(self.ctx.current_file_idx);
-        self.resolve_import_alias_type_target_from_source(
-            source_file_idx,
-            module_name,
-            import_name,
-            0,
-        )
+        self.resolve_import_alias_type_target_from_source(source_file_idx, module_name, import_name)
     }
 
     /// Resolve a value/type import alias used in **type position** to the
@@ -87,8 +82,52 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         source_file_idx: usize,
         module_name: &str,
         import_name: &str,
-        depth: usize,
     ) -> Option<tsz_binder::SymbolId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_import_alias_type_target_chain(
+            source_file_idx,
+            module_name,
+            import_name,
+            &mut visited,
+        )
+    }
+
+    /// Walk a plain named re-export chain (`export { X } from './y'`) across
+    /// files, hop by hop, to the real TYPE target of `import_name` exported by
+    /// `module_name` (as resolved from `source_file_idx`).
+    ///
+    /// `resolve_import_with_reexports_type_only` chases re-exports only inside a
+    /// single binder's tables: it sees every file's *direct* exports but not the
+    /// *intermediate* re-export hops declared in other files. A 2+-hop chain
+    /// (`consumer → c → b → a`) therefore lands back on a re-export alias stub
+    /// when chased from the consumer's barrel binder, because the middle module's
+    /// re-export table lives in a different binder. When that happens the stub
+    /// carries an `import_module()` but no TYPE shape of its own, so the bare
+    /// single-binder chase would fail the TYPE gate and the reference would fall
+    /// back to the alias's value (`typeof` / constructor) meaning.
+    ///
+    /// This helper follows each stub into its own declaring file's binder, so an
+    /// arbitrarily long plain re-export chain resolves to the underlying
+    /// class/interface instance type (#14358). The `visited` set guards against
+    /// import cycles.
+    fn resolve_import_alias_type_target_chain(
+        &self,
+        source_file_idx: usize,
+        module_name: &str,
+        import_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String, String)>,
+    ) -> Option<tsz_binder::SymbolId> {
+        if import_name == "*" {
+            return None;
+        }
+        if !visited.insert((
+            source_file_idx,
+            module_name.to_string(),
+            import_name.to_string(),
+        )) {
+            return None;
+        }
+
         let target_file_idx = self
             .ctx
             .resolve_import_target_from_file(source_file_idx, module_name)?;
@@ -133,30 +172,36 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         };
 
+        // If the single-binder chase above could not cross into the middle
+        // module's own re-export tables, it lands on another re-export alias
+        // stub. Follow that stub into its declaring file's binder and continue
+        // the chain there. This is the cross-file generalization of the
+        // single-binder chase that makes N-hop plain re-export chains resolve to
+        // the real TYPE target.
+        let next_hop = target_binder.get_symbol(target_sym_id).and_then(|stub| {
+            if !stub.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                return None;
+            }
+            let module = stub.import_module()?.to_string();
+            let name = stub
+                .import_name()
+                .unwrap_or(stub.escaped_name.as_str())
+                .to_string();
+            Some((module, name))
+        });
+        if let Some((next_module, next_name)) = next_hop
+            && let Some(resolved) = self.resolve_import_alias_type_target_chain(
+                resolved_file_idx,
+                &next_module,
+                &next_name,
+                visited,
+            )
+        {
+            return Some(resolved);
+        }
+
         let target_symbol = target_binder.get_symbol(target_sym_id)?;
         if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
-            // At 2+ re-export hops the single chase above can land on an
-            // intermediate re-export alias stub (it carries an `import_module`
-            // but no TYPE shape of its own) rather than the declaring
-            // class/interface, so the TYPE gate fails and the type reference
-            // wrongly falls back to the value (`typeof`) side (#14358). Follow
-            // the stub one more hop from its own file, bounded to avoid cycles.
-            if depth < 16
-                && let Some(stub_module) = target_symbol.import_module().map(str::to_string)
-            {
-                let stub_name = target_symbol
-                    .import_name()
-                    .unwrap_or(import_name)
-                    .to_string();
-                if stub_module != module_name || stub_name != import_name {
-                    return self.resolve_import_alias_type_target_from_source(
-                        resolved_file_idx,
-                        &stub_module,
-                        &stub_name,
-                        depth + 1,
-                    );
-                }
-            }
             return None;
         }
         self.ctx
@@ -197,12 +242,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .ctx
             .get_file_idx_for_arena(decl_arena)
             .unwrap_or(self.ctx.current_file_idx);
-        self.resolve_import_alias_type_target_from_source(
-            source_file_idx,
-            module_name,
-            import_name,
-            0,
-        )
+        self.resolve_import_alias_type_target_from_source(source_file_idx, module_name, import_name)
     }
 
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {

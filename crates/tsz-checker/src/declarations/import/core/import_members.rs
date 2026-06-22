@@ -1423,6 +1423,17 @@ impl<'a> CheckerState<'a> {
         if sym.is_type_only {
             return true;
         }
+        if sym.has_any_flags(symbol_flags::ALIAS)
+            && !sym.is_type_only
+            && let Some(import_module) = sym.import_module()
+        {
+            let import_name = sym.import_name().unwrap_or(sym.escaped_name.as_str());
+            return self.is_export_type_only_from_file(
+                import_module,
+                import_name,
+                Some(owner_file_idx),
+            );
+        }
         if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }

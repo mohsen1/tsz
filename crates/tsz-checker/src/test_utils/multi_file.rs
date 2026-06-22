@@ -227,15 +227,56 @@ pub fn check_multi_file_with_libs(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<Diagnostic> {
+    check_multi_file_with_libs_impl(files, entry_file, options, lib_files, false)
+}
+
+/// Like [`check_multi_file_with_libs`] but production-faithful with respect to
+/// per-file symbol provenance: each binder is given its file index *before*
+/// binding, so `BinderState::stamp_file_idx` records every module-local
+/// symbol's `decl_file_idx` exactly as the driver's bind-result reducer does.
+/// It also wires the `global_symbol_file_index`.
+///
+/// Tests that depend on `symbol_is_from_actual_or_cloned_lib` (which uses
+/// `decl_file_idx` to distinguish module-local symbols from lib globals) must
+/// use this helper: the plain [`check_multi_file_with_libs`] leaves
+/// `decl_file_idx == u32::MAX`, which makes a module-local symbol that shadows
+/// a lib global look like the lib symbol.
+pub fn check_multi_file_with_libs_stamped(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
+    check_multi_file_with_libs_impl(files, entry_file, options, lib_files, true)
+}
+
+/// Shared body for [`check_multi_file_with_libs`] and
+/// [`check_multi_file_with_libs_stamped`]. When `stamp` is set, each binder is
+/// given its file index before binding (so `stamp_file_idx` records
+/// `decl_file_idx`) and the `global_symbol_file_index` is wired — matching the
+/// production driver. When unset, this is the lib-aware counterpart to
+/// [`check_multi_file`] that leaves `decl_file_idx == u32::MAX`.
+fn check_multi_file_with_libs_impl(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+    stamp: bool,
+) -> Vec<Diagnostic> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
     let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
 
-    for (name, source) in files {
+    for (file_idx, (name, source)) in files.iter().enumerate() {
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
+        if stamp {
+            // Stamp the driver-assigned file index before binding so that
+            // `stamp_file_idx` runs at bind end and records `decl_file_idx`.
+            binder.set_file_idx(file_idx as u32);
+        }
         if lib_files.is_empty() {
             binder.bind_source_file(parser.get_arena(), root);
         } else {
@@ -283,6 +324,20 @@ pub fn check_multi_file_with_libs(
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
     checker.ctx.set_resolved_modules(resolved_modules);
+
+    if stamp {
+        // Build the immutable declaring-file index (SymbolId -> file_idx) like
+        // the driver's `build_global_symbol_file_index`.
+        let mut symbol_file_index = rustc_hash::FxHashMap::default();
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            for symbol in binder.symbols.iter() {
+                symbol_file_index.entry(symbol.id).or_insert(file_idx);
+            }
+        }
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::new(symbol_file_index));
+    }
 
     checker.check_source_file(roots[entry_idx]);
     checker.ctx.diagnostics.clone()
