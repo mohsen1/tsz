@@ -178,10 +178,10 @@ pub(crate) fn type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// context's own parameters) — to their declared `default → constraint →
 /// unknown`, matching tsc's `fillMissingTypeArguments`.
 /// See [`tsz_solver::computation::resolve_unbound_type_params_to_defaults`].
-pub(crate) fn resolve_unbound_type_params_to_defaults(
+pub(crate) fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
     db: &dyn TypeDatabase,
     member_type: TypeId,
-    in_scope: &rustc_hash::FxHashSet<TypeId>,
+    in_scope: &std::collections::HashSet<TypeId, S>,
 ) -> TypeId {
     tsz_solver::computation::resolve_unbound_type_params_to_defaults(db, member_type, in_scope)
 }

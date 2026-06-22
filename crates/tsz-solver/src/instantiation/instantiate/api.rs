@@ -1051,10 +1051,10 @@ const MAX_UNBOUND_DEFAULT_DEPTH: usize = 8;
 /// generic `Box<T>`); those are preserved, so only genuinely unbound base
 /// parameters are resolved. Type parameters bound by an enclosing callable
 /// signature are already excluded by [`free_type_parameter_ids_in`].
-pub fn resolve_unbound_type_params_to_defaults(
+pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
     db: &dyn TypeDatabase,
     member_type: TypeId,
-    in_scope: &FxHashSet<TypeId>,
+    in_scope: &std::collections::HashSet<TypeId, S>,
 ) -> TypeId {
     use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
 
