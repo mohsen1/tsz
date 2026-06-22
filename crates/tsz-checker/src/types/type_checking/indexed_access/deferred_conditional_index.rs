@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let Some(base_constraint) =
-            crate::query_boundaries::common::conditional_branch_union_constraint(
+            crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
                 self.ctx.types,
                 conditional,
             )
@@ -94,6 +94,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> Option<TypeId> {
         use crate::query_boundaries::common as q;
+        use crate::query_boundaries::conditional_constraints as conditional_query;
         // Resolve a generic `Application` (e.g. an alias `Drop<T>`) whose body is
         // an indexed access into that indexed access first, so both the direct and
         // alias-wrapped forms are covered.
@@ -133,7 +134,8 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let base_constraint = q::conditional_branch_union_constraint(self.ctx.types, conditional)?;
+        let base_constraint =
+            conditional_query::conditional_branch_union_constraint(self.ctx.types, conditional)?;
         // The branch-union must have resolved to a concrete shape; a constraint
         // that is itself still deferred has no computable apparent type.
         if q::is_conditional_type(self.ctx.types, base_constraint)

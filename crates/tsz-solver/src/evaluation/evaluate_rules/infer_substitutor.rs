@@ -267,12 +267,26 @@ impl<'a> InferSubstitutor<'a> {
                         param_name: index.param_name,
                     }
                 });
+                let symbol_index = shape.symbol_index.as_ref().map(|index| {
+                    let key_type = self.substitute(index.key_type);
+                    let value_type = self.substitute(index.value_type);
+                    if key_type != index.key_type || value_type != index.value_type {
+                        changed = true;
+                    }
+                    IndexSignature {
+                        key_type,
+                        value_type,
+                        readonly: index.readonly,
+                        param_name: index.param_name,
+                    }
+                });
                 if changed {
                     self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                         symbol: shape.symbol,
                     })
                 } else {

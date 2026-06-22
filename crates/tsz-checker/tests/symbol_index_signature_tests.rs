@@ -1206,3 +1206,68 @@ const o: { [k: number]: string } = { [0]: 42 };
         "did not expect TS2322 for index-signature mismatch, got {codes:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Bare `symbol` index signature (issue #14230).
+//
+// A type can carry a `symbol` index signature simultaneously with `string`
+// and/or `number` ones (e.g. `Record<PropertyKey, V>` /
+// `{ [K in string | number | symbol]: V }`). Indexing by the bare `symbol`
+// intrinsic must resolve to the value type, not raise TS2536.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mapped_property_key_indexed_by_symbol_is_valid() {
+    let codes = diagnostic_codes_for_ts(
+        "type M = { [K in string | number | symbol]: number };\ntype A = M[symbol];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536),
+        "M[symbol] over a string|number|symbol mapped must not raise TS2536, got {codes:?}",
+    );
+}
+
+#[test]
+fn mapped_property_key_indexed_by_string_and_number_still_valid() {
+    let codes = diagnostic_codes_for_ts(
+        "type M = { [K in string | number | symbol]: number };\ntype S = M[string];\ntype N = M[number];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536),
+        "M[string]/M[number] arms must not raise TS2536, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_only_mapped_indexed_by_symbol_is_valid() {
+    let codes = diagnostic_codes_for_ts(
+        "type M = { [K in symbol]: number };\ntype A = M[symbol];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536),
+        "symbol-only mapped M[symbol] must not raise TS2536, got {codes:?}",
+    );
+}
+
+#[test]
+fn object_with_both_string_and_symbol_index_keeps_both() {
+    let codes = diagnostic_codes_for_ts(
+        "type M = { [k: string]: boolean; [k: symbol]: number };\ntype StrV = M[string];\ntype SymV = M[symbol];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536),
+        "string+symbol index coexistence must not raise TS2536, got {codes:?}",
+    );
+}
+
+#[test]
+fn string_only_index_still_rejects_symbol_access() {
+    // Negative control: the fix must not blanket-suppress TS2536.
+    let codes = diagnostic_codes_for_ts(
+        "type N = { [K in string]: number };\ntype B = N[symbol];\nexport {};\n",
+    );
+    assert!(
+        codes.contains(&2536),
+        "string-only index must still raise TS2536 for [symbol], got {codes:?}",
+    );
+}

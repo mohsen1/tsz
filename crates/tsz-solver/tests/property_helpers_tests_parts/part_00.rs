@@ -635,6 +635,7 @@ fn test_string_index_signature_access() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -672,6 +673,7 @@ fn test_number_index_signature_with_numeric_key() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -702,6 +704,7 @@ fn test_explicit_property_takes_precedence_over_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -743,6 +746,7 @@ fn test_index_signature_with_no_unchecked_indexed_access() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1354,6 +1358,7 @@ fn test_object_with_both_index_signatures() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1588,6 +1593,7 @@ fn test_readonly_index_signature_access() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 

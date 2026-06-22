@@ -179,16 +179,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
             } => {
                 let shape = ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: None,
                 };
 
-                if shape.string_index.is_some() || shape.number_index.is_some() {
+                if shape.string_index.is_some()
+                    || shape.number_index.is_some()
+                    || shape.symbol_index.is_some()
+                {
                     Some(self.interner.object_with_index(shape))
                 } else {
                     Some(self.interner.object(shape.properties))
@@ -306,6 +311,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         if self.assume_related_on_cycle {
             flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
+        }
+        // The class-symbol classifier is behavior-affecting (it can make a
+        // no-`DefId` class-flagged symbol nominal), so discriminate verdicts
+        // computed with it active from class-agnostic ones (issue #13828). The
+        // classifier is a pure function of the program binder, fixed for the
+        // whole compilation, so this single bit fully partitions the regimes.
+        if self.is_class_symbol.is_some() {
+            flags |= RelationFlags::CLASS_CHECK_CONTEXT;
         }
 
         RelationPolicy::from_relation_flags(flags)
@@ -727,6 +740,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index: _,
             } => (properties, string_index, number_index),
             PropertyCollectionResult::Any => return Some(TypeId::ANY),
             PropertyCollectionResult::NonObject => {
@@ -744,6 +758,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index: _,
                     } => (properties, string_index, number_index),
                     PropertyCollectionResult::Any => return Some(TypeId::ANY),
                     PropertyCollectionResult::NonObject => return None,

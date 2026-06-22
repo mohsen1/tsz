@@ -595,6 +595,7 @@ pub fn apparent_primitive_shape(
         properties,
         string_index: None,
         number_index,
+        symbol_index: None,
         symbol: None,
     }
 }

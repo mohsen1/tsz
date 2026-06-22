@@ -193,6 +193,19 @@ impl<'a> CheckerState<'a> {
             return literal_type;
         }
 
+        if let Some((_, symbol_ref)) =
+            crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                &self.ctx,
+                |expr_idx| {
+                    self.resolve_value_symbol_for_lowering(expr_idx)
+                        .map(tsz_binder::SymbolId)
+                },
+                type_query.expr_name,
+            )
+        {
+            return self.ctx.types.unique_symbol(symbol_ref);
+        }
+
         if let Some(sym_id) = self
             .resolve_value_symbol_for_lowering(type_query.expr_name)
             .filter(|sym_id| {

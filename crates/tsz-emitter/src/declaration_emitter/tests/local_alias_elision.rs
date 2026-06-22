@@ -172,6 +172,7 @@ fn property_named_like_alias_is_untouched() {
         properties: vec![PropertyInfo::new(prop_name, app)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let union = interner.union(vec![object, app]);
@@ -199,6 +200,7 @@ fn bare_reference_to_collected_alias_prints_elided_any() {
         properties: vec![PropertyInfo::new(prop_name, interner.lazy(def_id))],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let union = interner.union(vec![object, app]);

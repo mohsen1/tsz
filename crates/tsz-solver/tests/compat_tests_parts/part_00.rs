@@ -1657,6 +1657,7 @@ fn test_no_unchecked_indexed_access_toggle() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1719,6 +1720,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),

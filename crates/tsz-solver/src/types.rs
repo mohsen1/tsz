@@ -344,6 +344,21 @@ bitflags::bitflags! {
         /// `strict_readonly_identity` field on `SubtypeChecker` for the
         /// rationale and toggle site.
         const STRICT_READONLY_IDENTITY      = 1 << 15;
+        /// A class-symbol classifier is active for this relation check (the
+        /// solver was configured via `with_class_check`).
+        ///
+        /// The classifier makes a class-flagged symbol that has no resolvable
+        /// `DefId` behave nominally — it then needs an explicit declared index
+        /// signature (`requires_explicit_declared_index_signature`) and gains
+        /// the both-classes nominal-heritage shortcut (`nominal_heritage_subtype`)
+        /// — whereas absent the classifier the same shape is judged purely
+        /// structurally. Those two verdicts genuinely differ, so they must not
+        /// share a cache slot. The classifier itself is a pure function of the
+        /// program's binder `CLASS` flags, fixed for the whole compilation, so a
+        /// single discriminating bit fully partitions the two regimes and lets
+        /// class-context verdicts live in the cross-checker shared cache without
+        /// poisoning the class-agnostic regime (issue #13828).
+        const CLASS_CHECK_CONTEXT           = 1 << 16;
     }
 }
 
@@ -1310,6 +1325,11 @@ bitflags::bitflags! {
         /// The `number_index` signature is *optional* (`[k: number]?: V`). The
         /// numeric mirror of [`Self::STRING_INDEX_OPTIONAL`].
         const NUMBER_INDEX_OPTIONAL = 1 << 11;
+
+        /// The `symbol_index` signature is *optional* (`[k: symbol]?: V`, e.g.
+        /// from `Partial<Record<symbol, V>>`). The symbol mirror of
+        /// [`Self::STRING_INDEX_OPTIONAL`].
+        const SYMBOL_INDEX_OPTIONAL = 1 << 12;
     }
 }
 
@@ -1328,6 +1348,16 @@ pub struct ObjectShape {
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature: { [key: symbol]: T }.
+    ///
+    /// A type can carry a `symbol` index signature *simultaneously* with a
+    /// `string` (and/or `number`) index — e.g. `Record<PropertyKey, V>` /
+    /// `{ [K in string | number | symbol]: V }`. The bare `symbol` intrinsic key
+    /// therefore needs its own slot; it cannot share `string_index` (whose
+    /// `key_type` historically doubled as a string/symbol discriminator) without
+    /// the two colliding. The contained [`IndexSignature::key_type`] is always
+    /// [`TypeId::SYMBOL`].
+    pub symbol_index: Option<IndexSignature>,
     /// Nominal identity for class instance types (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
 }
@@ -1390,6 +1420,33 @@ impl ObjectShape {
     /// (`[k: number]?: V`, e.g. from `Partial<Record<number, V>>`).
     pub const fn number_index_is_optional(&self) -> bool {
         self.flags.contains(ObjectFlags::NUMBER_INDEX_OPTIONAL)
+    }
+
+    /// Return true if this shape's `symbol_index` signature is optional
+    /// (`[k: symbol]?: V`, e.g. from `Partial<Record<symbol, V>>`).
+    pub const fn symbol_index_is_optional(&self) -> bool {
+        self.flags.contains(ObjectFlags::SYMBOL_INDEX_OPTIONAL)
+    }
+
+    /// The `string` index signature (`[k: string]: V`), if any.
+    ///
+    /// Defensively excludes a `symbol`-keyed signature: the symbol index lives
+    /// in its own [`Self::symbol_index`] slot, but historically a symbol index
+    /// was encoded in `string_index` with `key_type == SYMBOL`, so this filter
+    /// keeps callers correct even if a legacy path still routes one here.
+    pub fn string_index_signature(&self) -> Option<&IndexSignature> {
+        self.string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+    }
+
+    /// The `symbol` index signature (`[k: symbol]: V`), if any.
+    pub fn symbol_index_signature(&self) -> Option<&IndexSignature> {
+        self.symbol_index.as_ref().or_else(|| {
+            self.string_index
+                .as_ref()
+                .filter(|idx| idx.key_type == TypeId::SYMBOL)
+        })
     }
 }
 
@@ -1536,7 +1593,13 @@ pub struct CallableShape {
     pub construct_signatures: Vec<CallSignature>,
     /// Optional properties on the callable (e.g., Function.prototype)
     pub properties: Vec<PropertyInfo>,
-    /// String index signature (for static index signatures on classes)
+    /// String index signature (for static index signatures on classes).
+    ///
+    /// Unlike [`ObjectShape`], a `CallableShape` keeps the single-slot index
+    /// convention: a `symbol` index signature rides here too, discriminated by
+    /// `key_type == SYMBOL`. A static `string` + `symbol` index collision on a
+    /// callable is vanishingly rare, so no dedicated `symbol_index` slot is
+    /// carried; producers merge symbol into this slot via `string_index.or(..)`.
     pub string_index: Option<IndexSignature>,
     /// Number index signature (for static index signatures on classes)
     pub number_index: Option<IndexSignature>,

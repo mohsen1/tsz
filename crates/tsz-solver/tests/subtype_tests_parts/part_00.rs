@@ -312,6 +312,7 @@ fn test_template_literal_number_index_subtyping() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -324,6 +325,7 @@ fn test_template_literal_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -412,6 +414,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -518,6 +521,7 @@ fn test_apparent_string_number_index_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -530,6 +534,7 @@ fn test_apparent_string_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1326,6 +1331,7 @@ fn test_index_access_fresh_equivalent_type_parameter_keys_are_related() {
     let source_key = interner.fresh_type_param(key_info);
     let target_key = interner.fresh_type_param(key_info);
     let object = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1353,6 +1359,7 @@ fn test_no_unchecked_object_index_signature_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1382,6 +1389,7 @@ fn test_no_unchecked_indexed_access_string_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1411,6 +1419,7 @@ fn test_no_unchecked_indexed_access_union_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),

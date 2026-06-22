@@ -58,6 +58,11 @@ record_project_compatibility() {
     node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
+first_line() {
+    local text="$1"
+    printf '%s' "${text%%$'\n'*}"
+}
+
 # run_isolated <label> <command...>
 #
 # Runs a fixture function and swallows any non-zero exit so one bad fixture
@@ -240,7 +245,7 @@ run_benchmark() {
             echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${BENCH_TIMEOUT}s)"
         else
             local tsc_error
-            tsc_error="$(printf '%s\n' "$tsc_output" | head -1)"
+            tsc_error="$(first_line "$tsc_output")"
             echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
             echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
         fi
@@ -278,7 +283,7 @@ run_benchmark() {
             status="tsz error"
             tsz_ms="ERR"
             local tsz_error
-            tsz_error="$(printf '%s\n' "$tsz_output" | head -1)"
+            tsz_error="$(first_line "$tsz_output")"
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -290,7 +295,7 @@ run_benchmark() {
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error
-            tsgo_error="$(printf '%s\n' "$tsgo_output" | head -1)"
+            tsgo_error="$(first_line "$tsgo_output")"
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
@@ -448,7 +453,7 @@ run_project_benchmark() {
                 status="tsc fixture error"
                 tsc_error="$(diagnostic_lines_from_file "tsc" "$tsc_check_log")"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
-                echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
+                echo -e "  ${CYAN}tsc error:${NC} $(first_line "$tsc_error")" >&2
             fi
             record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
@@ -509,7 +514,7 @@ run_project_benchmark() {
             local tsz_error
             tsz_error="$(diagnostic_lines_from_file "tsz" "$tsz_check_log")"
             diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsz_error")"
-            echo -e "  ${CYAN}tsz error:${NC} $(printf '%s' "$tsz_error" | head -1)" >&2
+            echo -e "  ${CYAN}tsz error:${NC} $(first_line "$tsz_error")" >&2
         fi
 
         if [ "$tsgo_check" -eq 124 ]; then
@@ -523,7 +528,7 @@ run_project_benchmark() {
             local tsgo_error
             tsgo_error="$(diagnostic_lines_from_file "tsgo" "$tsgo_check_log")"
             diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsgo_error")"
-            echo -e "  ${CYAN}tsgo error:${NC} $(printf '%s' "$tsgo_error" | head -1)" >&2
+            echo -e "  ${CYAN}tsgo error:${NC} $(first_line "$tsgo_error")" >&2
         fi
 
         if [ "$name" != "large-ts-repo" ]; then

@@ -1336,6 +1336,19 @@ impl<'a> CheckerState<'a> {
                 node_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || node_kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             };
+            if is_access_expr
+                && !skip_flow_narrowing
+                && let Some((_, symbol_ref)) =
+                    crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                        &self.ctx,
+                        |expr_idx| self.resolve_identifier_symbol(expr_idx),
+                        idx,
+                    )
+            {
+                let unique = self.ctx.types.unique_symbol(symbol_ref);
+                self.ctx.node_types.insert(idx.0, unique);
+                return unique;
+            }
             let depends_on_current_this = self.current_this_type().is_some()
                 && (is_this_keyword
                     || (is_access_expr && self.access_expression_root_is_this(idx)));

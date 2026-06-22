@@ -324,23 +324,24 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Instance-local fallback memo for definitive relation verdicts that the
     /// cross-checker shared cache must skip (issue #13828).
     ///
-    /// A pair whose source/target carries a polymorphic `this`, or that is
-    /// checked inside a class-check context (`is_class_symbol` set), is
-    /// context-dependent: its verdict depends on the resolver's current `this`
-    /// binding (`resolve_this_type`) and on the class-symbol classification
-    /// callback. Those inputs cannot be encoded in the flag-agnostic
-    /// [`RelationCacheKey`], so such verdicts are excluded from the shared
-    /// `QueryCache` to avoid cross-checker poisoning.
+    /// The only verdicts routed here are those for a pair whose source/target
+    /// carries a polymorphic `this` for which no concrete receiver binding can
+    /// be resolved (`resolve_this_type` returns `None`): the binding the verdict
+    /// depends on cannot be encoded in the [`RelationCacheKey`], so the verdict
+    /// is excluded from the shared `QueryCache` to avoid cross-checker poisoning.
+    /// (A class-check context is no longer excluded — it is discriminated in the
+    /// key by `RelationFlags::CLASS_CHECK_CONTEXT` and shared; a `this`-bearing
+    /// pair *with* a resolvable binding is discriminated by
+    /// [`RelationCacheKey::this_context`] and shared.)
     ///
-    /// They are, however, stable for the lifetime of one [`SubtypeChecker`]
-    /// instance: a fresh checker is built per top-level relation query, the
-    /// resolver is borrowed immutably for that whole lifetime (so the
-    /// `this` binding cannot shift mid-query), and the `is_class_symbol`
-    /// closure is fixed at construction. Memoizing them here therefore serves
-    /// the repeated comparisons of the same pair inside one query's recursive
-    /// structural walk (the dominant redundancy on class-heavy code such as
-    /// `ts-morph`) without ever leaking a context-bound verdict to a later
-    /// query under a different context. Cleared by [`SubtypeChecker::reset`].
+    /// Such verdicts are, however, stable for the lifetime of one
+    /// [`SubtypeChecker`] instance: a fresh checker is built per top-level
+    /// relation query and the resolver is borrowed immutably for that whole
+    /// lifetime, so the `this` binding cannot shift mid-query. Memoizing them
+    /// here therefore serves the repeated comparisons of the same pair inside one
+    /// query's recursive structural walk without ever leaking a context-bound
+    /// verdict to a later query under a different context. Cleared by
+    /// [`SubtypeChecker::reset`].
     pub(crate) local_relation_cache: FxHashMap<RelationCacheKey, bool>,
     /// Configured work budget for one failure-explanation traversal (issue
     /// #13243). Defaults to [`super::explain::EXPLAIN_EVAL_BUDGET`]; lowered in

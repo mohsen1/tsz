@@ -1212,6 +1212,7 @@ mod lawyer_strict_mode_tests {
         };
 
         let obj_any = interner.object_with_index(ObjectShape {
+            symbol_index: None,
             symbol: None,
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
@@ -1219,6 +1220,7 @@ mod lawyer_strict_mode_tests {
             number_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
+            symbol_index: None,
             symbol: None,
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
@@ -1250,6 +1252,7 @@ mod lawyer_strict_mode_tests {
         };
 
         let obj_any = interner.object_with_index(ObjectShape {
+            symbol_index: None,
             symbol: None,
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
@@ -1257,6 +1260,7 @@ mod lawyer_strict_mode_tests {
             number_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
+            symbol_index: None,
             symbol: None,
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
@@ -1481,6 +1485,7 @@ mod property_access_conformance_tests {
         ));
 
         let typed_array = interner.object_with_index(ObjectShape {
+            symbol_index: None,
             symbol: None,
             flags: ObjectFlags::empty(),
             properties: vec![

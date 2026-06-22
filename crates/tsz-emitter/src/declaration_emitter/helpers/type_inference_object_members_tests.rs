@@ -299,6 +299,7 @@ fn synthesized_index_signature_uses_solver_key_and_value_types() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         symbol: None,
     });
 
@@ -334,6 +335,7 @@ fn synthesized_string_index_signature_uses_key_param_name_and_readonly() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -364,6 +366,7 @@ fn synthesized_index_signature_absent_without_solver_index_info() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 

@@ -618,6 +618,7 @@ fn test_union_to_object_with_index_signature() {
 
     // Target has index signature, so the relaxed rule should NOT apply
     let target_with_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::opt(
@@ -695,6 +696,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
     //   A = { [k: string]: Lazy(100) }  -> { [k: string]: {x: number} }
     //   B = { [k: string]: Lazy(101) }  -> { [k: string]: {x: string} }
     let obj_a = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -708,6 +710,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
