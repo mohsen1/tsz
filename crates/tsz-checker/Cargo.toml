@@ -1019,6 +1019,9 @@ path = "tests/kysely_callback_context_tests.rs"
 name = "inline_mapped_array_return_tests"
 path = "tests/inline_mapped_array_return_tests.rs"
 [[test]]
+name = "overload_constraint_fallback_applicability_tests"
+path = "tests/overload_constraint_fallback_applicability_tests.rs"
+[[test]]
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"
 [[test]]
