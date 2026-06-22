@@ -757,7 +757,6 @@ impl CheckerState<'_> {
         }
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
-        self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.align_awaited_type_instantiation_diagnostics(&sf.text);
         self.align_evolving_array_inference_diagnostics(&sf.text);
         self.align_type_inference_literal_union_diagnostics(&sf.text);
@@ -1027,113 +1026,6 @@ impl CheckerState<'_> {
                 message,
                 code,
             ));
-        }
-    }
-
-    fn rewrite_recursive_type_references1_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
-
-        if !source_text.contains("type Box2 = Box<Box2 | number>")
-            || !source_text.contains("const b20: Box2 = 42;")
-            || !source_text.contains("type RecArray<T> = Array<T | RecArray<T>>")
-        {
-            return;
-        }
-
-        let expected_recursive_array_diagnostics = [
-            (
-                "flat([1, ['a']]);",
-                "flat([",
-                "Type 'number' is not assignable to type 'string | RecArray<string>'.",
-            ),
-            (
-                "flat1([1, ['a']]);",
-                "flat1([",
-                "Type 'number' is not assignable to type 'string | string[]'.",
-            ),
-            (
-                "flat2([1, ['a']]);",
-                "flat2([",
-                "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
-            ),
-        ];
-        let mut callsite_rewrites = Vec::with_capacity(expected_recursive_array_diagnostics.len());
-        for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
-            let Some(line_start) = source_text.find(line_marker) else {
-                return;
-            };
-            let start = line_start + prefix.len();
-            let line_end = source_text[line_start..]
-                .find('\n')
-                .map(|offset| line_start + offset)
-                .unwrap_or(source_text.len());
-            callsite_rewrites.push((line_start, line_end, start, message));
-        }
-
-        let recursive_array_extra_messages = [
-            "Type 'number' is not assignable to type 'string | RecArray<string>'.",
-            "Type 'string' is not assignable to type 'number | RecArray<number>'.",
-            "Type 'number' is not assignable to type 'string | string[]'.",
-            "Type 'number' is not assignable to type 'string'.",
-            "Type '1' is not assignable to type '\"a\" | \"a\"[]'.",
-            "Type 'number' is not assignable to type '\"a\"'.",
-            "Type 'string' is not assignable to type 'number'.",
-            "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
-            "Type 'string' is not assignable to type 'number | number[]'.",
-            "Type 'string' is not assignable to type 'VibratePattern'.",
-            "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
-        ];
-        let fixture_block = source_text
-            .find("type RecArray<T> = Array<T | RecArray<T>>")
-            .and_then(|start| {
-                source_text[start..]
-                    .find("type T10 = T10[];")
-                    .map(|offset| (start, start + offset))
-            });
-        self.ctx.diagnostics.retain(|diag| {
-            if diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
-                return true;
-            }
-            let diag_start = diag.start as usize;
-            let in_rewrite_scope = callsite_rewrites
-                .iter()
-                .any(|(line_start, line_end, _, _)| {
-                    diag_start >= *line_start && diag_start < *line_end
-                })
-                || fixture_block
-                    .is_some_and(|(start, end)| diag_start >= start && diag_start < end);
-            if !in_rewrite_scope {
-                return true;
-            }
-            !recursive_array_extra_messages
-                .iter()
-                .any(|message| diag.message_text == *message)
-        });
-        let mut push_unique_diagnostic = |start: usize, code: u32, message: &str| {
-            let start_u32 = start as u32;
-            let len_u32 = 1u32;
-            if self.ctx.diagnostics.iter().any(|existing| {
-                existing.code == code
-                    && existing.start == start_u32
-                    && existing.length == len_u32
-                    && existing.message_text == message
-            }) {
-                return;
-            }
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start_u32,
-                len_u32,
-                message,
-                code,
-            ));
-        };
-        for (_, _, start, message) in callsite_rewrites {
-            push_unique_diagnostic(
-                start,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                message,
-            );
         }
     }
 

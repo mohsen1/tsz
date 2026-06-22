@@ -448,6 +448,22 @@ pub(crate) fn narrow_by_property_truthiness_in_context(
     narrowing.narrow_by_property_truthiness(type_id, property_path, is_true_branch)
 }
 
+/// Narrow a union flow type by a discriminant property's *nullishness* using the
+/// caller's active flow narrowing context.
+///
+/// Mirrors tsc's `narrowTypeByOptionality` discriminant arm. The checker owns
+/// recognizing that the discriminant access is the left operand of a `??`/`??=`
+/// (so its branches gate on nullishness, not truthiness); the solver owns
+/// filtering union members by whether the property can be (non-)nullish.
+pub(crate) fn narrow_by_property_nullishness_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_property_nullishness(type_id, property_path, is_true_branch)
+}
+
 /// Exclude known values from a flow type using the caller's active flow
 /// narrowing context.
 ///
