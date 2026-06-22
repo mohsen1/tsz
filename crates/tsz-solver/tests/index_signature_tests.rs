@@ -681,15 +681,14 @@ fn test_named_source_with_props_assignable_to_dual_any_index_named_target() {
     );
 }
 
-/// Anonymous synthetic targets (e.g. shape produced by interner-side intersection
-/// merging of `StringTo<any> & NumberTo<any>`) must NOT trigger the number-index
-/// short-circuit. The shape has `target.symbol == None` and its two indexes
-/// originated from distinct intersection members. tsc would relate the source
-/// against each intersection member independently, and the `NumberTo<any>`
-/// member alone (no string index) rejects a class/interface source without a
-/// number index.
+/// A shape produced by interner-side intersection merging of
+/// `StringTo<any> & NumberTo<any>` (stamped `ObjectFlags::INTERSECTION_MERGED`)
+/// must NOT trigger the number-index short-circuit: its two indexes originated
+/// from distinct intersection members. tsc relates the source against each
+/// intersection member independently, and the `NumberTo<any>` member alone (no
+/// string index) rejects a class/interface source without a number index.
 #[test]
-fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
+fn test_intersection_merged_dual_any_index_target_still_rejects_named_source() {
     use tsz_binder::SymbolId;
 
     let interner = TypeInterner::new();
@@ -706,7 +705,58 @@ fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
         Some(SymbolId(81)),
     );
 
-    // Anonymous merged-intersection shape (target.symbol = None).
+    // Merged-intersection shape: both indexes came from distinct members, so the
+    // shape carries `INTERSECTION_MERGED` (how `intern/intersection.rs` stamps an
+    // anonymous widening merge).
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::INTERSECTION_MERGED,
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Named class without numeric members must NOT satisfy an INTERSECTION_MERGED \
+         dual-index `any` target (preserves tsc's per-member intersection behavior)"
+    );
+}
+
+/// A genuine single anonymous object type literal `{ [k: string]: any; [k:
+/// number]: any }` (NOT an intersection merge — no `INTERSECTION_MERGED` flag)
+/// DOES accept a named class/interface source with no numeric index. tsc relates
+/// the source against this one type's index infos together, so the `any`-valued
+/// number index is waived by the co-present `any`-valued string index. This is
+/// the `Record<any, any>` / `{ [P in any]: any }` shape (issue #14220).
+#[test]
+fn test_anonymous_dual_any_index_literal_accepts_named_source() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(81)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("hello"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("world"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(81)),
+    );
+
     let target = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -726,9 +776,55 @@ fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
     });
 
     assert!(
+        checker.is_subtype_of(source, target),
+        "Named class must satisfy a single anonymous `{{ [k: string]: any; [k: number]: any }}` \
+         literal target (number-index waiver fires; tsc accepts `Record<any, any>`)"
+    );
+}
+
+/// The number-index waiver requires BOTH index values to be exactly `any`. A
+/// single anonymous literal whose string index is narrower than `any`
+/// (`{ [k: string]: string; [k: number]: any }`) must still reject a named source
+/// that lacks a numeric index — tsc falls back to the per-property numeric check.
+#[test]
+fn test_anonymous_dual_index_narrow_string_value_rejects_named_source() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(81)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(
+            interner.intern_string("hello"),
+            TypeId::STRING,
+        )],
+        ObjectFlags::empty(),
+        Some(SymbolId(81)),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
         !checker.is_subtype_of(source, target),
-        "Named class without numeric members must NOT satisfy an anonymous synthetic \
-         dual-index `any` target (preserves tsc's per-member intersection behavior)"
+        "Waiver must not fire when the string index value is narrower than `any`"
     );
 }
 
