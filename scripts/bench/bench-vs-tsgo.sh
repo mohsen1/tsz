@@ -1055,7 +1055,6 @@ run_fp_ts_project_benchmarks() {
 }
 
 run_io_ts_project_benchmarks() {
-    should_run_compile_canary_project || return 0
     if ! is_benchmark_selected "io-ts-project"; then
         return
     fi

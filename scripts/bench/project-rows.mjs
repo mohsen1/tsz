@@ -436,9 +436,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref_env: "IO_TS_REF",
     repo: "https://github.com/gcanti/io-ts.git",
     ref: "864a3a2f03c5d7b974afeb1da0faf46c21758779",
-    guard_set: "canary",
-    benchmark_set: "canary",
-    perf_timed: true,
+    guard_set: "required",
+    benchmark_set: "required",
     category: "external",
   },
   {

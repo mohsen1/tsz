@@ -35,6 +35,7 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "vite-vanilla-ts-app"
   "nextjs-fresh-app"
   "comlink-project"
+  "io-ts-project"
   "infisical-project"
 )
 
@@ -55,7 +56,6 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "zustand-project"
   "jotai-project"
   "fp-ts-project"
-  "io-ts-project"
   "immer-project"
   "remeda-project"
   "ts-morph-project"
