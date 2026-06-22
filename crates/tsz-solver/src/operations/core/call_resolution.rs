@@ -1474,8 +1474,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let should_type_check = if rest_type == TypeId::NEVER {
                     true
                 } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
+                    // Only a *leading* rest element makes the call-arg length
+                    // indeterminate (e.g. `[...T[], R]`), which tsc reports as an
+                    // assignability TS2345. When at least one fixed element
+                    // precedes the first rest (`[cmd: string, ...flags: string[]]`,
+                    // even `[a, ...b[], c]`), the minimum arity is determinate and
+                    // tsc reports the arity error TS2555 instead. The discriminator
+                    // is the position of the first top-level rest, not whether any
+                    // rest exists. A leading nested-tuple rest (`[...[...]]`) still
+                    // has `elems[0].rest == true`, so the head check suffices.
                     let elems = self.interner.tuple_list(elements);
-                    elems.iter().any(|e| e.rest)
+                    elems.first().is_some_and(|e| e.rest)
                 } else {
                     false
                 };

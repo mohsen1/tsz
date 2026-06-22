@@ -532,3 +532,73 @@ type _ = Assert<Eq<Parts<[1]>, [1, unknown, unknown[]]>>;
         "required head consumed, optional middle absent, rest unknown[]",
     );
 }
+
+// =============================================================================
+// Arity-diagnostic selection for a variadic-tuple rest parameter (#14488-adjacent)
+//
+// When a call supplies fewer args than the rest tuple's minimum arity, tsc
+// chooses the diagnostic by the position of the FIRST top-level rest element:
+//   * leading fixed element(s) then a rest (`[cmd, ...flags]`, even
+//     `[a, ...b[], c]`) -> determinate minimum arity -> TS2555 (arity).
+//   * a *leading* rest (`[...flags, last]`) -> indeterminate length ->
+//     TS2345 (args-as-tuple assignability).
+// tsz previously took the TS2345 path whenever ANY element was a rest.
+// =============================================================================
+
+fn codes_of(source: &str) -> Vec<u32> {
+    let mut codes = check_source_codes(source);
+    codes.sort_unstable();
+    codes.dedup();
+    codes
+}
+
+#[test]
+fn leading_fixed_then_rest_underarg_is_ts2555() {
+    assert_eq!(
+        codes_of("function run(...args: [cmd: string, ...flags: string[]]): void {}\nrun();\n"),
+        vec![2555],
+        "leading fixed element before the rest => determinate arity => TS2555",
+    );
+}
+
+#[test]
+fn leading_fixed_then_rest_underarg_is_ts2555_renamed_binders() {
+    // Same structural rule, different identifiers — not keyed on `cmd`/`flags`.
+    assert_eq!(
+        codes_of("function exec(...parts: [head: number, ...tail: boolean[]]): void {}\nexec();\n"),
+        vec![2555],
+        "renamed leading-fixed+rest => TS2555",
+    );
+}
+
+#[test]
+fn fixed_rest_then_required_tail_underarg_is_ts2555() {
+    // A required element AFTER the rest does not change the discriminator: the
+    // first element is still fixed, so the minimum arity is determinate.
+    assert_eq!(
+        codes_of("function f(...args: [a: string, ...b: number[], c: boolean]): void {}\nf();\n"),
+        vec![2555],
+        "fixed, rest, required-tail => TS2555",
+    );
+}
+
+#[test]
+fn leading_rest_then_required_underarg_is_ts2345() {
+    // A *leading* rest makes the length indeterminate: tsc reports the
+    // args-as-tuple assignability error, not an arity error.
+    assert_eq!(
+        codes_of("function f(...args: [...flags: string[], last: number]): void {}\nf();\n"),
+        vec![2345],
+        "leading rest then required => TS2345 (preserved)",
+    );
+}
+
+#[test]
+fn optional_leading_then_rest_underarg_is_clean() {
+    // Minimum arity 0: a zero-arg call is valid, no diagnostic.
+    assert!(
+        codes_of("function f(...args: [first?: string, ...rest: number[]]): void {}\nf();\n")
+            .is_empty(),
+        "optional-leading rest tuple has min arity 0 => no diagnostic",
+    );
+}
