@@ -564,9 +564,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a normalized request and return the typed result stage.
+    ///
+    /// The sole producer of [`EvaluationResult`]. In this #14346 scaffold
+    /// slice it always reports `Termination::Complete`: `self.evaluate`
+    /// already collapses every guard bail to a (relation-preserving) `TypeId`
+    /// internally, so the typed channel cannot observe an incomplete walk yet.
+    /// A future stage threads the bail verdict out so a budget-truncated walk
+    /// stops fabricating a finished type; until then the result is
+    /// byte-identical to the pre-channel evaluator.
     pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
-        EvaluationResult::new(self.evaluate(request.type_id()))
+        EvaluationResult::complete(self.evaluate(request.type_id()))
     }
 
     // =========================================================================
@@ -874,10 +882,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Check if depth was already exceeded in a previous call
         if self.guard.is_exceeded() {
+            // #14346 observability (no-op when counters off): record which
+            // guard cut this walk short. The bail outcome is unchanged.
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::DepthExceeded,
+            );
             return TypeId::ERROR;
         }
         // Cross-instance per-query operation budget (see `query_budget`).
         let Some(_query_frame) = self.enter_eval_query_budget() else {
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::QueryOpBudget,
+            );
             return type_id;
         };
 
@@ -895,6 +911,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // proceed at a shallower depth without inheriting a sticky
                 // exceeded flag. See the analogous DepthExceeded arm below.
                 self.mark_silent_depth_bailed();
+                tsz_common::perf_counters::record_eval_termination_guard(
+                    tsz_common::perf_counters::EvaluationTerminationGuard::CrossEvalCycle,
+                );
                 return type_id;
             }
             let result = self.evaluate_guarded(type_id);
@@ -928,6 +947,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         crate::recursion::with_solver_frame(|| self.evaluate_guarded_inner(type_id)).unwrap_or_else(
             || {
                 self.mark_silent_depth_bailed();
+                tsz_common::perf_counters::record_eval_termination_guard(
+                    tsz_common::perf_counters::EvaluationTerminationGuard::SolverStackFrames,
+                );
                 type_id
             },
         )
@@ -1111,6 +1133,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.mark_depth_exceeded();
             self.guard.leave(type_id);
             self.memo_insert(limit_epoch_at_entry, type_id, TypeId::ERROR);
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::FuelExhausted,
+            );
             return TypeId::ERROR;
         }
 

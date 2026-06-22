@@ -928,6 +928,11 @@ impl PerfCounters {
 
     fn dump_evaluator_memo(snap: &PerfCounterSnapshot) -> String {
         let counters = &snap.evaluator_memo;
+        let termination_total: u64 = counters
+            .termination_guard_fires
+            .iter()
+            .map(|g| g.count)
+            .sum();
         if counters.constructions == 0
             && counters.local_memo_hits == 0
             && counters.compute_nodes == 0
@@ -940,10 +945,11 @@ impl PerfCounters {
             && counters.lost_memo_recomputes_other == 0
             && counters.dropped_memo_entries == 0
             && counters.dropped_aux_entries == 0
+            && termination_total == 0
         {
             return String::new();
         }
-        format!(
+        let mut out = format!(
             "\nEvaluator memo lifecycle:\n  \
              constructions             {:>12}\n  \
              local memo hits           {:>12}\n  \
@@ -969,7 +975,19 @@ impl PerfCounters {
             counters.lost_memo_recomputes_other,
             counters.dropped_memo_entries,
             counters.dropped_aux_entries,
-        )
+        );
+        // #14346: which guard cut a walk short, and how often. The
+        // firing-order signal — a nonzero bucket fingerprints which bound a
+        // runaway recursive walk hits first.
+        if termination_total > 0 {
+            out.push_str("  termination guard fires:\n");
+            for guard in &counters.termination_guard_fires {
+                if guard.count > 0 {
+                    out.push_str(&format!("    {:<26} {:>12}\n", guard.name, guard.count));
+                }
+            }
+        }
+        out
     }
 
     fn dump_slow_check_timings(snap: &PerfCounterSnapshot) -> String {
