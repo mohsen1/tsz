@@ -1,5 +1,6 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::relations::subtype::TypeResolver;
 
 pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
     tsz_solver::is_compiler_managed_type(name)
@@ -131,11 +132,22 @@ where
 /// Outcome-shaped variant for type-node predicate validation.
 ///
 /// `TypeNodeChecker` does not own a `CheckerState`, so it cannot call the full
-/// checker relation helper. Keep the legacy `TypeDatabase` relation decision
-/// inside this query boundary while exposing the same `.related` shape used by
-/// checker-state predicate validation.
-pub(crate) fn type_predicate_type_assignability_outcome(
+/// checker relation helper. Keep the relation decision inside this query
+/// boundary while exposing the same `.related` shape used by checker-state
+/// predicate validation.
+///
+/// The `resolver` is threaded all the way into the relation so that a predicate
+/// or parameter type written through a type alias (`TypeData::Lazy(DefId)` head,
+/// or a generic-alias `Application`) is resolved to its body *during* the
+/// relation walk. A bare `query_relation` runs with a `NoopResolver`, leaving an
+/// aliased side opaque and spuriously failing the relation — the function-type
+/// path's TS2677 false positive (issue #14231). `tsc` resolves both sides
+/// structurally before relating them; passing the checker's `DefId`-resolving
+/// resolver here mirrors that, matching the checker-state path which evaluates
+/// its inputs through the `TypeEnvironment` before relating.
+pub(crate) fn type_predicate_type_assignability_outcome<R: TypeResolver>(
     db: &dyn QueryDatabase,
+    resolver: &R,
     predicate_type: TypeId,
     param_type: TypeId,
 ) -> super::assignability::RelationOutcome {
@@ -143,7 +155,7 @@ pub(crate) fn type_predicate_type_assignability_outcome(
         db,
         predicate_type,
         param_type,
-        |source, target| type_predicate_relation_outcome(db, source, target).related,
+        |source, target| type_predicate_relation_outcome(db, resolver, source, target).related,
     );
 
     super::assignability::RelationOutcome {
@@ -156,13 +168,15 @@ pub(crate) fn type_predicate_type_assignability_outcome(
     }
 }
 
-fn type_predicate_relation_outcome(
+fn type_predicate_relation_outcome<R: TypeResolver>(
     db: &dyn QueryDatabase,
+    resolver: &R,
     source: TypeId,
     target: TypeId,
 ) -> super::assignability::RelationOutcome {
-    let result = tsz_solver::relations::relation_queries::query_relation(
+    let result = tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db.as_type_database(),
+        resolver,
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,

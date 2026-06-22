@@ -8,8 +8,9 @@ use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::evaluate::{TypeEvaluator, evaluate_index_access, evaluate_type};
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
+use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -152,6 +153,57 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
             db.intersection2(base_constraint, constraint)
         }
         _ => type_id,
+    }
+}
+
+/// Base constraint of an instantiable indexed access `Obj[Idx]`, for the
+/// comparability/overlap relation ONLY.
+///
+/// This is a deliberately narrow reducer kept OUT of the shared
+/// [`get_base_constraint_of_type`]: the shared base-constraint query is on the
+/// hot path of assignment narrowing, generic-call normalization, and type-arg
+/// constraint validation, where reducing an instantiable indexed access changes
+/// the displayed/relation surface (e.g. it strips the `| undefined` that tsc
+/// keeps on `Partial<T>[keyof T]` in an assignment diagnostic). The comparability
+/// relation (TS2678 switch/case, TS2367 `===`/`!==`) is the only caller that
+/// needs tsc's `getReducedApparentType` indexed-access reduction.
+///
+/// Reduces the object's contained type parameters to their constraints (tsc's
+/// base-constraint mapper), evaluates that, then evaluates the indexed access
+/// against the reduced object. Returns the input `type_id` unchanged when it is
+/// not an `IndexAccess`, when no reduction is possible (the index access remains
+/// genuinely deferred), or when reduction produces an `Error`, so the relation
+/// sees the same opaque type it would have before.
+///
+/// For example `Parameters<F>["length"]` where `F extends (...args: any[]) => any`
+/// reduces to `any[]["length"]` = `number`, so a numeric-literal switch/`===`
+/// operand can overlap it (no false TS2678/TS2367).
+pub fn reduce_index_access_to_base_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let Some(TypeData::IndexAccess(object, index)) = db.lookup(type_id) else {
+        return type_id;
+    };
+
+    // Reduce the object's type parameters to their constraints, then evaluate so
+    // an alias `Application` (e.g. `Parameters<(...args: any[]) => any>`)
+    // collapses to its concrete body (`any[]`).
+    let object_constraint = evaluate_type(
+        db,
+        instantiate_type_params_to_constraints_uncached(db, object),
+    );
+
+    // No progress reducing the object: keep the deferred form.
+    if object_constraint == object {
+        return type_id;
+    }
+
+    let resolved = evaluate_index_access(db, object_constraint, index);
+    if resolved == TypeId::ERROR || resolved == type_id {
+        type_id
+    } else {
+        resolved
     }
 }
 

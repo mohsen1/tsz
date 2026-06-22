@@ -1303,7 +1303,13 @@ impl BinderState {
                     {
                         Arc::make_mut(&mut self.alias_partners).insert(sym_id, existing_id);
                     }
-                    file_exports.set(name.clone(), sym_id);
+                    if !self.export_surface_keeps_existing_value(
+                        name,
+                        file_exports.get(name),
+                        sym_id,
+                    ) {
+                        file_exports.set(name.clone(), sym_id);
+                    }
                 }
             }
         }
@@ -1339,6 +1345,53 @@ impl BinderState {
         if !file_exports.is_empty() {
             Arc::make_mut(&mut self.module_exports).insert(file_name.to_string(), file_exports);
         }
+    }
+
+    fn export_surface_keeps_existing_value(
+        &self,
+        export_name: &str,
+        existing_id: Option<SymbolId>,
+        incoming_id: SymbolId,
+    ) -> bool {
+        const TYPE_ONLY_DECL: u32 =
+            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
+
+        let Some(existing_id) = existing_id else {
+            return false;
+        };
+        let Some(existing) = self.symbols.get(existing_id) else {
+            return false;
+        };
+        let Some(incoming) = self.symbols.get(incoming_id) else {
+            return false;
+        };
+
+        if export_name == "default"
+            && existing.has_any_flags(symbol_flags::ALIAS)
+            && existing.import_module().is_some()
+            && incoming.has_any_flags(symbol_flags::ALIAS)
+            && incoming.import_module().is_none()
+        {
+            return true;
+        }
+
+        let incoming_is_type_only = incoming.is_type_only
+            || (incoming.has_any_flags(TYPE_ONLY_DECL)
+                && !incoming.has_any_flags(symbol_flags::VALUE)
+                && incoming.import_module().is_none());
+        if incoming_is_type_only
+            && existing.has_any_flags(symbol_flags::ALIAS)
+            && existing.import_name() == Some("*")
+            && !existing.is_umd_export
+        {
+            return false;
+        }
+        let existing_can_provide_value = !existing.is_type_only
+            && (existing.has_any_flags(symbol_flags::VALUE)
+                || (existing.has_any_flags(symbol_flags::ALIAS)
+                    && existing.import_module().is_some()));
+
+        incoming_is_type_only && existing_can_provide_value
     }
 
     /// Retry `export = X` binding for forward-reference cases.

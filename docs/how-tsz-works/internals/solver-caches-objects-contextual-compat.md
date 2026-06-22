@@ -320,12 +320,24 @@ granularities exist, mirroring the solver's:
 
 ### collect_properties: cross-collector recursion guard
 
-`collect_properties_result_cache` is keyed by `(TypeId, resolver_generation)`.
+`collect_properties_result_cache` scopes each result by `resolver_generation`.
 The `resolver_generation` (a monotonic counter on `TypeResolver`,
 `def/resolver.rs` line 25, bumped whenever a later `resolve` could return a
 different type) prevents reusing a result after lazy `DefId` resolution can
 change the answer — it is a generation-stamp invalidation, not an explicit
 sweep.
+
+Because the generation only advances, a result stamped with a superseded
+generation is never served again (a lookup always supplies the caller's current
+generation), yet the legacy flat `(TypeId, generation)` map never evicted it —
+it grew by one mostly-dead entry per cacheable collection until the per-file
+`clear()`. The memo (`query_cache_collect_properties_memo.rs`,
+`CollectPropertiesMemo`) therefore retains only the `MAX_GENERATIONS_PER_TYPE`
+most-recent generations per `TypeId` and evicts the oldest, bounding residency
+on generation-churning programs without changing any served value (issue
+\#14347). Replacing the generation epoch with per-dependency invalidation —
+so an *unrelated* def publish stops invalidating the entry at all — rides on
+canonical type identity (\#14344) and is tracked there.
 
 Caching intersection property collection is subtle because the collector
 recurses across *public* `collect_properties` calls (resolving recursive
