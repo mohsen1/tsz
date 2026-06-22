@@ -1937,58 +1937,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         //      pattern's (e.g. `Exclude<X<T> | undefined, undefined>` wraps
         //      `X<T>`) — evaluate through the wrapper so the
         //      Application-vs-Application match has a same-base source.
-        let mut check_type = cond.check_type;
-        if get_application_base(self.interner(), check_type) != Some(pattern_base) {
-            // Prefer a head-only alias reduction to align the base. Peeling
-            // substitutes the alias body to its `Application` form via
-            // `instantiate_generic_cached` without materializing the
-            // interface's members, whereas `self.evaluate` would force full
-            // member materialization. For a nested generic application such as
-            // `Promise<Promise<X>>` that materialization is super-linear in the
-            // nesting depth (#14330) — yet the Application-vs-Application
-            // matcher below only needs the head + args, which peeling already
-            // exposes. Fall back to full evaluation (and display-alias
-            // recovery) only when peeling cannot align the base.
-            let mut peeled = check_type;
-            let mut aligned = None;
-            for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
-                if get_application_base(self.interner(), peeled) == Some(pattern_base) {
-                    aligned = Some(peeled);
-                    break;
-                }
-                // Only peel "wrapper" aliases whose resolved body is itself an
-                // `Application` (e.g. `type AsyncBox<T> = Promise<...>`).
-                // Conditional-body aliases (`ReturnType<F>`, a self-recursive
-                // `DeepUnwrap<T>`) must not be peeled here: substituting their
-                // bodies eagerly reduces the conditional to a residual
-                // `Application` that differs from full evaluation and bypasses
-                // the load-bearing last-chance recovery below.
-                if !self.alias_application_has_application_body(peeled) {
-                    break;
-                }
-                let Some(next) = self.peel_alias_application(peeled) else {
-                    break;
-                };
-                if next == peeled {
-                    break;
-                }
-                peeled = next;
-            }
-
-            if let Some(aligned) = aligned {
-                check_type = aligned;
-            } else {
-                let evaluated = self.evaluate(check_type);
-                if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
-                    check_type = evaluated;
-                } else if let Some(origin) =
-                    self.try_recover_application_from_display_alias(evaluated)
-                    && get_application_base(self.interner(), origin) == Some(pattern_base)
-                {
-                    check_type = origin;
-                }
-            }
-        }
+        let check_type =
+            self.align_application_infer_check_type_base(cond.check_type, pattern_base);
 
         // Skip for special types
         if check_type == TypeId::ANY || check_type == TypeId::NEVER {

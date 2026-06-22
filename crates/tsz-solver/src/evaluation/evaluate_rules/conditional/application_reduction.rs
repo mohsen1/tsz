@@ -5,6 +5,57 @@ use crate::types::{TypeData, TypeId};
 use rustc_hash::FxHashMap;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Recover an `Application` form for `check_type` whose base matches
+    /// `pattern_base`, preferring head-only wrapper-alias peeling before full
+    /// evaluation.
+    pub(super) fn align_application_infer_check_type_base(
+        &mut self,
+        check_type: TypeId,
+        pattern_base: TypeId,
+    ) -> TypeId {
+        if crate::type_queries::get_application_base(self.interner(), check_type)
+            == Some(pattern_base)
+        {
+            return check_type;
+        }
+
+        let mut peeled = check_type;
+        for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
+            if crate::type_queries::get_application_base(self.interner(), peeled)
+                == Some(pattern_base)
+            {
+                return peeled;
+            }
+            // Only peel wrapper aliases whose resolved body is itself an
+            // `Application`; conditional-body aliases must stay on the full
+            // evaluation + recovery path to preserve their reduction behavior.
+            if !self.alias_application_has_application_body(peeled) {
+                break;
+            }
+            let Some(next) = self.peel_alias_application(peeled) else {
+                break;
+            };
+            if next == peeled {
+                break;
+            }
+            peeled = next;
+        }
+
+        let evaluated = self.evaluate(check_type);
+        if crate::type_queries::get_application_base(self.interner(), evaluated)
+            == Some(pattern_base)
+        {
+            return evaluated;
+        }
+        if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
+            && crate::type_queries::get_application_base(self.interner(), origin)
+                == Some(pattern_base)
+        {
+            return origin;
+        }
+        check_type
+    }
+
     /// Cheap pre-check before `reduce_alias_body_to_application_form`: only
     /// candidate types can be usefully reduced. Avoids the per-conditional
     /// hot-path cost of entering the reducer just to bail on the first
