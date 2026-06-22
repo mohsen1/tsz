@@ -8,7 +8,7 @@ use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex
 use crate::caches::db::{
     QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeContainsByIdCache,
     TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
-    TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -999,6 +999,16 @@ impl TypeContainsByIdCache for QueryCache<'_> {
     fn set_contains_type_by_id_memo(&self, root: TypeId, target: TypeId, result: bool) {
         self.interner
             .set_contains_type_by_id_memo(root, target, result);
+    }
+}
+
+impl TypePruneUnionCache for QueryCache<'_> {
+    fn prune_union_members_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.prune_union_members_memo(type_id)
+    }
+
+    fn set_prune_union_members_memo(&self, type_id: TypeId, result: TypeId) {
+        self.interner.set_prune_union_members_memo(type_id, result);
     }
 }
 

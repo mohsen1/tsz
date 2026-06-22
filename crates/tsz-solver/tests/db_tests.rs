@@ -273,6 +273,77 @@ fn query_cache_caches_object_spread_properties() {
     assert_eq!(db.object_spread_properties_cache_len(), 1);
 }
 
+/// `prune_impossible_object_union_members` is a pure function of the input union
+/// `TypeId` (only structural predicates over the immutable interned `DAG`), so its
+/// result is memoized project-wide on the interner. Object-union property access
+/// re-asks the same discriminated-union `TypeId` once per property read; this pins
+/// both the byte-identical pruned value and the cross-call cache reuse.
+#[test]
+fn prune_impossible_object_union_members_memo_is_byte_identical_and_reused() {
+    let interner = TypeInterner::new();
+
+    let kind_prop = |lit: TypeId, order: u32| PropertyInfo {
+        name: interner.intern_string("kind"),
+        type_id: lit,
+        write_type: lit,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    };
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+
+    // An intersection with conflicting required `kind` discriminants is a
+    // structurally impossible object member, so pruning drops it. Build it with
+    // the raw (un-normalized) intersection so it survives as an `Intersection`
+    // node and actually reaches the prune predicate, rather than being collapsed
+    // to `never` at construction time.
+    let impossible = interner.intersect_types_raw2(
+        interner.object(vec![kind_prop(lit_a, 0)]),
+        interner.object(vec![kind_prop(lit_b, 0)]),
+    );
+    let valid = interner.object(vec![kind_prop(lit_c, 0)]);
+    let union = interner.union_preserve_members(vec![impossible, valid]);
+
+    // The setup must hold a real two-member `Union` so the prune path is exercised
+    // (otherwise the early non-`Union` guard would short-circuit the memo).
+    let Some(TypeData::Union(members)) = interner.lookup(union) else {
+        panic!("expected a Union for the prune-memo setup, got {union:?}");
+    };
+    assert_eq!(interner.type_list(members).len(), 2);
+
+    let db: &dyn TypeDatabase = &interner;
+
+    // Pruning drops the structurally impossible intersection member, leaving the
+    // single valid object — the byte-identical structural answer.
+    let pruned = crate::type_queries::prune_impossible_object_union_members(db, union);
+    assert_eq!(pruned, valid);
+
+    // The result is memoized on the interner, so a second call returns the same
+    // value from the cache rather than re-walking the union.
+    assert_eq!(db.prune_union_members_memo(union), Some(pruned));
+    let pruned_again = crate::type_queries::prune_impossible_object_union_members(db, union);
+    assert_eq!(pruned_again, pruned);
+
+    // Non-union inputs are returned unchanged (the early `Union` guard) and never
+    // populate the union-keyed memo.
+    assert_eq!(
+        crate::type_queries::prune_impossible_object_union_members(db, TypeId::NUMBER),
+        TypeId::NUMBER
+    );
+    assert_eq!(db.prune_union_members_memo(TypeId::NUMBER), None);
+}
+
 #[test]
 fn type_interner_query_db_tracks_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();

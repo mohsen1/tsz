@@ -571,6 +571,30 @@ pub trait TypeContainsByIdCache {
     fn set_contains_type_by_id_memo(&self, _root: TypeId, _target: TypeId, _result: bool) {}
 }
 
+/// Cache for the pure structural `prune_impossible_object_union_members(type_id)`
+/// result, keyed by the union `TypeId`.
+///
+/// Pruning a union's impossible object members consults only structural
+/// predicates over the immutable interned type `DAG` (literal-discriminant
+/// conflicts, never-typed or impossible-unit required properties) plus
+/// resolver-free `evaluate_type` / `is_subtype_of` walks; it threads no resolver,
+/// substitution environment, or compiler option, so the pruned result is a pure
+/// function of the input union `TypeId` and stable within one interner. Kept
+/// separate from [`TypeDatabase`] so the broad query trait stays under its method
+/// cap (#8205); `TypeDatabase` re-exposes these via the supertrait bound, so
+/// `&dyn TypeDatabase` callers are unaffected.
+pub trait TypePruneUnionCache {
+    /// Look up the memoized `prune_impossible_object_union_members(type_id)`
+    /// result. Default `None` (no caching).
+    fn prune_union_members_memo(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Record the `prune_impossible_object_union_members(type_id)` result.
+    /// Default no-op.
+    fn set_prune_union_members_memo(&self, _type_id: TypeId, _result: TypeId) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -585,6 +609,7 @@ pub trait TypeDatabase:
     + TypeSubstitutionConstruction
     + TypeExtractParamsCache
     + TypeContainsByIdCache
+    + TypePruneUnionCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -1115,6 +1140,16 @@ impl TypeContainsByIdCache for TypeInterner {
 
     fn set_contains_type_by_id_memo(&self, root: TypeId, target: TypeId, result: bool) {
         Self::set_contains_type_by_id_memo(self, root, target, result);
+    }
+}
+
+impl TypePruneUnionCache for TypeInterner {
+    fn prune_union_members_memo(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::prune_union_members_memo(self, type_id)
+    }
+
+    fn set_prune_union_members_memo(&self, type_id: TypeId, result: TypeId) {
+        Self::set_prune_union_members_memo(self, type_id, result);
     }
 }
 

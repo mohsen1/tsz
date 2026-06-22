@@ -1765,10 +1765,27 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     false
 }
 
+/// Prune union members whose object/intersection shape is structurally
+/// impossible (conflicting literal discriminants, never-typed or impossible-unit
+/// required properties), returning the narrowed union (or `never` / the single
+/// survivor / the input unchanged).
+///
+/// Pure function of the input union `TypeId`: it consults only structural
+/// predicates over the immutable interned type `DAG` via resolver-free
+/// `evaluate_type` / `is_subtype_of` walks, threading no resolver, substitution
+/// environment, or compiler option. The result is therefore memoized
+/// project-wide on the interner ([`TypePruneUnionCache`]) so the repeated
+/// per-property-read prune walks that object-union property access issues
+/// against the same discriminated-union `TypeId` collapse to O(1), mirroring the
+/// sibling `contains_type_by_id` / `widen_type` pure-function memos.
 pub fn prune_impossible_object_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let Some(TypeData::Union(list_id)) = db.lookup(type_id) else {
         return type_id;
     };
+
+    if let Some(cached) = db.prune_union_members_memo(type_id) {
+        return cached;
+    }
 
     let members = db.type_list(list_id);
     let retained: Vec<_> = members
@@ -1780,12 +1797,15 @@ pub fn prune_impossible_object_union_members(db: &dyn TypeDatabase, type_id: Typ
         })
         .collect();
 
-    match retained.len() {
+    let result = match retained.len() {
         0 => TypeId::NEVER,
         len if len == members.len() => type_id,
         1 => retained[0],
         _ => db.union_preserve_members(retained),
-    }
+    };
+
+    db.set_prune_union_members_memo(type_id, result);
+    result
 }
 
 fn intersection_member_preserves_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
