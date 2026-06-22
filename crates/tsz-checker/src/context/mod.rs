@@ -479,16 +479,22 @@ pub struct NameResolutionDiagnostics {
     pub reported_nodes: FxHashSet<NodeIndex>,
 
     /// Memoized spelling-suggestion candidate scans keyed by the failing
-    /// reference `NodeIndex`. The full-symbol-universe Levenshtein walk in
-    /// `scan_similar_identifiers` is a pure function of the binder/lib tables
-    /// (stable within a file session) and the reference site, but demand-driven
-    /// type evaluation re-resolves the *same* unresolved type reference many
-    /// times (constraint/alias/conditional/indexed-access revisits). Without a
-    /// memo the scan re-runs per revisit — `O(references × identifier-table)`
-    /// instead of `O(unique-unresolved-references)`. Caching the result per node
-    /// collapses the repeats while emitting exactly the same suggestions.
+    /// reference `NodeIndex` together with the symbol-meaning mask the scan ran
+    /// under (`VALUE`/`TYPE` for ordinary name lookups, `NAMESPACE` for the
+    /// `Cannot find namespace` path). The full-symbol-universe Levenshtein walk
+    /// in `scan_similar_identifiers_for_meaning` is a pure function of the
+    /// binder/lib tables (stable within a file session), the reference site, and
+    /// the requested meaning, but demand-driven type evaluation re-resolves the
+    /// *same* unresolved reference many times (constraint/alias/conditional/
+    /// indexed-access revisits). Without a memo the scan re-runs per revisit —
+    /// `O(references × identifier-table)` instead of
+    /// `O(unique-unresolved-references)`. Caching the result per
+    /// `(node, meaning)` collapses the repeats while emitting exactly the same
+    /// suggestions. The meaning is part of the key so a node queried under two
+    /// distinct meanings (it never is today, but the gateway is shared) cannot
+    /// return a scan run for the wrong candidate set.
     /// Cleared at the file-session boundary alongside `reported_nodes`.
-    pub suggestion_scan_cache: RefCell<FxHashMap<NodeIndex, Vec<String>>>,
+    pub suggestion_scan_cache: RefCell<FxHashMap<(NodeIndex, u32), Vec<String>>>,
 }
 
 /// File-session memo tables shared by flow narrowing helpers.
