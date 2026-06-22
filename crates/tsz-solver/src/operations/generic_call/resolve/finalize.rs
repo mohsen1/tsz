@@ -10,13 +10,67 @@ use crate::operations::generic_call::{
 };
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 use super::FinishGenericCallResolutionArgs;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    /// Inference vars a context-sensitive callback argument reaches only through
+    /// a callback **parameter** (contravariant) position, never a callback
+    /// **return** (covariant) position. Round 2 body inference cannot recover
+    /// these from the callback body, so a contextual return type is allowed to
+    /// pin them even when they also appear in a direct-parameter slot.
+    ///
+    /// Evaluation of indexed-access/alias callback signatures (e.g.
+    /// `Ord<A>['compare']`) is performed here, after argument inference has
+    /// settled, so it cannot perturb in-flight inference.
+    fn callback_param_only_inference_vars(
+        &mut self,
+        func: &FunctionShape,
+        placeholder_subst: &TypeSubstitution,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+    ) -> FxHashSet<InferenceVar> {
+        let mut param_position: FxHashSet<InferenceVar> = FxHashSet::default();
+        let mut return_position: FxHashSet<InferenceVar> = FxHashSet::default();
+        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+        for param in &func.params {
+            let instantiated = instantiate_type(self.interner, param.type_id, placeholder_subst);
+            // Prefer the raw signature; only fall back to evaluation (which can
+            // resolve indexed-access/alias callbacks) when the raw type does not
+            // already expose a function shape.
+            let shape =
+                Self::get_contextual_signature_cached(self.interner, instantiated).or_else(|| {
+                    let evaluated = self.checker.evaluate_type(instantiated);
+                    (evaluated != instantiated)
+                        .then(|| Self::get_contextual_signature_cached(self.interner, evaluated))
+                        .flatten()
+                });
+            let Some(shape) = shape else {
+                continue;
+            };
+            for callback_param in &shape.params {
+                visited.clear();
+                param_position.extend(self.collect_direct_placeholder_vars_in_type(
+                    callback_param.type_id,
+                    var_map,
+                    &mut visited,
+                ));
+            }
+            visited.clear();
+            return_position.extend(self.collect_direct_placeholder_vars_in_type(
+                shape.return_type,
+                var_map,
+                &mut visited,
+            ));
+        }
+        param_position
+            .difference(&return_position)
+            .copied()
+            .collect()
+    }
+
     pub(super) fn finish_generic_call_resolution(
         &mut self,
         args: FinishGenericCallResolutionArgs<'_>,
@@ -32,6 +86,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             local_type_param_names,
             var_map,
             direct_param_vars,
+            callback_placeholder_subst,
             noinfer_param_vars,
             rest_tuple_target_type,
             structural_return_subst,
@@ -79,6 +134,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 );
             }
         }
+
+        // Partition the type-parameter inference vars that a context-sensitive
+        // callback argument reaches by where they appear in the callback's
+        // *expected* signature. A var in a callback **parameter** (contravariant)
+        // position cannot be recovered from the callback body during Round 2,
+        // whereas a var in the callback **return** (covariant) position can. Vars
+        // reached only through callback parameter positions must therefore accept
+        // a binding from the contextual return type even though they also occupy a
+        // direct-parameter slot; otherwise the binding is dropped and the
+        // parameter silently widens to its constraint/`unknown`. This mirrors
+        // `tsc`, which fixes such parameters from the return context (e.g.
+        // `fromCompare<A>(compare: Ord<A>['compare']): Ord<A>` called with a bare
+        // lambda under a contextual `Ord<string>`). Computed here, after argument
+        // inference has settled, so the evaluation of indexed-access/alias callback
+        // signatures cannot perturb in-flight inference.
+        let callback_param_only_vars =
+            self.callback_param_only_inference_vars(func, callback_placeholder_subst, var_map);
 
         let mut final_subst = TypeSubstitution::new();
         let mut infer_subst_cache: Option<TypeSubstitution> = None;
@@ -635,7 +707,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     false
                 };
+                // A var that a context-sensitive callback reaches only through a
+                // callback *parameter* (contravariant) position is not inferable
+                // from the callback body during Round 2, so its `unknown`/fallback
+                // here is a placeholder the contextual return type must fill — even
+                // though the var also occupies a direct-parameter slot. Treat it
+                // like a non-direct var so the contextual return substitution
+                // applies (matches `tsc` fixing such parameters from the return
+                // context, e.g. `fromCompare<A>(c: Ord<A>['compare']): Ord<A>`).
                 let keep_direct_param_inference = direct_param_vars.contains(&var)
+                    && !callback_param_only_vars.contains(&var)
                     && !contextual_can_replace_foreign_source
                     && !prefer_contextual_constraint_candidate
                     && ((!has_constraints

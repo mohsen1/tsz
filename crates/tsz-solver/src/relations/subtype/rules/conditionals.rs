@@ -426,11 +426,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // (a) constraint <: extends_type → always the true branch, deterministic
             // (b) no member of extends_type <: constraint → extends_type can never be
             //     satisfied by any subtype of constraint, always the false branch, deterministic
-            // (c) otherwise → non-deterministic, skip Strategy 1.5
-            let constraint_subtype_of_extends =
-                self.check_subtype(constraint, cond.extends_type).is_true();
-            let is_non_deterministic = if constraint_subtype_of_extends {
-                false // always-true branch — deterministic
+            // (c) the extends type is an `infer` pattern (`F extends (...a: infer P)
+            //     => any ? P : never`) — an *extraction* conditional rather than a
+            //     discriminating test. Instantiating the check type with its
+            //     constraint and evaluating yields the genuine extracted type, which
+            //     is exactly the constraint tsc reads via
+            //     `getConstraintOfDistributiveConditionalType`. The
+            //     subtype-of-extends heuristic below is meaningless for a pattern
+            //     (the infer placeholder always "matches"), so it must not gate
+            //     these out.
+            // (d) otherwise → non-deterministic, skip Strategy 1.5
+            let extends_is_inference_pattern =
+                crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type);
+            let is_non_deterministic = if extends_is_inference_pattern
+                || self.check_subtype(constraint, cond.extends_type).is_true()
+            {
+                // extraction pattern, or constraint <: extends (always-true
+                // branch) — deterministic. The `||` short-circuits, so the
+                // subtype check is skipped for an inference pattern (where it
+                // would be meaningless).
+                false
             } else if matches!(self.interner.lookup(constraint), Some(TypeData::Union(_))) {
                 // Union constraint: distribution over each member is always deterministic.
                 // e.g. ZeroOf<T extends number | string>: instantiate T→(number|string),
@@ -459,6 +474,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
                 if instantiated != cond_type_id {
                     let evaluated = self.evaluate_type(instantiated);
+                    // A `never` distributive constraint (e.g. `ZeroOf<{}>`, where
+                    // no branch matches) is legitimately assignable to any target,
+                    // so it is kept here rather than guarded out — `never <: T`
+                    // holds and matches tsc's acceptance of such relations.
                     if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
                     {
                         return SubtypeResult::True;

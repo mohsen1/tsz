@@ -406,6 +406,51 @@ pub fn conditional_branch_union_constraint(
     Some(union)
 }
 
+/// Constraint of a *distributive* conditional type, mirroring tsc's
+/// `getConstraintOfDistributiveConditionalType`.
+///
+/// For `T extends E ? X : Y` where the check type `T` is a constrained type
+/// parameter that does not occur in its own constraint, instantiate the whole
+/// conditional with `T := constraint` and evaluate it. This is the constraint
+/// tsc reads for such a reference — e.g. the parameter tuple of `Parameters<F>`
+/// (`F extends (...a: infer P) => any ? P : never`) resolves, via
+/// `F := <F's constraint>`, to the constraint's own parameter list (so
+/// `Parameters<F>` where `F extends (...p: never[]) => unknown` resolves to
+/// `never[]`).
+///
+/// Returns `None` when the conditional is not distributive, the check type is
+/// not a constrained type parameter, the constraint refers back to the
+/// parameter, the instantiation makes no progress, or the evaluated result is
+/// `never` — mirroring tsc's `!(instantiated.flags & Never)` guard, which keeps
+/// a `never` distributive constraint from being used (callers fall back to the
+/// default constraint instead).
+pub fn get_distributive_conditional_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+    if !cond.is_distributive {
+        return None;
+    }
+    let param_info = crate::visitor::type_param_info(db, cond.check_type)?;
+    let constraint = param_info.constraint?;
+    if crate::visitor::contains_type_parameter_named(db, constraint, param_info.name) {
+        return None;
+    }
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+    let sub = TypeSubstitution::single(param_info.name, constraint);
+    let instantiated = instantiate_type(db, type_id, &sub);
+    if instantiated == type_id {
+        return None;
+    }
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, instantiated);
+    if evaluated == type_id || evaluated == TypeId::NEVER {
+        return None;
+    }
+    Some(evaluated)
+}
+
 /// Resolve a type to its base constraint for display purposes, recursively reducing
 /// type parameters inside unions and intersections.
 ///
