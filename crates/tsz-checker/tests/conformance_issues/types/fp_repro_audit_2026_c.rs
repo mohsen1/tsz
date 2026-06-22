@@ -149,7 +149,6 @@ export type { A };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14225 (issue closed but minimal repro still emits TS2503)"]
 fn issue_14225_reimported_namespace_qualified_type_no_ts2503() {
     if !lib_files_available() {
         return;

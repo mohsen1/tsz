@@ -86,7 +86,6 @@ fn issue_14228_export_star_as_namespace_type_qualifier_no_ts2503() {
 /// (`T.Intersect<...>`) even when a same-named local *type* `T` shadows in type
 /// space. Using `T.Intersect` must not report TS2503.
 #[test]
-#[ignore = "reproduces #14225; FP still present (TS2503 'Cannot find namespace T' on a re-exported namespace import shadowed by a local `type T`; also emits a downstream TS2661)"]
 fn issue_14225_reexported_namespace_qualifier_with_local_type_shadow_no_ts2503() {
     if !lib_files_available() {
         return;
