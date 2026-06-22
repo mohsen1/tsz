@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
     /// TypeScript skips TS2454 when the declared type is `any`, `unknown`, or includes `undefined`.
     /// It also skips TS2454 entirely when `strictNullChecks` is disabled, because
     /// without strict null checks all types implicitly include `undefined`.
-    pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
+    pub(crate) fn skip_definite_assignment_for_type(&mut self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
 
         // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
@@ -575,11 +575,31 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Skip if the type includes undefined or void (uninitialized variables are undefined)
-        crate::query_boundaries::flow_analysis::type_contains_undefined(
+        // Fast path: the raw declared type already exposes `undefined` as a
+        // top-level union member (the common `T | undefined` case). This is a
+        // cheap structural walk and avoids invoking the relation engine below.
+        if crate::query_boundaries::flow_analysis::type_contains_undefined(
             self.ctx.types,
             declared_type,
-        )
+        ) {
+            return true;
+        }
+
+        // Otherwise the `undefined` may be reachable only through the resolved /
+        // apparent form: a union member that is an unevaluated indexed-access of an
+        // *optional* property (e.g. `W['opt']`) resolves to `... | undefined`, which
+        // the structural `type_contains_undefined` walk above cannot see (it does
+        // not reduce indexed-access / alias / conditional members). tsc gates TS2454
+        // on the resolved type, so ask the resolver-backed relation whether
+        // `undefined` is assignable to the declared type: it reduces indexed-access
+        // (looking the object's members up through the type resolver) and applies
+        // optional-property `| undefined` semantics. The bare flow-boundary relation
+        // lacks the resolver, so it cannot reduce `W['opt']` — `is_assignable_to`
+        // (CheckerState) must be used here. `strict_null_checks` is guaranteed on
+        // (the non-strict case returned `true` above), so this is exactly "does the
+        // declared type admit `undefined`".
+        // (#14538 — zustand `let x: (typeof window)['__REDUX_DEVTOOLS_EXTENSION__'] | false`.)
+        self.is_assignable_to(TypeId::UNDEFINED, declared_type)
     }
 
     /// - Not in ambient contexts

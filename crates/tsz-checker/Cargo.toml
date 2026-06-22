@@ -884,6 +884,9 @@ path = "tests/co_contra_inference_tests.rs"
 name = "issue_14261_indexed_access_param_inference_tests"
 path = "tests/issue_14261_indexed_access_param_inference_tests.rs"
 [[test]]
+name = "issue_14538_indexed_access_undefined_definite_assignment_tests"
+path = "tests/issue_14538_indexed_access_undefined_definite_assignment_tests.rs"
+[[test]]
 name = "keyof_type_param_target_diagnostic_tests"
 path = "tests/keyof_type_param_target_diagnostic_tests.rs"
 [[test]]
