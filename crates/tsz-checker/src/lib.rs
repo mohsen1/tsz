@@ -1474,6 +1474,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[path = "tests/type_position_resolution_cache_tests.rs"]
 mod type_position_resolution_cache_tests;
 #[cfg(test)]
+#[path = "tests/type_predicate_alias_relation_tests.rs"]
+mod type_predicate_alias_relation_tests;
+#[cfg(test)]
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;
 #[cfg(test)]
