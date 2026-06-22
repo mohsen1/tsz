@@ -44,7 +44,7 @@ const artifact = {
     {
       // tsz is 3x slower than tsgo here — past the 1.5x slowdown-failure
       // threshold, so this row must NOT count toward the README headline
-      // (matches the site chart + the perf gate dropping >=1.5x-slower rows).
+      // even though the website benchmark page still charts its timing pair.
       name: "utility-types-project",
       lines: 2000,
       tsz_ms: 9000,
@@ -72,8 +72,8 @@ const artifact = {
 };
 
 const summary = createReadmePerfSummary(artifact);
-// utility-types-project (tsz 3x slower) is excluded by the 1.5x slowdown
-// threshold; only the within-threshold rxjs-project counts toward the headline.
+// utility-types-project (tsz 3x slower) is excluded from the README headline by
+// the 1.5x slowdown threshold; only the within-threshold rxjs-project counts.
 assert.equal(summary.rows, 1);
 assert.equal(summary.projectRows, 1);
 assert.equal(summary.microRows, 3);
