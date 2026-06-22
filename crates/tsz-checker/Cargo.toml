@@ -222,6 +222,9 @@ path = "tests/ts2371_binding_pattern_default_tests.rs"
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
 [[test]]
+name = "return_literal_union_widening_tests"
+path = "tests/return_literal_union_widening_tests.rs"
+[[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
 [[test]]
