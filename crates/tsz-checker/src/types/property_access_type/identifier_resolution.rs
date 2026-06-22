@@ -816,7 +816,23 @@ impl<'a> CheckerState<'a> {
                 // instead of `(other: Dog) => boolean`, which diverges from tsc.
                 let this_substitution_target = if self.is_super_expression(access.expression) {
                     self.current_this_type().unwrap_or(original_object_type)
-                } else if direct_class_this_receiver {
+                } else if direct_class_this_receiver
+                    || crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        original_object_type,
+                    )
+                {
+                    // Either the receiver *is* `this`, or its type still refers to
+                    // the enclosing class's polymorphic `this` (e.g.
+                    // `this.children: this[]`, `this.pair: [this, this]`). Such a
+                    // receiver is not a concrete anchor for `this`: a member whose
+                    // type also mentions `this` — the element `this` of
+                    // `Array<this>.push`/`indexOf`, a `[this, this]` slot — is
+                    // already in the correct scope and must stay `this`.
+                    // Substituting `this` with the receiver type would conflate the
+                    // member's `this` with the whole receiver shape (turning the
+                    // `this` element of `this[]` into `this[]`), drawing a spurious
+                    // TS2345.
                     self.ctx.types.this_type()
                 } else {
                     original_object_type
