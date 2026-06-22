@@ -87,6 +87,46 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .set(self.constraint_recursion_depth.get() - 1);
     }
 
+    /// Constrain a mapped type's parameters from a source whose key space is
+    /// empty — the intrinsic `object` type, or an empty object literal `{}`.
+    ///
+    /// `keyof <keyless source>` is `never`, so the mapped key space collapses to
+    /// `never`. For a non-homomorphic mapped type (`{ [P in K]: T }`, whose
+    /// constraint is a plain key set rather than `keyof <param>`) the value space
+    /// is empty as well, so the template type parameter is inferred as `never`.
+    /// This matches tsc's `inferToMappedType`, which infers `[never, never]` for
+    /// both `rec(object)` and `rec({})` against
+    /// `<K extends PropertyKey, T>(r: Record<K, T>)`. Homomorphic mapped types
+    /// (constraint `keyof <param>`) keep only the key-space collapse, preserving
+    /// their reverse-mapped candidate handling.
+    fn constrain_empty_keyspace_mapped(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        mapped: &crate::types::MappedType,
+        priority: crate::types::InferencePriority,
+    ) {
+        self.constrain_types(ctx, var_map, TypeId::NEVER, mapped.constraint, priority);
+        // Only a homomorphic mapped type (`{ [P in keyof T]: … }` over an
+        // inference placeholder) has a reverse-mapped candidate path to
+        // preserve. For any other (non-homomorphic) mapped type the value space
+        // is empty too, so the template type parameter is inferred as `never`.
+        if self
+            .find_keyof_inference_target(mapped.constraint, var_map)
+            .is_none()
+        {
+            let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NEVER);
+            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
+            self.constrain_types(
+                ctx,
+                var_map,
+                TypeId::NEVER,
+                instantiated_template,
+                crate::types::InferencePriority::MappedType,
+            );
+        }
+    }
+
     /// Normalize a union's members for inference partitioning by peeling
     /// transparent identity-alias applications (`type Some<X> = X`).
     ///
@@ -644,15 +684,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && !has_index_sigs
                         && !crate::is_primitive_type(self.interner, source)
                     {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            TypeId::NEVER,
-                            mapped.constraint,
-                            priority,
-                        );
+                        self.constrain_empty_keyspace_mapped(ctx, var_map, &mapped, priority);
                         return;
                     }
+                }
+                // Keyless object-like source with no `ObjectShape` (the intrinsic
+                // `object` type). `keyof object` is `never`, so the mapped key
+                // space — and, for a non-homomorphic `{ [P in K]: T }`, the value
+                // space — collapse to `never`, inferring `K = never`, `T = never`.
+                // This matches tsc's `inferToMappedType` (`object` has no
+                // enumerable keys). Without it the intrinsic `object` produces no
+                // candidates, so `K` falls back to its constraint (e.g.
+                // `PropertyKey`) and `object` is wrongly rejected against
+                // `Record<K, T>`.
+                if matches!(source_key, Some(TypeData::Intrinsic(IntrinsicKind::Object))) {
+                    self.constrain_empty_keyspace_mapped(ctx, var_map, &mapped, priority);
+                    return;
                 }
                 // Handle Tuple sources against mapped types for reverse-mapped inference.
                 // Tuples like [string, number] have numeric keys "0", "1", etc.

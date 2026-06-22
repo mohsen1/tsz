@@ -466,6 +466,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self
+            .default_export_identifier_value_target(member_id)
+            .is_some()
+        {
+            return self.get_validated_member_type(member_id, property_name);
+        }
+
         if let Some(member_symbol) = self
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
@@ -587,6 +594,26 @@ impl<'a> CheckerState<'a> {
         if let Some(target_member_id) =
             self.default_export_identifier_value_target(resolved_member_id)
         {
+            let wrapper_type = self.get_type_of_symbol(resolved_member_id);
+            if !matches!(wrapper_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                return Some(wrapper_type);
+            }
+            if let Some(import_name) = self
+                .get_cross_file_symbol(target_member_id)
+                .or_else(|| self.ctx.binder.get_symbol(target_member_id))
+                .and_then(|target| {
+                    (target.has_any_flags(symbol_flags::ALIAS)
+                        && !target.is_type_only
+                        && target.import_module().is_some())
+                    .then(|| target.import_name().unwrap_or(property_name).to_string())
+                })
+            {
+                let mut visited_aliases = AliasCycleTracker::new();
+                let target_member_id = self
+                    .resolve_alias_symbol(target_member_id, &mut visited_aliases)
+                    .unwrap_or(target_member_id);
+                return self.get_validated_member_type(target_member_id, &import_name);
+            }
             let mut visited_aliases = AliasCycleTracker::new();
             let target_member_id = self
                 .resolve_alias_symbol(target_member_id, &mut visited_aliases)
@@ -675,6 +702,30 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // For merged TYPE_ALIAS + value symbols (`export const X = ...` paired
+        // with `export type X = typeof X`), `get_type_of_symbol` enters the
+        // TYPE_ALIAS branch and returns the type-alias body. In namespace
+        // member access (value position — e.g. a computed property key
+        // `[ns.X]`), the VALUE side is required so the key resolves to the
+        // const's literal type instead of an unevaluated `typeof X`, which
+        // would otherwise raise a spurious TS2464 (and a follow-on TS2722 once
+        // the key fails to register as a member) (#14130). Mirrors the
+        // `is_merged_interface_value` branch above and the same-file identifier
+        // path in `resolved_identifier_flow_result`; the value side is resolved
+        // through the same helpers `reexported_merged_alias_value_type` uses,
+        // reusing the `value_decl` already fetched above.
+        if (flags & symbol_flags::TYPE_ALIAS) != 0
+            && (flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION)) != 0
+            && (flags & symbol_flags::INTERFACE) == 0
+            && (flags & symbol_flags::CLASS) == 0
+            && (flags & symbol_flags::ENUM) == 0
+            && let Some(value_type) = self
+                .compute_value_type_for_merged_alias(resolved_member_id)
+                .or_else(|| self.cross_file_merged_alias_value_type(resolved_member_id, value_decl))
+        {
+            return Some(value_type);
         }
 
         Some(self.get_type_of_symbol(resolved_member_id))

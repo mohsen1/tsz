@@ -44,20 +44,20 @@ fn function_type_predicate_validation_uses_relation_outcome_boundary() {
     );
     assert!(
         compact_type_node.contains("type_predicate_type_assignability_outcome(")
-            && compact_type_node.contains("types,Some(&env),resolved_predicate,resolved_param")
+            && compact_type_node.contains("types,&*self.ctx,resolved_predicate,resolved_param")
             && compact_type_node.contains(").related"),
-        "type-node predicate validation should consume the outcome-shaped predicate boundary, threading the DefId-resolving environment"
+        "type-node predicate validation should consume the outcome-shaped predicate boundary and thread the checker resolver"
     );
     assert!(
         !compact_type_node.contains("|source,target|types.is_assignable_to(source,target)"),
         "type-node predicate validation should not pass raw TypeDatabase assignability from checker code"
     );
     assert!(
-        compact_boundary.contains("fntype_predicate_relation_outcome(")
+        compact_boundary.contains("fntype_predicate_relation_outcome<R:TypeResolver>(")
             && compact_boundary.contains(
-                "|source,target|type_predicate_relation_outcome(db,env,source,target).related"
+                "|source,target|type_predicate_relation_outcome(db,resolver,source,target).related"
             ),
-        "type-node predicate boundary should route recursive relation probes through a RelationOutcome"
+        "type-node predicate boundary should route recursive relation probes through a RelationOutcome with the threaded resolver"
     );
     assert!(
         !compact_boundary.contains("db.is_assignable_to(source,target)"),

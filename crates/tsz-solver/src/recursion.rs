@@ -795,6 +795,23 @@ pub fn with_solver_frame<T>(body: impl FnOnce() -> T) -> Option<T> {
     ))
 }
 
+/// Run `body` on a (possibly freshly grown) stack **without** consuming a logical
+/// recursion frame.
+///
+/// This is the stack-growth half of [`with_solver_frame`] for recursion that is
+/// already bounded by its own logical guard (e.g. a `(source, pattern)` visited
+/// cycle break plus an expansion-depth budget) and therefore must not also be
+/// capped by the shared [`MAX_SOLVER_STACK_FRAMES`] budget — doing so could flip
+/// a legitimately deep-but-terminating match to its bail default. It only grows
+/// the native stack on demand using the same shared segment sizes, so a deeply
+/// nested case degrades through its own depth budget instead of overflowing the
+/// OS stack (SIGABRT). Use [`with_solver_frame`] instead whenever the recursion
+/// needs the frame budget as its termination guarantee.
+#[inline]
+pub fn grow_solver_stack<T>(body: impl FnOnce() -> T) -> T {
+    stacker::maybe_grow(STACK_RED_ZONE_BYTES, STACK_GROW_BYTES, body)
+}
+
 /// Current number of active solver recursion frames on this thread.
 ///
 /// Exposed for tests and diagnostics; normal callers use

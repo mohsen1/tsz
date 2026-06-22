@@ -48,6 +48,21 @@ function isNonEmptyStringArray(value) {
   return Array.isArray(value) && value.some(isNonEmptyString);
 }
 
+// A benchmark shard that exits non-zero writes an explicit error stub
+// ({"schema_version":1,"results":[],"error":"..."}) instead of timing data
+// (scripts/cloudbuild/cloudbuild-bench-shard.yaml). A payload with no result
+// rows contributes nothing to the published artifact, so it carries no timing
+// data to publish — and nothing to forge — and must be excluded from the merge
+// rather than fail the runner-signature gate.
+function isFailedShardStub(payload) {
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  return results.length === 0;
+}
+
+function shardStubError(payload) {
+  return isNonEmptyString(payload?.error) ? payload.error.trim() : null;
+}
+
 function parseArgs(argv) {
   const [, , outFile, ...rest] = argv;
   const inputFiles = [];
@@ -556,14 +571,35 @@ function main() {
     process.exit(1);
   }
 
-  const payloads = inputFiles.map((file) => ({
+  const allPayloads = inputFiles.map((file) => ({
     file,
     payload: JSON.parse(fs.readFileSync(file, "utf8")),
   }));
 
-  if (payloads.length === 0) {
+  if (allPayloads.length === 0) {
     console.error("No benchmark JSON inputs found.");
     process.exit(1);
+  }
+
+  // Isolate failed/partial shards: a shard that wrote only the error stub (no
+  // result rows) must not abort the merge of the shards that succeeded. Crashing
+  // here on a single transient shard failure turned every such failure into a
+  // total benchmark-publish outage (issue #14398). Required-shard completeness
+  // is owned independently by the bench.yml shard gate and
+  // check-artifact-readiness.mjs, not by the runner-signature gate.
+  const payloads = [];
+  const droppedEmptyShards = [];
+  for (const entry of allPayloads) {
+    (isFailedShardStub(entry.payload) ? droppedEmptyShards : payloads).push(entry);
+  }
+
+  if (droppedEmptyShards.length > 0) {
+    console.warn(
+      "::warning::Excluding benchmark shard(s) that produced no result rows (failed/partial shard) from the merged artifact:",
+    );
+    for (const { file, payload } of droppedEmptyShards) {
+      console.warn(`  - ${path.basename(file)}: ${shardStubError(payload) ?? "no result rows"}`);
+    }
   }
 
   const results = mergeCompatibilityCanaries(
@@ -626,6 +662,10 @@ function main() {
       runner_environment_warnings: runnerEnvironmentWarnings,
       measurement_profile_warnings: measurementProfileWarnings,
       project_compatibility_advisory: compatAdvisory,
+      dropped_empty_shards: droppedEmptyShards.map(({ file, payload }) => ({
+        file: path.basename(file),
+        error: shardStubError(payload),
+      })),
     },
     ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
     ...(measurementProfile ? { measurement_profile: measurementProfile } : {}),
