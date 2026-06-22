@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -983,7 +985,8 @@ impl PerfCounters {
             out.push_str("  termination guard fires:\n");
             for guard in &counters.termination_guard_fires {
                 if guard.count > 0 {
-                    out.push_str(&format!("    {:<26} {:>12}\n", guard.name, guard.count));
+                    writeln!(&mut out, "    {:<26} {:>12}", guard.name, guard.count)
+                        .expect("writing to String cannot fail");
                 }
             }
         }
