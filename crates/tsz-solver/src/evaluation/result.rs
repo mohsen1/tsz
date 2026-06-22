@@ -14,13 +14,17 @@
 //! outer collapse silently treat a budget-truncated partial as a finished
 //! type.
 //!
-//! In this slice the channel is a parity-safe scaffold: the sole producer
-//! ([`crate::evaluation::evaluate::TypeEvaluator::evaluate_request_result`])
-//! always reports [`Termination::Complete`], and every consumer collapses
-//! through [`EvaluationResult::into_type_id`], which ignores the verdict. The
-//! [`EvaluationResult::incomplete`] constructor is intentionally unreached
-//! (dead-code) here — a future stage wires the bail sites to it so a
-//! limit-truncated walk stops fabricating a wrong, fully-formed type.
+//! The channel is parity-safe: every consumer collapses through
+//! [`EvaluationResult::into_type_id`], which returns the relation-preserving
+//! `partial` (= the same opaque `TypeId` the bail produced before the channel),
+//! so the emitted type and diagnostics are byte-identical. As of #14346
+//! stage 2 the [`crate::evaluation::evaluate::TypeEvaluator::evaluate_request_result`]
+//! producer reports [`Termination::Incomplete`] with
+//! [`TerminationKind::IterationExceeded`] when the per-evaluator iteration limit
+//! cut the walk short — the first real producer of the `Incomplete` arm — while
+//! still surfacing the same `partial` and preserving the `deep_recursion_seen`
+//! cache taint. The remaining bail classes still report
+//! [`Termination::Complete`] until later stages wire them in.
 
 use crate::types::TypeId;
 
@@ -30,7 +34,8 @@ use crate::types::TypeId;
 /// `crate::evaluation::evaluate::TypeEvaluator::evaluate`: the
 /// recursion-depth guard, the process-wide evaluation fuel counter, the shared
 /// solver-stack-frame breaker, the cross-evaluator global-depth cycle limit,
-/// and the per-query operation budget. Carried inside
+/// the per-query operation budget, and the per-evaluator iteration limit.
+/// Carried inside
 /// [`Termination::Incomplete`] so a downstream consumer can distinguish a
 /// genuine result from a budget-limited approximation, and (in a later stage)
 /// refuse to memoize it.
@@ -48,6 +53,10 @@ pub enum TerminationKind {
     CrossEvalCycle,
     /// The per-query operation budget (`enter_eval_query_budget`) ran out.
     QueryOpBudget,
+    /// The per-evaluator recursion guard's *iteration* limit tripped
+    /// (`RecursionResult::IterationExceeded`) — a bounded run that leaves the
+    /// node opaque and marks the `deep_recursion_seen` cache taint.
+    IterationExceeded,
 }
 
 /// Whether an evaluation walk ran to completion or was bounded short.
@@ -85,9 +94,12 @@ impl EvaluationResult {
     /// relation-preserving `partial` type and the [`TerminationKind`] that
     /// fired.
     ///
-    /// Intentionally unreached in this scaffold slice: the sole producer
-    /// always reports [`Termination::Complete`], so behavior is byte-identical
-    /// to before. A future stage routes the bail sites here.
+    /// Reached as of #14346 stage 2 for [`TerminationKind::IterationExceeded`]
+    /// (see `evaluate_request_result`). `type_id` is set to `partial`, so the
+    /// universal [`EvaluationResult::into_type_id`] collapse is byte-identical
+    /// to the pre-channel opaque bail; the verdict is additional metadata a
+    /// future verdict-aware consumer can act on. The other bail classes still
+    /// route through [`Self::complete`] until later stages wire them here.
     pub const fn incomplete(partial: TypeId, kind: TerminationKind) -> Self {
         Self {
             type_id: partial,
