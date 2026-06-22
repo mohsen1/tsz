@@ -380,13 +380,23 @@ export const fromBlock = <A>(O: Ord<A>): Ord<A[]> =>
 }
 
 // ---------------------------------------------------------------------------
-// #14220 — TS2339: primitive string wrongly satisfies Record<any, any> in a
-// conditional check (zod).
+// #14220 — TS2339: an object interface wrongly fails `extends Record<any, any>`,
+// collapsing a `Normalize<T>` conditional to `never` (zod).
+//
+// Real root (verified against tsc 6.0.2): the conditional check `T extends
+// Record<any, any>` must hold for the object constituent `Params`.
+// `Record<any, any>` expands to a single anonymous `{ [k: string]: any; [k:
+// number]: any }` whose `any`-valued number index is *waived* by its co-present
+// `any`-valued string index, so a named interface with no numeric index still
+// satisfies it. tsz only applied that waiver to NAMED targets, so the expanded
+// `Record<any, any>` (anonymous) rejected `Params`, the conditional took its
+// `never` branch, and `params.case` reported a false TS2339. Fixed in
+// `relations/subtype/rules/objects.rs` (number-index waiver gated on
+// `!INTERSECTION_MERGED`, requiring both index values to be `any`).
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14220 (issue closed but minimal repro still emits TS2339)"]
-fn issue_14220_primitive_not_record_conditional_branch_no_ts2339() {
+fn issue_14220_object_satisfies_record_any_conditional_branch_no_ts2339() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 type Flatten<T> = { [k in keyof T]: T[k] };
@@ -407,7 +417,66 @@ export { f };
     );
     assert!(
         !has_error(&diags, 2339),
-        "no TS2339 — `string` must not satisfy `Record<any, any>`, so the conditional takes the narrowable branch. Actual: {diags:#?}"
+        "no TS2339 — an object interface must satisfy `Record<any, any>`, so the conditional keeps its narrowable branch. Actual: {diags:#?}"
+    );
+}
+
+// #14220 (adjacent, name-varied): a named interface with no numeric index is
+// directly assignable to the dual-`any`-index `Record<any, any>` target, while a
+// `Record<number, any>` (number index only) is still correctly rejected — and an
+// intersection of two single-index aliases stays rejected (per-member relation).
+#[test]
+fn issue_14220_named_object_vs_record_any_index_matrix() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Widget { label?: "a" | "b"; size?: number; }
+declare const w: Widget;
+const ok1: Record<any, any> = w;
+const ok2: { [k: string]: any; [k: number]: any } = w;
+const ok3: Record<string, any> = w;
+export { ok1, ok2, ok3 };
+"#,
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2322),
+        "no TS2322 — a named interface satisfies dual-`any`-index targets. Actual: {diags:#?}"
+    );
+
+    let neg = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Gadget { label?: "a" | "b"; }
+declare const g: Gadget;
+const bad1: Record<number, any> = g;
+const bad2: { [k: string]: string; [k: number]: any } = g;
+export { bad1, bad2 };
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&neg, 2322),
+        "TS2322 expected — number-index-only and narrower-string-value targets still reject a named source. Actual: {neg:#?}"
+    );
+
+    // The waiver is for a *single* object type. An intersection of two named
+    // single-index interfaces (`StringTo<any> & NumberTo<any>`) is related
+    // member-by-member by tsc, so the `NumberTo<any>` member alone still demands
+    // a numeric index and the named source is rejected — mirrors the
+    // `objectTypeWithStringAndNumberIndexSignatureToAny.ts` conformance `f2`.
+    let intersection = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Gadget { label?: "a" | "b"; }
+interface StringTo<T> { [k: string]: T; }
+interface NumberTo<T> { [k: number]: T; }
+declare const g: Gadget;
+const bad: StringTo<any> & NumberTo<any> = g;
+export { bad };
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&intersection, 2322),
+        "TS2322 expected — an intersection of single-index interfaces relates per-member, so the numeric member still demands a numeric index. Actual: {intersection:#?}"
     );
 }
 

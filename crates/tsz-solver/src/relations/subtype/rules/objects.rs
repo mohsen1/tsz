@@ -1007,6 +1007,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         !self.disable_method_bivariance && value_type.is_any()
     }
 
+    /// Whether an `any`-valued number index signature on `target` imposes no
+    /// requirement on a source that declares no numeric index, because `target`
+    /// also carries an `any`-valued (non-symbol) string index. The numeric
+    /// mirror of [`Self::target_string_index_any_waives_missing_index`]: `tsc`'s
+    /// `indexSignaturesRelatedTo` short-circuit accepts a named class/interface
+    /// against `{ [k: string]: any; [k: number]: any }` (e.g. `Record<any, any>`,
+    /// `{ [P in any]: any }`) even though `{ [k: number]: any }` alone rejects it.
+    ///
+    /// Both index values must be exactly `any` — a narrower number value
+    /// (`{ ...; [k: number]: string }`) or string value
+    /// (`{ [k: string]: string; [k: number]: any }`) falls back to the
+    /// per-property numeric check. An eagerly-merged intersection
+    /// (`ObjectFlags::INTERSECTION_MERGED`, e.g. `StringTo<any> & NumberTo<any>`)
+    /// is excluded: `tsc` relates each intersection member separately, so the
+    /// numeric member alone still demands a numeric index. A TS legacy
+    /// `any`-propagation quirk, disabled with method bivariance in Sound Mode.
+    pub(crate) fn target_dual_any_index_waives_missing_number_index(
+        &self,
+        target: &ObjectShape,
+    ) -> bool {
+        !self.disable_method_bivariance
+            && target
+                .number_index
+                .as_ref()
+                .is_some_and(|idx| idx.value_type.is_any())
+            && target
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL && idx.value_type.is_any())
+            && !target.flags.contains(ObjectFlags::INTERSECTION_MERGED)
+    }
+
     /// Check string index signature compatibility between source and target.
     ///
     /// Validates that string index signatures are compatible, handling:
@@ -1171,23 +1203,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True; // Target has no number index constraint
         };
 
-        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
-        //   if THIS target index info maps to `any` AND the target ALSO has a
-        //   string index signature, the source need not declare a matching
-        //   number index. Gated on a NAMED target (`target.symbol.is_some()`)
-        //   so we don't loosen merged-intersection synthetic shapes whose
-        //   indexes come from distinct intersection members; tsc relates each
-        //   intersection member separately, while our interner eagerly merges
-        //   them. Without this gate, `Obj <: StringTo<any> & NumberTo<any>`
-        //   would incorrectly succeed.
-        if !self.disable_method_bivariance
-            && t_number_idx.value_type.is_any()
-            && target
-                .string_index
-                .as_ref()
-                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL)
-            && target.symbol.is_some()
-        {
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828) — an
+        // `any`-valued number index is waived by a co-present `any`-valued string
+        // index on the same single object type (`Record<any, any>` accepts a
+        // named source). See the helper for the full rule and intersection guard.
+        if self.target_dual_any_index_waives_missing_number_index(target) {
             return SubtypeResult::True;
         }
 
