@@ -18,7 +18,7 @@ pub(super) struct GeneratorDeclarationYieldCtx {
     pub(super) early_yield_type: Option<TypeId>,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Recover inferred yield type for unannotated generator declarations.
     ///
     /// Function declarations defer their body walk to `check_function_declaration`
