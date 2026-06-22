@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let member_type = self.resolve_identifier_property_access(
+        self.resolve_identifier_property_access(
             idx,
             access,
             name_node,
@@ -1017,40 +1017,6 @@ impl<'a> CheckerState<'a> {
                 is_this_access,
                 js_expando_before_assignment,
             },
-        );
-
-        // A `this.member` read can resolve to a type that still mentions a base
-        // class's type parameter when the class extended that base WITHOUT type
-        // arguments (`class Der extends Base`, where `Base<P = …>`): the omitted
-        // argument is never bound on the `this`-member path (unlike an external
-        // receiver, which reads the already-defaulted instance shape), so the bare
-        // `P` leaks into the value's type (false TS2339/TS7053/TS2322 on
-        // `this.member`). `tsc` binds such an omitted base argument to its default
-        // (then constraint), per `fillMissingTypeArguments`; do the same here.
-        //
-        // Scoped to `this`-receiver reads: an external/value receiver already
-        // resolves these correctly, and a non-`this` deferred-generic access (a
-        // member typed by a type parameter that is legitimately still free, e.g.
-        // inside a generic function) must keep its parameter. Type parameters of
-        // the enclosing generic context (a class's / function's own parameters,
-        // e.g. `T` of a generic `Box<T>`) stay in scope and are preserved.
-        // Gated first on the cheap memoized free-parameter predicate so concrete
-        // results are untouched.
-        if is_this_access
-            && crate::query_boundaries::common::contains_free_type_parameters(
-                self.ctx.types,
-                member_type,
-            )
-        {
-            let in_scope: rustc_hash::FxHashSet<TypeId> =
-                self.ctx.type_parameter_scope.values().copied().collect();
-            crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
-                self.ctx.types,
-                member_type,
-                &in_scope,
-            )
-        } else {
-            member_type
-        }
+        )
     }
 }
