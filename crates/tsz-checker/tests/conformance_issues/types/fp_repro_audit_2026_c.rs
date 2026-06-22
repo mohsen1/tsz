@@ -220,7 +220,6 @@ export { useType, useValue }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14230"]
 fn issue_14230_mapped_index_by_symbol_no_ts2536() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
