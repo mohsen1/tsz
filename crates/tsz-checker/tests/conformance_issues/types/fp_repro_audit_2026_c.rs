@@ -317,7 +317,6 @@ export { a, b }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14261"]
 fn issue_14261_contextual_return_binding_samename_typeparam_no_ts18046() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -418,7 +417,6 @@ export { f };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14231"]
 fn issue_14231_type_predicate_through_alias_no_ts2677() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
