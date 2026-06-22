@@ -171,8 +171,22 @@ impl CheckerState<'_> {
         // top-level result memo (`use_cache`) below affects correctness.
         let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
 
+        // When the evaluator observes an `Application` over a `DefId` whose body
+        // is not yet registered (the registration-window artifact the solver
+        // reports via `unresolved_def_seen`), the pass's result is a function of
+        // that window, not of `type_id` alone. The `env_eval_cache` is keyed
+        // purely on `type_id` with no generation guard, so persisting such a
+        // result lets the under-resolved answer permanently shadow the correct
+        // one. Suppress both the authoritative write and the intermediate
+        // seed/persist for the governing pass (issue #13980).
+        let backstop_active =
+            !crate::context::env_eval_cache::unresolved_def_cache_backstop_disabled();
+
         let mut depth_exceeded = false;
         let first_pass_silent_bailed;
+        // Whether the first pass's result is an unresolved-def artifact that must
+        // not be persisted (the solver's flag, masked by the active backstop).
+        let first_pass_poisoned;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
@@ -204,9 +218,13 @@ impl CheckerState<'_> {
                 self.ctx.depth_exceeded.set(true);
             }
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
+            first_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
             // Persist intermediate evaluation results to the shared cache.
-            // Skip entries whose result contains unbound `infer` types or type queries.
-            if seed_persist {
+            // Skip entries whose result contains unbound `infer` types or type
+            // queries, and skip the whole batch when this pass observed an
+            // unresolved def (its intermediates share the registration-window
+            // taint — issue #13980).
+            if seed_persist && !first_pass_poisoned {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             eval_result.result
@@ -280,7 +298,7 @@ impl CheckerState<'_> {
                 // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
-        let final_result = if needs_resolver_pass {
+        let (final_result, final_poisoned) = if needs_resolver_pass {
             // Recompute the speed-only seed/persist gate after the first pass:
             // persisting first-pass intermediates can push the cache over the
             // structural cap, so the second pass must not reuse a stale `true`
@@ -316,21 +334,29 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            if second_pass_seed_persist {
+            let second_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
+            if second_pass_seed_persist && !second_pass_poisoned {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
+            // When the resolver pass makes no progress (`result == type_id`),
+            // `final_result` is the first pass's value, so its taint governs;
+            // otherwise the resolver pass produced the value and its own flag
+            // governs (issue #13980).
             if eval_result.result == type_id {
-                result
+                (result, first_pass_poisoned)
             } else {
-                eval_result.result
+                (eval_result.result, second_pass_poisoned)
             }
         } else {
-            result
+            (result, first_pass_poisoned)
         };
 
         // Same Infer guard for the top-level result: don't cache results
-        // containing unbound infer types from partially-evaluated conditional types.
+        // containing unbound infer types from partially-evaluated conditional
+        // types, nor a registration-window artifact whose governing pass observed
+        // an unresolved def (issue #13980).
         if use_cache
+            && !final_poisoned
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
