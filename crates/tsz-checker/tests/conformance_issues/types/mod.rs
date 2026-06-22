@@ -1,4 +1,5 @@
 mod computed_property_names;
+mod conditional_wrapper_alias_infer_14489;
 mod const_initializer_widening;
 mod cross_module_unique_symbol;
 mod defaults;
