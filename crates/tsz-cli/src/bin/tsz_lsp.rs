@@ -186,8 +186,10 @@ struct WorkspaceFolder {
 
 impl LspServer {
     fn new() -> Self {
+        let mut project = Project::new();
+        project.set_memory_budget(Self::configured_memory_budget());
         Self {
-            project: Project::new(),
+            project,
             initialized: false,
             shutdown_requested: false,
             pending_notifications: Vec::new(),
@@ -197,6 +199,37 @@ impl LspServer {
             workspace_folders: Vec::new(),
             client_supports_workspace_folders: false,
             client_supports_progress: false,
+        }
+    }
+
+    /// Read the optional soft memory budget for the project from the
+    /// `TSZ_LSP_MEMORY_BUDGET_BYTES` environment variable.
+    ///
+    /// Returns `None` (eviction disabled, the default) when the variable is
+    /// unset or does not parse as a positive byte count.
+    fn configured_memory_budget() -> Option<usize> {
+        std::env::var("TSZ_LSP_MEMORY_BUDGET_BYTES")
+            .ok()?
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|&bytes| bytes > 0)
+    }
+
+    /// Drop cold, safely-droppable files when the project exceeds its
+    /// configured memory budget. A no-op unless a budget is configured.
+    fn maybe_evict_under_memory_pressure(&mut self) {
+        if self.project.memory_budget_bytes().is_none() {
+            return;
+        }
+        let result = self.project.evict_if_over_budget();
+        if !result.evicted.is_empty() {
+            tracing::info!(
+                evicted = result.evicted.len(),
+                freed_bytes = result.bytes_freed,
+                remaining_bytes = result.bytes_remaining,
+                "lsp: evicted cold files under memory pressure"
+            );
         }
     }
 
@@ -738,6 +771,7 @@ impl LspServer {
             let file_name = Self::uri_to_file_name(&uri);
             self.project.mark_file_open(&file_name);
             self.project.set_file(file_name, text);
+            self.maybe_evict_under_memory_pressure();
             self.publish_diagnostics(&uri);
         }
     }
@@ -851,6 +885,7 @@ impl LspServer {
 
         let discovered = self.project.discover_files(&roots);
         let count = discovered.len();
+        self.maybe_evict_under_memory_pressure();
 
         self.end_progress(&token, Some(&format!("Indexed {count} files")));
 
@@ -916,6 +951,7 @@ impl LspServer {
                         discovered.len()
                     ),
                 );
+                self.maybe_evict_under_memory_pressure();
             }
         }
     }
