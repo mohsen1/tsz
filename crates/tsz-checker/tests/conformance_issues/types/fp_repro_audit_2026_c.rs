@@ -253,8 +253,10 @@ export const f =
 // type in the true branch (SubstitutionType missing). TS2344.
 // ---------------------------------------------------------------------------
 
+// Fixed: conditional true-branch narrowing now wraps a structured (non-naked)
+// check operand in a `SubstitutionType`, so `Capitalize<CamelCase<V>>`'s
+// constraint passes. Kept as a live regression guard.
 #[test]
-#[ignore = "reproduces #14167 (issue closed but minimal repro still emits TS2344)"]
 fn issue_14167_conditional_true_branch_substitution_no_ts2344() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
