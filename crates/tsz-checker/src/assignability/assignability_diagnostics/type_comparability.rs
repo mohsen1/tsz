@@ -276,6 +276,24 @@ impl<'a> CheckerState<'a> {
         found_function_prop
     }
 
+    /// Reduce an instantiable indexed-access operand (`Obj[Idx]`) to its base
+    /// constraint for comparability, leaving everything else unchanged.
+    ///
+    /// Mirrors tsc's `getReducedApparentType` for the indexed-access case:
+    /// `Parameters<F>["length"]` (where `F extends (...args: any[]) => any`)
+    /// reduces through `F`'s constraint to `any[]["length"]` = `number`. The
+    /// underlying reduction lives in the solver's
+    /// `reduce_index_access_to_base_constraint`, a comparability-only reducer
+    /// kept off the shared `get_base_constraint_of_type` hot path (so it does
+    /// not perturb assignment narrowing / constraint validation). Non-indexed
+    /// and type-parameter operands pass through unchanged.
+    fn reduce_instantiable_indexed_access(&mut self, type_id: TypeId) -> TypeId {
+        crate::query_boundaries::comparability::reduce_index_access_to_base_constraint(
+            self.ctx.types,
+            type_id,
+        )
+    }
+
     /// Apparent type used by the comparable relation, mirroring tsc's
     /// `getApparentType` for instantiable operands.
     ///
@@ -287,19 +305,21 @@ impl<'a> CheckerState<'a> {
     /// step to the parameter's apparent type so the comparable relation sees a
     /// concrete value-space. Non-instantiable types are returned unchanged.
     fn comparable_apparent_type(&mut self, ty: TypeId, is_type_param: bool) -> TypeId {
-        if is_type_param {
-            return self.get_type_param_apparent_type(ty);
-        }
-        match crate::query_boundaries::conditional_constraints::conditional_default_constraint(
-            self.ctx.types,
-            ty,
-        ) {
-            Some(constraint) if is_type_parameter_like(self.ctx.types, constraint) => {
-                self.get_type_param_apparent_type(constraint)
+        let apparent = if is_type_param {
+            self.get_type_param_apparent_type(ty)
+        } else {
+            match crate::query_boundaries::conditional_constraints::conditional_default_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                Some(constraint) if is_type_parameter_like(self.ctx.types, constraint) => {
+                    self.get_type_param_apparent_type(constraint)
+                }
+                Some(constraint) => constraint,
+                None => ty,
             }
-            Some(constraint) => constraint,
-            None => ty,
-        }
+        };
+        self.reduce_instantiable_indexed_access(apparent)
     }
 
     /// Check if two types are comparable (overlap).
@@ -338,7 +358,10 @@ impl<'a> CheckerState<'a> {
         // deferred conditional to its default constraint. tsc's `getApparentType`
         // resolves instantiable types (type parameters and conditionals alike)
         // before the comparable relation runs, so `Exclude<T, U>` overlaps with a
-        // literal exactly when its branch constraint does.
+        // literal exactly when its branch constraint does. Instantiable indexed
+        // accesses are then reduced through the comparability-only reducer so
+        // `Parameters<F>["length"]` can overlap numeric literals without leaking
+        // that reduction into assignment diagnostics or constraint validation.
         let source_apparent = self.comparable_apparent_type(source, source_is_tp);
         let target_apparent = self.comparable_apparent_type(target, target_is_tp);
 

@@ -1031,8 +1031,17 @@ impl<'a> CheckerState<'a> {
         // - T vs {} → comparable (overlap exists, return false)
         // - T vs U (unrelated) → not comparable (no overlap, return true)
         // - T extends X vs Y → uses constraint resolution
+        //
+        // An instantiable indexed access (`Obj[Idx]`, e.g.
+        // `Parameters<F>["length"]`) is also delegated: `is_type_comparable_to`
+        // reduces it to its base constraint (`number`) before checking overlap,
+        // so an `n === 2` comparison against it does not emit a false TS2367.
+        // Concrete (already-evaluated) index accesses are not `IndexAccess`
+        // types here, so the genuine no-overlap cases are unaffected.
         if is_type_parameter_like(self.ctx.types, left)
             || is_type_parameter_like(self.ctx.types, right)
+            || crate::query_boundaries::common::is_index_access_type(self.ctx.types, left)
+            || crate::query_boundaries::common::is_index_access_type(self.ctx.types, right)
         {
             return !self.is_type_comparable_to(left, right);
         }
