@@ -19,6 +19,37 @@ impl<'a> CheckerState<'a> {
         {
             return Some(query_display);
         }
+        // Fast, deterministic path: reduce the already-resolved schema element
+        // object in place, recursively rewriting its nested `Static<…>`
+        // projection members, then render it with the object `display_alias`
+        // suppressed. This operates on the resolved element shape, so it does not
+        // re-type-check the schema's `const` value declaration the way the
+        // re-resolution paths below do. Those paths re-evaluate enough of the
+        // schema to exhaust the shared display work budget on the first of a
+        // message's two renders and then truncate back to the bare alias
+        // (`Input[]`) on the second, making the structural display
+        // non-deterministic.
+        //
+        // The rewrite is itself recursion-depth bounded, so it runs with the
+        // display budget suspended: the attempt must not spend the fuel the
+        // re-resolution fallback below relies on when the shape-only rewrite
+        // cannot fully reduce a member (it leaves a residual `Static<…>`), which
+        // happens when the element type was resolved without the lib types the
+        // full schema needs. Only the fully-reduced result is used here; a
+        // residual one falls through to the re-resolution paths with the budget
+        // intact.
+        let fully_reduced = {
+            let _suspend =
+                crate::error_reporter::display_budget::SuspendDisplayBudgetScope::enter();
+            self.rewrite_nested_static_projection_members(element_type, 0)
+                .filter(|&reduced| !self.type_has_residual_static_schema(reduced, 0))
+        };
+        if let Some(reduced) = fully_reduced {
+            let rebuilt = self.static_schema_array_display_type(reduced);
+            return Some(
+                self.format_type_for_assignability_message_skip_object_display_alias(rebuilt),
+            );
+        }
         if let Some(static_type) = self.static_schema_alias_element_structural_type(element_type) {
             return Some(self.format_static_schema_array_structural_type(static_type, format_peer));
         }
@@ -86,6 +117,26 @@ impl<'a> CheckerState<'a> {
     fn is_static_schema_application(&self, type_id: TypeId) -> bool {
         self.static_schema_application_schema_type(type_id)
             .is_some()
+    }
+
+    /// Whether `type_id` (or any nested object member, bounded by `depth`) is
+    /// still an unreduced `Static<…>` projection application. Used to detect
+    /// when the in-place shape rewrite under-reduced (so the caller falls back
+    /// to the full re-resolution path) versus produced the fully structural
+    /// form.
+    fn type_has_residual_static_schema(&self, type_id: TypeId, depth: u8) -> bool {
+        if depth > 12 {
+            return false;
+        }
+        if self.is_static_schema_application(type_id) {
+            return true;
+        }
+        diagnostic_query::object_shape_for_type(self.ctx.types, type_id).is_some_and(|shape| {
+            shape
+                .properties
+                .iter()
+                .any(|prop| self.type_has_residual_static_schema(prop.type_id, depth + 1))
+        })
     }
 
     pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {
@@ -308,11 +359,18 @@ impl<'a> CheckerState<'a> {
         let schema_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
         let schema_type = self.evaluate_type_for_assignability(schema_type);
         let static_type = self.typebox_schema_static_type(schema_type, 0)?;
-        let static_type = self.evaluate_type_for_assignability(static_type);
-        let static_type = self.widen_type_for_display(static_type);
-        let static_type = self.normalize_assignability_display_type(static_type);
-        let rebuilt = self.ctx.types.array(static_type);
+        let rebuilt = self.static_schema_array_display_type(static_type);
         Some(self.format_type_diagnostic(rebuilt))
+    }
+
+    /// Evaluate, widen, and normalize a schema's reduced element type, then wrap
+    /// it back into the array type to display. Shared by the structural-display
+    /// entry points so they prepare the element identically.
+    fn static_schema_array_display_type(&mut self, element_type: TypeId) -> TypeId {
+        let element_type = self.evaluate_type_for_assignability(element_type);
+        let element_type = self.widen_type_for_display(element_type);
+        let element_type = self.normalize_assignability_display_type(element_type);
+        self.ctx.types.array(element_type)
     }
 
     fn format_static_schema_array_structural_type(
@@ -320,10 +378,7 @@ impl<'a> CheckerState<'a> {
         static_type: TypeId,
         other: TypeId,
     ) -> String {
-        let static_type = self.evaluate_type_for_assignability(static_type);
-        let static_type = self.widen_type_for_display(static_type);
-        let static_type = self.normalize_assignability_display_type(static_type);
-        let rebuilt = self.ctx.types.array(static_type);
+        let rebuilt = self.static_schema_array_display_type(static_type);
         self.format_assignability_type_for_message(rebuilt, other)
     }
 }

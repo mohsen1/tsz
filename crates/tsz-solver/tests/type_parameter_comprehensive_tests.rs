@@ -896,3 +896,59 @@ fn unrelated_bare_type_parameters_are_not_subtypes() {
     assert!(!is_subtype_of(&interner, t, u), "T is not assignable to U");
     assert!(is_subtype_of(&interner, t, t), "T is reflexively a subtype");
 }
+
+#[test]
+fn same_named_type_parameters_only_split_on_mutually_disjoint_constraints() {
+    use crate::relations::subtype::SubtypeChecker;
+
+    let interner = TypeInterner::new();
+    let shared_name = interner.intern_string("Item");
+
+    let related_narrow = interner.type_param(TypeParamInfo {
+        name: shared_name,
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let related_wide = interner.type_param(TypeParamInfo {
+        name: shared_name,
+        constraint: Some(TypeId::UNKNOWN),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(related_narrow, related_wide),
+        "one-way-related same-named constraints are not enough proof of distinct declarations"
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(related_wide, related_narrow),
+        "same-named type parameters keep the reflexive shortcut unless constraints are mutually disjoint"
+    );
+
+    let disjoint_string = interner.type_param(TypeParamInfo {
+        name: shared_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    let disjoint_number = interner.type_param(TypeParamInfo {
+        name: shared_name,
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(disjoint_string, disjoint_number),
+        "mutually disjoint same-named constraints must still be treated as distinct"
+    );
+}

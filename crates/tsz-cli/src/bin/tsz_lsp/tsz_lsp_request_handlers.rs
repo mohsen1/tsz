@@ -899,6 +899,8 @@ impl LspServer {
                 _ => {}
             }
         }
+
+        self.maybe_evict_under_memory_pressure();
     }
 
     pub(super) fn is_ts_file(path: &str) -> bool {

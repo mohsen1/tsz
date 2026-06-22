@@ -703,16 +703,22 @@ impl<'a> NarrowingContext<'a> {
             let mut array_like: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    // tsc's `mapType(matching, t => isRelated(c, t) ? c : ...)`
-                    // substitutes the predicate type `c = any[]` when
-                    // `any[] <: member` structurally — detected via
-                    // `is_any_array_compat`. Check BEFORE recursing so the
-                    // substitution is detected at the union level (not
-                    // swallowed by `narrow_to_array`) and `has_any_compat` is
-                    // set correctly for the array-like retention pass below.
+                    // tsc narrows each union member `t` against the predicate
+                    // `c = any[]` as `isSubtypeOf(t, c) ? t : isSubtypeOf(c, t)
+                    // ? c : ...`: an already-array-like `t` is kept, and `c` is
+                    // only substituted for a non-array member that merely
+                    // *contains* `any[]` (`Record<string, any>`, `object`,
+                    // `{}`). So skip array-like members here — `number[]` is a
+                    // subtype of `any[]` (its element `any <: number` makes
+                    // `any[] <: number[]` too), and substituting it would drop
+                    // the concrete element type tsc preserves. Check BEFORE
+                    // recursing so the substitution is detected at the union
+                    // level (not swallowed by `narrow_to_array`) and
+                    // `has_any_compat` is set for the retention pass below.
                     let resolved_member = self.resolve_type(member);
-                    if self.is_any_array_compat(resolved_member)
-                        || is_subtype_of(self.db, any_array, resolved_member)
+                    if !self.is_array_like(resolved_member)
+                        && (self.is_any_array_compat(resolved_member)
+                            || is_subtype_of(self.db, any_array, resolved_member))
                     {
                         has_any_compat = true;
                         return Some(any_array);

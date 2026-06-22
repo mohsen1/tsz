@@ -32,7 +32,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Implements TypeScript's soundness rules for type parameter compatibility.
     ///
     /// ## TypeScript Soundness Rules:
-    /// - Same type parameter by name → reflexive (always compatible)
+    /// - Same type parameter (shared name, not proven distinct by mutually
+    ///   incompatible constraints) → reflexive (always compatible)
     /// - Different type parameters → check constraint transitivity
     /// - Type parameter vs concrete → constraint must be subtype of concrete
     /// - Unconstrained type parameter → acts like `unknown` (top type)
@@ -43,7 +44,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Type parameter vs type parameter
         if let Some(t_info) = type_param_info(self.interner, target) {
-            if s_info.name == t_info.name {
+            // A shared *name* is only a proxy for parameter identity: a
+            // `TypeParamInfo` carries no declaration handle, so two distinct
+            // type parameters that happen to share a name (e.g. an inner generic
+            // shadowing an outer one) are not necessarily the same parameter.
+            // When both carry constraints that are provably incompatible
+            // (neither assignable to the other), the parameters are definitely
+            // distinct — `tsc` treats them as unrelated and reports the failure
+            // (TS2719, "two different types with this name exist"). Related
+            // but non-identical constraints are not enough evidence: without a
+            // declaration handle they may still be the same parameter viewed
+            // through a primitive/object or alias relation. Only the reflexive
+            // same-parameter case may short-circuit to `True`; the distinct
+            // case must fall through to constraint transitivity so a genuine
+            // mismatch is reported instead of silently accepted.
+            if s_info.name == t_info.name
+                && !self.same_named_type_params_are_distinct(s_info, &t_info)
+            {
                 return SubtypeResult::True;
             }
             if let Some(s_constraint) = s_info.constraint {
@@ -122,6 +139,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::False
+    }
+
+    /// Decide whether two same-named type parameters are *provably distinct*
+    /// declarations rather than the same parameter seen twice.
+    ///
+    /// `TypeParamInfo` has no declaration handle, so a shared name cannot prove
+    /// identity. The conservative signal that two same-named parameters are
+    /// genuinely different is that both carry constraints which are mutually
+    /// non-assignable: the same parameter always presents the same constraint
+    /// (interning to the same `TypeId`, or — when the constraint is reached
+    /// through different-but-related representations — at least a one-way
+    /// assignable one), so a constraint pair with no assignable direction can
+    /// only come from two different declarations. Returning `true` here
+    /// suppresses the name-based reflexive shortcut so the relation falls
+    /// through to constraint transitivity and a real mismatch is reported,
+    /// mirroring `tsc`'s handling of distinct identically-named type parameters.
+    ///
+    /// Unconstrained (or one-sided-unconstrained) same-named pairs return
+    /// `false`: they intern to one `TypeId` and never reach this path, or cannot
+    /// be told apart without a parameter identity, so the historical reflexive
+    /// behaviour is preserved to avoid regressing alpha-renamed generic-signature
+    /// comparisons.
+    fn same_named_type_params_are_distinct(
+        &mut self,
+        s_info: &TypeParamInfo,
+        t_info: &TypeParamInfo,
+    ) -> bool {
+        let (Some(s_constraint), Some(t_constraint)) = (s_info.constraint, t_info.constraint)
+        else {
+            return false;
+        };
+        if s_constraint == t_constraint {
+            return false;
+        }
+        let source_extends_target = self.check_subtype(s_constraint, t_constraint).is_true();
+        let target_extends_source = self.check_subtype(t_constraint, s_constraint).is_true();
+        !source_extends_target && !target_extends_source
     }
 
     fn type_param_constraint_allows_spread_identity(

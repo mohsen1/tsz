@@ -1375,6 +1375,9 @@ mod satisfies_callback_return_widening_tests;
 #[path = "tests/satisfies_relation_routing_arch_tests.rs"]
 mod satisfies_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/shadowed_type_param_identity_tests.rs"]
+mod shadowed_type_param_identity_tests;
+#[cfg(test)]
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;
 #[cfg(test)]
