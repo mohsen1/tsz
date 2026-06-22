@@ -1121,6 +1121,23 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             let marked = shared_store.mark_non_program_interface_defs_deferred();
             tracing::debug!(marked, "lib interface defs marked deferred-publication");
         }
+        // #14344 Stage 5 (flag-gated, default-off): record each arena file's
+        // declaring-module canonical path so the solver-side content-election
+        // pass can join `DefinitionInfo.file_id -> canonical module path` and
+        // converge genuinely-same declarations across arenas. `program.files`
+        // is indexed by the same `file_idx` carried in `DefinitionInfo.file_id`
+        // (both are BFS-discovery order), so the file's path is its declaring
+        // identity. Off by default: the table stays empty and nothing reads it.
+        if tsz_solver::def::canonical_defid_enabled() {
+            for (file_idx, file) in program.files.iter().enumerate() {
+                let path = program.type_interner.intern_string(&file.file_name);
+                shared_store.set_file_canonical_path(file_idx as u32, path);
+            }
+            tracing::debug!(
+                files = program.files.len(),
+                "recorded file canonical paths for #14344 content election"
+            );
+        }
         program_context.shared_definition_store = Some(shared_store);
     }
 

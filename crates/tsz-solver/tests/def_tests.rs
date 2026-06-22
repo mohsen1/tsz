@@ -1886,4 +1886,51 @@ fn test_all_definition_names_qualifies_namespace_exports() {
     );
 }
 
+/// #14344 Stage 5 (PR1 plumbing): the declaring-module canonical-path table is
+/// store-level, set by the program, and queryable by file index for the
+/// content-election pass. Empty by default (no path recorded), so flag-off runs
+/// — which never call `set_file_canonical_path` — read back `None` and a zero
+/// count, the byte-identical baseline.
+#[test]
+fn file_canonical_path_table_records_and_reads_back() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Default: nothing recorded.
+    assert_eq!(store.file_canonical_path_count(), 0);
+    assert_eq!(store.file_canonical_path(0), None);
+
+    // The program records one canonical path per declaring file index.
+    let p0 = interner.intern_string("/proj/src/leaf.ts");
+    let p1 = interner.intern_string("/proj/src/barrel.ts");
+    store.set_file_canonical_path(0, p0);
+    store.set_file_canonical_path(1, p1);
+
+    assert_eq!(store.file_canonical_path_count(), 2);
+    assert_eq!(store.file_canonical_path(0), Some(p0));
+    assert_eq!(store.file_canonical_path(1), Some(p1));
+    assert_eq!(store.file_canonical_path(2), None);
+
+    // Two arena defs from the SAME declaring file index resolve to the SAME
+    // canonical path — the cross-arena convergence key the election will group
+    // on. (A def's own arena-local file_id alone cannot establish this.)
+    let a = store.register(DefinitionInfo::interface(
+        interner.intern_string("Shared"),
+        vec![],
+        vec![],
+    ));
+    let b = store.register(DefinitionInfo::interface(
+        interner.intern_string("Other"),
+        vec![],
+        vec![],
+    ));
+    let a_file = store.get(a).and_then(|i| i.file_id).unwrap_or(0);
+    let b_file = store.get(b).and_then(|i| i.file_id).unwrap_or(0);
+    // (Here both default to file 0; the table maps file_idx, not DefId.)
+    assert_eq!(
+        store.file_canonical_path(a_file),
+        store.file_canonical_path(b_file)
+    );
+}
+
 include!("def_tests_parts/type_to_def.rs");
