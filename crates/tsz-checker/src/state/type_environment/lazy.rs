@@ -1730,9 +1730,8 @@ impl CheckerState<'_> {
                 let resolved = if symbol.as_ref().is_some_and(|s| {
                     s.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::VARIABLE)
                 }) {
-                    let value_decl = symbol
-                        .map(|s| s.value_declaration)
-                        .unwrap_or(tsz_parser::NodeIndex::NONE);
+                    let value_decl =
+                        symbol.map_or(tsz_parser::NodeIndex::NONE, |s| s.value_declaration);
                     self.type_of_value_declaration_for_symbol(sym_id, value_decl)
                 } else {
                     self.get_type_of_symbol(sym_id)
