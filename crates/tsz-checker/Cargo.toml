@@ -707,6 +707,9 @@ path = "tests/accessor_assignment_read_surface_tests.rs"
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
+name = "object_literal_set_only_accessor_type_tests"
+path = "tests/object_literal_set_only_accessor_type_tests.rs"
+[[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
 [[test]]
