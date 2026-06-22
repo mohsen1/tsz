@@ -538,6 +538,19 @@ impl SymbolTypeCache {
         self.version.get()
     }
 
+    /// Advance the monotonic mutation counter by one.
+    ///
+    /// The single owner of the "a lookup-affecting mutation happened" signal:
+    /// every mutator that actually changes a stored entry calls this exactly
+    /// once, after its no-op guard, so a version change always means "some
+    /// previously observed symbol type may have changed". No-op writes (storing
+    /// the same value, or removing an absent key) must not call this, or version
+    /// consumers would needlessly drop memoized state.
+    #[inline]
+    fn bump_version(&self) {
+        self.version.set(self.version.get() + 1);
+    }
+
     #[inline]
     pub fn get(&self, key: &SymbolId) -> Option<TypeId> {
         self.data.borrow().get(key).copied()
@@ -553,13 +566,13 @@ impl SymbolTypeCache {
             if existing.is_none() {
                 return;
             }
-            self.version.set(self.version.get() + 1);
+            self.bump_version();
             Arc::make_mut(&mut self.data.borrow_mut()).remove(&key);
         } else {
             if existing == Some(value) {
                 return;
             }
-            self.version.set(self.version.get() + 1);
+            self.bump_version();
             Arc::make_mut(&mut self.data.borrow_mut()).insert(key, value);
         }
     }
@@ -574,7 +587,7 @@ impl SymbolTypeCache {
         if !self.data.borrow().contains_key(key) {
             return None;
         }
-        self.version.set(self.version.get() + 1);
+        self.bump_version();
         Arc::make_mut(&mut self.data.borrow_mut()).remove(key)
     }
 
@@ -593,7 +606,7 @@ impl SymbolTypeCache {
                 .unwrap_or(TypeId::NONE);
         }
         if !self.data.borrow().contains_key(&key) {
-            self.version.set(self.version.get() + 1);
+            self.bump_version();
         }
         *Arc::make_mut(&mut self.data.borrow_mut())
             .entry(key)
@@ -641,7 +654,7 @@ impl SymbolTypeCache {
         if !changes {
             return;
         }
-        self.version.set(self.version.get() + 1);
+        self.bump_version();
         let mut data_guard = self.data.borrow_mut();
         let data = Arc::make_mut(&mut data_guard);
         for (&symbol_id, &type_id) in other_data.iter() {
