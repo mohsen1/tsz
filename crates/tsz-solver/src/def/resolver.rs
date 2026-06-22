@@ -1009,11 +1009,27 @@ impl TypeEnvironment {
     /// registered `DefId` makes callers defer (the checker materializes the real
     /// body on demand) instead of resolving a collision.
     fn raw_symbol_fallback_def(&self, def_id: DefId) -> Option<DefId> {
-        if self
-            .definition_store
-            .as_ref()
-            .is_some_and(|store| store.contains(def_id))
+        if let Some(store) = self.definition_store.as_ref()
+            && store.contains(def_id)
         {
+            // #14344 observability (measurement only — the early `return None`
+            // below is the unchanged `#13862` behavior). A store-registered
+            // `DefId(N)` here is one whose raw value `N`, reread as a `SymbolId`,
+            // is *prevented* from redirecting to a colliding def. Count it only
+            // when that reinterpretation would genuinely land on a DIFFERENT,
+            // DIFFERENT-NAMED def (the `HTMLDivElement(218)` ->
+            // `FileSystemEntry(symbol 218)` class), not on mere raw-`u32` overlap
+            // (which is ~100% by construction and uninformative). Name identity
+            // is interned `Atom` equality, so this is the content-difference test.
+            if tsz_common::perf_counters::enabled_fast()
+                && let Some(collision_def) = store.find_def_by_symbol(def_id.0)
+                && collision_def != def_id
+                && let (Some(canonical_name), Some(collision_name)) =
+                    (store.get_name(def_id), store.get_name(collision_def))
+                && canonical_name != collision_name
+            {
+                tsz_common::perf_counters::record_identity_collision_wrong_decl_suppressed();
+            }
             return None;
         }
         self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
@@ -1806,6 +1822,82 @@ mod tests {
         // `real`'s body is unmaterialized. The pre-fix code returned the
         // collider's body via symbol conflation; the fix defers instead.
         assert_eq!(env.resolve_lazy(real, &interner), None);
+    }
+
+    /// #14344 identity-collision observability: the wrong-decl counter fires on
+    /// a GENUINE content collision (the `#13862`-suppressed
+    /// `HTMLDivElement(218)` -> `FileSystemEntry(symbol 218)` class) and stays
+    /// silent for a store-registered def with no different-named collider. This
+    /// is measurement only — `resolve_lazy` returns `None` either way (behavior
+    /// unchanged). The counter is the migration's md5-stability regression
+    /// signal.
+    #[test]
+    fn identity_collision_counter_fires_on_genuine_content_collision_only() {
+        use tsz_common::perf_counters::{counters, force_enable_perf_counters_for_tests};
+
+        // Force the gate on so we can observe `fetch_add` deltas regardless of
+        // env / `OnceLock` state (the recorder short-circuits when disabled).
+        force_enable_perf_counters_for_tests();
+
+        let read = || {
+            counters()
+                .identity_collision_wrong_decl_suppressed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+
+        let interner = crate::construction::TypeInterner::new();
+
+        // --- Case 1: genuine content collision (different-named decls). ---
+        let store = Arc::new(DefinitionStore::new());
+        let real = store.register(DefinitionInfo::interface(
+            interner.intern_string("ElementLike"),
+            vec![],
+            vec![],
+        ));
+        let mut collider_info =
+            DefinitionInfo::type_alias(interner.intern_string("Collider"), vec![], TypeId::STRING);
+        collider_info.symbol_id = Some(real.0);
+        let collider = store.register(collider_info);
+        store.set_body(collider, TypeId::STRING);
+        // Precondition: the raw-`u32` reinterpretation lands on the differently
+        // named collider, i.e. the content actually differs.
+        assert_eq!(store.find_def_by_symbol(real.0), Some(collider));
+
+        let mut env = TypeEnvironment::new();
+        env.set_definition_store(Arc::clone(&store));
+
+        let before = read();
+        // Behavior is unchanged: the `#13862` guard still defers.
+        assert_eq!(env.resolve_lazy(real, &interner), None);
+        assert_eq!(
+            read() - before,
+            1,
+            "a genuine different-named raw-u32 collision must be counted exactly once"
+        );
+
+        // --- Case 2: store-registered def with NO collider at its raw id. ---
+        // A fresh store whose only registered def has no symbol sharing its
+        // `DefId` numeric value: the fallback still defers, but there is no
+        // content collision, so the counter must not move.
+        let store2 = Arc::new(DefinitionStore::new());
+        let lonely = store2.register(DefinitionInfo::interface(
+            interner.intern_string("Lonely"),
+            vec![],
+            vec![],
+        ));
+        // No def carries `symbol_id == lonely.0`, so the raw reinterpretation
+        // finds nothing to collide with.
+        assert_eq!(store2.find_def_by_symbol(lonely.0), None);
+        let mut env2 = TypeEnvironment::new();
+        env2.set_definition_store(Arc::clone(&store2));
+
+        let before2 = read();
+        assert_eq!(env2.resolve_lazy(lonely, &interner), None);
+        assert_eq!(
+            read() - before2,
+            0,
+            "raw-u32 overlap with nothing (no different-named decl) must not be counted"
+        );
     }
 
     /// The symbol-conflation fallback stays valid for *zombie* `DefId`s — those
