@@ -49,6 +49,43 @@ const read: number = point.x;
     );
 }
 
+/// Object spread copies the runtime getter value. A set-only accessor has no
+/// getter, so the copied property value is `undefined` even though direct
+/// property lookup on the source uses the setter parameter type.
+#[test]
+fn direct_object_literal_spread_copies_set_only_accessor_as_undefined() {
+    let source = r#"
+const target: { foo: number, renamed: undefined } = {
+    foo: 1,
+    ...{ set renamed(value: number) { void value; } }
+};
+"#;
+    assert_eq!(
+        ts2322(source),
+        0,
+        "spreading a direct set-only accessor should copy an undefined value, got: {:?}",
+        codes(source)
+    );
+}
+
+/// If a direct object-literal spread overwrites an earlier property with a
+/// set-only accessor, the spread value wins and is still `undefined`.
+#[test]
+fn direct_object_literal_spread_set_only_accessor_overwrites_with_undefined() {
+    let source = r#"
+const target: { renamed: undefined } = {
+    renamed: 1,
+    ...{ set renamed(value: number) { void value; } }
+};
+"#;
+    assert_eq!(
+        ts2322(source),
+        0,
+        "a later set-only accessor spread should overwrite with undefined, got: {:?}",
+        codes(source)
+    );
+}
+
 /// Negative control: the property type is genuinely the setter parameter type,
 /// so reading it into an incompatible annotation still errors. (A blanket
 /// `undefined`/`any` fallback would wrongly silence this.)

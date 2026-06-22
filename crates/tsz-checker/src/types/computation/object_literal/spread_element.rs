@@ -7,7 +7,7 @@ use super::computation_support::{
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -389,7 +389,11 @@ impl<'a> CheckerState<'a> {
                 let resolved_spread = self.resolve_lazy_type(spread_type);
                 let resolved_spread = self.evaluate_type_with_env(resolved_spread);
                 let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
-                let spread_props = self.collect_object_spread_properties(resolved_spread);
+                let mut spread_props = self.collect_object_spread_properties(resolved_spread);
+                self.apply_direct_object_literal_set_only_accessor_spread_surface(
+                    spread_expr,
+                    &mut spread_props,
+                );
                 // In thisless generic option patterns, `this.options.foo` can
                 // temporarily resolve to `any` even though the containing call
                 // gives this literal a concrete contextual target. Use that
@@ -494,5 +498,58 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn apply_direct_object_literal_set_only_accessor_spread_surface(
+        &mut self,
+        spread_expr: NodeIndex,
+        spread_props: &mut [PropertyInfo],
+    ) {
+        let spread_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(spread_expr);
+        let Some(spread_node) = self.ctx.arena.get(spread_expr) else {
+            return;
+        };
+        if spread_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(literal) = self.ctx.arena.get_literal_expr(spread_node) else {
+            return;
+        };
+
+        let mut getter_names: FxHashSet<Atom> = FxHashSet::default();
+        let mut setter_names: FxHashSet<Atom> = FxHashSet::default();
+        for &elem_idx in &literal.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if !matches!(
+                elem_node.kind,
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+            ) {
+                continue;
+            }
+            let Some(accessor) = self.ctx.arena.get_accessor(elem_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name_resolved(accessor.name) else {
+                continue;
+            };
+            let atom = self.ctx.types.intern_string(&name);
+            if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                getter_names.insert(atom);
+            } else {
+                setter_names.insert(atom);
+            }
+        }
+
+        for prop in spread_props {
+            if setter_names.contains(&prop.name) && !getter_names.contains(&prop.name) {
+                prop.type_id = TypeId::UNDEFINED;
+                prop.write_type = TypeId::UNDEFINED;
+            }
+        }
     }
 }
