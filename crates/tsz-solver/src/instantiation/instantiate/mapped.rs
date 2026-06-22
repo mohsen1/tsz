@@ -48,6 +48,21 @@ impl<'a> TypeInstantiator<'a> {
             && let Some(substituted) = self.substitution.get(tp_info.name)
         {
             let resolved = self.evaluate_type(substituted);
+            // tsc's `instantiateMappedType` maps the homomorphic source type
+            // variable through `mapType`, and `mapType(never)` is `never`: a
+            // homomorphic mapped type `{ [K in keyof T]: ... }` whose source `T`
+            // instantiates to `never` reduces to `never`. This is independent of
+            // the template shape (`T[K]` or a constant), of key remapping (`as`),
+            // and of added/removed modifiers, so it must run before the
+            // template-shape-specific reductions below. Without it, the later
+            // object-expansion path materializes a spurious
+            // `{ [K in keyof never]: never[K] }` shape (an index access into
+            // `never`, since `keyof never` is `string | number | symbol`), which
+            // is not assignable to `never` and surfaces as a false TS2322.
+            if resolved == TypeId::NEVER {
+                self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                return TypeId::NEVER;
+            }
             if let Some(TypeData::Union(list_id)) = self.interner.lookup(resolved)
                 && !Self::is_array_or_tuple_like(self.interner, resolved)
             {
