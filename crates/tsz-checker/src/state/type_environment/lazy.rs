@@ -172,17 +172,17 @@ impl CheckerState<'_> {
         let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
 
         // When the evaluator observes an `Application` over a `DefId` whose body
-        // is not yet registered (the registration-window artifact the solver
-        // reports via `unresolved_def_seen`), the pass's result is a function of
-        // that window, not of `type_id` alone. The `env_eval_cache` is keyed
-        // purely on `type_id` with no generation guard, so persisting such a
-        // result lets the under-resolved answer permanently shadow the correct
-        // one. Suppress the authoritative write for the governing pass
-        // (issue #13980). The intermediate seed/persist memo remains speed-only:
-        // `persist_env_eval_cache_entries` already filters unsafe shapes, and
-        // dropping all intermediates from a tainted pass changes established
-        // conformance in cases where later lookups depend on fully-resolved
-        // sub-terms from the same walk.
+        // is not yet registered, it reports the registration window via
+        // `unresolved_def_seen`. Only an opaque no-progress result from that pass
+        // is the cache-poisoning artifact: persisting `input -> input` in the
+        // `TypeId`-keyed `env_eval_cache` would permanently shadow the expansion
+        // available after the def registers (issue #13980). A tainted pass can
+        // still make useful progress on the root while observing an unresolved
+        // sub-term; declaration-portability checks rely on caching those resolved
+        // roots, so the poison bit below is gated on both the flag and no progress.
+        //
+        // The intermediate seed/persist memo remains speed-only:
+        // `persist_env_eval_cache_entries` already filters unsafe shapes.
         let backstop_active =
             !crate::context::env_eval_cache::unresolved_def_cache_backstop_disabled();
 
@@ -222,7 +222,8 @@ impl CheckerState<'_> {
                 self.ctx.depth_exceeded.set(true);
             }
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
-            first_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
+            first_pass_poisoned =
+                backstop_active && eval_result.unresolved_def_seen && eval_result.result == type_id;
             // Persist intermediate evaluation results to the shared cache. The
             // helper skips entries whose result contains unbound `infer` types
             // or type queries; the top-level poisoned root is gated below.
@@ -336,7 +337,14 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            let second_pass_poisoned = backstop_active && eval_result.unresolved_def_seen;
+            let second_pass_input = if first_pass_unresolved_application {
+                result
+            } else {
+                type_id
+            };
+            let second_pass_poisoned = backstop_active
+                && eval_result.unresolved_def_seen
+                && eval_result.result == second_pass_input;
             if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
@@ -355,8 +363,8 @@ impl CheckerState<'_> {
 
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional
-        // types, nor a registration-window artifact whose governing pass observed
-        // an unresolved def (issue #13980).
+        // types, nor an opaque registration-window artifact from an unresolved
+        // def (issue #13980).
         if use_cache
             && !final_poisoned
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
