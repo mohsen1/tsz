@@ -150,3 +150,146 @@ export {};
         "PullOr<Box<number>> = \"MISS\" (false branch); number is not assignable",
     );
 }
+
+// =============================================================================
+// Type-predicate `infer`: `T extends (v: any) => v is infer R ? R : never`.
+//
+// A type guard's `infer` variable lives in the predicate target (`x is infer R`),
+// not the boolean return type. Two solver gaps suppressed the binding: the
+// contains-infer walk did not descend into `FunctionShape.type_predicate` (so a
+// conditional never ran infer matching at all), and `match_infer_function_pattern`
+// had no branch for predicate-only infer. tsc infers `R` from the source guard's
+// asserted type (`inferFromSignature`); tsz collapsed it to the `never` false
+// branch, producing spurious TS2322 (witnessed in the ts-pattern `P.string` /
+// `when(isString)` chainable family). Binder names are varied so the fix cannot
+// key off any identifier.
+// =============================================================================
+
+#[test]
+fn type_predicate_infer_binds_narrowed_type() {
+    // `R` must bind to the guard's asserted type (`string`), not `never`.
+    assert_no_ts2322(
+        r#"
+type Narrowed<P> = P extends (value: any) => value is infer R ? R : never;
+declare const isText: (probe: unknown) => probe is string;
+type Out = Narrowed<typeof isText>;
+const ok: Out = "hello";
+export {};
+"#,
+        "Narrowed<(probe) => probe is string> = string",
+    );
+}
+
+#[test]
+fn type_predicate_infer_is_not_never_or_any() {
+    // The dual control: a non-`string` assignment must still error, proving the
+    // bound type is exactly `string` (not `never`, which would also reject the
+    // positive case, nor `any`/`unknown`, which would accept this one).
+    assert_has_ts2322(
+        r#"
+type Narrowed<P> = P extends (value: any) => value is infer R ? R : never;
+declare const isText: (probe: unknown) => probe is string;
+type Out = Narrowed<typeof isText>;
+const bad: Out = 123;
+export {};
+"#,
+        "Narrowed<...> = string; number is not assignable",
+    );
+}
+
+#[test]
+fn generic_type_guard_when_pattern_infers_narrowed() {
+    // The ts-pattern `when(isString)` shape: a generic helper whose return type
+    // is a conditional extracting the predicate's narrowed type from a generic
+    // type guard `<U>(x: U | string) => x is string`.
+    assert_no_ts2322(
+        r#"
+function pick<input, predicate extends (value: input) => unknown>(
+  predicate: predicate
+): predicate extends (value: any) => value is infer narrowed ? narrowed : never {
+  return null as any;
+}
+function looksTextual<U>(candidate: U | string): candidate is string {
+  return typeof candidate === "string";
+}
+const picked = pick(looksTextual);
+const ok: string = picked;
+export {};
+"#,
+        "pick(looksTextual) narrowed = string",
+    );
+}
+
+#[test]
+fn generic_type_guard_when_pattern_is_not_any() {
+    // Control for the generic-guard case: the bound narrowed type is `string`,
+    // so a `number` annotation on the result is a real TS2322.
+    assert_has_ts2322(
+        r#"
+function pick<input, predicate extends (value: input) => unknown>(
+  predicate: predicate
+): predicate extends (value: any) => value is infer narrowed ? narrowed : never {
+  return null as any;
+}
+function looksTextual<U>(candidate: U | string): candidate is string {
+  return typeof candidate === "string";
+}
+const picked = pick(looksTextual);
+const bad: number = picked;
+export {};
+"#,
+        "pick(looksTextual) narrowed = string; number is not assignable",
+    );
+}
+
+#[test]
+fn asserts_predicate_infer_binds_narrowed_type() {
+    // The `asserts value is infer R` variant binds `R` the same way.
+    assert_has_ts2322(
+        r#"
+type AssertNarrowed<P> = P extends (value: any) => asserts value is infer R ? R : never;
+declare const ensureText: (subject: unknown) => asserts subject is string;
+type Out = AssertNarrowed<typeof ensureText>;
+const ok: Out = "x";
+const bad: Out = 7;
+export {};
+"#,
+        "AssertNarrowed<asserts subject is string> = string; number is not assignable",
+    );
+}
+
+#[test]
+fn non_guard_source_takes_false_branch() {
+    // Negative control: a source that returns `boolean` (no type predicate) is
+    // not a guard, so the conditional must keep its false branch — the suppress
+    // must not over-fire on every function type.
+    assert_has_ts2322(
+        r#"
+type GuardOut<P> = P extends (value: any) => value is infer R ? R : "NOT_A_GUARD";
+declare const plainCheck: (subject: unknown) => boolean;
+type Out = GuardOut<typeof plainCheck>;
+const ok: Out = "NOT_A_GUARD";
+const bad: Out = "other";
+export {};
+"#,
+        "GuardOut<(subject) => boolean> = \"NOT_A_GUARD\" (false branch)",
+    );
+}
+
+#[test]
+fn asserts_source_does_not_bind_non_asserts_infer_pattern() {
+    // Predicate kinds must match: an `asserts x is string` source does NOT bind a
+    // non-asserts `value is infer R` pattern, so the conditional takes its false
+    // branch (mirrors tsc's `typePredicateKindsMatch`).
+    assert_has_ts2322(
+        r#"
+type GuardOut<P> = P extends (value: any) => value is infer R ? R : "NO_MATCH";
+declare const ensureText: (subject: unknown) => asserts subject is string;
+type Out = GuardOut<typeof ensureText>;
+const ok: Out = "NO_MATCH";
+const bad: Out = "other";
+export {};
+"#,
+        "asserts source vs non-asserts pattern = \"NO_MATCH\" (false branch)",
+    );
+}

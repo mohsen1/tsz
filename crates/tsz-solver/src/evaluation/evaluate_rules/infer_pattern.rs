@@ -352,6 +352,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .this_type
                         .is_some_and(|this_type| self.type_contains_infer_inner(this_type, visited))
                     || self.type_contains_infer_inner(shape.return_type, visited)
+                    // A type-guard return (`x is infer R`) carries its infer in the
+                    // predicate target, not the boolean return type.
+                    || shape
+                        .type_predicate
+                        .and_then(|predicate| predicate.type_id)
+                        .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
@@ -363,6 +369,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.type_contains_infer_inner(this_type, visited)
                         })
                         || self.type_contains_infer_inner(sig.return_type, visited)
+                        || sig
+                            .type_predicate
+                            .and_then(|predicate| predicate.type_id)
+                            .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
                 }) || shape.construct_signatures.iter().any(|sig| {
                     sig.params
                         .iter()
@@ -371,6 +381,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.type_contains_infer_inner(this_type, visited)
                         })
                         || self.type_contains_infer_inner(sig.return_type, visited)
+                        || sig
+                            .type_predicate
+                            .and_then(|predicate| predicate.type_id)
+                            .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
                 }) || shape
                     .properties
                     .iter()

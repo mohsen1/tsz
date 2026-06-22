@@ -15,7 +15,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ParamInfo,
-    TupleElement, TypeData, TypeId, TypeParamInfo,
+    TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget,
 };
 use crate::visitor::array_element_type;
 use rustc_hash::FxHashMap;
@@ -84,6 +84,97 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return return_type;
         };
         instantiate_type(self.interner(), return_type, &subst)
+    }
+
+    /// Mirror of tsc `inferFromSignature`'s type-predicate handling: when both
+    /// the source signature and the inference pattern carry a type predicate
+    /// that names a type (`x is T` / `asserts x is T`), the inference for the
+    /// return position is taken from the predicate target types rather than the
+    /// boolean return type. Returns the source predicate's target type
+    /// (instantiated with the source signature's generic constraints) when the
+    /// predicate kinds are compatible, else `None` (which makes the pattern fail
+    /// so the conditional takes its false branch — a non-guard source does not
+    /// match a `value is infer R` pattern).
+    fn source_predicate_target_for_infer(
+        &self,
+        source_predicate: Option<TypePredicate>,
+        pattern_predicate: TypePredicate,
+        source_type_params: &[TypeParamInfo],
+    ) -> Option<TypeId> {
+        let source_predicate = source_predicate?;
+        // Predicate "kinds" must match (tsc compares predicate kind): the
+        // `asserts` modifier and the target shape (`this` vs an identifier).
+        if source_predicate.asserts != pattern_predicate.asserts {
+            return None;
+        }
+        let same_target_kind = matches!(
+            (source_predicate.target, pattern_predicate.target),
+            (TypePredicateTarget::This, TypePredicateTarget::This)
+                | (
+                    TypePredicateTarget::Identifier(_),
+                    TypePredicateTarget::Identifier(_)
+                )
+        );
+        if !same_target_kind {
+            return None;
+        }
+        let target_type = source_predicate.type_id?;
+        Some(self.erase_return_type_for_infer(target_type, source_type_params))
+    }
+
+    /// Extract a source `Function`/`Callable` signature's predicate target type
+    /// (when present and kind-compatible with `pattern_predicate`) for
+    /// predicate-`infer` matching, plus its instantiated params — but only when
+    /// `needs_params` (the pattern's params carry an infer). The dominant
+    /// predicate pattern `(value: any) => value is infer R` has no param infer,
+    /// so skipping the param instantiation avoids a wasted `Vec` clone on this
+    /// hot inference path. `None` when `source` is not a callable signature.
+    fn source_sig_for_predicate_infer(
+        &self,
+        source: TypeId,
+        pattern_predicate: TypePredicate,
+        needs_params: bool,
+    ) -> Option<(Vec<ParamInfo>, Option<TypeId>)> {
+        let instantiate_params = |params: &[ParamInfo], return_type, type_params: &[_]| {
+            if needs_params {
+                self.instantiate_signature_for_infer(params, return_type, type_params)
+                    .0
+            } else {
+                Vec::new()
+            }
+        };
+        match self.interner().lookup(source)? {
+            TypeData::Function(source_fn_id) => {
+                let source_fn = self.interner().function_shape(source_fn_id);
+                let params = instantiate_params(
+                    &source_fn.params,
+                    source_fn.return_type,
+                    &source_fn.type_params,
+                );
+                let predicate_type = self.source_predicate_target_for_infer(
+                    source_fn.type_predicate,
+                    pattern_predicate,
+                    &source_fn.type_params,
+                );
+                Some((params, predicate_type))
+            }
+            TypeData::Callable(source_shape_id) => {
+                let source_shape = self.interner().callable_shape(source_shape_id);
+                let source_sig = source_shape.call_signatures.last()?;
+                let params = instantiate_params(
+                    &source_sig.params,
+                    source_sig.return_type,
+                    &source_sig.type_params,
+                );
+                let predicate_type = self.source_predicate_target_for_infer(
+                    source_sig.type_predicate,
+                    pattern_predicate,
+                    &source_sig.type_params,
+                );
+                Some((params, predicate_type))
+            }
+            _ => None,
+        }
     }
 
     fn instantiate_signature_for_infer(
@@ -319,6 +410,95 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let has_single_rest_infer = pattern_fn.params.len() == 1
             && pattern_fn.params[0].rest
             && self.type_contains_infer(pattern_fn.params[0].type_id);
+        // A type-guard pattern `(v) => v is infer R` carries its infer variable
+        // in the predicate target type, not the (boolean) return type. The
+        // param/return-infer branches below never see it, so handle it here.
+        let has_predicate_infer = pattern_fn
+            .type_predicate
+            .and_then(|predicate| predicate.type_id)
+            .is_some_and(|type_id| self.type_contains_infer(type_id));
+
+        if pattern_fn.this_type.is_none() && has_predicate_infer && !has_return_infer {
+            // The boolean return holds no infer var; the inference target is the
+            // predicate's asserted type, and (per tsc) it binds only when the
+            // SOURCE is itself a type guard of the same predicate kind.
+            let Some(pattern_predicate) = pattern_fn.type_predicate else {
+                return false;
+            };
+            let Some(pattern_predicate_type) = pattern_predicate.type_id else {
+                return false;
+            };
+
+            let mut match_predicate_sig = |source_params: &[ParamInfo],
+                                           source_predicate_type: Option<TypeId>,
+                                           bindings: &mut FxHashMap<Atom, TypeId>|
+             -> bool {
+                if has_param_infer {
+                    if has_single_rest_infer {
+                        if !self.match_rest_infer_tuple(
+                            source_params,
+                            pattern_fn.params[0].type_id,
+                            bindings,
+                            checker,
+                        ) {
+                            return false;
+                        }
+                    } else if !self.match_signature_params_for_infer(
+                        source_params,
+                        &pattern_fn.params,
+                        bindings,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+                let Some(source_predicate_type) = source_predicate_type else {
+                    return false;
+                };
+                self.match_infer_pattern(
+                    source_predicate_type,
+                    pattern_predicate_type,
+                    bindings,
+                    visited,
+                    checker,
+                )
+            };
+
+            // A union source (`Guard1 | Guard2`) binds the infer to the union of
+            // each member's narrowed type; a single callable binds directly.
+            if let Some(TypeData::Union(members)) = self.interner().lookup(source) {
+                let members = self.interner().type_list(members);
+                let mut combined = FxHashMap::default();
+                for &member in members.iter() {
+                    let Some((params, source_predicate_type)) = self
+                        .source_sig_for_predicate_infer(member, pattern_predicate, has_param_infer)
+                    else {
+                        return false;
+                    };
+                    let mut member_bindings = FxHashMap::default();
+                    if !match_predicate_sig(&params, source_predicate_type, &mut member_bindings) {
+                        return false;
+                    }
+                    for (name, ty) in member_bindings {
+                        combined
+                            .entry(name)
+                            .and_modify(|existing| {
+                                *existing = self.interner().union2(*existing, ty);
+                            })
+                            .or_insert(ty);
+                    }
+                }
+                bindings.extend(combined);
+                return true;
+            }
+
+            let Some((params, source_predicate_type)) =
+                self.source_sig_for_predicate_infer(source, pattern_predicate, has_param_infer)
+            else {
+                return false;
+            };
+            return match_predicate_sig(&params, source_predicate_type, bindings);
+        }
 
         if pattern_fn.this_type.is_none() && has_param_infer && has_return_infer {
             let mut match_params_and_return = |_source_type: TypeId,
