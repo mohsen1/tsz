@@ -1465,11 +1465,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # uses for the sibling cross-file proof cache. No new quarantine entry.
         # Removal condition remains #8225.
         #
-        # Ratcheted 3079→3070 after #14306 moved the spread constraint probe
-        # through the narrower call boundary. A later current-main refresh kept
-        # nine net removals, but neighboring queued PRs consumed the stale
-        # 3055 slack recorded before the queue advanced.
-        3070,
+        # Ratcheted 3079→3073 after #14306 moved the spread constraint probe
+        # through the narrower call boundary. The merge queue picked up
+        # neighboring main changes while preserving a six-reference reduction.
+        3073,
     ),
 ]
 
