@@ -175,7 +175,7 @@ const value: Result = { A: 1, B: 2, C: 3 };
 "#,
     );
     assert!(
-        relation_codes(&diags).iter().any(|&c| c == 2353),
+        relation_codes(&diags).contains(&2353),
         "an excess string-named property must still error (TS2353), got: {diags:#?}"
     );
 }
