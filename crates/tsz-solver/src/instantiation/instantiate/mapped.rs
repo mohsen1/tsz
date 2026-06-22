@@ -290,8 +290,15 @@ impl<'a> TypeInstantiator<'a> {
                     /// `type_id` stays array-shaped.
                     RestArray(TypeId),
                     /// Rest of an opaque type (type parameter, lazy ref,
-                    /// etc.) — bind K = number on the existing template
-                    /// so the deferred `T[K]` shape is preserved.
+                    /// application, etc.) — rebind the mapped source to the
+                    /// rest's own inner type and bind K = number, so the
+                    /// deferred index access reads `Rest[number]` rather than
+                    /// `Source[number]`. Indexing the whole source tuple would
+                    /// fold the already-fixed prefix slots into the rest, so a
+                    /// later per-slot reification re-emits a prefix element and
+                    /// duplicates it (issue #14518). The inner type still
+                    /// carries any free type parameter, so reverse-mapped
+                    /// inference over `...T` keeps its `T[K]` relationship.
                     OpaqueRest,
                     /// Fixed element after at least one rest — the
                     /// numeric index on the full source is ambiguous, so
@@ -338,7 +345,7 @@ impl<'a> TypeInstantiator<'a> {
                         ElemBinding::RestArray(rest_arr) => {
                             (rebind_source(rest_arr), TypeId::NUMBER)
                         }
-                        ElemBinding::OpaqueRest => (new_template, TypeId::NUMBER),
+                        ElemBinding::OpaqueRest => (rebind_source(elem.type_id), TypeId::NUMBER),
                         ElemBinding::SuffixFixed => {
                             let proxy = self
                                 .interner

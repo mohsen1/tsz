@@ -1165,6 +1165,9 @@ mod mapped_optional_target_excess_property_tests;
 #[path = "tests/mapped_true_base_constraint_relation_routing_arch_tests.rs"]
 mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/mapped_tuple_opaque_rest_identity_tests.rs"]
+mod mapped_tuple_opaque_rest_identity_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
