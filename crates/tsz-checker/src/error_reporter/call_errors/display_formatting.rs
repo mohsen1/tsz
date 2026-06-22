@@ -1861,11 +1861,8 @@ impl<'a> CheckerState<'a> {
         {
             return "IArguments".to_string();
         }
-        // A `readonly` array / `readonly` tuple argument referenced through a
-        // non-generic type alias (`need(ra)` where `ra: RA`) loses its alias on
-        // structural interning; `tsc` renders the alias name it was referenced
-        // through. Recover it from the argument's declared annotation before the
-        // structural fallbacks below collapse it to `readonly number[]`.
+        // Preserve the declared alias display for readonly array/tuple
+        // arguments before structural fallbacks collapse it.
         if let Some(alias) = self.readonly_array_alias_source_display(expr_idx, arg_type) {
             return alias;
         }
