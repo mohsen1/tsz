@@ -352,10 +352,17 @@ fn awaited_unwraps_user_thenable_nested_in_promise() {
 // alias* whose array element is an object type parameter
 // (`type Box<T> = Promise<{ payload: T[] }>`; `D<Box<{ id: 0 }>>`) used to abort
 // the process with a stack overflow (SIGABRT). `tsc`/`tsgo` resolve the alias to
-// `{ id: 0 }` in a few steps, but tsz's full convergence for this shape is a
-// separate post-crash residual (#14417 family). The active PR #14418 guards the
-// process-safety contract below; the ignored witnesses keep the parity target
-// visible without making this test-only PR claim the solver convergence fix.
+// `{ id: 0 }` in a few steps.
+//
+// Both legs are now fixed on `main`: the crash by #14123 (process-safety guards
+// landed in #14418) and the **convergence** residual by #14417 (the alias-body
+// canonicalization fix in #14421 — the recursive conditional-alias display-alias
+// no longer re-enters reduction, so the `Application(Promise, …)` form survives
+// alias materialization and the conditional `infer` slot binds). The convergence
+// witnesses below were originally committed `#[ignore]`d so the test-only #14418
+// PR did not claim the solver fix; with #14421 landed they pass, so they are now
+// activated as live regression guards (the `hold`-floor pattern: a fleet-fixed
+// witness becomes a guard once the production fix is on `main`).
 
 /// Assert the binary did not abort with a stack overflow on `source`.
 fn assert_no_stack_overflow(name: &str, out: &str) {
@@ -366,7 +373,6 @@ fn assert_no_stack_overflow(name: &str, out: &str) {
 }
 
 #[test]
-#[ignore = "post-#14123 convergence residual; #14418 only guards process safety"]
 fn recursive_conditional_infer_generic_alias_array_element_resolves() {
     let out = run_check(
         "cond_infer_alias_14123",
@@ -398,7 +404,6 @@ fn recursive_conditional_infer_generic_alias_array_element_resolves() {
 }
 
 #[test]
-#[ignore = "post-#14123 convergence residual; #14418 only guards process safety"]
 fn recursive_conditional_infer_generic_alias_renamed_binders_resolve() {
     // Same structure, every binder renamed: the fix is structural, not by name.
     let out = run_check(
@@ -429,7 +434,6 @@ fn recursive_conditional_infer_generic_alias_renamed_binders_resolve() {
 }
 
 #[test]
-#[ignore = "post-#14123 convergence residual; #14418 only guards process safety"]
 fn recursive_conditional_infer_inlined_form_resolves() {
     // The inlined equivalent is a sibling convergence target. Keep the witness
     // with the same line-based assertions for the solver follow-up.
@@ -460,6 +464,101 @@ fn recursive_conditional_infer_inlined_form_resolves() {
 }
 
 // ---------------------------------------------------------------------------
+// Issue #14417 — alias-canonicalization breadth (the #14421 fix is structural).
+// ---------------------------------------------------------------------------
+//
+// #14421 fixed convergence by preserving the canonical `Application(Base, Args)`
+// form across alias-body materialization so the conditional `infer` slot can read
+// the argument. The witnesses above all route the check type through a lib
+// `Promise` alias; these guards prove the fix is general — it is keyed on the
+// `Application` form, not on `Promise` or on a single alias hop — so the
+// canonicalization cannot silently narrow back to the original witness shape.
+
+/// The recursive `infer` check type can be a **user-defined** generic alias (not
+/// a lib type): the conditional must still bind `infer U` on the alias's
+/// `Application` base and converge.
+#[test]
+fn recursive_conditional_infer_user_generic_alias_converges() {
+    let out = run_check(
+        "cond_infer_user_generic_14417",
+        "type Wrap<X> = { wrapped: X };\n\
+         type D<T> =\n\
+         \x20   T extends Wrap<infer U> ? D<U> :\n\
+         \x20   T extends { payload: infer P } ? D<P> :\n\
+         \x20   T;\n\
+         type R = D<Wrap<{ payload: { id: 0 } }>>;\n\
+         declare const r: R;\n\
+         const good: { id: number } = r;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert_no_stack_overflow("cond_infer_user_generic_14417", &out);
+    assert!(
+        out.contains("repro.ts(9,"),
+        "user-generic alias must resolve to `{{ id: 0 }}` (line 9 mismatch).\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains("repro.ts(8,"),
+        "user-generic alias must accept a `{{ id: number }}` target (line 8).\noutput:\n{out}"
+    );
+}
+
+/// The check type can reach `Promise` through **two** alias hops (`CD` → `AB` →
+/// `Promise`): the canonical `Application` form must survive every hop.
+#[test]
+fn recursive_conditional_infer_double_alias_indirection_converges() {
+    let out = run_check(
+        "cond_infer_double_alias_14417",
+        "type D<K> = K extends Promise<infer U> ? D<U> : K;\n\
+         type AB<T> = Promise<T>;\n\
+         type CD<T> = AB<T>;\n\
+         type R = D<CD<{ id: 0 }>>;\n\
+         declare const r: R;\n\
+         const good: { id: number } = r;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert_no_stack_overflow("cond_infer_double_alias_14417", &out);
+    assert!(
+        out.contains("repro.ts(7,"),
+        "double-alias indirection must resolve to `{{ id: 0 }}` (line 7 mismatch).\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains("repro.ts(6,"),
+        "double-alias indirection must accept a `{{ id: number }}` target (line 6).\noutput:\n{out}"
+    );
+}
+
+/// Distributing the recursive `infer` conditional over a **union** of aliased
+/// `Promise`s must reduce every member (not leave the union opaque/`any`): the
+/// reduced `{ id: 0 } | { tag: 1 }` is not assignable to `string`, so the
+/// mismatch must fire (an opaque/`any` result would silently accept it).
+#[test]
+fn recursive_conditional_infer_distributive_union_alias_converges() {
+    let out = run_check(
+        "cond_infer_union_alias_14417",
+        "type D<K> = K extends Promise<infer U> ? D<U> : K;\n\
+         type AB<T> = Promise<T>;\n\
+         type R = D<AB<{ id: 0 }> | AB<{ tag: 1 }>>;\n\
+         declare const r: R;\n\
+         const bad: string = r;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert_no_stack_overflow("cond_infer_union_alias_14417", &out);
+    assert!(
+        out.contains("repro.ts(5,"),
+        "distributive union over aliased Promises must reduce to objects, not stay \
+         opaque/`any` (line 5 mismatch must fire).\noutput:\n{out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Issue #14123 — process-safety guards (crash must never recur).
 // ---------------------------------------------------------------------------
 //
@@ -472,17 +571,15 @@ fn recursive_conditional_infer_inlined_form_resolves() {
 // must terminate and must never abort the process — independently of whether the
 // alias fully *converges* to `tsc`'s reduced shape.
 //
-// NOTE on the residual: the convergence assertions above
-// (`*_resolves` / `*_resolve`) require the alias to reduce to its `tsc` value
-// (`{ id: 0 }`). They do not yet hold: a recursive conditional whose *matching*
-// branch follows a non-matching `infer`-application branch (`Promise<infer U>` /
-// `Fn<infer U>`) leaves the alias deferred instead of reduced, because the
-// conditional's `extends`-operand semantic ref (`TypeData::Lazy(DefId)` for
-// `Promise<infer U>`) resolves to an *unregistered* body at the use site
-// (`resolve_lazy_type: body unregistered`), so the branch relation is reported
-// `Undetermined` and the conditional defers (the deferral introduced for #14238).
-// That is a distinct `Lazy`-operand registration defect tracked under #14123; the
-// process-safety guards below stand on their own and must always pass.
+// NOTE: the convergence assertions above (`*_resolves` / `*_resolve`) require the
+// alias to reduce to its `tsc` value (`{ id: 0 }`). They now hold on `main` after
+// #14417 (fixed by #14421): a recursive conditional whose *matching* branch
+// follows a non-matching `infer`-application branch (`Promise<infer U>`) used to
+// leave the alias deferred because the alias-body materialization dropped the
+// `Application(Promise, …)` form, so the conditional `infer` slot never bound;
+// #14421 keeps that canonical application form across alias materialization, so
+// the slot binds and the recursion converges. The process-safety guards below are
+// independent of convergence and must always pass.
 
 /// The canonical #14123 minimal repro must terminate without aborting the
 /// process, regardless of the resolved shape.
