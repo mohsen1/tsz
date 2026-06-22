@@ -1,5 +1,5 @@
 //! Regression tests for inferring through an **intrinsic string mapping** in a
-//! template-literal pattern: `S extends \`${Uppercase<infer P>}\` ? P : never`.
+//! template-literal pattern whose span is `Uppercase<infer P>`.
 //!
 //! Structural rule (owner: `match_intrinsic_span_from` in
 //! `evaluation/evaluate_rules/infer_pattern_template_match.rs`): a template span
@@ -7,10 +7,10 @@
 //! `Uncapitalize`) wrapping an `infer` matches only when the captured segment
 //! is a **fixpoint** of the mapping (e.g. an already-uppercase run for
 //! `Uppercase`), and infers the variable as `string` — the intrinsic's domain —
-//! not the literal segment. So `"ABC" extends \`${Uppercase<infer P>}\` ? P :
-//! never` is `string` (any string assignable), while a non-uppercase source
-//! takes the false branch (`never`). Previously the span was unhandled and the
-//! conditional wrongly collapsed to `never`, drawing a spurious TS2322.
+//! not the literal segment. So the `"ABC"`-against-`Uppercase<infer P>` case is
+//! `string` (any string assignable), while a non-uppercase source takes the
+//! false branch (`never`). Previously the span was unhandled and the conditional
+//! wrongly collapsed to `never`, drawing a spurious TS2322.
 
 use tsz_checker::test_utils::check_source_codes;
 
