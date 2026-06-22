@@ -1849,6 +1849,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Constituent count of `type_id`: a union contributes its member count,
+    /// any other type contributes one. Used by the union-complexity (TS2590)
+    /// caps that bound mapped-type and index-access distribution.
+    pub(crate) fn count_union_members(&self, type_id: TypeId) -> usize {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Union(list_id)) => self.interner().type_list(list_id).len(),
+            _ => 1,
+        }
+    }
+
     /// Check if a type is a meta-type that would benefit from evaluation
     /// inside a tuple element. Excludes type parameters and concrete types
     /// to avoid recursive blowup.

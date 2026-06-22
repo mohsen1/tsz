@@ -1862,28 +1862,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // when both object and index are unions: (X | Y)[A | B] -> X[A] | X[B] | Y[A] | Y[B]
         if let Some(members_id) = union_list_id(self.interner(), index_type) {
             let members = self.interner().type_list(members_id);
-            // Limit to prevent OOM with large unions
-            if members.len() > MAX_UNION_INDEX_SIZE {
-                self.mark_depth_exceeded();
-                return TypeId::ERROR;
-            }
-            let mut results = Vec::new();
-            for &member in members.iter() {
-                if self.is_depth_exceeded() {
-                    return TypeId::ERROR;
-                }
-                let result = self.recurse_index_access(object_type, member);
-                if result == TypeId::ERROR && self.is_depth_exceeded() {
-                    return TypeId::ERROR;
-                }
-                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
-                    results.push(result);
-                }
-            }
-            if results.is_empty() {
-                return TypeId::UNDEFINED;
-            }
-            return self.interner().union(results);
+            return super::index_access_union_distribution::evaluate_index_union_distribution(
+                self,
+                object_type,
+                &members,
+            );
         }
 
         let interner = self.interner();

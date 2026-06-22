@@ -12,6 +12,7 @@ use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type_cached, instantiate_type_preserving_cached,
 };
+use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
 use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::Visibility;
@@ -594,10 +595,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
             && source_object.is_some();
 
+        // TS2590 union-complexity bail (parity with tsc's `getUnionType`, which
+        // returns `errorType` once a union reaches ~100k constituents). A
+        // recursive mapped distribution such as
+        // `{ [K in T]: `${K}${Rec<Exclude<T, K>>}` }[T]` produces one
+        // property-value union per key; indexing the result (`[T]`) unions them,
+        // so the cumulative member count grows factorially and tsz would
+        // materialize an oversized union (CPU-bound non-termination, #13508)
+        // where tsc bails. Track the running member total and stop once it
+        // crosses the limit, mirroring the existing template-literal /
+        // cross-product expansion caps. The sticky `union_too_complex` flag then
+        // drives TS2590 in the checker.
+        let mut cumulative_value_members: usize = 0;
+        // Snapshot the flag so the cascade short-circuit reacts only to
+        // complexity that arose *inside* this evaluation (a nested key's
+        // sub-evaluation), never to a flag a sibling type left set before this
+        // mapped type was reached.
+        let union_complex_before_mapped = self.interner().is_union_too_complex();
+
         for mapped_key in key_set.keys {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
                 return TypeId::ERROR;
+            }
+            // Cascade short-circuit: a previous key's nested distribution already
+            // overflowed the union-complexity budget, so the whole mapped result
+            // is too complex (TS2590). Stop before instantiating/evaluating the
+            // remaining keys instead of re-paying the per-key cost for each.
+            if !union_complex_before_mapped && self.interner().is_union_too_complex() {
+                break;
             }
             let key_name = mapped_key.name;
             let key_literal = mapped_key.key_literal;
@@ -692,6 +718,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Naming flags an identity key inherits from its homomorphic source.
             let (src_string_named, src_symbol_named, src_single_quoted) =
                 source_info.map_or((false, false, false), |&(_, _, _, s, y, q)| (s, y, q));
+            // Accumulate the constituent count this key contributes (each remapped
+            // key emits one property whose value is `property_type`).
+            cumulative_value_members = cumulative_value_members.saturating_add(
+                self.count_union_members(property_type)
+                    .saturating_mul(remapped_keys.len()),
+            );
             for mk in remapped_keys {
                 let identity = mk.name == key_name;
                 // Numeric-named string-literal key (`"0"`) stays string-named so `keyof` yields `"0"`, not `0`.
@@ -718,6 +750,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     single_quoted_name,
                     non_widening: false,
                 });
+            }
+
+            // Stop materializing further keys once the produced property-value
+            // unions cross tsc's union-complexity budget; the sticky flag drives
+            // TS2590. The already-built properties are kept so the (now
+            // too-complex) result still has shape for downstream display.
+            if cumulative_value_members >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                self.interner().mark_union_too_complex();
+                break;
             }
         }
 
