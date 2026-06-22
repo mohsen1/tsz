@@ -135,12 +135,7 @@ impl<'a> InferenceContext<'a> {
             // must each individually be satisfied. Without this, decomposing a union target
             // (e.g., matching {kind: T} against {kind:'a'} | {kind:'b'}) produces separate
             // upper bounds 'a' and 'b', causing false TS2345 errors.
-            if self.in_contra_mode {
-                self.add_contra_candidate(var, target, priority);
-            } else {
-                // T <: target, so target is an UPPER bound
-                self.add_upper_bound(var, target);
-            }
+            self.add_source_type_param_candidate(var, target, priority);
             return Ok(());
         }
 

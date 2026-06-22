@@ -309,6 +309,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             write_placeholder_name(&mut placeholder_buf, placeholder_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
+            // Record the declared name -> var mapping so the inference engine can
+            // recognize a self-referential inference (the declared parameter
+            // leaking back into its own variable, e.g. through a callback
+            // parameter contextually typed with the un-instantiated signature)
+            // and skip the no-information (contra-)candidate it would otherwise add.
+            infer_ctx.register_original_type_param_name(tp.name, var);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                 is_const: tp.is_const,
                 name: placeholder_atom,

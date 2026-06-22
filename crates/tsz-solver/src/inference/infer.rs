@@ -329,6 +329,15 @@ pub(crate) struct InferenceContext<'a> {
     /// `[...A, ...B]` target between two adjacent variadic elements. Keyed by the
     /// root inference variable (see [`InferenceContext::set_implied_arity`]).
     pub(crate) implied_arities: FxHashMap<InferenceVar, usize>,
+    /// Maps each tracked type parameter's *original* (declared) name to its
+    /// inference variable. Distinct from `type_params`, which keys on the
+    /// unique `__infer_*` placeholder name. The original name is needed only to
+    /// recognize a self-referential inference — `T` (original) flowing into the
+    /// variable that represents `T` — which carries no information and must not
+    /// seed a (contra-)candidate. Mirrors tsc's `inferFromTypes` early-return
+    /// when source and target are the same type parameter, which tsz's
+    /// placeholder rename would otherwise miss.
+    pub(crate) original_type_param_for_var: FxHashMap<Atom, InferenceVar>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -365,6 +374,7 @@ impl<'a> InferenceContext<'a> {
             in_array_element_context: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
+            original_type_param_for_var: FxHashMap::default(),
         }
     }
 
@@ -390,6 +400,7 @@ impl<'a> InferenceContext<'a> {
             in_array_element_context: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
+            original_type_param_for_var: FxHashMap::default(),
         }
     }
 
@@ -435,12 +446,41 @@ impl<'a> InferenceContext<'a> {
         self.type_params.push((name, var, is_const));
     }
 
+    /// Record the *original* (declared) name of the type parameter that `var`
+    /// represents. Only consulted to detect a self-referential inference (the
+    /// declared parameter flowing into its own variable); it must not change
+    /// `find_type_param`, which keys on the renamed placeholder so outer-scope
+    /// parameters that share a name cannot alias a local variable.
+    pub fn register_original_type_param_name(&mut self, name: Atom, var: InferenceVar) {
+        self.original_type_param_for_var.insert(name, var);
+    }
+
     /// Look up an inference variable by type parameter name
     pub fn find_type_param(&self, name: Atom) -> Option<InferenceVar> {
         self.type_params
             .iter()
             .find(|(n, _, _)| *n == name)
             .map(|(_, v, _)| *v)
+    }
+
+    /// Returns true when `ty` is a bare named `TypeParameter` whose declared
+    /// name is the original name of the type parameter that `var` represents —
+    /// i.e. inferring `var` against `ty` is a self-reference. The placeholder
+    /// rename means `ty`'s name never matches the variable's tracked
+    /// (placeholder) name, so the original-name registry is the only way to
+    /// recognize this case.
+    pub(crate) fn type_is_own_original_type_param(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+    ) -> bool {
+        let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty) else {
+            return false;
+        };
+        match self.original_type_param_for_var.get(&info.name) {
+            Some(&mapped) => self.table.find(mapped) == self.table.find(var),
+            None => false,
+        }
     }
 
     /// Record the implied arity for an inference variable (tsc's
@@ -1256,6 +1296,19 @@ impl<'a> InferenceContext<'a> {
         ty: TypeId,
         priority: InferencePriority,
     ) {
+        // Inferring a type parameter against *itself* carries no information.
+        // The placeholder rename hides this: the inference variable is tracked
+        // under a unique `__infer_*` placeholder, while a callback parameter
+        // contextually typed with the un-instantiated signature (e.g.
+        // `(ev: EventMap[K]) => any`) leaks the *declared* `K` into the
+        // contravariant matcher. Recovered via the original-name registry, such a
+        // self-referential bare type parameter must not become a contra-candidate
+        // — otherwise it overrides a legitimate covariant inference (e.g.
+        // `K = "message"`). Mirrors tsc's `inferFromTypes` same-type-parameter
+        // early return.
+        if self.type_is_own_original_type_param(var, ty) {
+            return;
+        }
         let root = self.table.find(var);
         let candidate = InferenceCandidate {
             type_id: ty,
@@ -1337,6 +1390,16 @@ impl<'a> InferenceContext<'a> {
         priority: InferencePriority,
         context: CandidateContext,
     ) {
+        // In a contravariant position, a candidate that is the variable's own
+        // declared type parameter is a self-reference carrying no information
+        // (see `add_contra_candidate`). The placeholder rename hides it from the
+        // `occurs_in` self-referential filter at fixing time, so skip it here —
+        // otherwise the leaked bare parameter becomes a contra-candidate that
+        // overrides a legitimate covariant inference. Covariant routing keeps its
+        // existing behavior (handled by `discard_self_referential_candidates`).
+        if self.in_contra_mode && self.type_is_own_original_type_param(var, ty) {
+            return;
+        }
         let root = self.table.find(var);
         // A candidate is a "fresh literal" (eligible for widening) when:
         // - It's a literal type AND
