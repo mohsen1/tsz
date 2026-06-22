@@ -153,7 +153,11 @@ run_one() {
     # Format is "copy_symbol_file_targets   N  (M entries copied)"
     overlay_calls=$(awk '/copy_symbol_file_targets/ {for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/) {print $i; exit}}' "$out")
     # macOS awk doesn't support match() with array arg; use sed instead.
-    overlay_entries=$(grep "copy_symbol_file_targets" "$out" | sed -E 's/.*\(([0-9]+) entries.*/\1/' | head -1)
+    # `grep -m1` (not `grep ... | head -1`) so grep itself closes the pipe after
+    # the first match: under `set -euo pipefail` a `grep | head` lets head close
+    # the reader while grep keeps scanning a multi-match dump, SIGPIPEing grep
+    # (exit 141) and aborting this assignment (the #14449 freeze family).
+    overlay_entries=$(grep -m1 "copy_symbol_file_targets" "$out" | sed -E 's/.*\(([0-9]+) entries.*/\1/')
     if ! [[ "$overlay_entries" =~ ^[0-9]+$ ]]; then overlay_entries=0; fi
 
     local compute_calls
