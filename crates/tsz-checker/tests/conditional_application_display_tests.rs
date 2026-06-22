@@ -14,13 +14,12 @@
 //! Verified against `tsc` 6.0.2. Binder names are varied across the matrix so the
 //! rule is proven structural, not keyed on a particular identifier.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::test_utils::{check_source_diagnostics, check_source_strict};
 
-/// Collect the rendered messages (primary + nested) for inspection.
-#[track_caller]
-fn messages(source: &str) -> Vec<String> {
+fn collect(diags: Vec<Diagnostic>) -> Vec<String> {
     let mut out = Vec::new();
-    for d in check_source_diagnostics(source) {
+    for d in diags {
         out.push(d.message_text.clone());
         for r in &d.related_information {
             out.push(r.message_text.clone());
@@ -29,9 +28,22 @@ fn messages(source: &str) -> Vec<String> {
     out
 }
 
+/// Collect the rendered messages (primary + nested) for inspection.
 #[track_caller]
-fn assert_any_contains(source: &str, needle: &str) {
-    let msgs = messages(source);
+fn messages(source: &str) -> Vec<String> {
+    collect(check_source_diagnostics(source))
+}
+
+/// As [`messages`], but under `strict` + `strictNullChecks` — required for the
+/// nullish-stripping cases (`NonNullable<…>`) whose mismatch only surfaces when
+/// `undefined` is a tracked member.
+#[track_caller]
+fn messages_strict(source: &str) -> Vec<String> {
+    collect(check_source_strict(source))
+}
+
+#[track_caller]
+fn assert_msgs_any_contains(msgs: &[String], needle: &str) {
     assert!(
         msgs.iter().any(|m| m.contains(needle)),
         "expected a diagnostic containing {needle:?}, got: {msgs:#?}",
@@ -39,12 +51,21 @@ fn assert_any_contains(source: &str, needle: &str) {
 }
 
 #[track_caller]
-fn assert_none_contains(source: &str, needle: &str) {
-    let msgs = messages(source);
+fn assert_msgs_none_contains(msgs: &[String], needle: &str) {
     assert!(
         !msgs.iter().any(|m| m.contains(needle)),
         "expected no diagnostic containing {needle:?}, got: {msgs:#?}",
     );
+}
+
+#[track_caller]
+fn assert_any_contains(source: &str, needle: &str) {
+    assert_msgs_any_contains(&messages(source), needle);
+}
+
+#[track_caller]
+fn assert_none_contains(source: &str, needle: &str) {
+    assert_msgs_none_contains(&messages(source), needle);
 }
 
 // ── Nested elaboration positions (rendered by the solver formatter) ──
@@ -127,4 +148,76 @@ type F<T> = T extends number ? string : boolean;
 function g<T>(p: F<T>): void { const y: number = p; }
 "#;
     assert_any_contains(source, "string | boolean");
+}
+
+// ── Source position against a generic target (the alias is preserved) ──
+//
+// tsc renders the *source* of a TS2322 with its written conditional/indexed
+// spelling — never its apparent branch-union / constraint — when the target is
+// itself generic (a deferred conditional or type-parameter-bearing type). The
+// relation still compares the apparent form; only the displayed source differs.
+// This is the mirror of the target-side conditional guard and of the
+// concrete-target case above (where the constraint IS shown).
+
+#[test]
+fn conditional_source_keeps_alias_against_generic_target() {
+    // `T95<U>` vs `T94<U>`: both deferred conditionals. tsc shows the source as
+    // `T95<U>`, not its branch union `number | boolean`. (Fixture
+    // `conditionalTypes1.ts`, `f45`.)
+    let source = r#"
+type T94<T> = T extends string ? true : 42;
+type T95<T> = T extends string ? boolean : number;
+function h<U>(value: T95<U>, sink: T94<U>) { sink = value; }
+"#;
+    assert_any_contains(source, "Type 'T95<U>' is not assignable to type 'T94<U>'.");
+    assert_none_contains(source, "number | boolean");
+}
+
+#[test]
+fn conditional_source_keeps_alias_against_generic_target_renamed_binders() {
+    // Same structural rule, different identifiers — proves it is not keyed on a
+    // particular alias/parameter name.
+    let source = r#"
+type Pick94<Q> = Q extends string ? true : 42;
+type Pick95<Q> = Q extends string ? boolean : number;
+function relay<W>(input: Pick95<W>, out: Pick94<W>) { out = input; }
+"#;
+    assert_any_contains(
+        source,
+        "Type 'Pick95<W>' is not assignable to type 'Pick94<W>'.",
+    );
+    assert_none_contains(source, "number | boolean");
+}
+
+#[test]
+fn indexed_access_source_keeps_spelling_against_generic_target() {
+    // A deferred indexed-access source `T["x"]` keeps its written form against a
+    // generic `NonNullable<T["x"]>` target, rather than collapsing to the
+    // constraint `string | undefined`. (Fixture `conditionalTypes1.ts`, `f4`.)
+    // `NonNullable` is defined locally (the unit harness does not load `lib.es5`)
+    // with tsc's `T & {}` body so the nullish-stripping target keeps its alias.
+    let source = r#"
+type NonNullable<T> = T & {};
+function pick<T extends { x: string | undefined }>(src: T["x"], dst: NonNullable<T["x"]>) {
+    dst = src;
+}
+"#;
+    let msgs = messages_strict(source);
+    assert_msgs_any_contains(&msgs, "Type 'T[\"x\"]' is not assignable to type");
+    assert_msgs_none_contains(&msgs, "Type 'string | undefined' is not assignable");
+}
+
+#[test]
+fn conditional_source_still_expands_against_concrete_target() {
+    // Negative boundary: against a *concrete* target tsc shows the source's
+    // apparent constraint, not the alias. `IsArray<T>` is rendered `boolean`
+    // for `let t: true = x`. (Fixture `distributiveConditionalTypeConstraints.ts`.)
+    let source = r#"
+type IsArray<T> = T extends unknown[] ? true : false;
+function f1<T extends object>(x: IsArray<T>) {
+    let t: true = x;
+}
+"#;
+    assert_any_contains(source, "Type 'boolean' is not assignable to type 'true'.");
+    assert_none_contains(source, "Type 'IsArray<T>'");
 }
