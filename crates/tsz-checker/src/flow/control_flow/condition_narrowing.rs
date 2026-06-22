@@ -904,17 +904,39 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                     }
                 }
-                // Handle truthiness discriminant narrowing for properties
+                // When the access is the left operand of a `??`/`??=`, the
+                // branches gate on the value being *nullish*, not *falsy* — tsc
+                // routes such a condition through `narrowTypeByOptionality`
+                // instead of `narrowTypeByTruthiness`. This matters for a
+                // discriminated-union receiver: `r.fullPath ?? r.from` reaches
+                // `r.from` on the branch where `r.fullPath` is nullish, which
+                // discriminates `r` to the member whose `fullPath` is `undefined`
+                // (a falsy-but-non-nullish `string` value must NOT keep that
+                // member). Truthiness narrowing would keep both members and leak
+                // `undefined` into the result type (false TS2322).
+                let coalesce_left = self.condition_is_nullish_coalesce_left(condition_idx);
+
+                // Handle discriminant narrowing for properties.
                 // For `if (x.flag)` where x is a discriminated union like
                 // `{flag: "hello"; data: string} | {flag: ""; data: number}`,
-                // narrow x based on whether `flag` is truthy or falsy.
+                // narrow x based on whether `flag` is truthy or falsy (or, for a
+                // `??` left, non-nullish or nullish).
                 if let Some(property_path) = self.discriminant_property(condition_idx, target) {
-                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
-                        &narrowing,
-                        type_id,
-                        &property_path,
-                        is_true_branch,
-                    );
+                    let narrowed = if coalesce_left {
+                        flow_query::narrow_by_property_nullishness_in_context(
+                            &narrowing,
+                            type_id,
+                            &property_path,
+                            is_true_branch,
+                        )
+                    } else {
+                        flow_query::narrow_by_property_truthiness_in_context(
+                            &narrowing,
+                            type_id,
+                            &property_path,
+                            is_true_branch,
+                        )
+                    };
                     // For union types, NEVER means all members were filtered out
                     // (no member has a truthy/falsy property), which is valid.
                     // For non-union types (class, mapped, generic), NEVER often
@@ -930,6 +952,19 @@ impl<'a> FlowAnalyzer<'a> {
                 // Handle truthiness narrowing for property/element access: if (y.a)
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 if self.is_matching_reference(condition_ref, target) {
+                    if coalesce_left {
+                        // `??` left: keep only the non-nullish part (true/short-
+                        // circuit branch) or the nullish part (false/right
+                        // branch), matching tsc's `narrowTypeByOptionality`
+                        // matching-reference arm (`NEUndefinedOrNull` /
+                        // `EQUndefinedOrNull`).
+                        let (non_nullish, nullish) = tsz_solver::narrowing::split_nullish_type(
+                            self.interner.as_type_database(),
+                            type_id,
+                        );
+                        let part = if is_true_branch { non_nullish } else { nullish };
+                        return part.unwrap_or(TypeId::NEVER);
+                    }
                     if is_true_branch {
                         // Full truthiness narrowing (same as a symbol reference):
                         // tsc's narrowTypeByTruthiness does not special-case
@@ -956,6 +991,19 @@ impl<'a> FlowAnalyzer<'a> {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 let matches = self.is_matching_reference(condition_ref, target);
                 if matches {
+                    // A bare-identifier `??`/`??=` left gates the right operand
+                    // on nullishness, not truthiness (tsc's
+                    // `narrowTypeByOptionality` matching-reference arm). e.g.
+                    // `x ?? x.foo` with `x: T | undefined` sees `x: T` only when
+                    // `x` is non-nullish.
+                    if self.condition_is_nullish_coalesce_left(condition_idx) {
+                        let (non_nullish, nullish) = tsz_solver::narrowing::split_nullish_type(
+                            self.interner.as_type_database(),
+                            type_id,
+                        );
+                        let part = if is_true_branch { non_nullish } else { nullish };
+                        return part.unwrap_or(TypeId::NEVER);
+                    }
                     return flow_query::narrow_to_truthy_in_context(
                         &narrowing,
                         type_id,
