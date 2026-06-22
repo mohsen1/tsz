@@ -733,24 +733,43 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     /// mapped binding sites).
     ///
     /// On top of [`Self::canonical_type_param`] this also erases the declared
-    /// `name`. Once every reference to the parameter is positional, its name is
-    /// purely cosmetic: `tsc`'s `compareTypeParametersIdentical` maps parameters
-    /// positionally and compares constraints only — never names. Keeping the name
-    /// in the canonical shape let two alpha-equivalent generic callables
-    /// (`<T extends X>() => T` vs `<U extends X>() => U`) hash to distinct
-    /// `TypeId`s and miss the relation's reflexive/identity fast path — the same
-    /// fragmentation family as #13609, here on the parameter *name* axis rather
-    /// than a declaration modifier. The mapped-type binder already erased the name
-    /// for exactly this reason (`{ [K in T]: K }` vs `{ [P in T]: P }`); this
-    /// generalizes it to every binding site. The name is never looked up off the
-    /// canonical form (it is identity/hashing only) and the *interned* parameter
-    /// keeps its name where it is actually rendered.
+    /// `name` and the internal `origin` discriminant. Once every reference to the
+    /// parameter is positional, its name is purely cosmetic: `tsc`'s
+    /// `compareTypeParametersIdentical` maps parameters positionally and compares
+    /// constraints only — never names. Keeping the name in the canonical shape let
+    /// two alpha-equivalent generic callables (`<T extends X>() => T` vs
+    /// `<U extends X>() => U`) hash to distinct `TypeId`s and miss the relation's
+    /// reflexive/identity fast path — the same fragmentation family as #13609, here
+    /// on the parameter *name* axis rather than a declaration modifier. The
+    /// mapped-type binder already erased the name for exactly this reason
+    /// (`{ [K in T]: K }` vs `{ [P in T]: P }`); this generalizes it to every
+    /// binding site.
+    ///
+    /// The [`TypeParamOrigin`](crate::types::TypeParamOrigin) discriminant is
+    /// erased to the [`User`](crate::types::TypeParamOrigin::User) default for the
+    /// same reason. `origin` is a purely internal tsz classification (whether a
+    /// parameter is a source-written generic or an inference placeholder) and is
+    /// never part of TypeScript's notion of type identity. Its inference variants
+    /// carry program-unique `id`s (`InferPlaceholder { id }` / `InferSource { id,
+    /// .. }`), and `TypeParamInfo` derives `Eq`/`Hash` over `origin`, so two
+    /// otherwise-identical *bound* signatures whose parameters are
+    /// higher-order-inference placeholders minted at different ids (the
+    /// re-generalized return-type form) canonicalized to distinct `TypeId`s and
+    /// missed the reflexive short-circuit — the `origin` axis of the #13609
+    /// fragmentation family. Because a bound parameter's references are already
+    /// positional, the id is never load-bearing here. (A *free* reference is
+    /// different: an inference placeholder's `id` is its identity, so
+    /// [`Self::canonical_type_param`] keeps `origin` — exactly as it keeps the
+    /// name.) The discriminant is still read where it matters (inference) off the
+    /// *interned* parameter, which is unchanged; only this comparison/hashing-only
+    /// canonical form drops it.
     fn canonical_bound_type_param(
         &mut self,
         tp: crate::types::TypeParamInfo,
     ) -> crate::types::TypeParamInfo {
         crate::types::TypeParamInfo {
             name: Atom::NONE,
+            origin: crate::types::TypeParamOrigin::User,
             ..self.canonical_type_param(tp)
         }
     }
@@ -909,3 +928,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 #[cfg(test)]
 #[path = "../../tests/canonicalize_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/canonicalize_origin_axis_tests.rs"]
+mod origin_axis_tests;
