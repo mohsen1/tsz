@@ -580,19 +580,33 @@ impl<'a> CheckerState<'a> {
         // deferred form (`type G = Atom['read']; function f(g: G) { g() }`):
         // unlike a `const`, a parameter keeps its annotation lazy, so the call
         // path — not the declaration — must reduce it. tsc classifies calls on
-        // the apparent type, so fully evaluate the callee and re-classify. The
-        // evaluation is *uncached* on purpose: an opaque result may have been
-        // interned earlier while a referenced interface was still unresolved, and
-        // the uncached walk forces that interface's type and recomputes the
-        // reduction. Only adopt the result when it actually reveals signatures,
-        // leaving genuinely uncallable and still-deferred-generic callees
-        // untouched (intrinsics can never become callable, so skip them).
+        // the apparent type, so fully evaluate the callee and re-classify.
+        //
+        // Readying the callee's relation inputs first is load-bearing (#14164):
+        // a callee like `Parameters<Atom<unknown>['read']>[0]` only reduces once
+        // the user interface `Atom`'s `DefId -> TypeId` is registered in the
+        // `TypeEnvironment` — a user interface, unlike a force-eligible lib def,
+        // is not materialized on a `resolve_lazy` miss, and this path is reached
+        // while still inside symbol resolution (a function-body return-inference
+        // path) where the environment evaluator skips its own readiness step.
+        // The conditional evaluator keeps such a callee deferred (rather than
+        // collapsing to `never`) precisely so this readiness step + the uncached
+        // re-evaluation below can resolve it. Readying is the same step the
+        // relation path runs, which is why the identical type relates as callable
+        // but the call path did not. The evaluation is *uncached* on purpose: an
+        // opaque result may have been interned earlier while a referenced
+        // interface was still unresolved, so the uncached walk recomputes the
+        // reduction over the now-registered bodies. Only adopt the result when it
+        // actually reveals signatures, leaving genuinely uncallable and
+        // still-deferred-generic callees untouched (intrinsics can never become
+        // callable, so skip them).
         let original_callee_is_union =
             common::is_union_type(self.ctx.types, resolved_for_classification);
         if matches!(classification, query::CallSignaturesKind::NoSignatures)
             && !original_callee_is_union
             && !callee_type_for_resolution.is_intrinsic()
         {
+            self.ensure_relation_input_ready(callee_type_for_resolution);
             let fully_evaluated = self.evaluate_type_with_env_uncached(callee_type_for_resolution);
             let fully_evaluated = self.resolve_lazy_type(fully_evaluated);
             let fully_classification =
