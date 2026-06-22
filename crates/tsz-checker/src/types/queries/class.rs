@@ -1412,17 +1412,36 @@ impl<'a> CheckerState<'a> {
         }
 
         if !is_static {
-            let object_property_count = |this: &Self, type_id| {
+            // Rank an instance-`this` candidate by how *resolved* its members are,
+            // not merely how many it has: `(non-`any` property count, total property
+            // count)`. A Phase 0 prescan instance type carries every member but
+            // types them all `any` (initializers/getter bodies not yet evaluated),
+            // while the partial type built during real construction has fewer
+            // members but types them concretely. Comparing on total count alone let
+            // the all-`any` prescan shadow the partial type when resolving `this`
+            // inside a deferred getter body, so `this.field` came back `any` and the
+            // getter's inferred return type collapsed to `any` (missed TS2322).
+            // Ranking resolved members first keeps the genuinely-fuller candidate
+            // winning while never preferring an all-`any` shape over a typed one.
+            let object_property_rank = |this: &Self, type_id| {
                 crate::query_boundaries::common::object_shape_for_type(this.ctx.types, type_id)
-                    .map(|shape| shape.properties.len())
-                    .unwrap_or(0)
+                    .map(|shape| {
+                        let total = shape.properties.len();
+                        let resolved = shape
+                            .properties
+                            .iter()
+                            .filter(|prop| prop.type_id != TypeId::ANY)
+                            .count();
+                        (resolved, total)
+                    })
+                    .unwrap_or((0, 0))
             };
 
             if let Some(cached) = cached_instance_this
                 && cached != TypeId::ANY
                 && cached != TypeId::ERROR
             {
-                let cached_count = object_property_count(self, cached);
+                let cached_rank = object_property_rank(self, cached);
                 let in_progress = self
                     .ctx
                     .class_instance_type_cache
@@ -1432,7 +1451,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(in_progress) = in_progress
                     && in_progress != TypeId::ANY
                     && in_progress != TypeId::ERROR
-                    && object_property_count(self, in_progress) > cached_count
+                    && object_property_rank(self, in_progress) > cached_rank
                 {
                     if let Some(info) = self.ctx.enclosing_class.as_mut()
                         && info.class_idx == class_idx
