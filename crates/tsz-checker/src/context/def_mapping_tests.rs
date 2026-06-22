@@ -434,6 +434,52 @@ fn both_envs_defer_then_replay_under_simultaneous_borrow() {
     );
 }
 
+/// Pins the body-registration construction rule shared by
+/// `register_resolved_def_in_envs` and `mirror_def_in_type_environment`:
+/// empty params build the non-generic `InsertDef` variant, non-empty params
+/// build `InsertDefWithParams` with the threaded-through variances. This is the
+/// single rule both pure-construction sites now route through
+/// (`DeferredFlowEnvWrite::insert_def_choosing_params`), so a drift in one of
+/// them is caught here. Uses synthetic `DefId`s, so it is binder-name
+/// independent.
+#[test]
+fn insert_def_choosing_params_selects_variant_by_params_emptiness() {
+    use super::super::deferred_flow_env_write::DeferredFlowEnvWrite;
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefId;
+
+    let def_id = DefId(7);
+    let body = TypeId::STRING;
+
+    // Empty params -> non-generic InsertDef, variances ignored.
+    let empty = DeferredFlowEnvWrite::insert_def_choosing_params(def_id, body, vec![], None);
+    assert!(
+        matches!(
+            empty,
+            DeferredFlowEnvWrite::InsertDef { def_id: d, body: b } if d == def_id && b == body
+        ),
+        "empty params must build the non-generic InsertDef variant"
+    );
+
+    // Non-empty params -> generic InsertDefWithParams; `None` variances flow through.
+    let params = vec![tsz_solver::TypeParamInfo::simple(Atom::default())];
+    let generic =
+        DeferredFlowEnvWrite::insert_def_choosing_params(def_id, body, params.clone(), None);
+    assert!(
+        matches!(
+            generic,
+            DeferredFlowEnvWrite::InsertDefWithParams {
+                def_id: d,
+                body: b,
+                params: ref p,
+                variances: None,
+            } if d == def_id && b == body && p.len() == params.len()
+        ),
+        "non-empty params must build the generic InsertDefWithParams variant with the given variances"
+    );
+}
+
 /// Regression for #13944 / #13086: a `DefId -> TypeId` body re-published by the
 /// lazy-resolution path (`register_resolved_def_in_envs`, the gateway
 /// `try_insert_def_in_type_env` now uses) must travel the race-safe deferred

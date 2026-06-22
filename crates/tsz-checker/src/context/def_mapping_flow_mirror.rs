@@ -19,18 +19,10 @@ impl CheckerContext<'_> {
         body: TypeId,
         params: &[tsz_solver::TypeParamInfo],
     ) {
-        let op = if params.is_empty() {
-            DeferredFlowEnvWrite::InsertDef { def_id, body }
-        } else {
-            // Variances are left unset here, matching the prior direct
-            // `insert_def_with_params` mirror at this site.
-            DeferredFlowEnvWrite::InsertDefWithParams {
-                def_id,
-                body,
-                params: params.to_vec(),
-                variances: None,
-            }
-        };
+        // Variances are left unset here (`None`), matching the prior direct
+        // `insert_def_with_params` mirror at this site.
+        let op =
+            DeferredFlowEnvWrite::insert_def_choosing_params(def_id, body, params.to_vec(), None);
         self.mirror_to_flow_env(op);
     }
 
