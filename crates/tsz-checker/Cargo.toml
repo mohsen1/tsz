@@ -821,6 +821,9 @@ path = "tests/enum_discriminant_excess_property_tests.rs"
 name = "inherited_constructor_defaulted_type_arg_tests"
 path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
 [[test]]
+name = "ts2454_indexed_access_undefined_tests"
+path = "tests/ts2454_indexed_access_undefined_tests.rs"
+[[test]]
 name = "intersection_infer_last_member_tests"
 path = "tests/intersection_infer_last_member_tests.rs"
 [[test]]
