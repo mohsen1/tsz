@@ -6,6 +6,7 @@ mod js_prototype;
 mod jsx_body_context;
 mod literal_context;
 
+use self::generator_declaration_yield::GeneratorDeclarationYieldCtx;
 use super::function_type_helpers::{
     ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
     GeneratorBodyReturnCheckCtx,
@@ -1898,11 +1899,9 @@ impl<'a> CheckerState<'a> {
                         name_for_error: name_for_error.as_deref(),
                     });
 
-                // Restore outer generator's yield collection state
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
                 self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
-                // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;
                 self.ctx.label_stack.truncate(saved_cf_context.2);
@@ -1914,28 +1913,27 @@ impl<'a> CheckerState<'a> {
                 && !has_type_annotation
                 && final_generator_yield_type.is_none()
             {
-                final_generator_yield_type = self.infer_generator_declaration_yield_type(
-                    body,
-                    contextual_type,
-                    has_type_annotation,
-                    annotated_return_type,
-                    return_type,
-                    type_annotation,
-                    idx,
-                    function_is_async,
-                    early_yield_type,
-                );
+                final_generator_yield_type =
+                    self.infer_generator_declaration_yield_type(GeneratorDeclarationYieldCtx {
+                        body,
+                        contextual_type,
+                        has_type_annotation,
+                        annotated_return_type,
+                        return_type,
+                        type_annotation,
+                        idx,
+                        function_is_async,
+                        early_yield_type,
+                    });
             }
             self.pop_return_type();
             self.ctx.pop_yield_type();
             self.ctx.pop_generator_next_type();
 
-            // Exit async context
             if is_async_for_context {
                 self.ctx.exit_async_context();
             }
 
-            // Restore function_depth (incremented at body entry)
             self.ctx.function_depth -= 1;
         }
 

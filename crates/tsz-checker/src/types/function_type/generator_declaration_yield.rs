@@ -6,6 +6,18 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(super) struct GeneratorDeclarationYieldCtx {
+    pub(super) body: NodeIndex,
+    pub(super) contextual_type: Option<TypeId>,
+    pub(super) has_type_annotation: bool,
+    pub(super) annotated_return_type: Option<TypeId>,
+    pub(super) return_type: TypeId,
+    pub(super) type_annotation: NodeIndex,
+    pub(super) idx: NodeIndex,
+    pub(super) function_is_async: bool,
+    pub(super) early_yield_type: Option<TypeId>,
+}
+
 impl<'a> CheckerState<'a> {
     /// Recover inferred yield type for unannotated generator declarations.
     ///
@@ -15,16 +27,19 @@ impl<'a> CheckerState<'a> {
     /// come from the later declaration check.
     pub(super) fn infer_generator_declaration_yield_type(
         &mut self,
-        body: NodeIndex,
-        contextual_type: Option<TypeId>,
-        has_type_annotation: bool,
-        annotated_return_type: Option<TypeId>,
-        return_type: TypeId,
-        type_annotation: NodeIndex,
-        idx: NodeIndex,
-        function_is_async: bool,
-        early_yield_type: Option<TypeId>,
+        ctx: GeneratorDeclarationYieldCtx,
     ) -> Option<TypeId> {
+        let GeneratorDeclarationYieldCtx {
+            body,
+            contextual_type,
+            has_type_annotation,
+            annotated_return_type,
+            return_type,
+            type_annotation,
+            idx,
+            function_is_async,
+            early_yield_type,
+        } = ctx;
         let yield_diag_snapshot = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let saved_cf_context = (
             self.ctx.iteration_depth,
