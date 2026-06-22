@@ -42,7 +42,7 @@ impl CheckerState<'_> {
     /// exempt: substituting `this -> this` is an identity no-op, so the existing
     /// direct-`this`-receiver paths are preserved.
     pub(crate) fn type_is_compound_this_relative(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::is_compound_this_relative_surface_type(
+        crate::query_boundaries::type_checking::is_compound_this_relative_surface_type(
             self.ctx.types,
             type_id,
             self.ctx.types.this_type(),
