@@ -1933,4 +1933,5 @@ fn file_canonical_path_table_records_and_reads_back() {
     );
 }
 
+include!("def_tests_parts/content_election.rs");
 include!("def_tests_parts/type_to_def.rs");
