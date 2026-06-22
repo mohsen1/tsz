@@ -199,6 +199,9 @@ mod decorator_return_relation_routing_arch_tests;
 #[path = "tests/defaulted_param_deferred_undefined_strip_tests.rs"]
 mod defaulted_param_deferred_undefined_strip_tests;
 #[cfg(test)]
+#[path = "tests/definite_assignment_logical_compound_tests.rs"]
+mod definite_assignment_logical_compound_tests;
+#[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
