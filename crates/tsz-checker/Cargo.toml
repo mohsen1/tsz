@@ -791,6 +791,9 @@ path = "tests/binding_pattern_inference_tests.rs"
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 [[test]]
+name = "template_intrinsic_infer_tests"
+path = "tests/template_intrinsic_infer_tests.rs"
+[[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
 [[test]]
