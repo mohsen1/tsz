@@ -41,29 +41,6 @@ pub struct EvictedFile {
     pub estimated_bytes: usize,
 }
 
-/// Internal ranking entry for eviction decisions.
-struct EvictionEntry {
-    file_name: String,
-    estimated_bytes: usize,
-    has_dependents: bool,
-    is_declaration: bool,
-}
-
-impl EvictionEntry {
-    /// Composite eviction score (higher = evict first).
-    const fn score(&self) -> u64 {
-        let size = self.estimated_bytes as u64;
-        // Files with dependents get a 8x penalty (lower score).
-        let dep_factor = if self.has_dependents { size / 8 } else { size };
-        // Declaration files get an additional 4x penalty.
-        if self.is_declaration {
-            dep_factor / 4
-        } else {
-            dep_factor
-        }
-    }
-}
-
 impl Project {
     /// Mark a file as open in the editor.
     ///
@@ -122,70 +99,141 @@ impl Project {
     ///
     /// # Ranking
     ///
-    /// Files are ranked by a composite score that considers:
-    /// - **Estimated size** (larger = evicted first)
-    /// - **Dependents** (files that no one imports are evicted first)
-    /// - **Declaration files** (`.d.ts` are deprioritized, kept longer)
-    /// - **Open status** (open files are never evicted)
+    /// Candidates come from the shared [`Project::eviction_candidates`] ranking
+    /// (coldest-and-largest first: `idle_seconds * estimated_bytes`, with `.d.ts`
+    /// declaration files deprioritized since they are typically shared
+    /// dependencies). Files open in the editor are filtered out and never
+    /// evicted.
     pub fn evict_under_pressure(&mut self, target_bytes: usize) -> EvictionResult {
+        // Rank cold, large files first via the shared residency ranking,
+        // excluding files currently open in the editor (never evicted).
+        let ranked: Vec<(String, usize)> = self
+            .eviction_candidates(None)
+            .into_iter()
+            .filter(|info| !self.open_files.contains(&info.file_name))
+            .map(|info| (info.file_name, info.estimated_bytes))
+            .collect();
+        self.evict_ranked(ranked, target_bytes)
+    }
+
+    /// Evict cold, safely-droppable files when the project exceeds its
+    /// configured memory budget ([`Project::set_memory_budget`]).
+    ///
+    /// No-op when no budget is configured (the default), so eviction is
+    /// strictly opt-in. Only files that are **all** of:
+    ///
+    /// 1. not open in the editor,
+    /// 2. imported by no other file (zero dependents), and
+    /// 3. byte-identical to their on-disk contents,
+    ///
+    /// are evicted. The zero-dependents requirement guarantees that no
+    /// remaining file's analysis depends on an evicted file, so diagnostics are
+    /// unchanged; the disk-identity requirement guarantees an evicted file can
+    /// be rehydrated losslessly via [`Project::ensure_file_loaded`] when a later
+    /// request targets it directly.
+    ///
+    /// Files are dropped in coldest-and-largest-first order (the LRU ranking
+    /// produced by [`Project::eviction_candidates`]) until the footprint drops
+    /// to or below the budget, or no further file is safe to evict.
+    pub fn evict_if_over_budget(&mut self) -> EvictionResult {
+        let total = self.total_estimated_bytes();
+        // Disabled (no budget) or already within budget: skip ranking entirely.
+        let within_budget = EvictionResult {
+            evicted: Vec::new(),
+            bytes_freed: 0,
+            bytes_remaining: total,
+        };
+        let Some(budget) = self.memory_budget_bytes else {
+            return within_budget;
+        };
+        if total <= budget {
+            return within_budget;
+        }
+        let ranked: Vec<(String, usize)> = self
+            .eviction_candidates(None)
+            .into_iter()
+            .filter(|info| self.is_safely_evictable(&info.file_name))
+            .map(|info| (info.file_name, info.estimated_bytes))
+            .collect();
+        self.evict_ranked(ranked, budget)
+    }
+
+    /// Whether a file can be dropped under memory pressure without affecting
+    /// any other file's analysis or losing unsaved editor state.
+    ///
+    /// See [`Project::evict_if_over_budget`] for the three conditions.
+    fn is_safely_evictable(&self, file_name: &str) -> bool {
+        if self.open_files.contains(file_name) {
+            return false;
+        }
+        let has_dependents = self
+            .dependency_graph
+            .get_dependents(file_name)
+            .is_some_and(|deps| !deps.is_empty());
+        if has_dependents {
+            return false;
+        }
+        self.in_memory_matches_disk(file_name)
+    }
+
+    /// Reload a previously-evicted file from disk if it is currently missing.
+    ///
+    /// Returns `true` when the file is present after the call — either it was
+    /// already loaded, or it was successfully rehydrated from disk. The LSP
+    /// request path calls this so a request targeting an evicted file
+    /// transparently reloads it. Files with no on-disk backing (e.g. untitled
+    /// buffers) cannot be rehydrated and return `false`.
+    pub fn ensure_file_loaded(&mut self, file_name: &str) -> bool {
+        if self.files.contains_key(file_name) {
+            return true;
+        }
+        match std::fs::read_to_string(file_name) {
+            Ok(content) => {
+                self.set_file(file_name.to_string(), content);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Remove ranked files (best candidate first) until the total estimated
+    /// footprint drops to or below `target_bytes`.
+    fn evict_ranked(
+        &mut self,
+        ranked: Vec<(String, usize)>,
+        target_bytes: usize,
+    ) -> EvictionResult {
         let mut total = self.total_estimated_bytes();
+        let mut evicted = Vec::new();
+        let mut bytes_freed: usize = 0;
 
         if total <= target_bytes {
             return EvictionResult {
-                evicted: Vec::new(),
-                bytes_freed: 0,
+                evicted,
+                bytes_freed,
                 bytes_remaining: total,
             };
         }
 
-        // Build ranked eviction list, excluding open files.
-        let mut entries: Vec<EvictionEntry> = self
-            .files
-            .iter()
-            .filter(|(name, _)| !self.open_files.contains(name.as_str()))
-            .map(|(name, file)| {
-                let has_dependents = self
-                    .dependency_graph
-                    .get_dependents(name)
-                    .is_some_and(|deps| !deps.is_empty());
-                EvictionEntry {
-                    file_name: name.clone(),
-                    estimated_bytes: file.estimated_size_bytes(),
-                    has_dependents,
-                    is_declaration: name.ends_with(".d.ts"),
-                }
-            })
-            .collect();
-
-        // Sort by score descending (highest score = evict first).
-        entries.sort_by_key(|b| std::cmp::Reverse(b.score()));
-
-        let mut evicted = Vec::new();
-        let mut bytes_freed: usize = 0;
-
-        for entry in entries {
+        for (file_name, estimated_bytes) in ranked {
             if total <= target_bytes {
                 break;
             }
 
-            let file_bytes = entry.estimated_bytes;
-            let file_name = entry.file_name;
-
             if self.remove_file(&file_name).is_some() {
-                total = total.saturating_sub(file_bytes);
-                bytes_freed = bytes_freed.saturating_add(file_bytes);
-                evicted.push(EvictedFile {
-                    file_name,
-                    estimated_bytes: file_bytes,
-                });
-
+                total = total.saturating_sub(estimated_bytes);
+                bytes_freed = bytes_freed.saturating_add(estimated_bytes);
                 tracing::info!(
-                    evicted_file = %evicted.last().unwrap().file_name,
-                    freed_bytes = file_bytes,
+                    evicted_file = %file_name,
+                    freed_bytes = estimated_bytes,
                     remaining_total = total,
                     target = target_bytes,
                     "eviction: removed file under memory pressure"
                 );
+                evicted.push(EvictedFile {
+                    file_name,
+                    estimated_bytes,
+                });
             }
         }
 
@@ -327,5 +375,145 @@ mod tests {
         // All files are open, so none should be evicted.
         assert!(result.evicted.is_empty());
         assert_eq!(project.file_count(), 3);
+    }
+
+    // ── Opt-in, disk-backed memory-budget eviction ──────────────────────
+
+    /// Create a fresh, unique on-disk directory for a single test and return
+    /// its path. Cleaned up best-effort by [`TempDir::drop`].
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let mut dir = std::env::temp_dir();
+            dir.push(format!(
+                "tsz_lsp_evict_{tag}_{}_{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+            Self(dir)
+        }
+
+        /// Write `content` to `name` inside the temp dir, returning the absolute
+        /// path string used as the project's file name.
+        fn write(&self, name: &str, content: &str) -> String {
+            let path = self.0.join(name);
+            std::fs::write(&path, content).expect("write temp file");
+            path.to_string_lossy().to_string()
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn evict_if_over_budget_is_noop_without_budget() {
+        // Default: no budget configured -> eviction never runs.
+        let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
+        assert_eq!(project.memory_budget_bytes(), None);
+
+        let result = project.evict_if_over_budget();
+
+        assert!(result.evicted.is_empty());
+        assert_eq!(project.file_count(), 3);
+    }
+
+    #[test]
+    fn evict_if_over_budget_drops_clean_disk_backed_files() {
+        let tmp = TempDir::new("clean");
+        let a = tmp.write("a.ts", "export const a = 1;\n");
+        let b = tmp.write("b.ts", "export const b = 2;\n");
+
+        let mut project = Project::new();
+        project.set_file(a.clone(), "export const a = 1;\n".to_string());
+        project.set_file(b.clone(), "export const b = 2;\n".to_string());
+        assert_eq!(project.file_count(), 2);
+
+        // Budget below the current footprint forces eviction. Neither file is
+        // open or imported, and both match disk, so both are safe to drop.
+        project.set_memory_budget(Some(0));
+        let result = project.evict_if_over_budget();
+
+        assert!(!result.evicted.is_empty());
+        assert_eq!(project.file_count(), 0);
+
+        // An evicted, on-disk file rehydrates transparently.
+        assert!(project.ensure_file_loaded(&a));
+        assert_eq!(project.file_count(), 1);
+        assert!(project.file(&a).is_some());
+    }
+
+    #[test]
+    fn evict_if_over_budget_keeps_files_with_unsaved_changes() {
+        let tmp = TempDir::new("dirty");
+        // On-disk content differs from the in-memory (edited-but-unsaved) buffer.
+        let a = tmp.write("a.ts", "export const a = 1;\n");
+
+        let mut project = Project::new();
+        project.set_file(
+            a.clone(),
+            "export const a = 999; // unsaved edit\n".to_string(),
+        );
+
+        project.set_memory_budget(Some(0));
+        let result = project.evict_if_over_budget();
+
+        // Dropping it would lose the unsaved edit, so it must be retained.
+        assert!(result.evicted.is_empty());
+        assert_eq!(project.file_count(), 1);
+    }
+
+    #[test]
+    fn evict_if_over_budget_keeps_files_with_dependents() {
+        let tmp = TempDir::new("deps");
+        let lib = tmp.write("lib.ts", "export const v = 1;\n");
+        let app = tmp.write("app.ts", "export const v = 1;\n");
+
+        let mut project = Project::new();
+        project.set_file(lib.clone(), "export const v = 1;\n".to_string());
+        project.set_file(app.clone(), "export const v = 1;\n".to_string());
+        // `app` imports `lib`, so `lib` has a dependent and must not be evicted
+        // (its removal would break `app`'s analysis); `app` itself is a leaf.
+        project.dependency_graph.add_dependency(&app, &lib);
+
+        project.set_memory_budget(Some(0));
+        let result = project.evict_if_over_budget();
+
+        assert!(project.file(&lib).is_some(), "imported file must survive");
+        assert!(
+            result.evicted.iter().all(|e| e.file_name != lib),
+            "imported file must not be evicted"
+        );
+        assert!(project.file(&app).is_none(), "leaf file should be evicted");
+    }
+
+    #[test]
+    fn evict_if_over_budget_protects_open_files() {
+        let tmp = TempDir::new("open");
+        let a = tmp.write("a.ts", "export const a = 1;\n");
+
+        let mut project = Project::new();
+        project.set_file(a.clone(), "export const a = 1;\n".to_string());
+        project.mark_file_open(&a);
+
+        project.set_memory_budget(Some(0));
+        let result = project.evict_if_over_budget();
+
+        assert!(result.evicted.is_empty());
+        assert!(project.file(&a).is_some());
+    }
+
+    #[test]
+    fn ensure_file_loaded_returns_false_for_missing_file() {
+        let mut project = Project::new();
+        assert!(!project.ensure_file_loaded("/no/such/path/does-not-exist.ts"));
+        assert_eq!(project.file_count(), 0);
     }
 }
