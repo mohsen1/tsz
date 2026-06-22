@@ -364,6 +364,15 @@ pub struct IdentityCounters {
     /// Raw `SymbolId`-shaped `DefId` redirects inside
     /// `TypeEnvironment::resolve_lazy`.
     pub type_environment_raw_symbol_lazy_fallbacks: u64,
+    /// #14344: genuine content collisions suppressed by the
+    /// `raw_symbol_fallback_def` `#13862` guard (store-registered `DefId(N)`
+    /// whose raw value collides with a different-named decl). The migration's
+    /// md5-stability regression signal; trends to zero as identity canonicalizes.
+    pub identity_collision_wrong_decl_suppressed: u64,
+    /// #14344 denominator: `symbol_def_index` composite-key lookups that hit.
+    pub symbol_def_index_lookup_hits: u64,
+    /// #14344 denominator: `symbol_def_index` composite-key lookups that missed.
+    pub symbol_def_index_lookup_misses: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -709,6 +718,11 @@ impl PerfCounters {
                 type_environment_raw_symbol_lazy_fallbacks: load(
                     &c.type_environment_raw_symbol_lazy_fallbacks,
                 ),
+                identity_collision_wrong_decl_suppressed: load(
+                    &c.identity_collision_wrong_decl_suppressed,
+                ),
+                symbol_def_index_lookup_hits: load(&c.symbol_def_index_lookup_hits),
+                symbol_def_index_lookup_misses: load(&c.symbol_def_index_lookup_misses),
             },
             lib_bootstrap: LibBootstrapCounters {
                 snapshot_set_load_attempts: load(&c.lib_snapshot_set_load_attempts),
