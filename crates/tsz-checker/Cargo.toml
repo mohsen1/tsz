@@ -207,6 +207,9 @@ path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
 name = "homomorphic_mapped_index_display_tests"
 path = "tests/homomorphic_mapped_index_display_tests.rs"
 [[test]]
+name = "homomorphic_mapped_alias_readonly_index_source_tests"
+path = "tests/homomorphic_mapped_alias_readonly_index_source_tests.rs"
+[[test]]
 name = "intersection_modifier_merge_tests"
 path = "tests/intersection_modifier_merge_tests.rs"
 [[test]]

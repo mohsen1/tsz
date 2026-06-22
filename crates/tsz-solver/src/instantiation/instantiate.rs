@@ -256,11 +256,26 @@ impl<'a> TypeInstantiator<'a> {
                 }
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
+                // A readonly numeric index signature alone does NOT make this a
+                // `ReadonlyArray`: a plain `{ readonly [k: number]: V }` object
+                // (optionally with named members) has one too, and tsc maps it
+                // to an object with a readonly numeric index signature, not to
+                // `readonly V[]`. Require the array marker methods
+                // (`slice`/`concat`) — the same structural signal the mapped
+                // evaluator and conditional `infer` array paths use — before
+                // taking the array shortcut. Without this guard a homomorphic
+                // mapped alias over such a source was reshaped into an array and
+                // then failed to evaluate, surfacing as a spurious TS2322.
                 let shape = interner.object_shape(shape_id);
                 shape
                     .number_index
                     .as_ref()
-                    .filter(|idx| idx.readonly)
+                    .filter(|idx| {
+                        idx.readonly
+                            && crate::type_queries::object_shape_has_array_marker_methods_db(
+                                interner, &shape,
+                            )
+                    })
                     .map(|idx| (idx.value_type, true))
             }
             _ => None,
