@@ -116,6 +116,60 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
+    /// When the source expression is an identifier whose declared annotation is
+    /// a **non-generic** `TYPE_REFERENCE` to a type alias whose name `tsc`
+    /// preserves in diagnostics (its `aliasSymbol` survives — the body is not a
+    /// computed type rendered by its underlying form), return that alias name.
+    ///
+    /// `tsc` stamps an `aliasSymbol` onto a referenced structural type so the
+    /// alias spelling survives into diagnostics. `tsz` interns array,
+    /// readonly-array, and readonly-tuple types purely structurally, so a shared
+    /// `readonly number[]` `TypeId` carries no per-reference alias and the name
+    /// is recoverable only from the source expression's annotation. A diagnostic
+    /// whose source is such a structurally-interned type (notably `TS4104`
+    /// readonly-to-mutable) consults this to render the alias `tsc` shows (`RA`
+    /// rather than `readonly number[]`). A generic alias application
+    /// (`Immutable<string>`) keeps its `Name<Args>` surface through the
+    /// structural formatter and is intentionally excluded.
+    pub(in crate::error_reporter) fn declared_source_type_reference_alias_name(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let annotation_idx = self.declared_source_type_annotation_node(expr_idx)?;
+        let annotation_node = self.ctx.arena.get(annotation_idx)?;
+        // `get_type_ref` yields `Some` only for a `TYPE_REFERENCE` node, so it
+        // also serves as the annotation-kind gate.
+        let type_ref = self.ctx.arena.get_type_ref(annotation_node)?;
+        // Only a bare (no-type-argument) reference loses its name; a generic
+        // application keeps its `Name<Args>` surface through the formatter.
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let def_id = self.annotation_type_reference_alias_def_id(self.ctx.arena, annotation_idx)?;
+        let alias_name = {
+            let def = self.ctx.definition_store.get(def_id)?;
+            if !def.type_params.is_empty() {
+                return None;
+            }
+            def.name
+        };
+        // A non-generic alias whose body `tsc` renders by its underlying type
+        // (computed conditional / indexed-access / `keyof` / reducing
+        // application / intrinsic-or-literal singleton) carries no
+        // `aliasSymbol`; keep that underlying display rather than repainting it
+        // with the alias name.
+        if crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            def_id,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        Some(self.ctx.types.resolve_atom(alias_name))
+    }
+
     fn declared_source_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
