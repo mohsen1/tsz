@@ -1262,12 +1262,117 @@ fn object_with_both_string_and_symbol_index_keeps_both() {
 
 #[test]
 fn string_only_index_still_rejects_symbol_access() {
-    // Negative control: the fix must not blanket-suppress TS2536.
+    // Negative control: the fix must not blanket-suppress the error. A concrete
+    // object with no symbol index, indexed by the bare `symbol` type, is rejected
+    // by tsc as TS2538 ("Type 'symbol' cannot be used as an index type") — the
+    // `getPropertyTypeForIndexType` message family for a concrete object — not
+    // TS2536, which tsc reserves for generic / type-parameter object types.
     let codes = diagnostic_codes_for_ts(
         "type N = { [K in string]: number };\ntype B = N[symbol];\nexport {};\n",
     );
     assert!(
-        codes.contains(&2536),
-        "string-only index must still raise TS2536 for [symbol], got {codes:?}",
+        codes.contains(&2538),
+        "string-only index must still reject [symbol] as TS2538, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&2536),
+        "a concrete object indexed by `symbol` is TS2538, not TS2536, got {codes:?}",
+    );
+}
+
+// A concrete object type (interface, type literal, class, array, …) indexed by
+// the bare `symbol` type with no matching symbol index is rejected by tsc as
+// TS2538 ("cannot be used as an index type") — the `getPropertyTypeForIndexType`
+// message family for concrete objects — never TS2536 ("cannot be used to index
+// type"), which tsc reserves for generic / type-parameter object types. Binder
+// names are varied so the assertions track the structural shape, not a spelling.
+
+#[test]
+fn concrete_interface_string_index_indexed_by_symbol_is_ts2538() {
+    let codes = diagnostic_codes_for_ts(
+        "interface Bag { [k: string]: number }\ntype V = Bag[symbol];\nexport {};\n",
+    );
+    assert!(codes.contains(&2538), "expected TS2538, got {codes:?}");
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn concrete_number_index_indexed_by_symbol_is_ts2538() {
+    let codes = diagnostic_codes_for_ts(
+        "type Grid = { [Idx in number]: boolean };\ntype V = Grid[symbol];\nexport {};\n",
+    );
+    assert!(codes.contains(&2538), "expected TS2538, got {codes:?}");
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn concrete_object_literal_no_index_indexed_by_symbol_is_ts2538() {
+    let codes = diagnostic_codes_for_ts(
+        "type Point = { px: 1; py: 2 };\ntype V = Point[symbol];\nexport {};\n",
+    );
+    assert!(codes.contains(&2538), "expected TS2538, got {codes:?}");
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn concrete_array_indexed_by_symbol_is_ts2538() {
+    let codes = diagnostic_codes_for_ts("type V = number[][symbol];\nexport {};\n");
+    assert!(codes.contains(&2538), "expected TS2538, got {codes:?}");
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn concrete_object_indexed_by_string_or_symbol_union_is_ts2537_and_ts2538() {
+    // A union index reports per-member: the general-`string` member has no
+    // matching index signature on a property-only object (TS2537), and the
+    // `symbol` member cannot be used as an index type (TS2538) — matching tsc.
+    let codes = diagnostic_codes_for_ts(
+        "type Rec = { only: 1 };\ntype V = Rec[string | symbol];\nexport {};\n",
+    );
+    assert!(
+        codes.contains(&2537),
+        "expected TS2537 for string member, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&2538),
+        "expected TS2538 for symbol member, got {codes:?}"
+    );
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn concrete_unique_symbol_keyed_object_indexed_by_bare_symbol_is_ts2538() {
+    // The object has a *unique-symbol* key, not a general `symbol` index, so the
+    // bare `symbol` index matches nothing and tsc reports TS2538.
+    let codes = diagnostic_codes_for_ts(
+        "declare const tag: unique symbol;\ntype Tagged = { [tag]: number };\ntype V = Tagged[symbol];\nexport {};\n",
+    );
+    assert!(codes.contains(&2538), "expected TS2538, got {codes:?}");
+    assert!(!codes.contains(&2536), "must not be TS2536, got {codes:?}");
+}
+
+#[test]
+fn symbol_keyed_mapped_indexed_by_symbol_renamed_binder_is_valid() {
+    // Positive control (renamed binder): when the object *does* have a symbol
+    // index, `[symbol]` is a valid access — no TS2536/TS2537/TS2538.
+    let codes = diagnostic_codes_for_ts(
+        "type Reg = { [Sk in symbol]: string };\ntype V = Reg[symbol];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536) && !codes.contains(&2537) && !codes.contains(&2538),
+        "symbol-keyed object indexed by symbol must be accepted, got {codes:?}",
+    );
+}
+
+#[test]
+fn all_keys_keyed_mapped_indexed_by_symbol_is_valid() {
+    // Positive control: a `string | number | symbol`-keyed mapped type has a
+    // symbol index, so `[symbol]` is valid (the original #14230 witness).
+    let codes = diagnostic_codes_for_ts(
+        "type Any = { [Pk in string | number | symbol]: number };\ntype V = Any[symbol];\nexport {};\n",
+    );
+    assert!(
+        !codes.contains(&2536) && !codes.contains(&2538),
+        "all-keys mapped indexed by symbol must be accepted, got {codes:?}",
     );
 }
