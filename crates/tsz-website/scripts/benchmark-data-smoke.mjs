@@ -93,6 +93,50 @@ await fs.writeFile(artifact, `${JSON.stringify({
       },
     },
     {
+      name: "rxjs-project",
+      lines: 12000,
+      kb: 900,
+      tsz_ms: 300,
+      tsgo_ms: 100,
+      winner: "tsgo",
+      factor: 3,
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 12,
+        files_reached_reason: null,
+        peak_memory_bytes: 104857600,
+        peak_memory_bytes_reason: null,
+        fixture_sources: [
+          {
+            name: "rxjs",
+            repository: "https://github.com/ReactiveX/rxjs.git",
+            ref: "rxjs-ref",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
       name: "type-challenges-solutions-project",
       lines: 78,
       kb: 0,
@@ -457,6 +501,8 @@ try {
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Utility types project/);
+  assert.match(charts, /RxJS project/);
+  assert.match(charts, /tsgo 3\.0x faster/);
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges solutions project/);
 
