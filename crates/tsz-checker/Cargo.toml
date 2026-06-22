@@ -207,6 +207,9 @@ path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
 name = "homomorphic_mapped_index_display_tests"
 path = "tests/homomorphic_mapped_index_display_tests.rs"
 [[test]]
+name = "homomorphic_mapped_alias_readonly_index_source_tests"
+path = "tests/homomorphic_mapped_alias_readonly_index_source_tests.rs"
+[[test]]
 name = "intersection_modifier_merge_tests"
 path = "tests/intersection_modifier_merge_tests.rs"
 [[test]]
@@ -221,6 +224,9 @@ path = "tests/return_type_literal_union_widening_tests.rs"
 [[test]]
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
+[[test]]
+name = "return_literal_union_widening_tests"
+path = "tests/return_literal_union_widening_tests.rs"
 [[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
@@ -707,6 +713,9 @@ path = "tests/ts2322_tests.rs"
 name = "accessor_assignment_read_surface_tests"
 path = "tests/accessor_assignment_read_surface_tests.rs"
 [[test]]
+name = "inferred_getter_return_property_access_tests"
+path = "tests/inferred_getter_return_property_access_tests.rs"
+[[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
@@ -797,8 +806,14 @@ path = "tests/binding_pattern_inference_tests.rs"
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 [[test]]
+name = "template_intrinsic_infer_tests"
+path = "tests/template_intrinsic_infer_tests.rs"
+[[test]]
 name = "enum_discriminant_excess_property_tests"
 path = "tests/enum_discriminant_excess_property_tests.rs"
+[[test]]
+name = "inherited_constructor_defaulted_type_arg_tests"
+path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
 [[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"

@@ -648,9 +648,16 @@ impl DefinitionStore {
     /// `register_symbol_mapping`. This is an O(1) lookup that replaces the
     /// expensive multi-binder validation in `get_or_create_def_id`.
     pub fn lookup_by_symbol(&self, symbol_id: u32, file_idx: u32) -> Option<DefId> {
-        self.symbol_def_index
+        let result = self
+            .symbol_def_index
             .get(&(symbol_id, file_idx))
-            .map(|r| *r)
+            .map(|r| *r);
+        // #14344 denominator context (measurement only — `result` is returned
+        // unchanged): partitions composite-key `(symbol, file)` resolution
+        // attempts into hits/misses so the wrong-decl collision count has a
+        // population to normalize against.
+        tsz_common::perf_counters::record_symbol_def_index_lookup(result.is_some());
+        result
     }
 
     /// Get definition info by `DefId`.

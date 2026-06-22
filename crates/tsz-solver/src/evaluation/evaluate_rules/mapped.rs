@@ -1471,11 +1471,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             },
             // ObjectWithIndex with readonly numeric index: ReadonlyArray shape from lib
             Some(TypeData::ObjectWithIndex(shape_id)) => {
+                // A readonly numeric index signature alone is not enough — a
+                // plain `{ readonly [k: number]: V }` object has one but tsc
+                // maps it to an object, not `readonly V[]`. Require the array
+                // marker methods so only a genuine `ReadonlyArray<V>` takes the
+                // array shortcut (mirrors the guard in the object-source path
+                // and in `extract_array_element`).
                 let shape = self.interner().object_shape(shape_id);
                 let has_readonly_index = shape
                     .number_index
                     .as_ref()
-                    .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+                    .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER)
+                    && crate::type_queries::object_shape_has_array_marker_methods_db(
+                        self.interner(),
+                        &shape,
+                    );
                 if has_readonly_index && let Some(index) = &shape.number_index {
                     tracing::trace!(
                         "evaluate_mapped: readonly-array-constrained type parameter → producing readonly array"

@@ -64,6 +64,23 @@ pub struct PerfCounters {
     /// `TypeEnvironment::resolve_lazy` had to treat a `DefId` value as a raw
     /// `SymbolId` and redirect it to the real `DefId`.
     pub type_environment_raw_symbol_lazy_fallbacks: AtomicU64,
+    /// #14344 identity-collision observability: times the
+    /// `raw_symbol_fallback_def` `#13862` guard suppressed a *genuine* content
+    /// collision — a store-registered `DefId(N)` whose raw value `N`, reread as
+    /// a `SymbolId`, resolves to a DIFFERENT def whose canonical decl (name)
+    /// differs from `DefId(N)`'s own. This is the `HTMLDivElement(218)` ->
+    /// `FileSystemEntry(symbol 218)` class of collision (#13862), NOT mere
+    /// raw-`u32` overlap (which is ~100% by construction and uninformative). A
+    /// nonzero value is the measurable witness of the non-canonical-identity
+    /// root; the migration's md5-stability gate watches it trend to zero.
+    pub identity_collision_wrong_decl_suppressed: AtomicU64,
+    /// #14344 denominator context: total `symbol_def_index` (`(symbol, file)`
+    /// composite-key) resolution attempts, partitioned into hits/misses, so the
+    /// wrong-decl collision count above has a population to normalize against
+    /// (a raw count is uninterpretable without "out of how many lookups").
+    pub symbol_def_index_lookup_hits: AtomicU64,
+    /// Companion miss counter for [`Self::symbol_def_index_lookup_hits`].
+    pub symbol_def_index_lookup_misses: AtomicU64,
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -395,6 +412,9 @@ impl PerfCounters {
             direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
             type_environment_raw_symbol_lazy_fallbacks: AtomicU64::new(0),
+            identity_collision_wrong_decl_suppressed: AtomicU64::new(0),
+            symbol_def_index_lookup_hits: AtomicU64::new(0),
+            symbol_def_index_lookup_misses: AtomicU64::new(0),
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };

@@ -1027,6 +1027,65 @@ pub fn instantiate_type_params_to_constraints_uncached(
     }
 }
 
+/// Maximum number of substitution passes [`resolve_unbound_type_params_to_defaults`]
+/// makes. A parameter default may reference an earlier base parameter
+/// (`B = A[]`), so one pass can re-introduce a now-resolvable parameter; the
+/// bound plus the per-pass no-progress check terminate self-referential
+/// defaults (`T = T`).
+const MAX_UNBOUND_DEFAULT_DEPTH: usize = 8;
+
+/// Resolve "dangling" free type parameters in `member_type` — those that are
+/// free in the member but NOT present in `in_scope` — to their declared
+/// `default → constraint → unknown`, matching tsc's `fillMissingTypeArguments`.
+///
+/// A value-position member read can resolve to a type that still mentions a
+/// base class's type parameter when the class extended that base WITHOUT type
+/// arguments (`class Der extends Base`, where `Base<P = …>`): the omitted
+/// argument is never bound, so the bare `P` would otherwise leak into the
+/// member's value type (a false `TS2339`/`TS7053`/`TS2322` — the raw-parameter
+/// sibling of the `error`/`never`-in-a-type-argument-slot leak family). `tsc`
+/// binds such an omitted base argument to the parameter's default.
+///
+/// `in_scope` holds the type parameters legitimately bound by the enclosing
+/// generic context (the class's / function's own parameters, e.g. `T` of a
+/// generic `Box<T>`); those are preserved, so only genuinely unbound base
+/// parameters are resolved. Type parameters bound by an enclosing callable
+/// signature are already excluded by [`free_type_parameter_ids_in`].
+pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+) -> TypeId {
+    use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
+
+    let mut current = member_type;
+    for _ in 0..MAX_UNBOUND_DEFAULT_DEPTH {
+        let mut substitution = TypeSubstitution::new();
+        for param_id in free_type_parameter_ids_in(db, [current]) {
+            if in_scope.contains(&param_id) {
+                continue;
+            }
+            let Some(TypeData::TypeParameter(info)) = db.lookup(param_id) else {
+                continue;
+            };
+            let usable = |t: Option<TypeId>| t.filter(|&t| t != TypeId::ERROR);
+            let fill = usable(info.default)
+                .or_else(|| usable(info.constraint))
+                .unwrap_or(TypeId::UNKNOWN);
+            substitution.insert(info.name, fill);
+        }
+        if substitution.is_empty() {
+            return current;
+        }
+        let next = instantiate_type(db, current, &substitution);
+        if next == current {
+            return current;
+        }
+        current = next;
+    }
+    current
+}
+
 fn collect_type_param_constraint_substitutions(
     db: &dyn TypeDatabase,
     type_id: TypeId,

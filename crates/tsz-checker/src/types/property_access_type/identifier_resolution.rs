@@ -32,6 +32,59 @@ impl<'a> CheckerState<'a> {
         name_node: &Node,
         request: IdentifierPropertyAccessRequest,
     ) -> TypeId {
+        let is_this_access = request.is_this_access;
+        let member_type =
+            self.resolve_identifier_property_access_inner(idx, access, name_node, request);
+        self.bind_omitted_base_type_args_for_this_member(member_type, is_this_access)
+    }
+
+    /// Bind "dangling" base-class type parameters of a `this`-member read to the
+    /// base parameter's `default → constraint → unknown`.
+    ///
+    /// When a class extends a generic base WITHOUT type arguments
+    /// (`class Der extends Base`, where `Base<P = …>`), the omitted argument is
+    /// never bound on the `this`-member resolution path (an external receiver
+    /// reads the already-defaulted instance shape, so it is unaffected). The bare
+    /// parameter `P` would otherwise leak into the value's type — a false
+    /// `TS2339`/`TS7053`/`TS2322` on `this.member`, the raw-parameter sibling of
+    /// the `error`/`never`-in-a-type-argument-slot leak family (#13484). `tsc`
+    /// binds such an omitted base argument to its default
+    /// (`fillMissingTypeArguments`); this does the same.
+    ///
+    /// Type parameters of the enclosing generic context (a class's / function's
+    /// own parameters, e.g. `T` of a generic `Box<T>`) stay in scope and are
+    /// preserved, so only genuinely unbound base parameters are resolved. Gated on
+    /// the `this`-receiver flag and the cheap memoized free-parameter predicate so
+    /// concrete results and non-`this` deferred-generic reads are untouched.
+    fn bind_omitted_base_type_args_for_this_member(
+        &mut self,
+        member_type: TypeId,
+        is_this_access: bool,
+    ) -> TypeId {
+        if !is_this_access
+            || !crate::query_boundaries::common::contains_free_type_parameters(
+                self.ctx.types,
+                member_type,
+            )
+        {
+            return member_type;
+        }
+        let in_scope: rustc_hash::FxHashSet<TypeId> =
+            self.ctx.type_parameter_scope.values().copied().collect();
+        crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
+            self.ctx.types,
+            member_type,
+            &in_scope,
+        )
+    }
+
+    fn resolve_identifier_property_access_inner(
+        &mut self,
+        idx: NodeIndex,
+        access: &AccessExprData,
+        name_node: &Node,
+        request: IdentifierPropertyAccessRequest,
+    ) -> TypeId {
         let IdentifierPropertyAccessRequest {
             object_type,
             original_object_type,

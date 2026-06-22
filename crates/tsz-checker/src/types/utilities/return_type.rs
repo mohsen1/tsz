@@ -7,30 +7,22 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::function_returns as return_type_queries;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Accumulator for block-body return-type inference.
-///
-/// Beyond the raw contribution `types` and the `saw_empty` flag (an empty
-/// `return;`), this records the *pinned* literal contributions, so the
-/// union-then-widen rule in [`CheckerState::infer_return_type_from_body_inner`]
-/// can mirror tsc's `getWidenedType(getUnionType(unwidened))`: a fresh literal is
-/// pushed unwidened and widened only when the union is exactly that single
-/// literal, while a pinned literal (const assertion / contextual / annotated)
-/// never widens.
-#[derive(Default)]
-struct ReturnContributions {
-    types: Vec<TypeId>,
-    saw_empty: bool,
-    /// Literal contributions that must NOT widen even when the union reduces to
-    /// them (a `const` assertion, a contextually-shaped literal, or an annotated
-    /// literal value). A deferred *fresh* literal needs no record: it is widened
-    /// at union time whenever the union is a single literal absent from this set.
-    pinned_literals: FxHashSet<TypeId>,
+/// One block-body return contribution, collected *unwidened* so that a union of
+/// distinct fresh literals (`return "a"; return "b"` → `"a" | "b"`) is preserved
+/// rather than widened per branch. `widen_expr` is `Some(expr)` when this
+/// contribution is a fresh-literal return that would be widened on its own (no
+/// contextual / `satisfies` / `preserve_literal` / `const`-assertion /
+/// conditional carve-out); it is the expression node so the AST-aware widener
+/// (`widen_return_contribution_preserving_const`) can run if the union collapses
+/// to a single literal. See `infer_return_type_from_body_inner` (#14530).
+struct ReturnContribution {
+    type_id: TypeId,
+    widen_expr: Option<NodeIndex>,
 }
 
 impl<'a> CheckerState<'a> {
@@ -447,71 +439,48 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         return_context: Option<TypeId>,
     ) -> TypeId {
-        if let Some(ctx_type) = return_context
-            && (!self.ctx.in_satisfies_operand
-                || self.contextual_type_allows_literal(ctx_type, type_id))
-        {
-            return type_id;
-        }
-        if self.ctx.preserve_literal_types {
-            return type_id;
-        }
-        if self.return_expression_is_const_assertion(expr_idx) {
-            return type_id;
-        }
-        if self.ctx.arena.get(expr_idx).is_some_and(|node| {
-            node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_EXPRESSION
-        }) {
-            return type_id;
-        }
-        if self.is_fresh_literal_expression(expr_idx) {
+        if self.return_contribution_is_widenable(expr_idx, type_id, return_context) {
             return self.widen_return_contribution_preserving_const(expr_idx, type_id);
         }
         type_id
     }
 
-    /// Classify a block-body return contribution under tsc's union-then-widen
-    /// rule and record it in `out`.
+    /// Whether a single return-expression contribution would be widened by
+    /// `maybe_widen_return_contribution` — i.e. it is a fresh literal expression
+    /// with none of the per-expression carve-outs (contextual return type,
+    /// `satisfies`, `preserve_literal_types`, a `const` assertion, or a
+    /// conditional expression).
     ///
-    /// tsc computes `getWidenedType(getUnionType(unwidenedReturnTypes))`. A
-    /// *fresh* primitive literal therefore widens only when the union reduces to
-    /// that single literal — two distinct literals (or a literal alongside the
-    /// implicit `undefined` of a fall-through) stay an unwidened union. We mirror
-    /// that by **deferring** only primitive-literal widening to the union level:
-    /// such a contribution is pushed unwidened. Object/array literals are widened
-    /// per contribution as before (their member freshness survives the union in
-    /// tsc, so they widen regardless), and a literal the per-contribution rule
-    /// already declined to widen (const assertion, contextual return, annotated
-    /// value) is pinned so a union that happens to reduce to it still stays
-    /// precise.
-    fn record_return_contribution(
+    /// Block-body inference collects the *unwidened* contributions, unions them,
+    /// and widens the union only when it collapses to a single literal (tsc's
+    /// `getWidenedType(getUnionType(unwidenedReturnTypes))`). Two distinct fresh
+    /// literals (`return "a"; return "b"`) must stay a literal union, so the
+    /// per-branch widen is deferred to that single-literal check. This predicate
+    /// records, per branch, whether that survivor would have been widenable.
+    fn return_contribution_is_widenable(
         &mut self,
         expr_idx: NodeIndex,
-        raw_type: TypeId,
+        type_id: TypeId,
         return_context: Option<TypeId>,
-        out: &mut ReturnContributions,
-    ) {
-        let widened = self.maybe_widen_return_contribution(expr_idx, raw_type, return_context);
-        if widened != raw_type {
-            // Per-contribution widening changed the type: a fresh primitive
-            // literal defers its widening to the union (push it unwidened so
-            // distinct literals stay a precise union); an object/array literal
-            // keeps its in-place member widening.
-            let contribution =
-                if crate::query_boundaries::common::is_literal_type(self.ctx.types, raw_type) {
-                    raw_type
-                } else {
-                    widened
-                };
-            out.types.push(contribution);
-            return;
+    ) -> bool {
+        if let Some(ctx_type) = return_context
+            && (!self.ctx.in_satisfies_operand
+                || self.contextual_type_allows_literal(ctx_type, type_id))
+        {
+            return false;
         }
-        // A literal the per-contribution rule declined to widen is pinned: even
-        // if the union reduces to it, it must stay precise.
-        if crate::query_boundaries::common::is_literal_type(self.ctx.types, widened) {
-            out.pinned_literals.insert(widened);
+        if self.ctx.preserve_literal_types {
+            return false;
         }
-        out.types.push(widened);
+        if self.return_expression_is_const_assertion(expr_idx) {
+            return false;
+        }
+        if self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_EXPRESSION
+        }) {
+            return false;
+        }
+        self.is_fresh_literal_expression(expr_idx)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal
@@ -1032,15 +1001,21 @@ impl<'a> CheckerState<'a> {
             return self.maybe_widen_return_contribution(body_idx, raw, return_context);
         }
 
-        let mut out = ReturnContributions::default();
+        let mut return_types = Vec::new();
+        let mut saw_empty = false;
 
         if let Some(block) = self.ctx.arena.get_block(node) {
             for &stmt_idx in &block.statements.nodes {
-                self.collect_return_types_in_statement(stmt_idx, &mut out, return_context);
+                self.collect_return_types_in_statement(
+                    stmt_idx,
+                    &mut return_types,
+                    &mut saw_empty,
+                    return_context,
+                );
             }
         }
 
-        if out.types.is_empty() {
+        if return_types.is_empty() {
             // No return statements found. Check if the body falls through:
             // - If it does (normal implicit return), the return type is `void`
             // - If it doesn't (all paths throw or call never), the return type is `never`
@@ -1075,7 +1050,7 @@ impl<'a> CheckerState<'a> {
             // When contextually typed as `() => undefined | T`, use `undefined` so the
             // function matches. When the contextual return type doesn't accept `undefined`
             // (e.g., `number`), fall through to the void/contextual check below.
-            if out.saw_empty {
+            if saw_empty {
                 if let Some(ctx) = return_context {
                     // Only narrow to `undefined` when the contextual return type is a
                     // specific undefined-compatible type (not `any`/`unknown`/`void`).
@@ -1112,12 +1087,18 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if out.saw_empty || self.function_body_falls_through(body_idx) {
+        if saw_empty || self.function_body_falls_through(body_idx) {
             // When a function has value-returning paths AND also falls through
             // (or has empty `return;`), the non-returning paths contribute
             // `undefined` to the union, not `void`. tsc behaves the same way:
-            // `function f(x) { if (x) return 1; }` → `number | undefined`
-            out.types.push(TypeId::UNDEFINED);
+            // `function f(x) { if (x) return 1; }` → `number | undefined`.
+            // `undefined` is never a widenable literal contribution, so it keeps
+            // a literal+undefined union (`"a" | undefined`) from collapsing to a
+            // single-literal widen.
+            return_types.push(ReturnContribution {
+                type_id: TypeId::UNDEFINED,
+                widen_expr: None,
+            });
         }
 
         // Filter out ERROR types from return type inference when there are
@@ -1127,25 +1108,27 @@ impl<'a> CheckerState<'a> {
         // reference), but the base case `return 0` provides a concrete `number` type.
         // tsc filters out circular contributions and infers the return type from
         // non-circular branches only, so `fn1` gets return type `number`.
-        let has_non_error = out.types.iter().any(|&t| t != TypeId::ERROR);
+        let has_non_error = return_types.iter().any(|c| c.type_id != TypeId::ERROR);
         if has_non_error {
-            out.types.retain(|&t| t != TypeId::ERROR);
+            return_types.retain(|c| c.type_id != TypeId::ERROR);
         }
 
-        // tsc computes `getWidenedType(getUnionType(unwidened))`: union the
-        // unwidened contributions first, then widen a deferred fresh literal only
-        // when the union reduced to exactly that single literal. A ≥2-member union
-        // ("a" | "b", or a literal alongside the fall-through `undefined`) and an
-        // object are not literal types, so they stay precise; a pinned literal of
-        // the same value (const assertion / contextual / annotated) is excluded so
-        // it, too, keeps its literal type.
-        let union_result = factory.union(out.types);
-        if crate::query_boundaries::common::is_literal_type(self.ctx.types, union_result)
-            && !out.pinned_literals.contains(&union_result)
+        // Union the UNWIDENED contributions, then widen ONLY when the union
+        // collapses to a single literal (tsc's `getWidenedType(getUnionType(...))`).
+        // `factory.union` dedups and flattens a single surviving member to a
+        // scalar, so a multi-member literal union (`"a" | "b"`, `1 | 2`,
+        // `"a" | undefined`) is NOT a literal type and is returned unwidened,
+        // while a single fresh literal (`return "x"`, or `return "a"; return "a"`
+        // deduped to one) is widened via its originating expression's AST-aware
+        // widener — preserving per-property `const` subtrees (#14530).
+        let widen_expr = return_types.iter().find_map(|c| c.widen_expr);
+        let union = factory.union(return_types.iter().map(|c| c.type_id).collect());
+        if let Some(expr_idx) = widen_expr
+            && crate::query_boundaries::common::is_literal_type(self.ctx.types, union)
         {
-            return self.widen_literal_type(union_result);
+            return self.widen_return_contribution_preserving_const(expr_idx, union);
         }
-        union_result
+        union
     }
 
     /// Resolve a Lazy class type to a `TypeQuery` (constructor/value-position type).
@@ -1326,7 +1309,8 @@ impl<'a> CheckerState<'a> {
     fn collect_return_types_in_statement(
         &mut self,
         stmt_idx: NodeIndex,
-        out: &mut ReturnContributions,
+        return_types: &mut Vec<ReturnContribution>,
+        saw_empty: &mut bool,
         return_context: Option<TypeId>,
     ) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -1337,7 +1321,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
                     if return_data.expression.is_none() {
-                        out.saw_empty = true;
+                        *saw_empty = true;
                     } else {
                         // Keep block-body inference mostly raw, but allow concrete
                         // contextual return types to shape literals and other
@@ -1353,19 +1337,32 @@ impl<'a> CheckerState<'a> {
                             return_type,
                             return_context,
                         );
-                        self.record_return_contribution(
+                        // Collect the contribution UNWIDENED, recording whether it
+                        // would have been widened. The union of two distinct fresh
+                        // literals must stay a literal union (`"a" | "b"`); only a
+                        // union that collapses to a single literal is widened, in
+                        // `infer_return_type_from_body_inner` (tsc parity, #14530).
+                        let widenable = self.return_contribution_is_widenable(
                             return_data.expression,
                             return_type,
                             return_context,
-                            out,
                         );
+                        return_types.push(ReturnContribution {
+                            type_id: return_type,
+                            widen_expr: widenable.then_some(return_data.expression),
+                        });
                     }
                 }
             }
             syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     for &stmt in &block.statements.nodes {
-                        self.collect_return_types_in_statement(stmt, out, return_context);
+                        self.collect_return_types_in_statement(
+                            stmt,
+                            return_types,
+                            saw_empty,
+                            return_context,
+                        );
                     }
                 }
             }
@@ -1382,13 +1379,15 @@ impl<'a> CheckerState<'a> {
                     }
                     self.collect_return_types_in_statement(
                         if_data.then_statement,
-                        out,
+                        return_types,
+                        saw_empty,
                         return_context,
                     );
                     if if_data.else_statement.is_some() {
                         self.collect_return_types_in_statement(
                             if_data.else_statement,
-                            out,
+                            return_types,
+                            saw_empty,
                             return_context,
                         );
                     }
@@ -1406,7 +1405,8 @@ impl<'a> CheckerState<'a> {
                             for &stmt_idx in &clause.statements.nodes {
                                 self.collect_return_types_in_statement(
                                     stmt_idx,
-                                    out,
+                                    return_types,
+                                    saw_empty,
                                     return_context,
                                 );
                             }
@@ -1416,18 +1416,25 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.ctx.arena.get_try(node) {
-                    self.collect_return_types_in_statement(try_data.try_block, out, return_context);
+                    self.collect_return_types_in_statement(
+                        try_data.try_block,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
                     if try_data.catch_clause.is_some() {
                         self.collect_return_types_in_statement(
                             try_data.catch_clause,
-                            out,
+                            return_types,
+                            saw_empty,
                             return_context,
                         );
                     }
                     if try_data.finally_block.is_some() {
                         self.collect_return_types_in_statement(
                             try_data.finally_block,
-                            out,
+                            return_types,
+                            saw_empty,
                             return_context,
                         );
                     }
@@ -1435,7 +1442,12 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::CATCH_CLAUSE => {
                 if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
-                    self.collect_return_types_in_statement(catch_data.block, out, return_context);
+                    self.collect_return_types_in_statement(
+                        catch_data.block,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
                 }
             }
             syntax_kind_ext::WHILE_STATEMENT
@@ -1444,7 +1456,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     self.collect_return_types_in_statement(
                         loop_data.statement,
-                        out,
+                        return_types,
+                        saw_empty,
                         return_context,
                     );
                 }
@@ -1453,7 +1466,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
                     self.collect_return_types_in_statement(
                         for_in_of_data.statement,
-                        out,
+                        return_types,
+                        saw_empty,
                         return_context,
                     );
                 }
@@ -1462,7 +1476,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
                     self.collect_return_types_in_statement(
                         labeled_data.statement,
-                        out,
+                        return_types,
+                        saw_empty,
                         return_context,
                     );
                 }

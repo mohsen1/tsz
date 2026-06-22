@@ -954,10 +954,27 @@ impl<'a> CheckerState<'a> {
     /// function-expression branch in `return_expression_type`, where nested
     /// function-like inference does the same).
     pub(crate) fn infer_getter_return_type(&mut self, body_idx: NodeIndex) -> TypeId {
+        self.infer_getter_return_type_for_node(tsz_parser::parser::NodeIndex::NONE, body_idx)
+    }
+
+    /// Infer a get-accessor's return type from its body, threading the accessor
+    /// declaration node as the enclosing function.
+    ///
+    /// Passing the accessor node (rather than `NodeIndex::NONE`) gives the body
+    /// walk the same enclosing-function context a method body receives in
+    /// `call_signature_from_method` (circular-return tracking, self-reference
+    /// detection), keeping getter and method return inference consistent.
+    /// Callers that have no accessor node (e.g. object-literal getters, which
+    /// establish their own context via `get_type_of_function`) pass
+    /// `NodeIndex::NONE`.
+    pub(crate) fn infer_getter_return_type_for_node(
+        &mut self,
+        accessor_idx: NodeIndex,
+        body_idx: NodeIndex,
+    ) -> TypeId {
         let prev = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = false;
-        let r =
-            self.infer_return_type_from_body(tsz_parser::parser::NodeIndex::NONE, body_idx, None);
+        let r = self.infer_return_type_from_body(accessor_idx, body_idx, None);
         self.ctx.preserve_literal_types = prev;
         r
     }

@@ -342,8 +342,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     pub(crate) fn object_shape_has_readonly_array_markers(&self, shape_id: ObjectShapeId) -> bool {
-        self.object_shape_has_property(shape_id, "slice")
-            && self.object_shape_has_property(shape_id, "concat")
+        let shape = self.interner().object_shape(shape_id);
+        crate::type_queries::object_shape_has_array_marker_methods_db(self.interner(), &shape)
     }
 
     fn object_shape_has_property(&self, shape_id: ObjectShapeId, expected: &str) -> bool {
