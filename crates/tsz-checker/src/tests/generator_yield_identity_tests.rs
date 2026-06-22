@@ -74,3 +74,82 @@ function* gen(): Generator<(x: string) => void, void, unknown> {
         "lib Generator identity should contextually type the yield operand; got: {codes:?}"
     );
 }
+
+#[test]
+fn generator_declaration_infers_yield_type_for_consumers() {
+    // An unannotated `function*` *declaration* infers its yield type from the
+    // body just like a generator method/expression. Consuming `.next().value`
+    // as an incompatible type must surface TS2322 — previously the declaration's
+    // yield collapsed to `any`, hiding the error (and emitting `Generator<any>`
+    // in `.d.ts`). Binder names vary across the cases below so the guard tracks
+    // the structural rule, not a spelling.
+    let codes = strict_codes_with_libs(
+        r#"
+function* produce() {
+    yield "alpha";
+}
+const wrong: number = produce().next().value;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "generator declaration's inferred string yield must surface TS2322 at a number consumer; got: {codes:?}"
+    );
+}
+
+#[test]
+fn async_generator_declaration_infers_yield_type_for_consumers() {
+    let codes = strict_codes_with_libs(
+        r#"
+async function* stream() {
+    yield 42;
+}
+async function drain() {
+    const wrong: string = (await stream().next()).value;
+}
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "async generator declaration's inferred number yield must surface TS2322 at a string consumer; got: {codes:?}"
+    );
+}
+
+#[test]
+fn generator_declaration_inferred_yield_accepts_matching_consumer() {
+    // A correctly-typed consumer of the inferred yield must stay clean.
+    let codes = strict_codes_with_libs(
+        r#"
+function* emit() {
+    yield "beta";
+}
+const ok: string | void = emit().next().value;
+export {};
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "a consumer matching the inferred yield type must not error; got: {codes:?}"
+    );
+}
+
+#[test]
+fn empty_generator_declaration_infers_never_yield() {
+    // A `function*` declaration with no `yield` infers a non-`any` yield
+    // (`Generator<never, void, unknown>`, matching tsc), so `.next().value` is
+    // `void`-typed and a number consumer reports TS2322.
+    let codes = strict_codes_with_libs(
+        r#"
+function* drained() {
+}
+const wrong: number = drained().next().value;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "empty generator declaration must infer a non-any (never) yield; got: {codes:?}"
+    );
+}
