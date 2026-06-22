@@ -576,10 +576,50 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip if the type includes undefined or void (uninitialized variables are undefined)
-        crate::query_boundaries::flow_analysis::type_contains_undefined(
+        if crate::query_boundaries::flow_analysis::type_contains_undefined(
             self.ctx.types,
             declared_type,
+        ) {
+            return true;
+        }
+
+        // The declared type can carry `undefined` behind an *unevaluated* indexed
+        // access — e.g. `W['opt'] | false` where `opt?` is optional, so `W['opt']`
+        // resolves to `{ … } | undefined`. `type_contains_undefined` does not look
+        // through an `IndexAccess`, so for an index-access-bearing declared type
+        // evaluate its resolved form and re-check. tsc gates TS2454 on the apparent
+        // declared type, so a member that resolves to include `undefined`
+        // suppresses the definite-assignment error (#14538). Gating on the presence
+        // of an index access keeps plain aliases on the raw path — e.g.
+        // `type Maybe<T> = T | void` must NOT be evaluated here, since `void` in a
+        // union does not suppress TS2454 in tsc (only genuine `undefined` does).
+        if !crate::query_boundaries::diagnostics::contains_index_access_type(
+            self.ctx.types,
+            declared_type,
+        ) {
+            return false;
+        }
+        let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &self.ctx,
+            declared_type,
+            std::iter::empty(),
+            false,
+            crate::query_boundaries::state::type_environment::EvaluateTypeWithCacheOptions {
+                expand_application_display_alias_args: false,
+                query_db: Some(self.ctx.types),
+                authoritative: true,
+                cache_entry_collection:
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
+            },
         )
+        .result;
+        evaluated != declared_type
+            && evaluated != TypeId::ERROR
+            && crate::query_boundaries::flow_analysis::type_contains_undefined(
+                self.ctx.types,
+                evaluated,
+            )
     }
 
     /// - Not in ambient contexts
