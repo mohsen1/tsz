@@ -1351,7 +1351,22 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                let source_str =
+                // `tsc` preserves the source's type-alias name in the TS4104
+                // message (`The type 'RA' is 'readonly' …`). `tsz` interns the
+                // readonly array/tuple structurally, so the alias is recovered
+                // from the source expression's declared annotation; falls back
+                // to the structural display for inline (non-aliased) readonly
+                // types and generic alias applications.
+                let alias_source_display = if depth == 0 {
+                    self.direct_diagnostic_source_expression(idx)
+                        .or_else(|| self.assignment_source_expression(idx))
+                        .and_then(|expr_idx| {
+                            self.declared_source_type_reference_alias_name(expr_idx)
+                        })
+                } else {
+                    None
+                };
+                let source_str = alias_source_display.unwrap_or_else(|| {
                     if let Some(inner) = crate::query_boundaries::common::readonly_inner_type(
                         self.ctx.types,
                         *source_type,
@@ -1361,7 +1376,8 @@ impl<'a> CheckerState<'a> {
                         format!("readonly {tuple_display}")
                     } else {
                         self.format_type_diagnostic(*source_type)
-                    };
+                    }
+                });
                 let target_str = self
                     .format_tuple_shape_for_readonly_to_mutable(*target_type)
                     .unwrap_or_else(|| self.format_type_diagnostic(*target_type));
