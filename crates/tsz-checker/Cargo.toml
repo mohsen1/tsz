@@ -500,6 +500,9 @@ path = "tests/lazy_class_constructor_type_tests.rs"
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_typed_value_into_this_field_tests"
+path = "tests/this_typed_value_into_this_field_tests.rs"
+[[test]]
 name = "this_type_indexed_access_receiver_tests"
 path = "tests/this_type_indexed_access_receiver_tests.rs"
 [[test]]

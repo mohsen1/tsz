@@ -1265,9 +1265,16 @@ impl<'a> CheckerState<'a> {
 
         // The property has ThisType. Check if the RHS is also this-typed.
         // A value is this-typed if:
-        // 1. It's the `this` keyword itself
-        // 2. It's a `this.prop` access where the property also has ThisType
-        if self.expression_has_this_type(right_idx) {
+        // 1. Its computed type IS the canonical polymorphic `ThisType` — e.g. a
+        //    parameter `c: this`, a `this`-returning getter, or a `const t: this`
+        //    binding. Within one class `this <: this`, so assigning such a value
+        //    into a `this`-typed property is well-typed (tsc accepts).
+        // 2. Syntactically the `this` keyword or a `this.prop` access whose
+        //    property is also `this`-typed (covers cases whose computed type was
+        //    already narrowed/resolved away from the bare `ThisType` marker).
+        if crate::query_boundaries::common::is_this_type(self.ctx.types, right_type)
+            || self.expression_has_this_type(right_idx)
+        {
             return Some(false); // Compatible - both are this-typed
         }
 
