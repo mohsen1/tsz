@@ -681,7 +681,7 @@ impl HelpersNeeded {
 ///
 /// Priority mapping (from TypeScript's factory/emitHelpers.ts):
 ///   0: extends, makeTemplateObject
-///   1: assign, createBinding
+///   1: assign, createBinding, setModuleDefault
 ///   2: decorate, esDecorate/runInitializers, importStar, exportStar
 ///   3: metadata
 ///   4: param
@@ -702,7 +702,7 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(MAKE_TEMPLATE_OBJECT_HELPER);
         output.push('\n');
     }
-    // Priority 1: assign, createBinding
+    // Priority 1: assign, createBinding, setModuleDefault
     if helpers.assign {
         output.push_str(ASSIGN_HELPER);
         output.push('\n');
@@ -711,7 +711,14 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(CREATE_BINDING_HELPER);
         output.push('\n');
     }
-    // Priority 2: decorate, esDecorate/runInitializers, importStar (with setModuleDefault), exportStar
+    // `__setModuleDefault` (`typescript:commonjscreatevalue`) is priority 1 in
+    // tsc, not priority 2 with `__importStar` (which references it). It is
+    // needed exactly when `import_star` is. See the priority tiers above.
+    if helpers.import_star {
+        output.push_str(SET_MODULE_DEFAULT_HELPER);
+        output.push('\n');
+    }
+    // Priority 2: decorate, esDecorate/runInitializers, importStar, exportStar
     if helpers.decorate {
         output.push_str(DECORATE_HELPER);
         output.push('\n');
@@ -733,8 +740,6 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push('\n');
     }
     if helpers.import_star {
-        output.push_str(SET_MODULE_DEFAULT_HELPER);
-        output.push('\n');
         output.push_str(IMPORT_STAR_HELPER);
         output.push('\n');
     }
@@ -1258,10 +1263,10 @@ mod tests {
     fn emit_helpers_order_decorators_and_async_helpers() {
         // emit_helpers source orders priority-2 helpers as:
         //   decorate, esDecorate, runInitializers,
-        //   propKey, importStar (with setModuleDefault),
-        //   rewriteRelativeImportExtension, exportStar
-        // and places setFunctionName after awaiter/generator but before
-        // async-generator helpers.
+        //   propKey, importStar, rewriteRelativeImportExtension, exportStar
+        // (`__setModuleDefault` is priority 1 and emitted earlier, before any
+        // priority-2 helper) and places setFunctionName after awaiter/generator
+        // but before async-generator helpers.
         let helpers = HelpersNeeded {
             decorate: true,
             run_initializers: true,
@@ -1544,6 +1549,49 @@ mod tests {
         assert!(
             i_set_default < i_import_star,
             "__setModuleDefault must precede __importStar (referenced by it)",
+        );
+    }
+
+    #[test]
+    fn emit_helpers_set_module_default_is_priority_one_before_decorators() {
+        // tsc's `compareEmitHelpers` puts `__setModuleDefault`
+        // (`typescript:commonjscreatevalue`) at priority 1, tied with
+        // `__createBinding`, so it is emitted before every priority-2 helper
+        // (decorators, `__importStar`). Witness: `import * as ns` combined with
+        // a decorated class — tsc 6.x emits
+        //   __createBinding, __setModuleDefault, __runInitializers,
+        //   __esDecorate, __importStar
+        // Regression: tsz previously bundled `__setModuleDefault` with
+        // `__importStar` at priority 2, emitting it AFTER the decorator helpers.
+        let helpers = HelpersNeeded {
+            create_binding: true,
+            import_star: true,
+            es_decorate: true,
+            run_initializers: true,
+            ..HelpersNeeded::default()
+        };
+
+        let output = emit_helpers(&helpers);
+        let i_create = find_helper(&output, "__createBinding");
+        let i_set_default = find_helper(&output, "__setModuleDefault");
+        let i_run = find_helper(&output, "__runInitializers");
+        let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_import_star = find_helper(&output, "__importStar");
+        assert!(
+            i_create < i_set_default,
+            "__createBinding then __setModuleDefault within priority 1",
+        );
+        assert!(
+            i_set_default < i_run,
+            "priority-1 __setModuleDefault before priority-2 __runInitializers",
+        );
+        assert!(
+            i_set_default < i_es_decorate,
+            "priority-1 __setModuleDefault before priority-2 __esDecorate",
+        );
+        assert!(
+            i_set_default < i_import_star,
+            "__setModuleDefault still precedes __importStar",
         );
     }
 
