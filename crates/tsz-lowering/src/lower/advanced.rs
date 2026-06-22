@@ -870,8 +870,46 @@ impl TypeLowering<'_> {
                     _ => {}
                 }
             }
+            // A qualified value query `typeof a.b` is exactly `(typeof a)["b"]`.
+            // Lower it to a deferred indexed-access chain so the member resolves
+            // lazily through the indexed-access machinery (matching the checker's
+            // typeof resolution). Without this a qualified `typeof` collapses to
+            // `error` here — e.g. inside a mapped type's key constraint
+            // `{ [K in keyof typeof a.b]: V }`, which is lowered through this pass.
+            if let Some(deferred) = self.lower_deferred_typeof_value_chain(data.expr_name) {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let type_args: Vec<TypeId> =
+                        args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
+                    return self.interner.application(deferred, type_args);
+                }
+                return deferred;
+            }
             TypeId::ERROR
         }
+    }
+
+    /// Build the deferred `typeof` representation of a value entity name as a
+    /// chain of indexed accesses over a base `TypeQuery`: `a` → `TypeQuery(a)`,
+    /// `a.b` → `(typeof a)["b"]`, `a.b.c` → `((typeof a)["b"])["c"]`. The member
+    /// resolves lazily through the indexed-access machinery rather than being
+    /// eagerly read off the (possibly not-yet-materialized) value object.
+    /// Returns `None` when the root does not resolve to a value symbol.
+    fn lower_deferred_typeof_value_chain(&self, expr_name: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(expr_name)?;
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.arena.get_qualified_name(node)?;
+            let base = self.lower_deferred_typeof_value_chain(qn.left)?;
+            let right_node = self.arena.get(qn.right)?;
+            let right_ident = self.arena.get_identifier(right_node)?;
+            let index_type = self
+                .interner
+                .literal_string(right_ident.escaped_text.as_str());
+            return Some(self.interner.index_access(base, index_type));
+        }
+        let symbol_id = self.resolve_value_symbol(expr_name)?;
+        Some(self.interner.type_query(SymbolRef(symbol_id)))
     }
 
     /// Lower a type operator (keyof, readonly, unique)

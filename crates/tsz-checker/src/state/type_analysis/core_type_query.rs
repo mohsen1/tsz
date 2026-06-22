@@ -32,6 +32,36 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Build the deferred `typeof` representation of a value entity name as a
+    /// chain of indexed accesses over a base `TypeQuery`.
+    ///
+    /// `config` (an identifier) lowers to the deferred `TypeQuery(config)`;
+    /// `config.routes` lowers to `(typeof config)["routes"]`;
+    /// `config.a.b` to `((typeof config)["a"])["b"]`. The result resolves the
+    /// member lazily through the indexed-access machinery, which — unlike an
+    /// eager property access on the already-resolved value object — does not
+    /// depend on the object's members being materialized at the point the query
+    /// is first forced (a `keyof`/mapped operand can force it early). Returns
+    /// `None` when the root does not resolve to a usable value symbol.
+    fn deferred_typeof_value_chain(&self, expr_name: NodeIndex) -> Option<TypeId> {
+        use tsz_solver::SymbolRef;
+        let node = self.ctx.arena.get(expr_name)?;
+        let factory = self.ctx.types.factory();
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let sym_id = self.resolve_value_symbol_for_lowering(expr_name)?;
+            return Some(factory.type_query(SymbolRef(sym_id)));
+        }
+        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            let base = self.deferred_typeof_value_chain(qn.left)?;
+            let right_node = self.ctx.arena.get(qn.right)?;
+            let right_ident = self.ctx.arena.get_identifier(right_node)?;
+            let index_type = factory.literal_string(right_ident.escaped_text.as_str());
+            return Some(factory.index_access(base, index_type));
+        }
+        None
+    }
+
     pub(crate) fn get_type_from_type_query_flow_sensitive_with_request(
         &mut self,
         idx: NodeIndex,
@@ -200,6 +230,18 @@ impl<'a> CheckerState<'a> {
                     let left_idx = qn.left;
                     let right_idx = qn.right;
 
+                    // When the left side resolves to a concrete value object but the
+                    // member cannot be resolved *eagerly* (the surrounding type, e.g.
+                    // a `keyof`/mapped operand, is evaluated before the value object's
+                    // members are materialized), fall back to a deferred indexed access
+                    // `(<value object>)["member"]` instead of collapsing to `error`.
+                    // A qualified value query `typeof a.b` is exactly `(typeof a)["b"]`,
+                    // which the indexed-access machinery resolves lazily (and correctly
+                    // reports TS2339 for a genuinely missing member). This keeps inline
+                    // `typeof a.b` in step with the explicit `(typeof a)["b"]` form,
+                    // whose deferral does not depend on member-materialization order.
+                    let mut deferred_value_member_access: Option<TypeId> = None;
+
                     // For merged namespace+interface symbols (e.g., `typeof M2.Point`
                     // where Point is both a namespace and an interface), resolve via
                     // the binder's export tables FIRST. Property access on the parent
@@ -327,8 +369,25 @@ impl<'a> CheckerState<'a> {
                                     };
                                 }
                                 _ => {
-                                    // Property access returned any/error or failed entirely.
-                                    // Fall through to binder-based resolution below.
+                                    // Property access returned any/error or failed
+                                    // entirely. Record a deferred indexed access over the
+                                    // base value's *deferred* `typeof` (a `TypeQuery`), so
+                                    // the member resolves lazily — correct even when the
+                                    // value object's members are not materialized yet
+                                    // (e.g. a `keyof`/mapped operand forces this query
+                                    // before the object literal's property types exist).
+                                    // Indexing the already-resolved object eagerly would
+                                    // reproduce the same premature-resolution failure;
+                                    // `(typeof base)["member"]` does not. Namespace
+                                    // resolution still takes priority below.
+                                    if let Some(deferred_base) =
+                                        self.deferred_typeof_value_chain(left_idx)
+                                    {
+                                        let factory = self.ctx.types.factory();
+                                        let index_type = factory.literal_string(&prop_name);
+                                        deferred_value_member_access =
+                                            Some(factory.index_access(deferred_base, index_type));
+                                    }
                                 }
                             }
                         }
@@ -344,6 +403,19 @@ impl<'a> CheckerState<'a> {
                                 &type_argument_nodes,
                             );
                         }
+                    }
+                    // Namespace resolution did not apply: resolve the value member
+                    // lazily through the deferred indexed access recorded above.
+                    if let Some(deferred) = deferred_value_member_access {
+                        let resolved = self.apply_type_query_instantiation_arguments(
+                            deferred,
+                            &type_argument_nodes,
+                        );
+                        return if use_flow_sensitive_query && !has_type_args {
+                            self.apply_flow_narrowing(type_query.expr_name, resolved)
+                        } else {
+                            resolved
+                        };
                     }
                 }
             } else if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
