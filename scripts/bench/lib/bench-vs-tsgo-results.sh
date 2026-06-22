@@ -408,6 +408,25 @@ run_project_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (${file_count} project files)"
 
+    # Integrity guard: a tsconfig that resolves zero input files under `-p`
+    # (e.g. a solution-style {"files":[],"references":[...]} config, whose
+    # references are only followed under `-b`) type-checks NOTHING, so every
+    # compiler "passes" trivially and the row would publish a meaningless ratio
+    # (the infisical "0 lines, tsz 24.6x faster" phantom). project_tsconfig_stats
+    # resolves files the same way the compilers do under -p
+    # (parseJsonConfigFileContent().fileNames), so file_count==0 means -p checks
+    # nothing. Record fixture-invalid (gray, advisory) and never a winner.
+    if ! [[ "${file_count:-0}" =~ ^[0-9]+$ ]] || [ "${file_count:-0}" -eq 0 ]; then
+        local zero_status="0 input files (references-only/empty tsconfig under -p)"
+        echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (${zero_status})"
+        record_project_compatibility "$name" "fixture invalid" "fixture setup" \
+            "zero input files under -p" \
+            "tsconfig resolves 0 project files under -p; references are only followed under -b, so this is not a valid compile" \
+            "$file_count" "$peak_memory_bytes" "" "" "" "$tsconfig" "$src_dir"
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${zero_status}\n"
+        return
+    fi
+
     # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
     # run with a larger heap during compilation.
     local -a project_node_prefix=()
@@ -712,13 +731,14 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            # The perf-comparison canary shard intentionally charts tsz-vs-tsgo
-            # even when tsz is much slower than tsgo — that gap IS the comparison
-            # we want to surface. The slowdown-failure gate nulls the timing
-            # (ERR,ERR), which would drop every canary off the chart, so it must
-            # not apply to the bench-canaries shard. Required project rows keep it.
+            # Hard-gate EVERY perf_timed row, canaries included: when tsz is at
+            # or past the slowdown threshold (default 1.5x) slower than tsgo, null
+            # the timing (ERR,ERR) so the row surfaces as a perf failure and drops
+            # out of the chart instead of charting a quiet "tsgo Nx faster" loss.
+            # Canaries were previously exempted (via TSZ_BENCH_SHARD_LABEL) to keep
+            # the gap charted; per owner decision the 1.5x rule now applies to them
+            # too — a >=1.5x loss is a failure regardless of guard/benchmark set.
             if [ "$winner" = "tsgo" ] \
-                && [ "${TSZ_BENCH_SHARD_LABEL:-}" != "bench-canaries" ] \
                 && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
                 local threshold
                 threshold="$(tsz_project_slowdown_failure_factor)"
