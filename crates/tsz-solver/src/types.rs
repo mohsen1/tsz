@@ -344,6 +344,21 @@ bitflags::bitflags! {
         /// `strict_readonly_identity` field on `SubtypeChecker` for the
         /// rationale and toggle site.
         const STRICT_READONLY_IDENTITY      = 1 << 15;
+        /// A class-symbol classifier is active for this relation check (the
+        /// solver was configured via `with_class_check`).
+        ///
+        /// The classifier makes a class-flagged symbol that has no resolvable
+        /// `DefId` behave nominally — it then needs an explicit declared index
+        /// signature (`requires_explicit_declared_index_signature`) and gains
+        /// the both-classes nominal-heritage shortcut (`nominal_heritage_subtype`)
+        /// — whereas absent the classifier the same shape is judged purely
+        /// structurally. Those two verdicts genuinely differ, so they must not
+        /// share a cache slot. The classifier itself is a pure function of the
+        /// program's binder `CLASS` flags, fixed for the whole compilation, so a
+        /// single discriminating bit fully partitions the two regimes and lets
+        /// class-context verdicts live in the cross-checker shared cache without
+        /// poisoning the class-agnostic regime (issue #13828).
+        const CLASS_CHECK_CONTEXT           = 1 << 16;
     }
 }
 

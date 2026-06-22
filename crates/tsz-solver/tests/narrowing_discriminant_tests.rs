@@ -1173,6 +1173,78 @@ fn property_truthiness_false_branch() {
 }
 
 // =============================================================================
+// Property Nullishness Narrowing (the `a.prop ?? b` discriminant path)
+// =============================================================================
+
+/// The witness shape: `{ p: string; q?: never } | { p?: never; q: string }`.
+/// Narrowing by `p` being *nullish* (the right-operand branch of `p ?? q`)
+/// keeps only the member whose `p` is `undefined` — the second member. This is
+/// where nullishness differs from truthiness: a falsy-but-non-nullish `string`
+/// `p` is EXCLUDED from the nullish branch (truthiness would keep it).
+#[test]
+fn property_nullishness_false_branch_excludes_non_nullish_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let p = interner.intern_string("p");
+    let q = interner.intern_string("q");
+
+    // member1: { p: string; q?: never } — accessing `p` yields `string`.
+    // member2: { p?: never; q: string } — accessing `p` yields `undefined`.
+    let member1 = interner.object(vec![
+        PropertyInfo::new(p, TypeId::STRING),
+        PropertyInfo::opt(q, TypeId::NEVER),
+    ]);
+    let member2 = interner.object(vec![
+        PropertyInfo::opt(p, TypeId::NEVER),
+        PropertyInfo::new(q, TypeId::STRING),
+    ]);
+    let union = interner.union(vec![member1, member2]);
+
+    // False (nullish) branch: keep members where `p` can be nullish → member2.
+    let nullish_branch = ctx.narrow_by_property_nullishness(union, &[p], false);
+    assert_eq!(
+        nullish_branch, member2,
+        "nullish `p` keeps only the member whose `p` is undefined"
+    );
+
+    // Truthiness false branch keeps BOTH (string can be ""), proving the two
+    // filters diverge on a non-nullish falsy discriminant.
+    let falsy_branch = ctx.narrow_by_property_truthiness(union, &[p], false);
+    assert_eq!(
+        falsy_branch, union,
+        "falsy `p` keeps both members; nullishness must be stricter"
+    );
+}
+
+/// True (non-nullish) branch keeps only the member whose `p` is definitely
+/// present (non-nullish): member1.
+#[test]
+fn property_nullishness_true_branch_keeps_non_nullish_member() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let p = interner.intern_string("p");
+    let q = interner.intern_string("q");
+
+    let member1 = interner.object(vec![
+        PropertyInfo::new(p, TypeId::STRING),
+        PropertyInfo::opt(q, TypeId::NEVER),
+    ]);
+    let member2 = interner.object(vec![
+        PropertyInfo::opt(p, TypeId::NEVER),
+        PropertyInfo::new(q, TypeId::STRING),
+    ]);
+    let union = interner.union(vec![member1, member2]);
+
+    let non_nullish_branch = ctx.narrow_by_property_nullishness(union, &[p], true);
+    assert_eq!(
+        non_nullish_branch, member1,
+        "non-nullish `p` keeps only the member whose `p` is `string`"
+    );
+}
+
+// =============================================================================
 // Discriminant via TypeGuard
 // =============================================================================
 

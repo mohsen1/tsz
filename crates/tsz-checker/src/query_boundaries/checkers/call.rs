@@ -134,6 +134,15 @@ pub(crate) fn contains_index_access_with_variadic_tuple_object(
     tsz_solver::type_queries::contains_index_access_with_variadic_tuple_object(db, type_id)
 }
 
+/// Whether `type_id`'s base constraint resolves to an array or tuple type
+/// (type-parameter / `infer` constraint chains and deferred-conditional default
+/// constraints are followed first). The caller must pass an env-evaluated type
+/// so a generic-alias `Application` like `Parameters<F>` is already expanded to
+/// its deferred-conditional body.
+pub(crate) fn base_constraint_is_array_or_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::base_constraint_is_array_or_tuple(db, type_id)
+}
+
 pub(crate) fn contains_generic_indexed_access_surface_for_call(
     db: &dyn TypeDatabase,
     type_id: TypeId,

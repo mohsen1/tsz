@@ -334,18 +334,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
         let this_context = this_binding.unwrap_or(TypeId::NONE);
-        // Class-symbol classification is also context-dependent: the callback
-        // can make the same object shape behave as a named class/interface in
-        // one checker and as a plain structural object in another. Since the
-        // relation cache key cannot encode an arbitrary predicate, those answers
-        // are excluded from the cross-checker shared cache and served by the
-        // instance-local fallback memo, whose `is_class_symbol` closure is fixed
-        // for the checker's lifetime.
-        let has_class_check_context = self.is_class_symbol.is_some();
+        // Class-symbol classification is also behavior-affecting (it can make a
+        // class-flagged symbol that has no resolvable `DefId` behave nominally),
+        // but it is no longer a cache bypass: the classifier is a pure function
+        // of the program binder, fixed for the whole compilation, so whether it
+        // is active is encoded as a single discriminating bit in the relation
+        // cache key via `RelationFlags::CLASS_CHECK_CONTEXT` (issue #13828).
+        // Class-context verdicts then share the cross-checker cache in their own
+        // partition and cannot poison the class-agnostic regime (whose keys keep
+        // the bit clear).
+        //
         // A `this`-bearing pair is shareable once keyed by its resolved binding;
-        // without a binding (or inside a class-check context) it stays local.
-        let can_use_shared_relation_cache =
-            !has_class_check_context && (!has_this_type || this_binding.is_some());
+        // without a binding it stays on the instance-local fallback memo.
+        let can_use_shared_relation_cache = !has_this_type || this_binding.is_some();
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
@@ -373,18 +374,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             } else if !self.local_relation_cache.is_empty() {
-                // Context-dependent pair (polymorphic `this` / class-check
-                // context): excluded from the cross-checker shared cache, but
-                // memoizable for this checker instance's lifetime (issue
-                // #13828). The context — the resolver's `this` binding and the
-                // `is_class_symbol` closure — is fixed for the instance, so a
-                // definitive verdict for this pair holds for every repeat of it
-                // in the same query's recursive structural walk. The memo is
-                // dropped with the checker (and cleared by `reset`), so it can
-                // never serve a verdict to a later query under a different
-                // context. A non-empty memo implies `query_db` was present at
-                // write time (and it never reverts to `None`), so no `query_db`
-                // recheck is needed before building the key below.
+                // Unbindable polymorphic-`this` pair: excluded from the
+                // cross-checker shared cache, but memoizable for this checker
+                // instance's lifetime (issue #13828). The resolver's `this`
+                // binding is fixed for the instance, so a definitive verdict for
+                // this pair holds for every repeat of it in the same query's
+                // recursive structural walk. The memo is dropped with the checker
+                // (and cleared by `reset`), so it can never serve a verdict to a
+                // later query under a different binding. A non-empty memo implies
+                // `query_db` was present at write time (and it never reverts to
+                // `None`), so no `query_db` recheck is needed before building the
+                // key below.
                 let key = self.make_cache_key(source, target);
                 if let Some(&related) = self.local_relation_cache.get(&key) {
                     return if related {
@@ -1215,17 +1215,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Record a definitive subtype verdict for later reuse.
     ///
-    /// Context-independent pairs are written to the cross-checker shared
-    /// `QueryCache`. Context-dependent pairs — those carrying a polymorphic
-    /// `this` or checked inside a class-check context, for which
-    /// `can_use_shared_relation_cache` is `false` — are written to the
-    /// instance-local fallback memo instead (issue #13828): their verdict
-    /// depends on the resolver's current `this` binding and on the
-    /// `is_class_symbol` closure, neither of which the flag-agnostic
-    /// [`RelationCacheKey`] encodes, so sharing them across checker instances
-    /// could poison sibling checks. Both inputs are fixed for the lifetime of
-    /// one checker instance, so the local memo safely serves repeats of the
-    /// same pair within one query and is dropped when the instance (or its
+    /// Most pairs are written to the cross-checker shared `QueryCache`. A
+    /// class-check context is no longer excluded: it is encoded in the key via
+    /// `RelationFlags::CLASS_CHECK_CONTEXT`, so class-context verdicts share the
+    /// cache in their own partition (issue #13828). The only pairs still routed
+    /// to the instance-local fallback memo — when `can_use_shared_relation_cache`
+    /// is `false` — are those carrying a polymorphic `this` with no resolvable
+    /// receiver binding: the binding the verdict depends on is not available to
+    /// encode in the [`RelationCacheKey`], so sharing them across checker
+    /// instances could poison sibling checks. The `this` binding is fixed for the
+    /// lifetime of one checker instance, so the local memo safely serves repeats
+    /// of the same pair within one query and is dropped when the instance (or its
     /// `reset`) ends.
     ///
     /// Only definitive `True`/`False` verdicts are recorded; `CycleDetected` /

@@ -376,6 +376,9 @@ mod literal_application_alias_display_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
 #[cfg(test)]
+#[path = "tests/logical_assignment_member_narrowing_tests.rs"]
+mod logical_assignment_member_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/member_assignment_narrowing_join_tests.rs"]
 mod member_assignment_narrowing_join_tests;
 #[cfg(test)]
@@ -1198,6 +1201,9 @@ mod nonunique_symbol_property_access_tests;
 #[path = "tests/nullable_union_callback_variance_tests.rs"]
 mod nullable_union_callback_variance_tests;
 #[cfg(test)]
+#[path = "../tests/nullish_coalescing_discriminated_union_tests.rs"]
+mod nullish_coalescing_discriminated_union_tests;
+#[cfg(test)]
 #[path = "../tests/nullish_coalescing_unknown_result_tests.rs"]
 mod nullish_coalescing_unknown_result_tests;
 #[cfg(test)]
@@ -1467,6 +1473,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/type_position_resolution_cache_tests.rs"]
 mod type_position_resolution_cache_tests;
+#[cfg(test)]
+#[path = "tests/type_predicate_alias_relation_tests.rs"]
+mod type_predicate_alias_relation_tests;
 #[cfg(test)]
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;

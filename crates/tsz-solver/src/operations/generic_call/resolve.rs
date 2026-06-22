@@ -30,6 +30,9 @@ pub(super) struct FinishGenericCallResolutionArgs<'a> {
     pub(super) local_type_param_names: &'a FxHashSet<tsz_common::Atom>,
     pub(super) var_map: &'a FxHashMap<TypeId, InferenceVar>,
     pub(super) direct_param_vars: &'a FxHashSet<InferenceVar>,
+    /// Placeholder-only substitution (type-param name -> fresh placeholder) used
+    /// to classify callback type-parameter positions during finalization.
+    pub(super) callback_placeholder_subst: &'a TypeSubstitution,
     pub(super) noinfer_param_vars: &'a FxHashSet<InferenceVar>,
     pub(super) rest_tuple_target_type: Option<TypeId>,
     pub(super) structural_return_subst: &'a TypeSubstitution,
@@ -309,6 +312,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             write_placeholder_name(&mut placeholder_buf, placeholder_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
+            // Record the declared name -> var mapping so the inference engine can
+            // recognize a self-referential inference (the declared parameter
+            // leaking back into its own variable, e.g. through a callback
+            // parameter contextually typed with the un-instantiated signature)
+            // and skip the no-information (contra-)candidate it would otherwise add.
+            infer_ctx.register_original_type_param_name(tp.name, var);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                 is_const: tp.is_const,
                 name: placeholder_atom,
@@ -602,6 +611,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             })
             .collect();
+
+        // Snapshot the placeholder-only substitution before any contextual-return
+        // pre-substitution mutates it; finalization uses it to classify callback
+        // type-parameter positions without perturbing in-flight inference.
+        let callback_placeholder_subst = substitution.clone();
+
         let mut noinfer_param_vars = FxHashSet::default();
         for param in &instantiated_params {
             placeholder_visited.clear();
@@ -1950,6 +1965,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             local_type_param_names: &local_type_param_names,
             var_map: &var_map,
             direct_param_vars: &direct_param_vars,
+            callback_placeholder_subst: &callback_placeholder_subst,
             noinfer_param_vars: &noinfer_param_vars,
             rest_tuple_target_type,
             structural_return_subst: &structural_return_subst,
