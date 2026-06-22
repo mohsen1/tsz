@@ -1474,8 +1474,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let should_type_check = if rest_type == TypeId::NEVER {
                     true
                 } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
+                    // A leading rest element makes arity indeterminate (TS2345);
+                    // a fixed element before the first rest keeps min arity
+                    // determinate (TS2555), even for `[a, ...b[], c]`.
                     let elems = self.interner.tuple_list(elements);
-                    elems.iter().any(|e| e.rest)
+                    elems.first().is_some_and(|e| e.rest)
                 } else {
                     false
                 };
