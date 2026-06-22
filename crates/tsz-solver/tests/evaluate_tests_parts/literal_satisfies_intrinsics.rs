@@ -290,6 +290,7 @@ fn test_satisfies_record_type() {
 
     // Record<string, number> is an object with string index signature
     let record = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

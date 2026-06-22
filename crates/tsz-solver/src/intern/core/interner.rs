@@ -900,6 +900,7 @@ impl TypeInterner {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                 })
             }))
@@ -1398,8 +1399,20 @@ impl TypeInterner {
         TemplateLiteralId(self.template_lists.intern(&spans))
     }
 
-    pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+    pub fn intern_object_shape(&self, mut shape: ObjectShape) -> ObjectShapeId {
         tsz_common::perf_counters::record_interner_object_shape_intern_call();
+        // Canonicalize the symbol index slot. A *lone* symbol index signature
+        // lives in `string_index` (whose `key_type == SYMBOL` discriminates it):
+        // this preserves the historical single-slot representation so a type with
+        // only `[k: symbol]: V` interns and reads exactly as before. The dedicated
+        // `symbol_index` slot is reserved for the case where a `string` index
+        // already occupies `string_index` and would otherwise collide with the
+        // symbol one (e.g. `Record<PropertyKey, V>`).
+        if shape.string_index.is_none()
+            && let Some(sym) = shape.symbol_index.take()
+        {
+            shape.string_index = Some(sym);
+        }
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 

@@ -30,7 +30,7 @@ pub(super) fn index_signature_key_includes_symbol(
                     .any(|&m| index_signature_key_includes_symbol(interner, resolver, m));
             }
             Some(TypeData::Lazy(def_id)) => match resolver.resolve_lazy(def_id, interner) {
-                Some(resolved) if resolved != current => current = resolved,
+                Some(next_key) if next_key != current => current = next_key,
                 _ => return false,
             },
             _ => return false,
@@ -229,6 +229,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
 
@@ -253,6 +254,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         })
     }
@@ -315,6 +317,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         // A numeric literal prefers the number index signature.
@@ -338,6 +341,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -355,6 +359,7 @@ mod tests {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -383,6 +388,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -417,6 +423,7 @@ mod tests {
                     readonly: false,
                     param_name: None,
                 }),
+                symbol_index: None,
                 symbol: None,
             });
             // Vary the brand name/type so the rule is structural, not name-driven.
@@ -460,6 +467,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         let key = tagged_number(&db, "id", TypeId::STRING);
@@ -477,6 +485,7 @@ mod tests {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         let key = tagged_number(&db, "tag", TypeId::NUMBER);
@@ -504,6 +513,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         let brand_atom = db.intern_string("g");
@@ -541,6 +551,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
 
@@ -586,6 +597,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(

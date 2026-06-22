@@ -298,6 +298,7 @@ fn build_abstract_constructor_with_index_sig(
             param_name: Some(x),
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     interner.callable(CallableShape {

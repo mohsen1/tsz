@@ -198,6 +198,13 @@ impl<'a> CheckerState<'a> {
         if let Some(shape) =
             crate::query_boundaries::state::checking::object_shape(self.ctx.types, resolved)
         {
+            if let Some(index) = shape.symbol_index_signature() {
+                value_types.push(index.value_type);
+                return;
+            }
+            // An aliased `symbol` key (`type S = symbol; { [k: S]: V }`) keeps the
+            // index in `string_index` with a `Lazy` key that only resolves to the
+            // `symbol` intrinsic through the type environment.
             if let Some(index) = &shape.string_index
                 && self.resolve_index_signature_key_type_via_env(index.key_type) == TypeId::SYMBOL
             {

@@ -123,7 +123,7 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_resolution(type_id);
 
         if let Some(constraint) =
-            crate::query_boundaries::common::conditional_branch_union_constraint(
+            crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
                 self.ctx.types,
                 evaluated,
             )
@@ -134,7 +134,7 @@ impl<'a> CheckerState<'a> {
         let (object_type, key_type) =
             crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)?;
         let object_constraint =
-            crate::query_boundaries::common::conditional_branch_union_constraint(
+            crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
                 self.ctx.types,
                 self.evaluate_type_with_resolution(object_type),
             )?;

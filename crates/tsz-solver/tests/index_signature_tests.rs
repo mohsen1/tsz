@@ -12,6 +12,7 @@ fn test_string_index_to_string_index() {
 
     // { [key: string]: number } <: { [key: string]: number }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -25,6 +26,7 @@ fn test_string_index_to_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -48,6 +50,7 @@ fn test_string_index_covariant_value() {
     let hello = interner.literal_string("hello");
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -61,6 +64,7 @@ fn test_string_index_covariant_value() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -82,6 +86,7 @@ fn test_string_index_not_subtype_incompatible_value() {
 
     // { [key: string]: string } NOT <: { [key: string]: number }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -95,6 +100,7 @@ fn test_string_index_not_subtype_incompatible_value() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -121,6 +127,7 @@ fn test_object_with_props_to_index_signature() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -147,6 +154,7 @@ fn test_object_with_incompatible_props_not_subtype() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -168,6 +176,7 @@ fn test_index_with_props_to_simple_object() {
 
     // { [key: string]: number, foo: number } <: { foo: number }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -197,6 +206,7 @@ fn test_number_index_to_number_index() {
 
     // { [key: number]: string } <: { [key: number]: string }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -210,6 +220,7 @@ fn test_number_index_to_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -232,6 +243,7 @@ fn test_string_and_number_index() {
     // { [key: string]: number, [key: number]: number } <: { [key: string]: number }
     // Number index must be subtype of string index
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -250,6 +262,7 @@ fn test_string_and_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -271,6 +284,7 @@ fn test_index_signature_with_named_property() {
 
     // { [key: string]: number, length: number } <: { [key: string]: number, length: number }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -287,6 +301,7 @@ fn test_index_signature_with_named_property() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -311,6 +326,7 @@ fn test_index_signature_source_property_mismatch() {
 
     // { [key: string]: string, foo: number } NOT <: { [key: string]: string }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -327,6 +343,7 @@ fn test_index_signature_source_property_mismatch() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -348,6 +365,7 @@ fn test_number_index_signature_source_property_mismatch() {
 
     // { [key: number]: number, "0": string } NOT <: { [key: number]: number }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
@@ -364,6 +382,7 @@ fn test_number_index_signature_source_property_mismatch() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -387,6 +406,7 @@ fn test_empty_object_to_index_signature() {
     let source = interner.object(vec![]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -440,6 +460,7 @@ fn test_classify_element_indexable_preserves_union_members() {
 
     // Member 2: object with string index { [s: string]: number }
     let member2 = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -486,6 +507,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
 
     // Source: { foo: string }
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
@@ -510,6 +532,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
 
     // Target: { [x: string]: string; [x: number]: string }
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -542,6 +565,7 @@ fn test_empty_object_assignable_to_dual_index_target() {
     let source = interner.object(vec![]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -592,6 +616,7 @@ fn test_named_source_assignable_to_string_index_any_target() {
 
     // Source: a class-like named type with only a number index, e.g. `class NumberTo<any> { [x: number]: any }`.
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: Some(SymbolId(7)),
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -606,6 +631,7 @@ fn test_named_source_assignable_to_string_index_any_target() {
 
     // Target: anonymous `{ [x: string]: any }`.
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -657,6 +683,7 @@ fn test_named_source_with_props_assignable_to_dual_any_index_named_target() {
 
     // Target is a NAMED interface like `StringAndNumberTo<any>`.
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: Some(SymbolId(80)),
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -708,6 +735,7 @@ fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
 
     // Anonymous merged-intersection shape (target.symbol = None).
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -757,6 +785,7 @@ fn test_named_source_still_rejected_by_number_only_any_target() {
 
     // Target: `{ [n: number]: any }` -- number index only, NO string index.
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -798,6 +827,7 @@ fn test_named_class_plain_object_not_assignable_to_string_indexed_target() {
     );
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -837,6 +867,7 @@ fn test_named_class_plain_object_not_assignable_to_string_indexed_target_alt_nam
     );
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -869,6 +900,7 @@ fn test_anonymous_plain_object_still_assignable_to_string_indexed_target_when_co
     ]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -908,6 +940,7 @@ fn test_string_index_source_does_not_supply_required_named_member() {
     let interner = TypeInterner::new();
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -940,6 +973,7 @@ fn test_string_index_source_satisfies_optional_named_member_regardless_of_value(
     let interner = TypeInterner::new();
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -970,6 +1004,7 @@ fn test_number_index_source_satisfies_optional_numeric_member_regardless_of_valu
     let interner = TypeInterner::new();
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1000,6 +1035,7 @@ fn test_string_index_source_satisfies_matching_optional_named_member() {
     let interner = TypeInterner::new();
 
     let source = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

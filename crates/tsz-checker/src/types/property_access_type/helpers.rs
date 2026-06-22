@@ -1531,6 +1531,16 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        if !request.flow.skip_flow_narrowing()
+            && let Some((_, symbol_ref)) =
+                crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                    &self.ctx,
+                    |expr_idx| self.resolve_identifier_symbol(expr_idx),
+                    idx,
+                )
+        {
+            return self.ctx.types.unique_symbol(symbol_ref);
+        }
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
             self.ctx.depth_exceeded.set(true);
             return TypeId::ERROR; // Max instantiation depth exceeded - propagate error

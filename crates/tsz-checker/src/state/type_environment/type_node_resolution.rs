@@ -787,6 +787,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: shape.symbol.or(Some(sym_id)),
         })
     }

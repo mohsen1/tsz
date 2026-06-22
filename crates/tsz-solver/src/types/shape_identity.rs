@@ -175,6 +175,7 @@ impl PartialEq for ObjectShape {
             properties,
             string_index,
             number_index,
+            symbol_index,
             symbol,
         } = self;
         *flags == other.flags
@@ -186,6 +187,7 @@ impl PartialEq for ObjectShape {
                     .all(|(left, right)| left.declaration_order == right.declaration_order))
             && index_signature_display_eq(string_index, &other.string_index)
             && index_signature_display_eq(number_index, &other.number_index)
+            && index_signature_display_eq(symbol_index, &other.symbol_index)
             && *symbol == other.symbol
     }
 }
@@ -201,6 +203,7 @@ impl std::hash::Hash for ObjectShape {
             properties,
             string_index,
             number_index,
+            symbol_index,
             symbol,
         } = self;
         flags.hash(state);
@@ -212,6 +215,7 @@ impl std::hash::Hash for ObjectShape {
         }
         hash_index_signature_display(string_index, state);
         hash_index_signature_display(number_index, state);
+        hash_index_signature_display(symbol_index, state);
         symbol.hash(state);
     }
 }

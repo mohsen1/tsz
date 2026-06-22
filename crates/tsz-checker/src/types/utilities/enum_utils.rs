@@ -1054,14 +1054,16 @@ impl<'a> CheckerState<'a> {
         // having no overlap wrongly fires TS2367 (#14253). Gated on a non-intrinsic
         // operand so the common literal/primitive comparisons skip the evaluation.
         if !left.is_intrinsic() || !right.is_intrinsic() {
-            let left_default = crate::query_boundaries::common::conditional_default_constraint(
-                self.ctx.types,
-                self.evaluate_type_with_env(left),
-            );
-            let right_default = crate::query_boundaries::common::conditional_default_constraint(
-                self.ctx.types,
-                self.evaluate_type_with_env(right),
-            );
+            let left_default =
+                crate::query_boundaries::conditional_constraints::conditional_default_constraint(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(left),
+                );
+            let right_default =
+                crate::query_boundaries::conditional_constraints::conditional_default_constraint(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(right),
+                );
             if left_default.is_some() || right_default.is_some() {
                 return !self.is_type_comparable_to(
                     left_default.unwrap_or(left),
@@ -1438,10 +1440,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn conditional_overlap_apparent_type(&mut self, type_id: TypeId) -> TypeId {
-        let Some(constraint) = crate::query_boundaries::common::conditional_default_constraint(
-            self.ctx.types,
-            type_id,
-        ) else {
+        let Some(constraint) =
+            crate::query_boundaries::conditional_constraints::conditional_default_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        else {
             return type_id;
         };
 

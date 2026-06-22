@@ -186,6 +186,7 @@ fn test_index_access_with_string_index_signature() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
         number_index: None,
     });
 
@@ -215,6 +216,7 @@ fn test_symbol_index_signature_accepts_symbol_keys_only() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let unique_key = interner.unique_symbol(crate::types::SymbolRef(7));
@@ -248,6 +250,7 @@ fn test_symbol_named_properties_do_not_satisfy_string_index_signatures() {
         ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
     }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
         properties: vec![],
@@ -276,6 +279,7 @@ fn test_symbol_index_signatures_check_symbol_named_properties() {
         ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
     }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
         properties: vec![],
@@ -524,6 +528,7 @@ fn test_index_access_never_key_on_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     let index_access = interner.index_access(obj, TypeId::NEVER);
 

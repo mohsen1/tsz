@@ -525,6 +525,7 @@ fn test_keyof_object_with_string_index_signature() {
 
     let key_x = interner.intern_string("x");
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(key_x, TypeId::NUMBER)],
@@ -552,6 +553,7 @@ fn test_keyof_object_with_number_index_signature() {
 
     let key_x = interner.intern_string("x");
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(key_x, TypeId::NUMBER)],
@@ -633,6 +635,7 @@ fn test_keyof_union_string_index_overlap_literal() {
     let interner = TypeInterner::new();
 
     let obj_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -660,6 +663,7 @@ fn test_keyof_union_index_signature_intersection() {
     let interner = TypeInterner::new();
 
     let string_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -672,6 +676,7 @@ fn test_keyof_union_index_signature_intersection() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -1348,6 +1353,7 @@ fn test_keyof_both_index_signatures() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1530,6 +1536,7 @@ fn test_keyof_union_with_index_signature_and_literal() {
     )]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1562,6 +1569,7 @@ fn test_keyof_intersection_with_index_signature() {
     )]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

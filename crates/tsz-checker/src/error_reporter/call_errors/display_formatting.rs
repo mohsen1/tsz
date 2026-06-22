@@ -1511,14 +1511,8 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
-                let string_index = shape
-                    .string_index
-                    .as_ref()
-                    .filter(|sig| sig.key_type != TypeId::SYMBOL);
-                let symbol_index = shape
-                    .string_index
-                    .as_ref()
-                    .filter(|sig| sig.key_type == TypeId::SYMBOL);
+                let string_index = shape.string_index_signature();
+                let symbol_index = shape.symbol_index_signature();
                 if prefer_number_index {
                     shape
                         .number_index

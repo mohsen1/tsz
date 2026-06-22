@@ -420,14 +420,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                 } => {
-                    if !properties.is_empty() || string_index.is_some() || number_index.is_some() {
-                        let merged_type = if string_index.is_some() || number_index.is_some() {
+                    if !properties.is_empty()
+                        || string_index.is_some()
+                        || number_index.is_some()
+                        || symbol_index.is_some()
+                    {
+                        let merged_type = if string_index.is_some()
+                            || number_index.is_some()
+                            || symbol_index.is_some()
+                        {
                             self.checker.interner.object_with_index(ObjectShape {
                                 flags: ObjectFlags::empty(),
                                 properties,
                                 string_index,
                                 number_index,
+                                symbol_index,
                                 symbol: None,
                             })
                         } else {
@@ -489,6 +498,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index: _,
                     } => (properties, string_index, number_index),
                     PropertyCollectionResult::NonObject => (Vec::new(), None, None),
                 };
@@ -872,6 +882,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,
                 number_index: s_callable.number_index,
+                symbol_index: None,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_subtype(
@@ -895,6 +906,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,
                 number_index: s_callable.number_index,
+                symbol_index: None,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_to_indexed(

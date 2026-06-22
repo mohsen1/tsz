@@ -13,6 +13,7 @@ fn test_resolve_string_index() {
 
     // Object with string index
     let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -36,6 +37,7 @@ fn test_resolve_number_index() {
 
     // Object with number index
     let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -170,6 +172,7 @@ fn test_is_readonly() {
 
     // Readonly string index
     let obj1 = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -184,6 +187,7 @@ fn test_is_readonly() {
 
     // Mutable string index
     let obj2 = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -245,6 +249,7 @@ fn test_has_index_signature_plain_object() {
 fn test_has_index_signature_with_string_index() {
     let db = TypeInterner::new();
     let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -274,6 +279,7 @@ fn test_has_index_signature_with_string_index() {
 fn test_has_index_signature_with_both_indexes() {
     let db = TypeInterner::new();
     let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -518,6 +524,7 @@ fn test_numeric_key_prefers_number_index_over_string_index() {
     // { [n: number]: number, [s: string]: string | number }
     let string_or_number = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
