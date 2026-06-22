@@ -41,6 +41,7 @@ pub(crate) mod inference;
 pub(crate) mod intersection_display;
 pub(crate) mod js_exports;
 pub(crate) mod key_constraints;
+pub(crate) mod lib_augmentations;
 pub(crate) mod name_resolution;
 pub(crate) mod operator_wrappers;
 pub(crate) mod optional_chain;
