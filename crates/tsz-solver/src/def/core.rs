@@ -1120,7 +1120,7 @@ impl DefinitionStore {
     pub fn elect_content_representatives_unchecked(&self) -> usize {
         // Group key: (kind, name, declaring-module canonical path, decl-span-start).
         let mut groups: FxHashMap<(DefKind, Atom, Atom, u32), Vec<DefId>> = FxHashMap::default();
-        for entry in self.definitions.iter() {
+        for entry in &self.definitions {
             let def_id = *entry.key();
             let info = entry.value();
             if !matches!(

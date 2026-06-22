@@ -410,13 +410,13 @@ mod tests {
         let store = DefinitionStore::new();
 
         // File 1: 2 defs
-        let mut info1a = DefinitionInfo::type_alias(Atom(100), vec![], TypeId::NUMBER);
-        info1a.file_id = Some(1);
-        store.register(info1a);
+        let mut file1_number_info = DefinitionInfo::type_alias(Atom(100), vec![], TypeId::NUMBER);
+        file1_number_info.file_id = Some(1);
+        store.register(file1_number_info);
 
-        let mut info1b = DefinitionInfo::type_alias(Atom(101), vec![], TypeId::STRING);
-        info1b.file_id = Some(1);
-        store.register(info1b);
+        let mut file1_string_info = DefinitionInfo::type_alias(Atom(101), vec![], TypeId::STRING);
+        file1_string_info.file_id = Some(1);
+        store.register(file1_string_info);
 
         // File 2: 1 def
         let mut info2 = DefinitionInfo::type_alias(Atom(200), vec![], TypeId::BOOLEAN);
