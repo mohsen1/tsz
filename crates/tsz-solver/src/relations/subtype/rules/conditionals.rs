@@ -364,6 +364,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Strategy 1.25: getConstraintFromConditionalType for an infer-extraction
+        // conditional whose check type is a constrained type parameter.
+        //
+        // For `Parameters<F>` (= `F extends (...args: infer P) => any ? P :
+        // never`), the default constraint above is the union of branch results,
+        // which leaves the rest-position `infer P` unresolved — so it never
+        // recognizes the array base `never[]`. tsc instead substitutes the check
+        // type `F` with its constraint and re-instantiates: `AnyFunction extends
+        // (...args: infer P) => any ? P : never` evaluates to `never[]`, the
+        // concrete apparent base.
+        //
+        // This is gated on an `infer` in the extends type: a predicate
+        // conditional without `infer` (e.g. `T extends unknown[] ? true :
+        // false`) keeps the determinism guard in Strategy 1.5 below, which this
+        // must not bypass — substituting its check type and picking a single
+        // branch would unsoundly narrow a non-deterministic result. An
+        // infer-extraction conditional has no such hazard: the true branch is
+        // the matched-and-extracted shape, so the instantiated extraction is a
+        // sound upper bound.
+        if let Some(evaluated) =
+            self.infer_extraction_conditional_constraint(self.interner.conditional(*cond))
+            && self.check_subtype(evaluated, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
+
         // Strategy 1.5: Distributive constraint evaluation.
         //
         // When the check_type is a distributive type parameter with a constraint,
@@ -400,11 +426,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // (a) constraint <: extends_type → always the true branch, deterministic
             // (b) no member of extends_type <: constraint → extends_type can never be
             //     satisfied by any subtype of constraint, always the false branch, deterministic
-            // (c) otherwise → non-deterministic, skip Strategy 1.5
-            let constraint_subtype_of_extends =
-                self.check_subtype(constraint, cond.extends_type).is_true();
-            let is_non_deterministic = if constraint_subtype_of_extends {
-                false // always-true branch — deterministic
+            // (c) the extends type is an `infer` pattern (`F extends (...a: infer P)
+            //     => any ? P : never`) — an *extraction* conditional rather than a
+            //     discriminating test. Instantiating the check type with its
+            //     constraint and evaluating yields the genuine extracted type, which
+            //     is exactly the constraint tsc reads via
+            //     `getConstraintOfDistributiveConditionalType`. The
+            //     subtype-of-extends heuristic below is meaningless for a pattern
+            //     (the infer placeholder always "matches"), so it must not gate
+            //     these out.
+            // (d) otherwise → non-deterministic, skip Strategy 1.5
+            let extends_is_inference_pattern =
+                crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type);
+            let is_non_deterministic = if extends_is_inference_pattern
+                || self.check_subtype(constraint, cond.extends_type).is_true()
+            {
+                // extraction pattern, or constraint <: extends (always-true
+                // branch) — deterministic. The `||` short-circuits, so the
+                // subtype check is skipped for an inference pattern (where it
+                // would be meaningless).
+                false
             } else if matches!(self.interner.lookup(constraint), Some(TypeData::Union(_))) {
                 // Union constraint: distribution over each member is always deterministic.
                 // e.g. ZeroOf<T extends number | string>: instantiate T→(number|string),
@@ -433,6 +474,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
                 if instantiated != cond_type_id {
                     let evaluated = self.evaluate_type(instantiated);
+                    // A `never` distributive constraint (e.g. `ZeroOf<{}>`, where
+                    // no branch matches) is legitimately assignable to any target,
+                    // so it is kept here rather than guarded out — `never <: T`
+                    // holds and matches tsc's acceptance of such relations.
                     if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
                     {
                         return SubtypeResult::True;
@@ -449,6 +494,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    /// tsc's `getConstraintFromConditionalType` for an infer-extraction
+    /// conditional whose check type is a constrained type parameter.
+    ///
+    /// Substitutes the check-type parameter with its own constraint and
+    /// evaluates the result, so a deferred extraction utility such as
+    /// `Parameters<F>` (`F extends (...args: infer P) => any ? P : never`)
+    /// resolves to its concrete apparent base (`never[]`). Returns `None` when
+    /// `type_id` is not a deferred conditional, when its extends type has no
+    /// `infer` (a predicate conditional — substituting and picking a branch
+    /// would unsoundly narrow a non-deterministic result, so those keep the
+    /// determinism-guarded distributive path), when the check type is not a
+    /// type parameter, or when the instantiation collapses to `never`.
+    pub(crate) fn infer_extraction_conditional_constraint(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let cond_id = crate::type_queries::get_conditional_type_id(self.interner, type_id)?;
+        let cond = self.interner.conditional_type(cond_id);
+        // Cheap structural gate first: a non-type-parameter check type can never
+        // profit, so short-circuit before the `contains_infer_types_db` tree walk.
+        if type_param_info(self.interner, cond.check_type).is_none()
+            || !crate::type_queries::contains_infer_types_db(self.interner, cond.extends_type)
+        {
+            return None;
+        }
+        let substituted = crate::type_queries::conditional_check_type_substituted_constraint(
+            self.interner,
+            type_id,
+        )?;
+        let evaluated = self.evaluate_type(substituted);
+        (evaluated != TypeId::NEVER).then_some(evaluated)
     }
 
     /// Compute the default constraint of a deferred conditional type.

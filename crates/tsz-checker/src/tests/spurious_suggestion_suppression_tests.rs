@@ -58,6 +58,31 @@ type T = Foobaz.X;
 }
 
 #[test]
+fn namespace_suggestion_stable_across_repeated_references() {
+    // The `Cannot find namespace` suggestion path is memoized per
+    // (reference site, NAMESPACE meaning) so a missing namespace re-resolved
+    // many times under demand-driven evaluation does not re-run the
+    // full-symbol-universe scan (issue #14349). Referencing the same missing
+    // namespace from several distinct sites must still yield one TS2833 per
+    // site with the correct suggestion and no spurious TS2503 — i.e. the memo
+    // never returns a stale/empty scan for a namespace lookup.
+    let codes = check_strict(
+        r#"
+namespace Foobar { export type X = number; }
+type A = Foobaz.X;
+type B = Foobaz.X;
+type C = Foobaz.X;
+"#,
+    );
+    assert_eq!(
+        count(&codes, TS2833),
+        3,
+        "each missing-namespace site still gets its suggestion: {codes:?}"
+    );
+    assert_eq!(count(&codes, TS2503), 0, "{codes:?}");
+}
+
+#[test]
 fn rest_only_indexer_method_does_not_get_call_hint() {
     // `o[sym]` where `get` takes only a rest param (min-arg-count 0) — tsc emits
     // plain TS7053, not the "Did you mean to call 'o.get'?" TS7052 hint.

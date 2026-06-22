@@ -454,11 +454,23 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // TS2632: Check if this identifier is an import binding BEFORE resolving
-        // through imports. resolve_identifier follows aliases, so the resolved symbol
-        // would be the export target (e.g., `var x`) rather than the import binding.
-        // Import bindings are readonly in ESM — you cannot reassign them.
-        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(name)
+        // TS2632: Check if this identifier's *innermost* binding is an import
+        // alias BEFORE resolving through imports. `resolve_identifier` follows
+        // aliases, so the fully-resolved symbol would be the export target
+        // (e.g. `var x`) rather than the import binding, losing the ALIAS flag.
+        // We therefore walk the scope chain to the innermost binding and inspect
+        // its raw flags: import bindings are readonly in ESM and cannot be
+        // reassigned. Crucially, a `let`/`const`/parameter that SHADOWS the
+        // import wins the scope walk, so assigning to the shadowing local must
+        // NOT report TS2632 (tsc parity).
+        let lib_binders = self.get_lib_binders();
+        let innermost_binding = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            inner,
+            &lib_binders,
+            |_sym_id| true,
+        );
+        if let Some(local_sym_id) = innermost_binding
             && let Some(local_sym) = self.ctx.binder.get_symbol(local_sym_id)
             && local_sym.has_any_flags(symbol_flags::ALIAS)
         {

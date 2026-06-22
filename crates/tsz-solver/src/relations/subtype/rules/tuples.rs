@@ -389,22 +389,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(variadic) = expansion.variadic
                     && !self.check_subtype(variadic, t_elem).is_true()
                 {
-                    // When the variadic is a TypeParameter constrained to an
-                    // array-like type (e.g., `U extends string[]` or
-                    // `U extends [string, number]`), expand_tuple_rest returns the
-                    // type parameter itself as the variadic. For `[...U] <: E[]`,
-                    // check the constraint's element type — which for a tuple
-                    // constraint is the union of its element types, not the tuple
-                    // itself.
-                    let ok = type_param_info(self.interner, variadic).is_some_and(|info| {
-                        info.constraint.is_some_and(|c| {
-                            let e = crate::type_queries::rest_spread_element_type(self.interner, c);
-                            // `rest_spread_element_type` returns its input unchanged
-                            // for a non-array-like constraint; `e != c` means the
-                            // constraint actually decomposed to an element type.
-                            e != c && self.check_subtype(e, t_elem).is_true()
-                        })
-                    });
+                    // `[...X] <: E[]` reduces to `X <: E[]` when the spread `X` is
+                    // itself array-like. expand_tuple_rest keeps such a spread
+                    // unreduced as the variadic — a type parameter constrained to
+                    // an array/tuple or a deferred conditional like `Parameters<F>`
+                    // whose base constraint is array-like. Relate the spread to the
+                    // array form `E[]` (which resolves an instantiable spread
+                    // through its constraint), or fall back to the constraint's
+                    // rest-spread element type.
+                    let variadic_as_array = self.interner.array(t_elem);
+                    let ok = self.check_subtype(variadic, variadic_as_array).is_true()
+                        || type_param_info(self.interner, variadic).is_some_and(|info| {
+                            info.constraint.is_some_and(|c| {
+                                let e =
+                                    crate::type_queries::rest_spread_element_type(self.interner, c);
+                                // `rest_spread_element_type` returns its input unchanged
+                                // for a non-array-like constraint; `e != c` means the
+                                // constraint actually decomposed to an element type.
+                                 e != c && self.check_subtype(e, t_elem).is_true()
+                             })
+                         })
+                        // A deferred infer-extraction conditional spread element
+                        // (`[...Parameters<F>] <: never[]`) decomposes only after
+                        // `getConstraintFromConditionalType` resolves it to its
+                        // array base; check that base's element type against the
+                        // target.
+                        || self
+                            .infer_extraction_conditional_constraint(variadic)
+                            .is_some_and(|c| {
+                                let e = crate::type_queries::rest_spread_element_type(
+                                    self.interner,
+                                    c,
+                                );
+                                e != c && self.check_subtype(e, t_elem).is_true()
+                            });
                     if !ok {
                         return SubtypeResult::False;
                     }

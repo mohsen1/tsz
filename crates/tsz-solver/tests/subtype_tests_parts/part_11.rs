@@ -379,6 +379,7 @@ fn test_intersection_index_signature_with_properties() {
     let x_name = interner.intern_string("x");
 
     let index_sig = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -410,6 +411,7 @@ fn test_intersection_two_index_signatures() {
     let one_or_two = interner.union(vec![one, two]);
 
     let index_number = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -423,6 +425,7 @@ fn test_intersection_two_index_signatures() {
     });
 
     let index_literal = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1048,6 +1051,7 @@ fn test_keyof_with_index_signature_includes_string() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -1073,6 +1077,7 @@ fn test_keyof_with_number_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

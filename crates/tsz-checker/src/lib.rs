@@ -199,6 +199,9 @@ mod decorator_return_relation_routing_arch_tests;
 #[path = "tests/defaulted_param_deferred_undefined_strip_tests.rs"]
 mod defaulted_param_deferred_undefined_strip_tests;
 #[cfg(test)]
+#[path = "tests/definite_assignment_logical_compound_tests.rs"]
+mod definite_assignment_logical_compound_tests;
+#[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
@@ -375,6 +378,9 @@ mod literal_application_alias_display_tests;
 #[cfg(test)]
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
+#[cfg(test)]
+#[path = "tests/logical_assignment_member_narrowing_tests.rs"]
+mod logical_assignment_member_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/member_assignment_narrowing_join_tests.rs"]
 mod member_assignment_narrowing_join_tests;
@@ -666,6 +672,9 @@ mod as_const_nested_literal_display_tests;
 #[cfg(test)]
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
+#[cfg(test)]
+#[path = "tests/assign_to_import_shadowing_local_tests.rs"]
+mod assign_to_import_shadowing_local_tests;
 #[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
@@ -1470,6 +1479,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/type_position_resolution_cache_tests.rs"]
 mod type_position_resolution_cache_tests;
+#[cfg(test)]
+#[path = "tests/type_predicate_alias_relation_tests.rs"]
+mod type_predicate_alias_relation_tests;
 #[cfg(test)]
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;

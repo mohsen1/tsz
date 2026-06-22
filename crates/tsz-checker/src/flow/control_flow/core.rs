@@ -468,7 +468,7 @@ impl<'a> FlowAnalyzer<'a> {
         simplified
     }
 
-    fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
+    pub(super) fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
         let Some(sym_id) = self.reference_symbol(reference) else {
             return false;
         };

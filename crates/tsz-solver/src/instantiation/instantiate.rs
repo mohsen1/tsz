@@ -938,15 +938,21 @@ impl<'a> TypeInstantiator<'a> {
                     .number_index
                     .as_ref()
                     .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_symbol_idx = shape
+                    .symbol_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
                 if instantiated_props.is_some()
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
+                    || instantiated_symbol_idx.is_some()
                 {
                     let result = self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol_index: instantiated_symbol_idx.or(shape.symbol_index),
                         symbol: shape.symbol,
                     });
                     self.propagate_instantiated_display_properties(type_id, result);

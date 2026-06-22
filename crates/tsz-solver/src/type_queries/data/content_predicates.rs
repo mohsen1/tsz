@@ -1858,6 +1858,59 @@ pub fn get_tuple_elements(
     }
 }
 
+/// True when `type_id`'s base constraint resolves to an array or tuple type.
+///
+/// Mirrors the array-likeness tsc reads through `getBaseConstraintOfType`: a
+/// type-parameter / `infer` constraint chain and a deferred-conditional
+/// constraint are followed before the structural array/tuple test. A generic
+/// reference like `P extends Parameters<F>` — whose alias body is the deferred
+/// conditional `F extends (...a: infer Q) => any ? Q : never` — is therefore
+/// classified as array-like: its distributive constraint (instantiate
+/// `F := <F's constraint>`, evaluate) resolves to that function's parameter
+/// list, which is array/tuple-like. Distributes over unions: every member must
+/// be array/tuple-like, matching `isArrayLikeType`.
+///
+/// This query follows constraints and conditional constraints only, not alias
+/// instantiation: a caller that may hold a still-opaque generic-alias
+/// `Application` (e.g. `Parameters<F>`) must evaluate it with an env-aware
+/// evaluator first, since the bare-`TypeDatabase` evaluator keeps a generic
+/// application opaque.
+pub fn base_constraint_is_array_or_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    fn go(db: &dyn TypeDatabase, type_id: TypeId, depth: u8) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        if crate::type_queries::is_array_or_tuple_type(db, type_id) {
+            return true;
+        }
+        match db.lookup(type_id) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+                .constraint
+                .is_some_and(|constraint| go(db, constraint, depth + 1)),
+            Some(TypeData::Conditional(_)) => {
+                // The base constraint of a deferred conditional is read through
+                // its distributive constraint (an extraction utility like
+                // `Parameters` resolves to a concrete parameter list) and,
+                // failing that, its default constraint (the union of branch
+                // results, tsc's `getBaseConstraintOfType` of a conditional).
+                crate::type_queries::get_distributive_conditional_constraint(db, type_id)
+                    .or_else(|| {
+                        crate::type_queries::get_conditional_default_constraint(db, type_id)
+                    })
+                    .is_some_and(|constraint| {
+                        constraint != type_id && go(db, constraint, depth + 1)
+                    })
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = db.type_list(list_id);
+                !members.is_empty() && members.iter().all(|&m| go(db, m, depth + 1))
+            }
+            _ => false,
+        }
+    }
+    go(db, type_id, 0)
+}
+
 /// Check if a type is a union containing at least one tuple member.
 ///
 /// This detects the `T extends readonly unknown[] | []` pattern where `| []`

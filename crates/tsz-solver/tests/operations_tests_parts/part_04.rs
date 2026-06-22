@@ -13,6 +13,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -72,6 +73,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -164,6 +166,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
@@ -247,6 +250,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),

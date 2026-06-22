@@ -52,7 +52,6 @@ export { c }
 }
 
 #[test]
-#[ignore = "reproduces #14164"]
 fn issue_14164_extracted_method_callable_no_ts2349() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -68,6 +67,101 @@ export { viaIndex }
     assert!(
         !has_error(&diags, 2349),
         "no TS2349 — extracted method type must keep its call signature. Actual: {diags:#?}"
+    );
+}
+
+// #14164 adjacent matrix: the defect is a conditional whose check type references
+// an unresolved user-interface `Lazy` collapsing to its false branch. Vary the
+// binders/shape to prove the fix is structural, not witness-shaped, and pin
+// negative controls so genuinely non-callable members still report errors.
+
+/// The same shape with non-canonical binder names and a generic callback alias.
+/// The fix follows the shape (a still-deferred indexed access as a conditional
+/// check type), not the `Atom`/`Getter` spellings, so an extracted function-typed
+/// parameter stays callable here too.
+#[test]
+fn issue_14164_extracted_method_callable_renamed_binders() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Widget<Payload> { handler: (cb: Sink) => Payload }
+type Sink = <Z>(w: Widget<Z>) => Z
+declare const wq: Widget<string>
+type SinkFromIndex = Parameters<Widget<unknown>['handler']>[0]
+function run(cb: SinkFromIndex) { return cb(wq) }
+export { run }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2349),
+        "no TS2349 — extracted method type stays callable regardless of binder names. Actual: {diags:#?}"
+    );
+}
+
+/// Renamed binders + a non-generic extracted method (no `<V>` on the callback
+/// alias). Still routes through `Parameters<Store<unknown>['select']>[0]` whose
+/// `Store` base is an unresolved `Lazy` while the enclosing function's type is
+/// computed; the call must stay callable.
+#[test]
+fn issue_14164_extracted_method_non_generic_renamed_callable() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Store<State> { select: (read: Reader) => State }
+type Reader = (store: Store<number>) => number
+declare const s: Store<number>
+type ReaderFromIndex = Parameters<Store<unknown>['select']>[0]
+function viaIndex(read: ReaderFromIndex) { return read(s) }
+export { viaIndex }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        !has_error(&diags, 2349),
+        "no TS2349 — non-generic extracted method (renamed binders) stays callable. Actual: {diags:#?}"
+    );
+}
+
+/// #14164 adjacent (negative control): `Parameters<T>` over a check that
+/// genuinely resolves to a non-callable concrete type must still report the
+/// `(...args: any) => any` constraint violation (TS2344) — the deferral only
+/// applies while the indexed access is unreduced, never to a resolved concrete
+/// non-function. Guards against the fix over-deferring into a silent pass.
+#[test]
+fn issue_14164_parameters_over_concrete_non_callable_still_ts2344() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Holder { count: number }
+type Bad = Parameters<Holder['count']>
+export type { Bad }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&diags, 2344),
+        "TS2344 expected — `Holder['count']` resolves to `number`, which violates the \
+         `(...args: any) => any` constraint. Actual: {diags:#?}"
+    );
+}
+
+/// Negative control: an extracted member that is genuinely NOT callable (a
+/// `number`-typed property reached the same way) must still report TS2349 —
+/// the deferral only applies while a referenced `Lazy` is unresolved, never to
+/// a resolved non-callable member.
+#[test]
+fn issue_14164_extracted_non_callable_member_still_ts2349() {
+    let diags = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Atom<Value> { read: (get: Getter) => Value; size: number }
+type Getter = <V>(atom: Atom<V>) => V
+declare const sz: Atom<unknown>['size']
+const r = sz()
+export { r }
+"#,
+        strict_opts(),
+    );
+    assert!(
+        has_error(&diags, 2349),
+        "TS2349 expected — a number-typed indexed member is not callable. Actual: {diags:#?}"
     );
 }
 
@@ -149,7 +243,6 @@ export type { A };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14225 (issue closed but minimal repro still emits TS2503)"]
 fn issue_14225_reimported_namespace_qualified_type_no_ts2503() {
     if !lib_files_available() {
         return;
@@ -205,8 +298,10 @@ export const f =
 // type in the true branch (SubstitutionType missing). TS2344.
 // ---------------------------------------------------------------------------
 
+// Fixed: conditional true-branch narrowing now wraps a structured (non-naked)
+// check operand in a `SubstitutionType`, so `Capitalize<CamelCase<V>>`'s
+// constraint passes. Kept as a live regression guard.
 #[test]
-#[ignore = "reproduces #14167 (issue closed but minimal repro still emits TS2344)"]
 fn issue_14167_conditional_true_branch_substitution_no_ts2344() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -267,7 +362,6 @@ export { a, b }
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14261"]
 fn issue_14261_contextual_return_binding_samename_typeparam_no_ts18046() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -368,7 +462,6 @@ export { f };
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "reproduces #14231"]
 fn issue_14231_type_predicate_through_alias_no_ts2677() {
     let diags = compile_and_get_diagnostics_with_lib_and_options(
         r#"

@@ -86,7 +86,6 @@ fn issue_14228_export_star_as_namespace_type_qualifier_no_ts2503() {
 /// (`T.Intersect<...>`) even when a same-named local *type* `T` shadows in type
 /// space. Using `T.Intersect` must not report TS2503.
 #[test]
-#[ignore = "reproduces #14225; FP still present (TS2503 'Cannot find namespace T' on a re-exported namespace import shadowed by a local `type T`; also emits a downstream TS2661)"]
 fn issue_14225_reexported_namespace_qualifier_with_local_type_shadow_no_ts2503() {
     if !lib_files_available() {
         return;
@@ -193,7 +192,7 @@ fn issue_13484_generic_base_class_member_substituted_no_ts2322() {
 /// (curried) form `(a) => (): T => ({ m: (x, y) => ... })` must not report
 /// TS7006 ("Parameter implicitly has an 'any' type") on `x`/`y`.
 #[test]
-#[ignore = "reproduces #14213; FP still present (TS7006 on inner-arrow object-literal method params under a curried annotated return)"]
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14213).
 fn issue_14213_curried_arrow_object_literal_method_params_no_ts7006() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -286,7 +285,7 @@ export {};
 /// every type position of the signature. `type Guard = (a: { z: string }) => a is
 /// typeof a & { y: boolean }` must not report TS2304 ("Cannot find name 'a'").
 #[test]
-#[ignore = "reproduces #14229; FP still present (TS2304 'Cannot find name a' for `typeof a` in a function-type-alias predicate asserted type)"]
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14229).
 fn issue_14229_typeof_param_in_predicate_asserted_type_no_ts2304() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -318,7 +317,7 @@ export {};
 /// in-module binding for `Exp`; in-module `Capitalize<S>` must keep its intrinsic
 /// meaning. The witness must not report TS2315 ("'Capitalize' is not generic").
 #[test]
-#[ignore = "reproduces #14255; FP still present (TS2315 'Type Local is not generic' — `export { Local as Capitalize }` shadows the string-mapping intrinsic in-module)"]
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14255).
 fn issue_14255_export_rename_shadowing_intrinsic_no_ts2315() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -400,7 +399,7 @@ fn issue_14258_export_star_reexport_type_alias_named_import_no_ts2749() {
 /// class meaning (value and type). No TS2749 at type sites, no TS2552 at value
 /// sites.
 #[test]
-#[ignore = "reproduces #14216; FP still present (export-alias `export { box as Box }` clobbers the local `class Box` in value and type space)"]
+// Now fixed on `main`; kept as a live regression guard (was #[ignore] for #14216).
 fn issue_14216_export_alias_collides_local_class_no_ts2552_ts2749() {
     if !lib_files_available() {
         return;

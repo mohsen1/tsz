@@ -278,6 +278,44 @@ pub fn conditional_default_constraint_from_data(
     Some(constraint)
 }
 
+/// Substitute a deferred conditional's check-type parameter with its own base
+/// constraint, returning the substituted (still unevaluated) conditional.
+///
+/// This is the construction half of tsc's `getConstraintFromConditionalType`:
+/// for `T extends U ? X : Y` where the check type `T` is a type parameter with
+/// a constraint `C` (`C != T`), substituting `T -> C` makes the check type
+/// concrete so a subsequent (resolver-backed) evaluation can match the `extends`
+/// pattern and select a branch. For a deferred utility such as `Parameters<F>`
+/// (whose conditional is `F extends (...args: infer P) => any ? P : never`),
+/// the substituted conditional `AnyFunction extends (...args: infer P) => any ?
+/// P : never` evaluates to the concrete apparent base `never[]` — which the
+/// shallow [`get_base_constraint_of_type`] and the branch-union
+/// [`get_conditional_default_constraint`] both leave as an unresolved infer
+/// placeholder.
+///
+/// Returns `None` when `type_id` is not a deferred conditional, when the check
+/// type is not a constrained type parameter, or when the substitution is a
+/// no-op. The caller is responsible for evaluating the result (resolver-backed
+/// when the constraint references imported aliases) and for discarding a `never`
+/// collapse in favor of the branch-union default constraint.
+pub fn conditional_check_type_substituted_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+    let TypeData::TypeParameter(info) = db.lookup(cond.check_type)? else {
+        return None;
+    };
+    let constraint = get_base_constraint_of_type(db, cond.check_type);
+    if constraint == cond.check_type {
+        return None;
+    }
+    let subst = crate::instantiation::instantiate::TypeSubstitution::single(info.name, constraint);
+    let substituted = crate::instantiation::instantiate::instantiate_type(db, type_id, &subst);
+    (substituted != type_id).then_some(substituted)
+}
+
 /// Default constraint of a nested conditional whose check type matches
 /// `outer_check_type`, recursing for arbitrary Extract-chain depth.
 fn nested_conditional_default_constraint(
@@ -366,6 +404,51 @@ pub fn conditional_branch_union_constraint(
         return None;
     }
     Some(union)
+}
+
+/// Constraint of a *distributive* conditional type, mirroring tsc's
+/// `getConstraintOfDistributiveConditionalType`.
+///
+/// For `T extends E ? X : Y` where the check type `T` is a constrained type
+/// parameter that does not occur in its own constraint, instantiate the whole
+/// conditional with `T := constraint` and evaluate it. This is the constraint
+/// tsc reads for such a reference — e.g. the parameter tuple of `Parameters<F>`
+/// (`F extends (...a: infer P) => any ? P : never`) resolves, via
+/// `F := <F's constraint>`, to the constraint's own parameter list (so
+/// `Parameters<F>` where `F extends (...p: never[]) => unknown` resolves to
+/// `never[]`).
+///
+/// Returns `None` when the conditional is not distributive, the check type is
+/// not a constrained type parameter, the constraint refers back to the
+/// parameter, the instantiation makes no progress, or the evaluated result is
+/// `never` — mirroring tsc's `!(instantiated.flags & Never)` guard, which keeps
+/// a `never` distributive constraint from being used (callers fall back to the
+/// default constraint instead).
+pub fn get_distributive_conditional_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+    if !cond.is_distributive {
+        return None;
+    }
+    let param_info = crate::visitor::type_param_info(db, cond.check_type)?;
+    let constraint = param_info.constraint?;
+    if crate::visitor::contains_type_parameter_named(db, constraint, param_info.name) {
+        return None;
+    }
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+    let sub = TypeSubstitution::single(param_info.name, constraint);
+    let instantiated = instantiate_type(db, type_id, &sub);
+    if instantiated == type_id {
+        return None;
+    }
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, instantiated);
+    if evaluated == type_id || evaluated == TypeId::NEVER {
+        return None;
+    }
+    Some(evaluated)
 }
 
 /// Resolve a type to its base constraint for display purposes, recursively reducing
@@ -791,12 +874,20 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
                     index.value_type = value_type;
                     index
                 });
+                let symbol_index = shape.symbol_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
                 if changed {
                     db.object_with_index(crate::types::ObjectShape {
                         flags: shape.flags,
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                         symbol: shape.symbol,
                     })
                 } else {

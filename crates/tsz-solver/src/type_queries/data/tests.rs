@@ -581,6 +581,7 @@ fn test_get_object_symbol() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(sym),
     });
     assert_eq!(get_object_symbol(&interner, obj_with_sym), Some(sym));

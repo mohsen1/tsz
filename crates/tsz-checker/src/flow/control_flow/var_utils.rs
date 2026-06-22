@@ -179,12 +179,17 @@ impl<'a> FlowAnalyzer<'a> {
                 false
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 if self.assignment_targets_reference(flow.node, reference)
-                    && !self.is_compound_read_write_assignment(flow.node)
+                    && (!self.is_compound_read_write_assignment(flow.node)
+                        || self.is_logical_compound_assignment(flow.node))
                 {
                     // Simple assignment (x = value) counts as definite assignment.
-                    // Compound assignments (x += 1, ++x, x--) do NOT — they read
-                    // the variable first, so tsc considers the variable still
-                    // "used before being assigned" even after the compound write.
+                    // Arithmetic compound assignments (x += 1, ++x, x--) do NOT —
+                    // they read the variable first, so tsc considers the variable
+                    // still "used before being assigned" even after the compound
+                    // write. Logical compound assignments (x ??= v, x ||= v,
+                    // x &&= v) DO count: tsc treats the target as definitely
+                    // assigned, so they neither report TS2454 at the assignment
+                    // nor at later reads.
                     true
                 } else if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
@@ -957,6 +962,35 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(bin) = self.arena.get_binary_expr(node_data)
         {
             return crate::query_boundaries::operator_wrappers::is_compound_assignment_operator(
+                bin.operator_token,
+            );
+        }
+
+        false
+    }
+
+    /// Check if an assignment node is a logical compound assignment
+    /// (`&&=`, `||=`, `??=`).
+    ///
+    /// Unlike arithmetic compound assignments (`+=`, `*=`, etc.) and
+    /// increment/decrement (`++`/`--`), tsc treats the left operand of a logical
+    /// compound assignment as definitely assigned for use-before-assigned
+    /// analysis (TS2454). The implicit read of the target is the conditioning
+    /// test, not a use of an unassigned value, and on every reachable path the
+    /// target ends up holding a value: for `x ??= rhs`/`x ||= rhs` the target is
+    /// assigned `rhs` when the condition matches and otherwise retains the value
+    /// the condition already proved present; for `x &&= rhs` the assignment runs
+    /// only when `x` is truthy (already a value) and is skipped otherwise. tsc
+    /// does not report TS2454 for any of the three.
+    pub(crate) fn is_logical_compound_assignment(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        if node_data.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node_data)
+        {
+            return crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
                 bin.operator_token,
             );
         }

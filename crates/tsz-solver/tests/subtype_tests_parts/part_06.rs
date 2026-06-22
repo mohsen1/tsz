@@ -732,6 +732,7 @@ fn test_index_signature_string_basic() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_number = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -745,6 +746,7 @@ fn test_index_signature_string_basic() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -771,6 +773,7 @@ fn test_index_signature_covariant_value() {
     let hello = interner.literal_string("hello");
 
     let indexed_literal = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -784,6 +787,7 @@ fn test_index_signature_covariant_value() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -809,6 +813,7 @@ fn test_index_signature_with_known_property() {
     let a_name = interner.intern_string("a");
 
     let indexed_with_prop = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(a_name, TypeId::STRING)],
@@ -822,6 +827,7 @@ fn test_index_signature_with_known_property() {
     });
 
     let indexed_only = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -845,6 +851,7 @@ fn test_index_signature_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let number_indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -858,6 +865,7 @@ fn test_index_signature_number_index() {
     });
 
     let string_indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -884,6 +892,7 @@ fn test_index_signature_union_value() {
     let union_value = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let indexed_union = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -897,6 +906,7 @@ fn test_index_signature_union_value() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
@@ -929,6 +939,7 @@ fn test_index_signature_object_to_indexed() {
     ]);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],

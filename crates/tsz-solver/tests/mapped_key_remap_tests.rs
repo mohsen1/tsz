@@ -1081,6 +1081,7 @@ fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let keyof_source = interner.intern(TypeData::KeyOf(source));
@@ -1136,6 +1137,7 @@ fn test_keyof_string_indexed_object_preserves_unique_symbol_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1181,6 +1183,7 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let generic_tail = interner.intern(TypeData::TypeParameter(TypeParamInfo {

@@ -1220,20 +1220,6 @@ impl<'a> CheckerState<'a> {
     /// (it does not re-apply the suppression predicates or touch the cap
     /// counter), and only when a diagnostic is actually being emitted.
     pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
-        // Memoize per reference site: the same unresolved reference is
-        // re-resolved many times under demand-driven evaluation, and each
-        // revisit would otherwise repeat the full-symbol-universe scan below.
-        // See `NameResolutionDiagnostics::suggestion_scan_cache`.
-        if let Some(cached) = self
-            .ctx
-            .name_resolution_diagnostics
-            .suggestion_scan_cache
-            .borrow()
-            .get(&idx)
-        {
-            return cached.clone();
-        }
-
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
@@ -1244,15 +1230,52 @@ impl<'a> CheckerState<'a> {
             tsz_binder::symbol_flags::VALUE
         };
 
+        self.scan_similar_identifiers_for_meaning(name, idx, suggestion_meaning)
+    }
+
+    /// Memoized full-symbol-universe candidate scan for an explicit symbol
+    /// meaning. This is the single owner of `find_similar_identifiers`: every
+    /// spelling-suggestion call site (ordinary `VALUE`/`TYPE` name lookups via
+    /// `scan_similar_identifiers`, and the `Cannot find namespace` path via
+    /// `error_cannot_find_namespace_with_suggestion`) routes through here so the
+    /// expensive Levenshtein walk is memoized exactly once per
+    /// `(reference site, meaning)`.
+    ///
+    /// Before this consolidation the namespace path called
+    /// `find_similar_identifiers` directly, bypassing the memo, so a missing
+    /// namespace re-resolved during demand-driven evaluation re-ran the whole
+    /// scan on every revisit (issue #14349). Callers that need cap/suppression
+    /// gating must still consult `suggestion_scan_eligible` first; this method
+    /// only owns the candidate scan and its cache.
+    pub(crate) fn scan_similar_identifiers_for_meaning(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+        meaning: u32,
+    ) -> Vec<String> {
+        // Memoize per (reference site, meaning): the same unresolved reference is
+        // re-resolved many times under demand-driven evaluation, and each
+        // revisit would otherwise repeat the full-symbol-universe scan below.
+        // See `NameResolutionDiagnostics::suggestion_scan_cache`.
+        if let Some(cached) = self
+            .ctx
+            .name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow()
+            .get(&(idx, meaning))
+        {
+            return cached.clone();
+        }
+
         let suggestions = self
-            .find_similar_identifiers(name, idx, suggestion_meaning)
+            .find_similar_identifiers(name, idx, meaning)
             .unwrap_or_default();
 
         self.ctx
             .name_resolution_diagnostics
             .suggestion_scan_cache
             .borrow_mut()
-            .insert(idx, suggestions.clone());
+            .insert((idx, meaning), suggestions.clone());
 
         suggestions
     }
@@ -1570,10 +1593,16 @@ impl<'a> CheckerState<'a> {
         // type (interface / class / type alias) as a namespace suggestion, so
         // including `TYPE` here wrongly suggested e.g. the DOM `Node` interface for
         // a missing `NodeJS` namespace (TS2833) where tsc emits plain TS2503.
+        // Route through the shared memoized scan gateway (keyed by node +
+        // `NAMESPACE` meaning) so a missing namespace re-resolved during
+        // demand-driven evaluation does not re-run the full-symbol-universe
+        // walk on every revisit (issue #14349). An empty result means no
+        // close-enough namespace candidate, so we fall through to plain TS2503 —
+        // identical to the previous `Option`-returning direct call.
         if !self.has_syntax_parse_errors()
-            && let Some(suggestions) =
-                self.find_similar_identifiers(name, idx, symbol_flags::NAMESPACE)
-            && let Some(suggestion) = suggestions.first()
+            && let Some(suggestion) = self
+                .scan_similar_identifiers_for_meaning(name, idx, symbol_flags::NAMESPACE)
+                .first()
         {
             self.error_at_node_msg(
                 idx,

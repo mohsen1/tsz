@@ -32,6 +32,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return None;
         };
 
+        if let Some((_, symbol_ref)) =
+            crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                self.ctx,
+                |idx| {
+                    let node = self.ctx.arena.get(idx)?;
+                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                        return self
+                            .ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, idx)
+                            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text));
+                    }
+                    None
+                },
+                expr_name,
+            )
+        {
+            return Some(self.ctx.types.unique_symbol(symbol_ref));
+        }
+
         let property_name = self.property_name_text(property_name_node)?;
         let base_type = self.value_type_for_type_query_member_base(base)?;
         let evaluated_base =

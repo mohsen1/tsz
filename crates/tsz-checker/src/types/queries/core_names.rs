@@ -110,6 +110,17 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol_ref) = self.well_known_symbol_ref_for_name(&name, name_idx)
             {
                 self.register_well_known_symbol_name_mapping(&name, symbol_ref);
+            } else if name.starts_with("[Symbol.")
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+                && let Some((declared_name, symbol_ref)) =
+                    crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                        &self.ctx,
+                        |idx| self.resolve_computed_name_expression_symbol(idx),
+                        computed.expression,
+                    )
+                && declared_name == name
+            {
+                return Some(format!("__unique_{}", symbol_ref.0));
             }
             return Some(name);
         }
@@ -171,6 +182,21 @@ impl<'a> CheckerState<'a> {
                 && let Some(unique_member_name) =
                     self.declared_unique_symbol_member_property_name(computed.expression)
             {
+                if let Some(sym_id) =
+                    self.resolve_computed_name_expression_symbol(computed.expression)
+                {
+                    return Some(format!("__unique_{}", sym_id.0));
+                }
+                if let Some((declared_name, symbol_ref)) =
+                    crate::types_domain::computed_names::declared_unique_symbol_member_ref_for_expr(
+                        &self.ctx,
+                        |idx| self.resolve_computed_name_expression_symbol(idx),
+                        computed.expression,
+                    )
+                    && declared_name == unique_member_name
+                {
+                    return Some(format!("__unique_{}", symbol_ref.0));
+                }
                 return Some(unique_member_name);
             }
             if let Some(symbol_name) =

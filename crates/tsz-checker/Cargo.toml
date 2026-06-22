@@ -851,6 +851,9 @@ path = "tests/contextual_tuple_tests.rs"
 name = "contextual_return_tuple_generic_member_tests"
 path = "tests/contextual_return_tuple_generic_member_tests.rs"
 [[test]]
+name = "contextual_return_callback_param_only_inference_tests"
+path = "tests/contextual_return_callback_param_only_inference_tests.rs"
+[[test]]
 name = "contextual_return_value_arg_pinned_tests"
 path = "tests/contextual_return_value_arg_pinned_tests.rs"
 [[test]]
@@ -859,6 +862,9 @@ path = "tests/contextual_ts2345_conformance_tests.rs"
 [[test]]
 name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
+[[test]]
+name = "issue_14261_indexed_access_param_inference_tests"
+path = "tests/issue_14261_indexed_access_param_inference_tests.rs"
 [[test]]
 name = "keyof_type_param_target_diagnostic_tests"
 path = "tests/keyof_type_param_target_diagnostic_tests.rs"
@@ -1818,6 +1824,9 @@ path = "tests/flow_passthrough_run_narrowing_tests.rs"
 [[test]]
 name = "array_mutation_unrelated_narrowing_tests"
 path = "tests/array_mutation_unrelated_narrowing_tests.rs"
+[[test]]
+name = "array_mutation_same_array_join_narrowing_tests"
+path = "tests/array_mutation_same_array_join_narrowing_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
@@ -1928,6 +1937,9 @@ path = "tests/class_interface_self_merge_implements_tests.rs"
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]
+name = "reexported_symbol_keyed_member_tests"
+path = "tests/reexported_symbol_keyed_member_tests.rs"
+[[test]]
 name = "polymorphic_this_display_tests"
 path = "tests/polymorphic_this_display_tests.rs"
 [[test]]
@@ -1939,6 +1951,9 @@ path = "tests/recursive_utility_alias_fanout_tests.rs"
 [[test]]
 name = "recursive_conditional_alias_concrete_fixpoint_tests"
 path = "tests/recursive_conditional_alias_concrete_fixpoint_tests.rs"
+[[test]]
+name = "conditional_true_branch_substitution_tests"
+path = "tests/conditional_true_branch_substitution_tests.rs"
 [[test]]
 name = "issue_14123_repro_tests"
 path = "tests/issue_14123_repro_tests.rs"
@@ -2047,6 +2062,10 @@ path = "tests/generic_callable_as_assertion_overlap_tests.rs"
 [[test]]
 name = "function_type_predicate_typeof_param_tests"
 path = "tests/function_type_predicate_typeof_param_tests.rs"
+
+[[test]]
+name = "typeof_function_union_object_narrowing_tests"
+path = "tests/typeof_function_union_object_narrowing_tests.rs"
 
 [[test]]
 name = "function_type_predicate_alias_tests"

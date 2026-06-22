@@ -42,7 +42,7 @@ pub(crate) fn unique_symbol_type_for_operator(
 /// declaration is not itself a binder symbol (interface and object-type-literal
 /// members are resolved structurally, not via `node_symbols`). The position
 /// hash is unique per declaration, so distinct members stay distinct.
-fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
+pub(crate) fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
     let mut hash = 0x811c_9dc5u32;
     for byte in file_name.as_bytes() {
         hash ^= u32::from(*byte);

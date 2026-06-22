@@ -82,11 +82,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .number_index
             .as_ref()
             .map(|idx| self.evaluate(idx.value_type));
+        let sym_val = shape
+            .symbol_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
         let mut any_changed = str_val
             .zip(shape.string_index.as_ref())
             .is_some_and(|(v, idx)| v != idx.value_type)
             || num_val
                 .zip(shape.number_index.as_ref())
+                .is_some_and(|(v, idx)| v != idx.value_type)
+            || sym_val
+                .zip(shape.symbol_index.as_ref())
                 .is_some_and(|(v, idx)| v != idx.value_type);
         for prop in shape.properties.iter() {
             let rt = self.evaluate(prop.type_id);
@@ -118,12 +125,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             index.value_type = v;
         }
 
+        let mut symbol_index = shape.symbol_index;
+        if let (Some(index), Some(v)) = (symbol_index.as_mut(), sym_val) {
+            index.value_type = v;
+        }
+
         if with_index {
             self.interner().object_with_index(ObjectShape {
                 flags,
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol,
             })
         } else {
@@ -182,8 +195,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         if params.is_empty() {
-            // No named parameters to widen: the failed relation already used
-            // the most permissive forms available.
+            // No named parameters to widen unless the check is an unresolved
+            // operator. Do not use the broader generic-marker predicate: string
+            // mappings like `Lowercase<T>` are evaluated through constraints.
+            if matches!(
+                self.interner().lookup(check_type),
+                Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Conditional(_))
+            ) {
+                return false;
+            }
             return true;
         }
         let mut substitution = TypeSubstitution::new();
@@ -222,6 +242,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     fn generic_extends_can_use_permissive_false_branch(&self, extends_type: TypeId) -> bool {
         crate::visitors::visitor_predicates::is_tuple_type(self.interner(), extends_type)
+    }
+
+    /// Whether `check_type` is a *non-generic* `IndexAccess` whose object is a
+    /// reference to a user interface the active resolver cannot resolve yet.
+    ///
+    /// Such a check type — e.g. `Atom<unknown>['read']` while the user interface
+    /// `Atom`'s `DefId -> TypeId` is not yet registered in this evaluation
+    /// context (the resolution-order window of #13980) — survives evaluation
+    /// unreduced. Matching an infer pattern (`Parameters<…>`'s
+    /// `(...args: infer P) => any`) against it then fails, and because the check
+    /// type carries no type parameters none of the generic-deferral guards apply,
+    /// so the conditional would collapse to its `never` false branch. That
+    /// `false` is schedule-dependent: the identical conditional matches its true
+    /// branch once the interface is registered (the consuming call/relation path
+    /// readies it). So the caller defers instead, the infer-path analogue of the
+    /// existing `UnresolvedTypeName` / unresolved-`Application` deferrals (#14164).
+    ///
+    /// The gate is deliberately narrow — a *concrete* `IndexAccess` over a single
+    /// unresolvable interface reference — so it never touches a generic indexed
+    /// access (handled by the generic guards) nor a recursive `Application` /
+    /// `Conditional` check type whose definitive branch is correct.
+    fn index_access_blocks_on_unresolved_interface(&self, check_type: TypeId) -> bool {
+        let Some(TypeData::IndexAccess(object, _)) = self.interner().lookup(check_type) else {
+            return false;
+        };
+        if crate::visitor::contains_free_type_parameters(self.interner(), object) {
+            return false;
+        }
+        // The interface reference is the index object itself (`I['k']`) or the
+        // base of an application of it (`I<…>['k']`).
+        let interface_ref = get_application_base(self.interner(), object).unwrap_or(object);
+        let Some(def_id) = crate::visitor::lazy_def_id(self.interner(), interface_ref) else {
+            return false;
+        };
+        self.resolver()
+            .resolve_lazy(def_id, self.interner())
+            .is_none()
     }
 
     /// Evaluate a conditional type: T extends U ? X : Y
@@ -1024,6 +1081,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         false_type: cond.false_type,
                         is_distributive: cond.is_distributive,
                     });
+                }
+
+                // Infer match failed, but the (non-generic) check type is an
+                // indexed access whose interface base the resolver cannot resolve
+                // yet — an unregistered user interface in this evaluation context
+                // (the resolution-order window of #13980). The pattern was matched
+                // against an unreduced meta-type, so the `false` is
+                // schedule-dependent: the identical conditional matches its true
+                // branch once the interface is registered by a consuming
+                // call/relation path. Defer instead of collapsing to the false
+                // branch (#14164). The depth-detection pass is exempt for the same
+                // reason as the generic guard above.
+                if !self.is_depth_detection_pass()
+                    && self.index_access_blocks_on_unresolved_interface(check_type)
+                {
+                    return self.deferred_conditional(cond, check_type, extends_type);
                 }
 
                 // Infer match failed — take the false branch.

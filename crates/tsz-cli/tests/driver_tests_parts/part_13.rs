@@ -525,3 +525,135 @@ fn compile_exact_name_ambient_precedence_keeps_missing_member_diagnostics() {
         result.diagnostics
     );
 }
+
+/// A `declare global { interface Window { [K]?: T } }` augmentation whose member
+/// is keyed by a computed property name `[K]` (K a string `const`, including an
+/// `import type`-aliased one) must resolve when the augmented member is accessed
+/// (`self.$_TSR`) from a DIFFERENT file than the one declaring the augmentation.
+///
+/// #14137 fixed the same-file form; this is the cross-file residual. The driver
+/// aggregates per-file `global_augmentations`, so this whole-program harness (not
+/// the single-binder checker harness) is what exercises the cross-arena
+/// computed-key member-name evaluation. Witness: tanstack-router
+/// `ssr/tsrScript.ts` accesses `self.$_TSR`/`self.$R` while `ssr/ssr-client.ts`
+/// declares the augmentation with keys imported from `ssr/constants.ts`.
+#[test]
+fn compile_cross_file_declare_global_computed_const_key_resolves() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2017",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "lib": ["es2017", "dom"],
+            "strict": true,
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    // Both an inferred `const` and a declared-literal-type `declare const`, imported
+    // via `import type` into the augmenting file.
+    write_file(
+        &base.join("constants.ts"),
+        r#"export const GLOBAL_TSR = '$_TSR'
+export declare const GLOBAL_SEROVAL: '$R'
+"#,
+    );
+    write_file(
+        &base.join("aug.ts"),
+        r#"import type { GLOBAL_TSR, GLOBAL_SEROVAL } from './constants'
+interface TsrSsrGlobal { hydrated: boolean }
+declare global {
+  interface Window {
+    [GLOBAL_TSR]?: TsrSsrGlobal
+    [GLOBAL_SEROVAL]?: number
+  }
+}
+export {}
+"#,
+    );
+    // Access the augmented members from a different file. Before the fix tsz
+    // dropped the computed-`const`-keyed members here and reported false TS2339.
+    write_file(
+        &base.join("usage.ts"),
+        r#"self.$_TSR = { hydrated: false }
+const ok: boolean = self.$_TSR!.hydrated
+self.$R = 1
+export {}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let no_member_drop = !result
+        .diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && (d.message_text.contains("$_TSR") || d.message_text.contains("$R")));
+    assert!(
+        no_member_drop,
+        "cross-file computed-const Window augmentation members ($_TSR/$R) must resolve \
+         (no false TS2339). Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+/// Negative bound for the cross-file computed-`const`-key fix: it must key a
+/// SPECIFIC member, not synthesize an index signature. An ABSENT member on
+/// `Window` still errors TS2339, matching tsc.
+#[test]
+fn compile_cross_file_declare_global_computed_const_key_does_not_overbroaden() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2017",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "lib": ["es2017", "dom"],
+            "strict": true,
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("aug.ts"),
+        r#"const GLOBAL_TSR = '$_TSR'
+interface TsrSsrGlobal { hydrated: boolean }
+declare global {
+  interface Window {
+    [GLOBAL_TSR]?: TsrSsrGlobal
+  }
+}
+export {}
+"#,
+    );
+    write_file(
+        &base.join("usage.ts"),
+        r#"const bad = self.totallyAbsentMember
+export {}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == 2339 && d.message_text.contains("totallyAbsentMember")),
+        "an absent Window member must still error TS2339 (the fix keys a specific \
+         member, not an index signature). Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
