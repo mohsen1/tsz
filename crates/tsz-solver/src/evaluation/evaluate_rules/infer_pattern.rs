@@ -1836,7 +1836,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // the constituent the pattern targets.
         if let Some(TypeData::Intersection(members)) = self.interner().lookup(source) {
             let members = self.interner().type_list(members);
-            for &member in members.iter() {
+            // For a function/callable pattern, tsc's `infer` settles on the
+            // LAST matching member of an intersection (last-wins), for both
+            // covariant-return (`(()=>"x")&(()=>"y")&(()=>"z")` vs
+            // `() => infer R` → "z") and contravariant-parameter
+            // (`((k:"a")=>void)&((k:"b")=>void)` vs `(k: infer K) => void` → "b")
+            // positions — the UnionToIntersection/LastOfUnion idiom. Iterate in
+            // reverse so the last matching callable member binds. For every
+            // other pattern keep declaration order (first structurally-matching
+            // constituent wins), the long-standing behavior used to pick the
+            // callable constituent out of a `callable & brand` intersection.
+            let pattern_is_signature = matches!(
+                self.interner().lookup(pattern),
+                Some(TypeData::Function(_) | TypeData::Callable(_))
+            );
+            let ordered: Vec<TypeId> = if pattern_is_signature {
+                members.iter().rev().copied().collect()
+            } else {
+                members.iter().copied().collect()
+            };
+            for member in ordered {
                 if member == source {
                     continue;
                 }
