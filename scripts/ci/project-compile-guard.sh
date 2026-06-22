@@ -432,14 +432,35 @@ install_application_deps() {
   # is recorded fixture-invalid (gray), never a false tsz regression.
   echo "Installing application deps: (cd $dir && $cmd)"
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  # The self-hosted Cloud Run runner ships only npm — corepack/yarn/pnpm/bun are
+  # not on PATH, and npm's DEFAULT global prefix is neither writable nor on PATH,
+  # so a bare `npm i -g corepack` neither installs nor becomes invocable and every
+  # yarn/pnpm/bun app fell to "<pm>: command not found" -> gray. Install global
+  # tooling into a runner-writable prefix that we also put on PATH (the runner can
+  # reach the registry — npm ci already works for the npm apps). corepack then
+  # runs each app's pinned yarn/pnpm version; bun is fetched directly. Exports
+  # persist across rows via the function's shared shell env. Best-effort: a
+  # still-missing PM falls through and the row is recorded fixture-invalid (gray).
+  local pm_prefix="${TSZ_PM_PREFIX:-${HOME:-/tmp}/.tsz-pm}"
+  export NPM_CONFIG_PREFIX="$pm_prefix"
+  mkdir -p "$pm_prefix/bin" 2>/dev/null || true
+  case ":$PATH:" in
+    *":$pm_prefix/bin:"*) ;;
+    *) export PATH="$pm_prefix/bin:$PATH" ;;
+  esac
   local pm="${cmd%% *}"
   case "$pm" in
     yarn | pnpm)
       command -v corepack >/dev/null 2>&1 || npm i -g corepack >/dev/null 2>&1 || true
-      corepack enable >/dev/null 2>&1 || true
+      # Install the yarn/pnpm shims into our on-PATH prefix (the default
+      # install-directory is the unwritable/off-PATH Node bin dir).
+      corepack enable --install-directory "$pm_prefix/bin" >/dev/null 2>&1 \
+        || corepack enable >/dev/null 2>&1 || true
       if command -v corepack >/dev/null 2>&1; then
         echo "info: routing $pm install through corepack (resolves the app's pinned version)" >&2
         cmd="corepack $cmd"
+      else
+        echo "warn: corepack still unavailable after bootstrap; $pm install will fail" >&2
       fi
       ;;
     bun)
