@@ -780,7 +780,7 @@ fn restore_alpha_index_signature(
 /// mirroring `TSZ_DISABLE_CLOSED_EVAL_CACHE`. Defaults to enabled; used only to
 /// bisect regressions.
 fn project_instantiation_cache_enabled() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     if PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.get()) {
         return false;
     }
@@ -789,39 +789,34 @@ fn project_instantiation_cache_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_INSTANTIATION_CACHE").is_err())
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 thread_local! {
     /// Per-thread test override letting the per-file `QueryCache` wiring tests
-    /// disable the project-wide cache so they can assert per-file hit/miss
-    /// statistics in isolation. Set via [`with_project_instantiation_cache_disabled`].
+    /// (in this crate and the checker crate) disable the project-wide cache so
+    /// they can assert per-file hit/miss statistics in isolation. Held via
+    /// [`ProjectInstCacheDisabledGuard`].
     static PROJECT_INST_CACHE_DISABLED_FOR_TEST: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
-}
-
-/// Run `f` with the project-wide instantiation cache disabled on this thread
-/// (test-only). Lets the per-file `QueryCache` wiring tests observe the per-file
-/// instantiation cache tier without the project-wide cache serving first.
-#[cfg(test)]
-pub(crate) fn with_project_instantiation_cache_disabled<R>(f: impl FnOnce() -> R) -> R {
-    let _guard = ProjectInstCacheDisabledGuard::new();
-    f()
 }
 
 /// RAII guard that disables the project-wide instantiation cache on this thread
 /// for the per-file `QueryCache` wiring tests; re-enables on drop. Hold one at
 /// the top of a test that asserts per-file instantiation cache statistics.
-#[cfg(test)]
-pub(crate) struct ProjectInstCacheDisabledGuard;
+/// Available in `test`/`debug_assertions` builds so the checker crate's wiring
+/// tests can use it too (mirrors `force_enable_perf_counters_for_tests`).
+#[cfg(any(test, debug_assertions))]
+pub struct ProjectInstCacheDisabledGuard;
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl ProjectInstCacheDisabledGuard {
-    pub(crate) fn new() -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
         PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.set(true));
         Self
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl Drop for ProjectInstCacheDisabledGuard {
     fn drop(&mut self) {
         PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.set(false));
