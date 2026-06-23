@@ -8,6 +8,8 @@
  *       --require-green release gate found non-green required rows, the
  *       --require-clean-metadata gate found artifact metadata warnings,
  *       --require-application-compat found missing/incomplete application rows,
+ *       --require-green-project-timing-pairs found green perf-timed rows
+ *       missing tsz/tsgo timing pairs,
  *       or the --require-source-current gate found a stale artifact source commit
  *   2 — artifact file absent or unparseable
  *
@@ -19,7 +21,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-green-project-timing-pairs] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -29,6 +31,7 @@ import {
   REQUIRED_PROJECT_ROWS,
   PROJECT_ROW_DEFINITIONS,
   PROJECT_ROWS_BY_NAME,
+  PERF_TIMED_PROJECT_ROWS,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import {
@@ -65,6 +68,7 @@ function parseArgs(rawArgs) {
     requireGreen: false,
     requireCleanMetadata: false,
     requireApplicationCompat: false,
+    requireGreenProjectTimingPairs: false,
     requireSourceCurrent: false,
     requiredProjectTimingPairs: 0,
     expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
@@ -81,6 +85,8 @@ function parseArgs(rawArgs) {
       options.requireCleanMetadata = true;
     } else if (arg === "--require-application-compat") {
       options.requireApplicationCompat = true;
+    } else if (arg === "--require-green-project-timing-pairs") {
+      options.requireGreenProjectTimingPairs = true;
     } else if (arg === "--require-source-current") {
       options.requireSourceCurrent = true;
     } else if (arg === "--require-project-timing-pairs") {
@@ -111,6 +117,7 @@ const {
   requireGreen,
   requireCleanMetadata,
   requireApplicationCompat,
+  requireGreenProjectTimingPairs,
   requireSourceCurrent,
   requiredProjectTimingPairs: rawRequiredProjectTimingPairs,
   expectedSourceCommit: rawExpectedSourceCommit,
@@ -179,6 +186,29 @@ function applicationCompatibilityState(row, duplicate = false) {
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
+
+function hasSuccessfulTimingPair(row) {
+  return (
+    Number.isFinite(Number(row?.tsz_ms)) &&
+    Number(row.tsz_ms) > 0 &&
+    Number.isFinite(Number(row?.tsgo_ms)) &&
+    Number(row.tsgo_ms) > 0 &&
+    row?.winner !== "error" &&
+    !row?.status
+  );
+}
+
+function hasGreenCompatibilityEvidence(row) {
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none")
+    && hasCompletePhaseMetadata(compatibility);
+}
 
 function cleanValidationWarnings(warnings) {
   if (!Array.isArray(warnings)) return [];
@@ -321,6 +351,14 @@ function analyzeArtifact(artifact, expectedCommit) {
   const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
     compatibilityRow(name, applicationCompatibilityState),
   );
+  const greenTimedRowsMissingTimingPairs = PERF_TIMED_PROJECT_ROWS
+    .map((name) => compatibilityRow(name, applicationCompatibilityState))
+    .filter((row) => {
+      const sourceRow = byName.get(row.name);
+      return row.duplicate_count <= 1 &&
+        hasGreenCompatibilityEvidence(sourceRow) &&
+        !hasSuccessfulTimingPair(sourceRow);
+    });
 
   return {
     measurementProfile: measurementProfileStatus(artifact),
@@ -335,13 +373,10 @@ function analyzeArtifact(artifact, expectedCommit) {
       r.metadata_complete !== true
     )),
     applicationDuplicates: applicationRows.filter((r) => r.duplicate_count > 1),
+    greenTimedRowsMissingTimingPairs,
     successfulProjectTimingPairs: rows.filter((row) => (
       row.state === "green" &&
-      Number.isFinite(Number(row.tsz_ms)) &&
-      Number(row.tsz_ms) > 0 &&
-      Number.isFinite(Number(row.tsgo_ms)) &&
-      Number(row.tsgo_ms) > 0 &&
-      row.winner !== "error"
+      hasSuccessfulTimingPair(row)
     )),
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
@@ -373,6 +408,7 @@ function buildJson({
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  greenTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -415,6 +451,15 @@ function buildJson({
     required_row_count: rows?.length ?? REQUIRED_MEASURED_ROWS.length,
     successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
     required_project_timing_pairs: requiredProjectTimingPairs,
+    require_green_project_timing_pairs: requireGreenProjectTimingPairs,
+    green_project_timing_pair_gaps: greenTimedRowsMissingTimingPairs?.length ?? 0,
+    green_project_timing_pair_gap_rows: greenTimedRowsMissingTimingPairs?.map((r) => ({
+      name: r.name,
+      label: r.label,
+      state: r.state,
+      tsz_ms: r.tsz_ms,
+      tsgo_ms: r.tsgo_ms,
+    })) ?? [],
     application_compatibility: applicationRows
       ? {
           required: requireApplicationCompat,
@@ -547,6 +592,7 @@ function buildReport({
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  greenTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -584,6 +630,7 @@ function buildReport({
     `| Binary target CPU | ${profile.rust_target_cpu ? `\`${profile.rust_target_cpu}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
+    `| Green perf-timed rows missing timing | ${greenTimedRowsMissingTimingPairs.length} |`,
     `| Application compatibility rows | ${applicationRows.length - applicationMissing.length}/${applicationRows.length} present, ${applicationIncomplete.length} incomplete |`,
     `| ✅ green | ${green.length} |`,
     `| ⚠️ yellow | ${yellow.length} |`,
@@ -616,6 +663,14 @@ function buildReport({
     for (const r of applicationMissing) lines.push(`- \`${r.name}\`: missing compatibility row`);
     for (const r of applicationIncomplete) lines.push(`- \`${r.name}\`: incomplete compatibility metadata`);
     for (const r of applicationDuplicates) lines.push(`- \`${r.name}\`: duplicate compatibility row (${r.duplicate_count})`);
+    lines.push("");
+  }
+
+  if (greenTimedRowsMissingTimingPairs.length > 0) {
+    lines.push(`### Green perf-timed rows missing timing (${greenTimedRowsMissingTimingPairs.length})`, "");
+    for (const r of greenTimedRowsMissingTimingPairs) {
+      lines.push(`- \`${r.name}\`: compatibility is green but no tsz/tsgo timing pair was recorded`);
+    }
     lines.push("");
   }
 
@@ -696,6 +751,7 @@ if (artifactAbsent || parseError) {
         applicationMissing: null,
         applicationIncomplete: null,
         applicationDuplicates: null,
+        greenTimedRowsMissingTimingPairs: null,
         missing: null,
         red: null,
         yellow: null,
@@ -719,6 +775,7 @@ const {
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  greenTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -744,6 +801,7 @@ if (jsonOutput) {
       applicationMissing,
       applicationIncomplete,
       applicationDuplicates,
+      greenTimedRowsMissingTimingPairs,
       successfulProjectTimingPairs,
       missing,
       red,
@@ -819,6 +877,14 @@ if (successfulProjectTimingPairs.length < requiredProjectTimingPairs) {
   process.stderr.write(
     `bench-artifact-readiness: ${successfulProjectTimingPairs.length} successful project timing pair(s); ` +
       `required ${requiredProjectTimingPairs} before publishing latest benchmark data\n`,
+  );
+  process.exit(1);
+}
+
+if (requireGreenProjectTimingPairs && greenTimedRowsMissingTimingPairs.length > 0) {
+  process.stderr.write(
+    `bench-artifact-readiness: ${greenTimedRowsMissingTimingPairs.length} green perf-timed project row(s) ` +
+      `missing tsz/tsgo timing pairs: ${greenTimedRowsMissingTimingPairs.map((r) => r.name).join(", ")}\n`,
   );
   process.exit(1);
 }

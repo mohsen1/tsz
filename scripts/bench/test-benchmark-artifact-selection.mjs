@@ -52,6 +52,12 @@ function applicationCompatibilityRows() {
     }));
 }
 
+function applicationTimedRows() {
+  return PROJECT_ROW_DEFINITIONS
+    .filter((row) => row.category === "application")
+    .map((row) => projectRow(row.name, "green"));
+}
+
 try {
   const snapshot = writeArtifact("bench-snapshot.json", "2026-05-17T01:23:02.991Z");
   const github = writeArtifact("bench-vs-tsgo-github-latest.json", "2026-05-28T02:14:24.444Z");
@@ -100,6 +106,30 @@ try {
     )?.file,
     olderWithApplications,
     "a newer artifact without application compatibility should not mask older app-compatible benchmark data",
+  );
+  const olderWithApplicationTimings = writeArtifact("older-with-application-timings.json", "2026-06-04T00:00:00.000Z", [
+    projectRow("utility-types-project"),
+    ...applicationTimedRows(),
+  ]);
+  const newerWithGreenCompileOnlyApplications = writeArtifact(
+    "newer-with-green-compile-only-applications.json",
+    "2026-06-05T00:00:00.000Z",
+    [
+      projectRow("utility-types-project"),
+      ...applicationCompatibilityRows(),
+    ],
+  );
+  assert.equal(
+    selectLatestBenchmarkArtifact(
+      [olderWithApplicationTimings, newerWithGreenCompileOnlyApplications],
+      {
+        minimumProjectTimingPairs: 1,
+        requireApplicationCompat: true,
+        requireGreenProjectTimingPairs: true,
+      },
+    )?.file,
+    olderWithApplicationTimings,
+    "a newer artifact with green compile-only app rows should not mask older app chart data",
   );
   assert.equal(
     selectLatestBenchmarkArtifact([path.join(tempDir, "missing.json")]),
