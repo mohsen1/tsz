@@ -363,6 +363,20 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Recovery return type for a generic call that failed the argument-count
+    /// check, with the signature's own type parameters resolved to their
+    /// `default → constraint → unknown` fallback (matching tsc). Falls back to
+    /// the plain recovery if the default-resolving walk finds no signature.
+    fn stable_call_recovery_return_type_with_default_type_args(
+        &self,
+        callee_type: TypeId,
+    ) -> Option<TypeId> {
+        crate::query_boundaries::checkers::call::stable_call_recovery_return_type_with_default_type_args(
+            self.ctx.types,
+            callee_type,
+        )
+    }
+
     fn is_spread_argument_marker_type(&self, type_id: TypeId) -> bool {
         common::is_spread_marker_tuple(self.ctx.types.as_type_database(), type_id)
     }
@@ -1017,7 +1031,8 @@ impl<'a> CheckerState<'a> {
                 }
                 if is_super_call {
                     TypeId::VOID
-                } else if let Some(return_type) = self.stable_call_recovery_return_type(callee_type)
+                } else if let Some(return_type) =
+                    self.stable_call_recovery_return_type_with_default_type_args(callee_type)
                 {
                     self.finalize_call_return_like_success(
                         callee_expr,

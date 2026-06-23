@@ -186,6 +186,37 @@ pub(crate) fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>
     tsz_solver::computation::resolve_unbound_type_params_to_defaults(db, member_type, in_scope)
 }
 
+/// Resolve the named (signature-own) type parameters that appear free in a
+/// *failed* generic call's recovered result type to their declared
+/// `default → constraint → unknown`, matching tsc's instantiation of a call
+/// with default type arguments when the argument-count check fails before
+/// inference runs. Type parameters not in `names` (enclosing-scope parameters)
+/// are preserved.
+/// See [`tsz_solver::computation::resolve_named_type_params_to_defaults`].
+pub(crate) fn resolve_named_type_params_to_defaults(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    names: &rustc_hash::FxHashSet<tsz_common::interner::Atom>,
+) -> TypeId {
+    tsz_solver::computation::resolve_named_type_params_to_defaults(db, ty, names)
+}
+
+/// Resolve `ty`'s references to a signature's own `type_params` to their
+/// `default → constraint → unknown` fallback (a no-op when the signature is
+/// non-generic). Shared by the call and constructor failed-arity recovery paths.
+pub(crate) fn resolve_signature_default_type_args(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    type_params: &[tsz_solver::TypeParamInfo],
+) -> TypeId {
+    if type_params.is_empty() {
+        return ty;
+    }
+    let names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+        type_params.iter().map(|tp| tp.name).collect();
+    resolve_named_type_params_to_defaults(db, ty, &names)
+}
+
 /// Check if a type parameter has a constraint that contains a conditional type.
 /// This is used to suppress false-positive TS2339 errors when accessing properties
 /// on generic conditional types like `Parameters<T>["length"]` where the property
