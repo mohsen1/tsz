@@ -46,7 +46,8 @@ steps:
       exit 0
 
   - id: bench-shard
-    name: rust:1.95
+    # Build image; see the _BENCH_IMAGE substitution at the bottom of this file.
+    name: ${_BENCH_IMAGE}
     env:
       - 'CI=true'
       - 'BENCH_FULL=1'
@@ -100,22 +101,31 @@ steps:
         test -f bench-prep.env
         test -f bench-prep.tar
 
-        apt-get update
-        apt-get install -y --no-install-recommends \
-          bc \
-          ca-certificates \
-          curl \
-          git \
-          hyperfine \
-          jq \
-          pkg-config \
-          xz-utils
-        rm -rf /var/lib/apt/lists/*
+        # Bootstrap the bench toolchain only when it is not already present. On
+        # the stock rust:1.95 image this installs it inline (as before); on the
+        # prebuilt bench base image (vars.BENCH_IMAGE_REF) the tools are baked
+        # in, so this is skipped and the per-shard external-mirror SPOF is
+        # removed (#13751). Keep the baked set in
+        # scripts/infra/bench-base/Dockerfile in sync with the packages/versions
+        # below.
+        if ! command -v hyperfine >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            bc \
+            ca-certificates \
+            curl \
+            git \
+            hyperfine \
+            jq \
+            pkg-config \
+            xz-utils
+          rm -rf /var/lib/apt/lists/*
 
-        node_version="22.13.1"
-        node_arch="x64"
-        curl -fsSL "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz" \
-          | tar -xJ -C /usr/local --strip-components=1
+          node_version="22.13.1"
+          node_arch="x64"
+          curl -fsSL "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz" \
+            | tar -xJ -C /usr/local --strip-components=1
+        fi
 
         if ! command -v pnpm >/dev/null 2>&1; then
           npm install -g pnpm --silent
@@ -206,6 +216,10 @@ substitutions:
   _BENCH_TARGET_SHA: unknown
   _BENCH_SHARD_LABEL: unknown
   _BENCH_SHARD_FILTER: unknown
+  # Build image; defaults to the stock rust:1.95 + inline bootstrap. Override
+  # via the bench.yml _BENCH_IMAGE passthrough (vars.BENCH_IMAGE_REF) to run on
+  # the prebuilt bench base image (scripts/infra/bench-base/README.md).
+  _BENCH_IMAGE: rust:1.95
 
 options:
   pool:
@@ -221,9 +235,11 @@ options:
 # downloads artifacts well inside the 135m GitHub job timeout. Keep this value
 # strictly below the bench.yml wait-loop deadline.
 #
-# Follow-up (infra, out of scope for this file-only PR): a dedicated
+# The per-shard apt/curl/npm bootstrap network SPOF (#13751 fix 3) is addressed
+# by the prebuilt bench base image (scripts/infra/bench-base/): set the
+# _BENCH_IMAGE substitution (vars.BENCH_IMAGE_REF) to that image and the guarded
+# bootstrap above becomes a no-op. Remaining follow-up (GCP infra): a dedicated
 # tsz-ci-merge-pool so a bench burst cannot throttle the required
-# unit-checker-integration merge-queue submit, and a prebuilt image baking
-# hyperfine/jq/xz-utils/Node 22/pnpm to remove the per-shard apt/curl/npm
-# bootstrap network SPOF (see #13751 proposed fixes 1 and 3).
+# unit-checker-integration merge-queue submit (#13751 fix 1; largely mitigated
+# already by bench.yml's schedule-only single-flight design).
 timeout: 6300s

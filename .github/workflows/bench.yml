@@ -45,6 +45,11 @@ env:
   # guard replace the old age/stale/catch-up knobs (all removed).
   GITHUB_SHA: ${{ github.sha }}
   BENCH_TARGET_SHA: ${{ github.sha }}
+  # Build image for the prepare/shard Cloud Builds. Empty (default) falls back to
+  # rust:1.95 + the inline bootstrap; set the BENCH_IMAGE_REF repo variable to a
+  # prebuilt bench base image to remove the per-build bootstrap SPOF (#13751; see
+  # scripts/infra/bench-base/README.md).
+  BENCH_IMAGE_REF: ${{ vars.BENCH_IMAGE_REF }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
   npm_config_cache: ${{ github.workspace }}/.ci-cache/npm
   PNPM_STORE_DIR: ${{ github.workspace }}/.ci-cache/pnpm-store
@@ -136,7 +141,7 @@ jobs:
             --region=us-central1 \
             --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
+            --substitutions=_BENCH_TARGET_SHA="${target_sha}",_BENCH_IMAGE="${BENCH_IMAGE_REF:-rust:1.95}" \
             --format='value(id)' \
             .)"
           build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
@@ -224,7 +229,7 @@ jobs:
             --region=us-central1 \
             --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
+            --substitutions=_BENCH_TARGET_SHA="${target_sha}",_BENCH_IMAGE="${BENCH_IMAGE_REF:-rust:1.95}" \
             --format='value(id)' \
             .)"
           build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
@@ -1082,7 +1087,7 @@ jobs:
             --region=us-central1 \
             --config=scripts/cloudbuild/cloudbuild-bench-shard.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}" \
+            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}",_BENCH_IMAGE="${BENCH_IMAGE_REF:-rust:1.95}" \
             --format='value(id)' \
             .)" || submit_rc=$?
           if [[ "$submit_rc" -eq 124 ]]; then
