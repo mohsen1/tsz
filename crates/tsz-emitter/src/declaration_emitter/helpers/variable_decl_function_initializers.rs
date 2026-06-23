@@ -72,17 +72,29 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
+        // A returned identifier resolves to its source-faithful type text. For an
+        // `async` function the same text is wrapped in `Promise<...>`; the body's
+        // unwrapped return type (only resolved on that path) drives the
+        // double-wrap guard.
         if func.body.is_some()
             && let Some(returned_identifier) =
                 self.function_body_unique_return_identifier(func.body)
             && let Some(type_text) =
                 self.function_return_identifier_type_text(func, returned_identifier)
         {
+            let body_return_type_id = (func.is_async && !func.asterisk_token)
+                .then(|| {
+                    self.function_return_identifier_declared_type_id(func, returned_identifier)
+                        .or_else(|| self.get_node_type_or_names(&[returned_identifier]))
+                })
+                .flatten();
+            let type_text =
+                self.wrap_async_function_return_type_text(func, type_text, body_return_type_id);
             self.write(&type_text);
             return true;
         }
 
-        let preferred_return_type_text = if func.body.is_some() {
+        let mut preferred_return_type_text = if func.body.is_some() {
             self.arena.get(func.body).and_then(|body_node| {
                 if body_node.kind == syntax_kind_ext::BLOCK {
                     self.function_body_preferred_return_type_text(func.body)
@@ -93,6 +105,31 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             None
         };
+
+        // An `async` function's return type is `Promise<Awaited<T>>`. Render the
+        // body's own (source-faithful) return type text and wrap it, matching the
+        // method path. Done here, after `preferred_return_type_text` is known, so
+        // async reuses the same body inference as the non-async paths instead of
+        // the alias-expanding signature printer. (A returned identifier is already
+        // handled above.)
+        if func.is_async && !func.asterisk_token && func.body.is_some() {
+            let async_inner = if self.body_returns_void(func.body) {
+                Some(("void".to_string(), None))
+            } else {
+                preferred_return_type_text
+                    .take()
+                    .map(|text| (text, self.function_body_return_value_type_id(func)))
+            };
+            if let Some((inner_text, body_return_type_id)) = async_inner {
+                let wrapped = self.wrap_async_function_return_type_text(
+                    func,
+                    inner_text,
+                    body_return_type_id,
+                );
+                self.write(&wrapped);
+                return true;
+            }
+        }
 
         if func.body.is_some()
             && let Some(predicate_text) = self.function_source_type_predicate_text(func)
