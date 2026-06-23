@@ -171,3 +171,107 @@ const c: number = t[7];
 "#
     ));
 }
+
+// ── Homomorphic mapped over a tuple, through recursive utility composition ───
+//
+// `{ [K in keyof T]: F<T[K]> }` is homomorphic over `T` even when the per-key
+// value passes through another utility `F`, so the tuple structure (and each
+// element's per-index identity) must be preserved. Before the fix the mapped
+// collapsed the tuple to an array (`F<T[number]>[]`) because the homomorphic
+// source could not be recovered through the `F<…>` application wrapper, and the
+// variadic rebuild folded every spread index onto a single `source[index]`.
+
+/// The four-utility composition from the bug report: a homomorphic mapped
+/// (`NormalizeBox`/`AliasCompute`) sits over a variadic-rebuilt tuple
+/// (`DeepRO`) reached through a key-remap mapped (`PickStr`). `tuple[2]` must be
+/// the third element, so `.wrapped` resolves.
+#[test]
+fn recursive_utility_composition_preserves_tuple_index_identity() {
+    assert!(no_access_errors(
+        r#"
+type AliasCompute<TValue> = TValue extends (...args: infer P) => infer R
+  ? (...args: P) => R
+  : TValue extends readonly [infer H, ...infer T]
+    ? readonly [AliasCompute<H>, ...AliasCompute<T>]
+    : TValue extends object ? { [K in keyof TValue]: AliasCompute<TValue[K]> } : TValue;
+type NormalizeBox<I> = I extends object ? { [F in keyof I]: NormalizeBox<I[F]> } : I;
+type DeepRO<S> = S extends (...a: any[]) => any ? S
+  : S extends readonly [infer A, ...infer B] ? readonly [DeepRO<A>, ...DeepRO<B>]
+  : S extends object ? { readonly [N in keyof S]: DeepRO<S[N]> } : S;
+type PickStr<R> = { [M in keyof R as M extends string ? M : never]: R[M] };
+type UtilityPipeline<X> = AliasCompute<NormalizeBox<DeepRO<PickStr<X>>>>;
+type Seed = { readonly tuple: readonly [{ a: 1 }, { b: 2 }, { wrapped: 3 }] };
+declare const m: UtilityPipeline<Seed>;
+const probe: 3 = m.tuple[2].wrapped;
+"#
+    ));
+}
+
+/// Reduced witness with renamed binders: a homomorphic map (`Wrap`) over an
+/// object whose property is a variadic-rebuilt tuple (`Freeze`), read per index
+/// in value position. Every literal index resolves to its own element.
+#[test]
+fn homomorphic_map_over_rebuilt_tuple_each_index_resolves() {
+    assert!(no_access_errors(
+        r#"
+type Wrap<Box> = Box extends object ? { [Slot in keyof Box]: Wrap<Box[Slot]> } : Box;
+type Freeze<Src> = Src extends readonly [infer Lead, ...infer Trail]
+  ? readonly [Freeze<Lead>, ...Freeze<Trail>]
+  : Src extends object ? { readonly [Pos in keyof Src]: Freeze<Src[Pos]> } : Src;
+type Holder = { readonly cells: readonly [{ p: 1 }, { q: 2 }, { r: 3 }] };
+declare const h: Wrap<Freeze<Holder>>;
+const c0: 1 = h.cells[0].p;
+const c1: 2 = h.cells[1].q;
+const c2: 3 = h.cells[2].r;
+"#
+    ));
+}
+
+/// Negative control: a `number` index into the same composed tuple must still
+/// yield the element *union*, not a single element — so reading a property that
+/// only exists on one element is rejected.
+#[test]
+fn composed_tuple_number_index_stays_element_union() {
+    let found = codes(
+        r#"
+type Wrap<Box> = Box extends object ? { [Slot in keyof Box]: Wrap<Box[Slot]> } : Box;
+type Freeze<Src> = Src extends readonly [infer Lead, ...infer Trail]
+  ? readonly [Freeze<Lead>, ...Freeze<Trail>]
+  : Src extends object ? { readonly [Pos in keyof Src]: Freeze<Src[Pos]> } : Src;
+type Holder = { readonly cells: readonly [{ p: 1 }, { q: 2 }, { r: 3 }] };
+declare const h: Wrap<Freeze<Holder>>;
+declare const n: number;
+const u = h.cells[n];
+const onlyP: { readonly p: 1 } = u;
+"#,
+    );
+    assert!(
+        found.contains(&2322),
+        "number index must stay the element union (TS2322 expected): {found:?}"
+    );
+}
+
+/// Length preservation: the composed receiver's tuple property keeps exactly
+/// three elements (it is not widened to an array), so reading the whole tuple
+/// observes a fixed-length tuple rather than `(elt)[]`.
+#[test]
+fn composed_tuple_keeps_fixed_length_three() {
+    // A genuine array would assign to `readonly unknown[]` but never expose a
+    // length-3 tuple shape. Assigning the tuple to a 2-tuple target must fail
+    // (lengths differ), proving the third element is present and distinct.
+    let found = codes(
+        r#"
+type Wrap<Box> = Box extends object ? { [Slot in keyof Box]: Wrap<Box[Slot]> } : Box;
+type Freeze<Src> = Src extends readonly [infer Lead, ...infer Trail]
+  ? readonly [Freeze<Lead>, ...Freeze<Trail>]
+  : Src extends object ? { readonly [Pos in keyof Src]: Freeze<Src[Pos]> } : Src;
+type Holder = { readonly cells: readonly [{ p: 1 }, { q: 2 }, { r: 3 }] };
+declare const h: Wrap<Freeze<Holder>>;
+const twoOnly: readonly [{ p: 1 }, { q: 2 }] = h.cells;
+"#,
+    );
+    assert!(
+        found.contains(&2322),
+        "length-3 tuple must not assign to a 2-tuple target (TS2322 expected): {found:?}"
+    );
+}
