@@ -113,6 +113,16 @@ pub struct IRPrinter<'a> {
     /// a mapping. The next `ASTRef` emitted at that same offset skips its own
     /// automatic mapping to avoid duplicate source-map entries.
     suppress_ast_ref_mapping_at_output_len: Option<usize>,
+    /// When true, this printer is emitting a down-leveled plain `function*`
+    /// generator wrapper. `tsc` synthesizes that wrapper's body as a
+    /// single-line block (`function g() { return __generator(...); }`) — the
+    /// braces hug the lone `return __generator(...)` statement even though its
+    /// inner state machine spans multiple lines. The async-generator inner
+    /// wrapper (`__asyncGenerator(..., function () { ... })`) has the identical
+    /// `[GeneratorBody]` IR shape but `tsc` keeps it multi-line, so this flag —
+    /// set only by `emit_generator_function_es5` — distinguishes the two without
+    /// inspecting the (shared) IR shape.
+    plain_generator_wrapper: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -294,6 +304,7 @@ impl<'a> IRPrinter<'a> {
             source_index: 0,
             capture_mappings: false,
             suppress_ast_ref_mapping_at_output_len: None,
+            plain_generator_wrapper: false,
         }
     }
 
@@ -330,6 +341,7 @@ impl<'a> IRPrinter<'a> {
             source_index: 0,
             capture_mappings: false,
             suppress_ast_ref_mapping_at_output_len: None,
+            plain_generator_wrapper: false,
         }
     }
 
@@ -366,6 +378,7 @@ impl<'a> IRPrinter<'a> {
             source_index: 0,
             capture_mappings: false,
             suppress_ast_ref_mapping_at_output_len: None,
+            plain_generator_wrapper: false,
         }
     }
 
@@ -497,6 +510,73 @@ impl<'a> IRPrinter<'a> {
     /// Mark this printer as targeting ES5 (disables `let`/`const` emission).
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
+    }
+
+    /// Mark this printer as emitting a down-leveled plain `function*` generator
+    /// wrapper, so its single-statement `return __generator(...)` body is
+    /// emitted as a single-line block to match `tsc`. See the field doc on
+    /// [`IRPrinter::plain_generator_wrapper`].
+    pub const fn set_plain_generator_wrapper(&mut self, value: bool) {
+        self.plain_generator_wrapper = value;
+    }
+
+    /// Emit a plain `function*` wrapper body as a single-line block when it is
+    /// exactly the synthesized `[ <hoisted var decls>*, GeneratorBody ]` body
+    /// (no default-parameter checks or rest prologue). `tsc` hugs the braces
+    /// around those statements — `function g() { var x; return __generator(...); }`
+    /// — even though the generator state machine inside spans multiple lines.
+    ///
+    /// Returns `true` when it emitted the body (caller is done), `false` when
+    /// the caller should fall back to the normal multi-line body emission (e.g.
+    /// a default-parameter prologue makes `tsc` emit the wrapper multi-line, and
+    /// a nested-function / `new.target` / `arguments` capture is not the shape
+    /// `tsc` hugs). Only fires when [`Self::plain_generator_wrapper`] is set, so
+    /// the shape-identical async-generator inner wrapper is unaffected.
+    fn try_emit_plain_generator_wrapper(
+        &mut self,
+        parameters: &[IRParam],
+        body: &[IRNode],
+    ) -> bool {
+        if !self.plain_generator_wrapper {
+            return false;
+        }
+        // A default-parameter check (`if (a === void 0) ...`) or an ES5 rest
+        // prologue makes the wrapper body multi-statement, which `tsc` emits
+        // multi-line — so only the parameter-prologue-free wrapper hugs.
+        if parameters
+            .iter()
+            .any(|p| p.default_value.is_some() || p.rest)
+        {
+            return false;
+        }
+        // The body must be the synthesized hoisted-var declarations followed by
+        // the lone `return __generator(...)` (`GeneratorBody`). Any other
+        // statement shape is not the simple wrapper `tsc` hugs.
+        let Some((last, leading)) = body.split_last() else {
+            return false;
+        };
+        if !matches!(last, IRNode::GeneratorBody { .. }) {
+            return false;
+        }
+        if !leading
+            .iter()
+            .all(|n| matches!(n, IRNode::VarDecl { .. } | IRNode::VarDeclList(_)))
+        {
+            return false;
+        }
+        let previous_generator_state_name = self.generator_state_name;
+        if let Some(name) = Self::generator_state_name_for_function_body(body) {
+            self.generator_state_name = name;
+        }
+        self.write("{ ");
+        for stmt in leading {
+            self.emit_node(stmt);
+            self.write(" ");
+        }
+        self.emit_node(last);
+        self.write(" }");
+        self.generator_state_name = previous_generator_state_name;
+        true
     }
 
     pub const fn set_generator_state_name(&mut self, name: &'static str) {
@@ -947,6 +1027,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
+                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                    return;
+                }
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
                 let is_source_single_line = self.is_body_source_single_line(*body_source_range);
 
@@ -1349,6 +1432,16 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
+                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                    if !self.remove_comments
+                        && !self.suppress_function_trailing_extraction
+                        && let Some(comment) = self.extract_trailing_comment_from_function(node)
+                    {
+                        self.write(" ");
+                        self.write(&comment);
+                    }
+                    return;
+                }
                 let force_multiline_empty =
                     self.current_class_iife_name.as_deref() == Some(&**name);
                 let previous_generator_state_name = self.generator_state_name;
