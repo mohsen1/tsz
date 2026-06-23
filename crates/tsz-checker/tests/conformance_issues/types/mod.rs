@@ -10,6 +10,7 @@ mod fp_repro_audit_2026_b;
 mod fp_repro_audit_2026_c;
 mod fp_repro_audit_2026_d;
 mod fp_repro_audit_2026_e;
+mod fp_repro_audit_2026_f;
 mod function_intersection_target;
 mod indexed_access;
 mod indexed_callable_member_param_tests;
