@@ -38,7 +38,13 @@ class C {
     }
 }
 "#;
-    let diagnostics = check_default(source);
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
     let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -1545,6 +1551,31 @@ const zipped = zip([1, 2], ["a", "b"], (n, s) => [n, s]);
     assert!(
         ts2345.is_empty(),
         "Expected no TS2345 for generic zip call, got {ts2345:?}"
+    );
+}
+
+#[test]
+fn curried_function_type_zip_preserves_inferred_object_return() {
+    let source = r#"
+var pair: <T, S>(x: T) => (y: S) => { x: T; y: S; }
+var zipWith: <T, S, U>(a: T[], b: S[], f: (x: T) => (y: S) => U) => U[];
+var result = zipWith([1, 2], ['a', 'b'], pair);
+var i: number = result[0].x;
+var s: string = result[0].y;
+"#;
+    let diagnostics = check_default(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected result[0].y to remain unknown and reject string assignment, got {diagnostics:?}"
+    );
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code != 2454 && d.code != 2322)
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Expected only definite-assignment and y:string diagnostics for curried generic zip, got {diagnostics:?}"
     );
 }
 
