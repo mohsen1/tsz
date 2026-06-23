@@ -355,7 +355,7 @@ fn collect_heritage_subtree_nodes(
     else {
         return nodes;
     };
-    let mut stack: Vec<NodeIndex> = clauses.nodes.iter().copied().collect();
+    let mut stack: Vec<NodeIndex> = clauses.nodes.to_vec();
     while let Some(node_idx) = stack.pop() {
         if nodes.insert(node_idx) {
             stack.extend(arena.get_children(node_idx));
