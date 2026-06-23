@@ -18,13 +18,19 @@
 //! [`EvaluationResult::into_type_id`], which returns the relation-preserving
 //! `partial` (= the same opaque `TypeId` the bail produced before the channel),
 //! so the emitted type and diagnostics are byte-identical. As of #14346
-//! stage 2 the [`crate::evaluation::evaluate::TypeEvaluator::evaluate_request_result`]
-//! producer reports [`Termination::Incomplete`] with
-//! [`TerminationKind::IterationExceeded`] when the per-evaluator iteration limit
-//! cut the walk short — the first real producer of the `Incomplete` arm — while
-//! still surfacing the same `partial` and preserving the `deep_recursion_seen`
-//! cache taint. The remaining bail classes still report
-//! [`Termination::Complete`] until later stages wire them in.
+//! stage 3 the [`crate::evaluation::evaluate::TypeEvaluator::evaluate_request_result`]
+//! producer reports [`Termination::Incomplete`] for every one of the six bail
+//! classes: stage 2 wired [`TerminationKind::IterationExceeded`] (the
+//! per-evaluator iteration limit), and stage 3 wired the five guards that
+//! already carried a `record_eval_termination_guard` observability counter —
+//! [`TerminationKind::DepthExceeded`], [`TerminationKind::FuelExhausted`],
+//! [`TerminationKind::SolverStackFrames`], [`TerminationKind::CrossEvalCycle`],
+//! and [`TerminationKind::QueryOpBudget`] — through the shared
+//! `note_request_termination` helper (first-wins: the verdict names the guard
+//! that first truncated the walk). Each still surfaces the same `partial` and
+//! preserves the existing cache taint, so the collapse is byte-identical; the
+//! verdict is additive metadata a later stage (cache eligibility as a property
+//! of the result) can act on.
 
 use crate::types::TypeId;
 
@@ -94,12 +100,12 @@ impl EvaluationResult {
     /// relation-preserving `partial` type and the [`TerminationKind`] that
     /// fired.
     ///
-    /// Reached as of #14346 stage 2 for [`TerminationKind::IterationExceeded`]
-    /// (see `evaluate_request_result`). `type_id` is set to `partial`, so the
-    /// universal [`EvaluationResult::into_type_id`] collapse is byte-identical
-    /// to the pre-channel opaque bail; the verdict is additional metadata a
-    /// future verdict-aware consumer can act on. The other bail classes still
-    /// route through [`Self::complete`] until later stages wire them here.
+    /// Reached for every bail class as of #14346 stage 3 (stage 2 wired
+    /// [`TerminationKind::IterationExceeded`]; stage 3 added the five
+    /// guard bails — see `evaluate_request_result`). `type_id` is set to
+    /// `partial`, so the universal [`EvaluationResult::into_type_id`] collapse
+    /// is byte-identical to the pre-channel opaque bail; the verdict is
+    /// additional metadata a future verdict-aware consumer can act on.
     pub const fn incomplete(partial: TypeId, kind: TerminationKind) -> Self {
         Self {
             type_id: partial,
@@ -153,7 +159,9 @@ mod tests {
 
     #[test]
     fn incomplete_result_carries_partial_and_kind() {
-        // Reserved for a future stage; today no producer reaches this arm.
+        // `DepthExceeded` is a real producer as of #14346 stage 3 (the
+        // `guard.is_exceeded()` prologue bail); the partial/verdict contract is
+        // identical for every kind.
         let result = EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
 
         assert!(result.is_incomplete());
