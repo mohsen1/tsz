@@ -1,6 +1,9 @@
 //! Construction and configuration helpers for the IR printer.
 
-use super::*;
+use super::{
+    AstPrinter, IRNode, IRParam, IRPrinter, NodeArena, PrinterOptions, TransformContext,
+    TslibHelperNaming,
+};
 
 impl<'a> IRPrinter<'a> {
     /// Create a new IR printer
