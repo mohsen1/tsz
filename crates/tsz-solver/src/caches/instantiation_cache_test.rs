@@ -799,7 +799,7 @@ fn clean_instantiation_is_cached_project_wide() {
         &interner,
         Some(&db),
         body,
-        &[param.clone()],
+        std::slice::from_ref(&param),
         &[TypeId::BOOLEAN],
     );
     assert_eq!(
@@ -833,7 +833,7 @@ fn depth_exceeded_instantiation_not_cached_project_wide() {
         &interner,
         Some(&db),
         body,
-        &[param.clone()],
+        std::slice::from_ref(&param),
         &[TypeId::STRING],
     );
     assert!(
@@ -866,7 +866,7 @@ fn pre_existing_limit_flag_does_not_block_clean_instantiation() {
         &interner,
         Some(&db),
         body,
-        &[param.clone()],
+        std::slice::from_ref(&param),
         &[TypeId::NUMBER],
     );
     assert_eq!(
