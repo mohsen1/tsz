@@ -98,8 +98,7 @@ fn lib_generic_prewarm_defer_disabled() -> bool {
     static DISABLED: OnceLock<bool> = OnceLock::new();
     *DISABLED.get_or_init(|| {
         std::env::var("TSZ_DISABLE_LIB_GENERIC_PREWARM_DEFER")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
+            .is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
