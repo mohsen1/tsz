@@ -747,3 +747,127 @@ export {};
         result.diagnostics
     );
 }
+
+/// A generic type alias whose body is a genuinely-registered `unknown`
+/// (`type U<T> = unknown`, or a conditional whose selected branch is `unknown`)
+/// reduces its applications to canonical `unknown`. When such an application
+/// appears as the RETURN TYPE of a function-typed interface member
+/// (`run: () => U<T>`) and the interface is instantiated, the relation layer's
+/// return-type comparison previously misclassified the genuine `unknown` body
+/// as a missing-body placeholder and fell back to comparing the raw deferred
+/// `Application` against the source — a false TS2322
+/// `unknown` =< `U<...>`. tsc 6.0.2 is clean. This is the function-return-position
+/// slice of the #13212 identity family (the #14595 fix covered property/direct
+/// positions via the evaluator; the relation-layer return-type gate needs the
+/// same genuine-vs-placeholder distinction).
+///
+/// Binder names are varied across the cases (anti-hardcoding): the rule keys on
+/// the structural `unknown`-body classification, never on identifier text.
+#[test]
+fn compile_generic_unknown_bodied_alias_in_function_return_position_no_ts2322() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "strict": true,
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+// Genuine `unknown` body, function-return position, generic interface.
+type Boxed<T> = unknown;
+interface Carrier<T> {
+  run: () => Boxed<T>;
+}
+function makeCarrier<T>(): Carrier<T> {
+  return { run: () => 1 as unknown };
+}
+
+// Conditional alias whose both branches are `unknown` (selected branch is the
+// canonical intrinsic), distinct binder names.
+type Reduced<Elem> = Elem extends 1 ? unknown : unknown;
+interface Holder<Elem> {
+  emit: () => Reduced<Elem>;
+}
+function makeHolder<Elem>(): Holder<Elem> {
+  return { emit: () => "anything" };
+}
+
+// Nested function-return position: `() => () => U<T>`.
+interface DeepCarrier<Shape> {
+  thunk: () => () => Boxed<Shape>;
+}
+function makeDeep<Shape>(): DeepCarrier<Shape> {
+  return { thunk: () => () => true as unknown };
+}
+
+export { makeCarrier, makeHolder, makeDeep };
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "a genuine `unknown`-bodied generic alias in function-return position must \
+         relate as canonical `unknown` (everything is assignable), matching tsc — \
+         no false TS2322. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+/// Soundness bound for the function-return-position fix: it must NOT make every
+/// alias-returning member relate vacuously. A generic alias with a NON-`unknown`
+/// body still compares structurally, so a mismatched return value is rejected
+/// exactly like tsc.
+#[test]
+fn compile_generic_alias_function_return_still_rejects_mismatched_non_unknown_body() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "strict": true,
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+// Both branches are `string`, never `unknown`: the member return must still be
+// compared structurally, so returning a `number` is a genuine error.
+type AlwaysStr<Param> = Param extends 1 ? string : string;
+interface Sink<Param> {
+  run: () => AlwaysStr<Param>;
+}
+function makeSink<Param>(): Sink<Param> {
+  return { run: () => 123 };
+}
+export { makeSink };
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2322),
+        "a non-`unknown` alias body in function-return position must still reject a \
+         mismatched return value (TS2322), matching tsc. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}

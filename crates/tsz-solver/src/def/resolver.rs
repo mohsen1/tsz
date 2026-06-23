@@ -378,6 +378,23 @@ pub trait TypeResolver {
     fn get_def_raw_body(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
+
+    /// Whether `def_id` names a generic type alias whose body is a *genuinely
+    /// registered* `unknown` (`type C<T> = unknown`, or a utility alias that
+    /// reduces to `unknown`), as opposed to a cross-file registration-window
+    /// placeholder whose `unknown` is a not-yet-published-body sentinel.
+    ///
+    /// The two are indistinguishable from a resolved `unknown` alone: a genuine
+    /// body is recorded in the definition store at alias-registration time
+    /// (surfaced by [`Self::get_def_raw_body`]), whereas a placeholder `unknown`
+    /// comes from an unresolved symbol-type fallback with no registered body.
+    /// This is the single source of truth for that distinction, consumed by both
+    /// the evaluator (whether to reduce `C<Args>` to canonical `unknown`) and the
+    /// relation layer (whether a deferred `unknown`-returning member relates as
+    /// `unknown`). See issues #14595 / #13212.
+    fn is_genuine_unknown_alias_body(&self, def_id: DefId, interner: &dyn TypeDatabase) -> bool {
+        self.get_def_raw_body(def_id, interner) == Some(TypeId::UNKNOWN)
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.

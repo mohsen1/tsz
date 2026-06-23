@@ -1003,13 +1003,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         let is_placeholder = match def_id {
             Some(def_id) => match self.resolver.resolve_lazy(def_id, self.interner) {
-                Some(body) => {
-                    body == TypeId::UNKNOWN
-                        || matches!(
-                            self.interner.lookup(body),
-                            Some(TypeData::Lazy(body_def)) if body_def == def_id
-                        )
-                }
+                // A resolved body of `unknown` is ambiguous: it is EITHER a
+                // cross-file registration-window placeholder (the declaring file
+                // has not published its real body yet, so its `unknown` is a
+                // missing-body sentinel) OR a genuine, finalized `unknown` body
+                // (`type C<T> = unknown`, or a utility alias that reduces to
+                // `unknown`). Only the placeholder justifies the raw-form
+                // fallback; for a genuine body the evaluator's `unknown` is
+                // authoritative and the source must relate to it (everything is
+                // assignable to `unknown`). Mirror the genuine-vs-placeholder
+                // distinction made by `evaluate_application` via the shared
+                // `is_genuine_unknown_alias_body` predicate (issue #14595 /
+                // #13212). Without this guard a function-typed member returning
+                // such an alias (`run: () => C<T>`) reaches this check with a
+                // genuine `unknown` body, is misclassified as a placeholder, and
+                // the raw deferred `Application` is compared against the source —
+                // a false `unknown` ≰ `C<...>` (TS2322) in function-return
+                // position.
+                Some(body) if body == TypeId::UNKNOWN => !self
+                    .resolver
+                    .is_genuine_unknown_alias_body(def_id, self.interner),
+                // A self-referential `Lazy` wrapper is a structural body not yet
+                // materialized on this query — also a placeholder.
+                Some(body) => matches!(
+                    self.interner.lookup(body),
+                    Some(TypeData::Lazy(body_def)) if body_def == def_id
+                ),
                 None => true,
             },
             None => true,

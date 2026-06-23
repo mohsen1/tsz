@@ -377,8 +377,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // this special case.
             if resolved == TypeId::UNKNOWN {
                 let genuine_unknown_body = genuine_unknown_alias_reduction_enabled()
-                    && self.resolver.get_def_raw_body(def_id, self.interner)
-                        == Some(TypeId::UNKNOWN);
+                    && self
+                        .resolver
+                        .is_genuine_unknown_alias_body(def_id, self.interner);
                 if genuine_unknown_body {
                     return ApplicationEvalOutcome::Computed(TypeId::UNKNOWN);
                 }
