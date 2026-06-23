@@ -5,7 +5,7 @@ use crate::types::{ObjectShape, PropertyInfo, TupleElement, TypeId};
 
 use super::super::evaluate::TypeEvaluator;
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Evaluate property access on an object type with index signatures.
     pub(crate) fn evaluate_object_with_index(
         &self,
