@@ -18,6 +18,60 @@ use super::lib_name_text::entity_name_text_in_arena;
 use super::lib_resolution::{keyword_name_to_type_id, keyword_syntax_to_type_id};
 use super::lib_scoped_heritage::LibHeritageBase;
 
+/// Maximum nesting for `merge_lib_interface_heritage`, tracked by the
+/// thread-local [`LIB_HERITAGE_MERGE_DEPTH`] counter below.
+///
+/// Real lib heritage chains are shallow (the deepest, the DOM diamond, stays
+/// well under 20) and same-name re-entry is already blocked by the
+/// `lib_heritage_in_progress` name guard, so this bound is reached only by a
+/// pathologically deep distinct-name chain. It exists purely as OS-stack
+/// defense; normal lib types never approach it, so their inherited heritage
+/// members always materialize regardless of surrounding checker recursion.
+const LIB_HERITAGE_MERGE_MAX_DEPTH: u32 = 50;
+
+thread_local! {
+    /// Depth of the active `merge_lib_interface_heritage` call stack on this
+    /// thread. A thread-local (mirroring `LIB_RESOLUTION_DEPTH`) rather than a
+    /// `CheckerContext` field so it survives the fresh / cross-arena child
+    /// contexts the heritage merge can hop — which reset per-context counters —
+    /// and so its nesting is decoupled from the global `recursion_depth` budget
+    /// that unrelated deep recursion exhausts (issue #13942). Balanced
+    /// enter/leave keep it self-clearing back to `0` at each top-level
+    /// resolution.
+    static LIB_HERITAGE_MERGE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII frame for one `merge_lib_interface_heritage` call. Increments
+/// [`LIB_HERITAGE_MERGE_DEPTH`] on entry and decrements it on drop, so the
+/// counter self-balances even if the merge unwinds.
+struct LibHeritageMergeFrame {
+    /// Whether this frame is the outermost lib-heritage merge on the thread
+    /// (it entered at depth `0`).
+    is_outermost: bool,
+}
+
+impl LibHeritageMergeFrame {
+    /// Enter a frame, or return `None` when the dedicated lib-heritage budget is
+    /// exhausted so the caller bails to a heritage-thin body.
+    fn enter() -> Option<Self> {
+        LIB_HERITAGE_MERGE_DEPTH.with(|depth| {
+            let cur = depth.get();
+            (cur < LIB_HERITAGE_MERGE_MAX_DEPTH).then(|| {
+                depth.set(cur + 1);
+                Self {
+                    is_outermost: cur == 0,
+                }
+            })
+        })
+    }
+}
+
+impl Drop for LibHeritageMergeFrame {
+    fn drop(&mut self) {
+        LIB_HERITAGE_MERGE_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 fn select_external_module_lib_interface(
     name: &str,
     actual_lib_file_count: usize,
@@ -80,7 +134,7 @@ impl<'a> CheckerState<'a> {
     /// uses the flag to avoid caching the incomplete derived type (#12299).
     pub(crate) fn merge_lib_interface_heritage(
         &mut self,
-        mut derived_type: TypeId,
+        derived_type: TypeId,
         name: &str,
     ) -> (TypeId, bool) {
         // Guard against infinite recursion in recursive generic hierarchies
@@ -88,19 +142,62 @@ impl<'a> CheckerState<'a> {
         //
         // A bail here returns `derived_type` with its heritage loop NOT yet run,
         // i.e. an own-members-only, heritage-THIN body. Report it as incomplete so
-        // the caller refuses to cache it (the #12299 taint contract): otherwise a
-        // body produced when the shared `CheckerRecursion` depth budget was already
-        // exhausted by unrelated deep recursion (e.g. jotai's mutually-recursive
-        // `Atom` graph) would be cached with inherited members un-substituted — a
-        // base interface's raw type parameter (`Iterator<T>.next(): IteratorResult<T>`)
+        // the caller refuses to cache it (the #12299 taint contract): a thin body
+        // would otherwise be cached with inherited members un-substituted — a base
+        // interface's raw type parameter (`Iterator<T>.next(): IteratorResult<T>`)
         // then leaks through a concrete `Map`/`Set` iteration into the checker as a
-        // bare `T` (false TS2488/TS2345, issue #13652). Recomputing once the budget
-        // has headroom yields the fully-merged body. O(1) at the bail site; no
-        // identifier/file-name predicate.
-        if !self.ctx.enter_recursion() {
+        // bare `T` (false TS2488/TS2345, issue #13652).
+        //
+        // This uses a DEDICATED `LibHeritageMergeFrame` budget, not the global
+        // `recursion_depth` (`enter_recursion`) counter. The lib heritage graph is
+        // shallow and same-name re-entry is already blocked by the
+        // `lib_heritage_in_progress` name guard below, so sharing the global
+        // counter only let *unrelated* deep recursion exhaust the budget and force
+        // a spurious thin body that dropped a derived iterator's inherited `next`
+        // (the `SetIterator`/`MapIterator`/`IterableIterator` false-positive family,
+        // issue #13942). The dedicated counter reflects actual lib-heritage nesting,
+        // so normal lib types always materialize their full heritage regardless of
+        // surrounding checker recursion. O(1) at the bail site; no identifier/
+        // file-name predicate.
+        let Some(frame) = LibHeritageMergeFrame::enter() else {
             return (derived_type, true);
-        }
+        };
 
+        // Outermost lib-heritage entry: give the bounded, name-cycle-guarded
+        // subtree a fresh global `recursion_depth` budget so the structural member
+        // merge (`merge_interface_types_with_mode`, which also consults that global
+        // counter) is not starved by *unrelated* surrounding recursion — the second
+        // half of the #13942 fix. OS-stack safety stays with the #14111
+        // `with_stack_guard` breaker; cycle-safety with `lib_heritage_in_progress`
+        // and the resolution fuel. Nested lib-heritage calls keep the live budget.
+        let saved_recursion_depth = frame.is_outermost.then(|| {
+            std::mem::replace(
+                &mut *self.ctx.recursion_depth.borrow_mut(),
+                tsz_solver::recursion::DepthCounter::with_profile(
+                    tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+                ),
+            )
+        });
+
+        let result = self.merge_lib_interface_heritage_inner(derived_type, name);
+
+        if let Some(saved) = saved_recursion_depth {
+            *self.ctx.recursion_depth.borrow_mut() = saved;
+        }
+        // Drop the frame only now: it must outlive the inner call so nested
+        // lib-heritage merges observe the correct nesting depth.
+        drop(frame);
+        result
+    }
+
+    /// Inner body of [`Self::merge_lib_interface_heritage`]; the public wrapper
+    /// owns the dedicated lib-heritage depth counter and the outermost
+    /// global-`recursion_depth` insulation.
+    fn merge_lib_interface_heritage_inner(
+        &mut self,
+        mut derived_type: TypeId,
+        name: &str,
+    ) -> (TypeId, bool) {
         // Name-based cycle guard: prevent re-entrant heritage merging for the same
         // interface name. This breaks the resolve_lib_type_by_name ↔ merge_lib_interface_heritage
         // mutual recursion that occurs through deep heritage chains
@@ -117,7 +214,6 @@ impl<'a> CheckerState<'a> {
         // lib interfaces (e.g. the DOM heritage graph; regresses the
         // declarationFileForHtml* conformance rows).
         if !self.ctx.lib_heritage_in_progress.insert(name.to_string()) {
-            self.ctx.leave_recursion();
             return (derived_type, false);
         }
 
@@ -184,13 +280,11 @@ impl<'a> CheckerState<'a> {
             });
         let Some((sym_id, selected_binder_arc)) = selected else {
             self.ctx.lib_heritage_in_progress.remove(name);
-            self.ctx.leave_recursion();
             return (derived_type, false);
         };
         let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
         let Some(symbol) = selected_binder.get_symbol_with_libs(sym_id, &lib_binders) else {
             self.ctx.lib_heritage_in_progress.remove(name);
-            self.ctx.leave_recursion();
             return (derived_type, false);
         };
 
@@ -223,7 +317,6 @@ impl<'a> CheckerState<'a> {
 
         if !has_any_heritage {
             self.ctx.lib_heritage_in_progress.remove(name);
-            self.ctx.leave_recursion();
             return (derived_type, false);
         }
 
@@ -388,7 +481,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.lib_heritage_in_progress.remove(name);
-        self.ctx.leave_recursion();
         (derived_type, incomplete)
     }
 
