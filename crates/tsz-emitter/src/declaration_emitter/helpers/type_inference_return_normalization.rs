@@ -875,6 +875,10 @@ impl DeclarationEmitter<'_> {
             let Some(type_text) = self.function_parameter_type_text(func, prop.initializer) else {
                 continue;
             };
+            // DTS text boundary (#14142): this is a textual rewrite of already-
+            // emitted `: unknown` member lines; `type_text` is rendered declaration
+            // text with no in-scope `TypeId`, and an `unknown` rendering means there
+            // is nothing to rewrite.
             if type_text == "unknown" {
                 continue;
             }
@@ -932,6 +936,10 @@ impl DeclarationEmitter<'_> {
             let Some(type_text) = self.function_parameter_type_text(func, initializer) else {
                 continue;
             };
+            // DTS text boundary (#14142): textual rewrite of `: unknown;` object
+            // members; `type_text` is rendered declaration text (no in-scope
+            // `TypeId`), and an `unknown` rendering means there is nothing to
+            // rewrite.
             if type_text == "unknown" {
                 continue;
             }

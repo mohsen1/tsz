@@ -631,6 +631,11 @@ impl<'a> Printer<'a> {
         }
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
+        // Plain `function*` wrappers are synthesized by `tsc` as a single-line
+        // block hugging the lone `return __generator(...)` statement; mark this
+        // printer so it reproduces that shape (the async-generator inner wrapper
+        // shares the IR shape but stays multi-line and is printed elsewhere).
+        printer.set_plain_generator_wrapper(true);
         // Use the source-map text (falling back to source text) so a downleveled
         // generator body can be mapped; the two are identical in normal emit.
         if let Some(text) = self.source_text_for_map() {

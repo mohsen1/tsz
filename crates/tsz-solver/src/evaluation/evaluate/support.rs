@@ -1548,6 +1548,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Re-evaluate the resolved type in case it needs further evaluation
             self.evaluate(resolved)
         } else {
+            // The `Lazy(DefId)` has no resolvable body on this query: the def is
+            // mid-registration, or owned by a file whose checker has not yet
+            // published it (the cross-file / cross-arena registration window).
+            // The bare `Lazy` returned here is a *registration-window artifact*,
+            // not a stable function of `original_type_id`: once the declaring
+            // file registers the body, `evaluate` reduces the same `Lazy` to the
+            // concrete type. Mark the taint so this opaque result is kept out of
+            // the `TypeId`-keyed eval caches — the same discipline the other
+            // unresolved-def deferral sites already apply (`evaluate_application`,
+            // conditional reduction, `evaluate_keyof`, the indexed-access
+            // visitor). Without it the under-resolved `Lazy` is memoized as
+            // authoritative and permanently shadows the real type, the
+            // cross-arena member-degradation class tracked under #14347
+            // (witnessed by #13484 / #10663). This is the *canonical* bare-`Lazy`
+            // evaluation path: every consumer that bottoms out at an unresolved
+            // `Lazy` through `evaluate` (template-literal spans, string-intrinsic
+            // arguments, mapped-type constraints, …) inherits the taint here, so
+            // no per-consumer classification is required.
+            //
+            // `resolve_lazy` succeeding (including the self-recursive promise
+            // cycle break above) never reaches this arm, so a genuinely resolved
+            // — merely recursive — alias is not tainted.
+            self.mark_unresolved_def_seen();
             original_type_id
         }
     }

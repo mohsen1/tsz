@@ -295,6 +295,12 @@ impl<'a> DeclarationEmitter<'a> {
                         self.arena.get(prop.initializer).is_some_and(|node| {
                             node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
+                    // DTS text boundary (#14142): the decision is over the rewritten
+                    // declaration text of an object-literal initializer, not over
+                    // `effective_type`. Both a top-level `any` rendering and a nested
+                    // `: any;` member (`.contains`) must prefer the syntactic type
+                    // text; the nested-`any` case has no single in-scope `TypeId`, so
+                    // the rendered-string checks are the correct boundary here.
                     let type_text = if has_object_literal_initializer
                         && (type_text == "any"
                             || type_text.contains(": any;")

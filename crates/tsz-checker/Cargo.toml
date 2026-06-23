@@ -33,6 +33,12 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "failed_generic_call_default_type_args_tests"
+path = "tests/failed_generic_call_default_type_args_tests.rs"
+[[test]]
+name = "index_signature_branded_key_applicability_tests"
+path = "tests/index_signature_branded_key_applicability_tests.rs"
+[[test]]
 name = "recursive_utility_tuple_index_14518_tests"
 path = "tests/recursive_utility_tuple_index_14518_tests.rs"
 [[test]]
@@ -1683,6 +1689,9 @@ path = "tests/generic_property_mismatch_display_tests.rs"
 [[test]]
 name = "object_literal_property_target_display_tests"
 path = "tests/object_literal_property_target_display_tests.rs"
+[[test]]
+name = "object_literal_present_mismatch_precedence_tests"
+path = "tests/object_literal_present_mismatch_precedence_tests.rs"
 [[test]]
 name = "nominal_application_call_suppression_tests"
 path = "tests/nominal_application_call_suppression_tests.rs"

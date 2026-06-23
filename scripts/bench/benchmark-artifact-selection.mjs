@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 import {
+  PERF_TIMED_PROJECT_ROWS,
   PROJECT_ROW_DEFINITIONS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
@@ -30,6 +31,7 @@ function hasTiming(value) {
 const APPLICATION_PROJECT_ROW_NAMES = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application")
   .map((row) => row.name);
+const PERF_TIMED_PROJECT_ROW_NAMES = new Set(PERF_TIMED_PROJECT_ROWS);
 
 export function successfulProjectTimingPairCount(data) {
   return (Array.isArray(data?.results) ? data.results : []).filter((row) => (
@@ -43,6 +45,33 @@ export function successfulProjectTimingPairCount(data) {
 
 export function hasSuccessfulProjectTimingPairs(data, minimum = 1) {
   return successfulProjectTimingPairCount(data) >= minimum;
+}
+
+function hasGreenCompatibilityEvidence(row) {
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none");
+}
+
+function hasTimingPair(row) {
+  return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms) && row?.winner !== "error" && !row?.status;
+}
+
+export function greenProjectTimingPairGapCount(data) {
+  return (Array.isArray(data?.results) ? data.results : []).filter((row) => (
+    PERF_TIMED_PROJECT_ROW_NAMES.has(String(row?.name || "")) &&
+    hasGreenCompatibilityEvidence(row) &&
+    !hasTimingPair(row)
+  )).length;
+}
+
+export function hasGreenProjectTimingPairs(data) {
+  return greenProjectTimingPairGapCount(data) === 0;
 }
 
 export function applicationCompatibilityRowCount(data) {
@@ -64,6 +93,7 @@ export function hasApplicationCompatibilityRows(data) {
 export function selectLatestBenchmarkArtifact(files, options = {}) {
   const minimumProjectTimingPairs = Math.max(0, Number(options.minimumProjectTimingPairs ?? 0));
   const requireApplicationCompat = options.requireApplicationCompat === true;
+  const requireGreenProjectTimingPairs = options.requireGreenProjectTimingPairs === true;
   const candidates = [];
   for (const [index, file] of files.entries()) {
     const data = readBenchmarkArtifact(file);
@@ -72,12 +102,15 @@ export function selectLatestBenchmarkArtifact(files, options = {}) {
     if (projectTimingPairs < minimumProjectTimingPairs) continue;
     const applicationCompatibilityRows = applicationCompatibilityRowCount(data);
     if (requireApplicationCompat && applicationCompatibilityRows < APPLICATION_PROJECT_ROW_NAMES.length) continue;
+    const greenProjectTimingPairGaps = greenProjectTimingPairGapCount(data);
+    if (requireGreenProjectTimingPairs && greenProjectTimingPairGaps > 0) continue;
     candidates.push({
       file,
       data,
       generatedAtMs: benchmarkGeneratedAtMs(data),
       projectTimingPairs,
       applicationCompatibilityRows,
+      greenProjectTimingPairGaps,
       index,
     });
   }

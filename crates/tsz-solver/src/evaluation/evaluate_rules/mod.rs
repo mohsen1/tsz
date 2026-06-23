@@ -18,6 +18,7 @@ pub mod conditional;
 pub mod index_access;
 mod index_access_callable;
 mod index_access_empty_key;
+mod index_access_evaluator_helpers;
 mod index_access_keys;
 mod index_access_object_with_index;
 mod index_access_optional_read;
