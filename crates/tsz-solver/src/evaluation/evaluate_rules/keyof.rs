@@ -786,7 +786,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.recurse_keyof(resolved)
                         }
                         None => {
-                            // Keep as deferred KeyOf if resolution fails
+                            // The alias body is not registered on this query
+                            // (e.g. a cross-file type alias whose declaring file
+                            // is still being processed, or has not published its
+                            // body to the shared `DefinitionStore`). The deferred
+                            // `keyof` produced here is a registration-window
+                            // artifact, NOT a stable function of `operand`: once
+                            // the body is resolvable, `keyof` reduces to the
+                            // concrete key set. Caching the deferred form poisons
+                            // every later use — e.g. a generic constraint
+                            // `T extends keyof Omit<ImportedIface, K>` then
+                            // rejects a valid key with a spurious `TS2345`
+                            // (kysely `AlterColumnNode.create`, #10663). Mark the
+                            // unresolved def so the result stays out of the
+                            // persistent caches, mirroring the `Application`
+                            // body-resolution bails (`evaluate/application.rs`).
+                            self.mark_unresolved_def_seen();
                             self.interner().keyof(operand)
                         }
                     }
