@@ -820,19 +820,14 @@ v({ s: "", n: 0 }).toLowerCase();
     );
 }
 
-// Known tsz divergence from tsc 6.0.2 (pinned, not papered over): this asserts a
-// tsz-specific design where the overload TS2769 is *suppressed* when a structural
-// class error (TS2420) already explains the broken callee, and where that
-// suppression must also avoid an orphaned `never` follow-on TS2339. tsc 6.0.2
-// does NOT suppress: it emits TS2420 + TS2769 + the `never` TS2339 together.
-// tsz currently suppresses TS2769 but still surfaces the `never` TS2339, so it
-// matches neither tsc nor its own design goal. The parity-correct fix is to
-// emit TS2769 like tsc (a solver overload-resolution change out of scope here);
-// ignored so the witness is preserved without asserting non-tsc behavior as a
-// gate.
+// tsz must match tsc 6.0.2: a genuine no-overload-match reports TS2769 even when
+// the callee's class carries its own structural error (TS2420). tsc treats the
+// two as independent and emits TS2420 + TS2769 + the `never` follow-on TS2339
+// together (verified against tsc 6.0.2). tsz previously suppressed TS2769 when a
+// structural class/interface/namespace error sat on the callee's base symbol,
+// matching neither tsc nor its own design goal; that suppression is removed.
 #[test]
-#[ignore = "tsz diverges from tsc 6.0.2 here (tsc emits TS2769 + never TS2339; tsz suppresses TS2769 but keeps the never TS2339); parity fix tracked separately"]
-fn test_suppressed_overload_error_does_not_return_never_for_follow_on_access() {
+fn test_no_overload_match_reports_ts2769_even_with_structural_callee_error() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 interface Required {
@@ -860,14 +855,100 @@ Broken.make({ s: "", n: 0 }).toLowerCase();
         "Expected TS2420 for the structurally invalid class.\nActual: {diagnostics:#?}"
     );
     assert!(
+        has_error(&diagnostics, 2769),
+        "Expected TS2769 for the failed overload call; the callee's structural error must not suppress it (tsc emits both).\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("type 'never'")),
+        "Expected the failed overload result to behave like `never` and surface TS2339 on `.toLowerCase()`, matching tsc.\nActual: {diagnostics:#?}"
+    );
+}
+
+// Same rule with renamed binders, proving it is structural and not keyed on the
+// `Broken`/`make` identifiers. tsc emits TS2420 + TS2769 + the `never` TS2339.
+#[test]
+fn test_no_overload_match_reports_ts2769_structural_callee_error_renamed() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Spec {
+    value: string;
+}
+
+class Service implements Spec {
+    static pick(x: { id: number }): number;
+    static pick(x: { name: string }): string;
+    static pick(_x: unknown): string | number {
+        return "";
+    }
+}
+
+Service.pick({ id: 0, name: "x" }).toUpperCase();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2420),
+        "Expected TS2420 for the structurally invalid class.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2769),
+        "Expected TS2769 for the failed overload call regardless of binder names.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("type 'never'")),
+        "Expected the failed overload result to surface a `never` TS2339, matching tsc.\nActual: {diagnostics:#?}"
+    );
+}
+
+// Control: a structurally-broken callee class must not turn a *matching* overload
+// call into a spurious no-overload-match. When one overload matches, tsc reports
+// only the class's TS2420 and resolves the call to the matched return type, so the
+// follow-on member access is valid (no TS2769, no `never` TS2339).
+#[test]
+fn test_matching_overload_on_structurally_broken_class_still_resolves() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Spec {
+    value: string;
+}
+
+class Service implements Spec {
+    static pick(x: { id: number }): number;
+    static pick(x: { name: string }): string;
+    static pick(_x: unknown): string | number {
+        return "";
+    }
+}
+
+Service.pick({ name: "x" }).toLowerCase();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2420),
+        "Expected TS2420 for the structurally invalid class.\nActual: {diagnostics:#?}"
+    );
+    assert!(
         !has_error(&diagnostics, 2769),
-        "Expected TS2769 to remain suppressed when structural errors already explain the broken callee.\nActual: {diagnostics:#?}"
+        "A matching overload must not be reported as a no-overload-match.\nActual: {diagnostics:#?}"
     );
     assert!(
         !diagnostics
             .iter()
             .any(|(code, message)| *code == 2339 && message.contains("type 'never'")),
-        "Suppressed TS2769 must not turn the call result into never and orphan a follow-on TS2339.\nActual: {diagnostics:#?}"
+        "A matching overload resolves to its real return type, so the follow-on access must be valid.\nActual: {diagnostics:#?}"
     );
 }
 
