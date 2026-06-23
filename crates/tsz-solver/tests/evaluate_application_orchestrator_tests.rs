@@ -121,6 +121,85 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
     );
 }
 
+/// Type-argument deferral taint (#14347). When an application's base resolves
+/// but a type *argument* is a `Lazy(DefId)` whose body is not registered on this
+/// query (a cross-file alias whose declaring file has not published it yet), the
+/// argument stays opaque — and the evaluator must record `unresolved_def_seen`
+/// so the enclosing application's under-expanded result is kept out of the
+/// `TypeId`-keyed evaluation caches. This is the argument-side mirror of the
+/// application-base deferrals in `evaluate/application.rs`.
+#[test]
+fn evaluate_application_unresolved_arg_alias_taints_unresolved_def_seen() {
+    let interner = TypeInterner::new();
+    let t_param = unconstrained_param(&interner, "T");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let value_name = interner.intern_string("value");
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+
+    // `Box<Unregistered>` where `Unregistered`'s body is absent on this query.
+    let unresolved_arg = interner.lazy(DefId(909));
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(101),
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![unresolved_arg],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let _ = evaluator.evaluate(app);
+
+    assert!(
+        evaluator.is_unresolved_def_seen(),
+        "an application argument whose alias body is unresolved must taint \
+         `unresolved_def_seen` so the result is not cached as authoritative"
+    );
+}
+
+/// Negative control for #14347: a type argument whose alias body *is* registered
+/// expands cleanly and must NOT taint `unresolved_def_seen`. This pins the taint
+/// to genuine registration-window deferrals, never a steady-state expansion.
+#[test]
+fn evaluate_application_resolved_arg_alias_does_not_taint() {
+    let interner = TypeInterner::new();
+    let t_param = unconstrained_param(&interner, "T");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let value_name = interner.intern_string("value");
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+
+    let mut env = TypeEnvironment::new();
+    // `type StringAlias = string` — a fully registered, resolvable alias arg.
+    env.insert_def_with_params(DefId(808), TypeId::STRING, vec![]);
+    env.insert_def_kind(DefId(808), DefKind::TypeAlias);
+    let resolved_arg = interner.lazy(DefId(808));
+
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(101),
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![resolved_arg],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert!(
+        !evaluator.is_unresolved_def_seen(),
+        "a resolvable argument alias must not taint `unresolved_def_seen`"
+    );
+    let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::STRING)]);
+    assert_eq!(
+        result, expected,
+        "Box<StringAlias> must expand to {{ value: string }}"
+    );
+}
+
 fn tuple_elem(type_id: TypeId) -> TupleElement {
     TupleElement {
         type_id,

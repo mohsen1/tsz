@@ -310,11 +310,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(resolved) = self.resolver.resolve_type_query(sym_ref, self.interner) {
                     resolved
                 } else if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
-                    self.resolver
-                        .resolve_lazy(def_id, self.interner)
-                        .unwrap_or(arg)
+                    match self.resolver.resolve_lazy(def_id, self.interner) {
+                        Some(resolved) => resolved,
+                        // No registered body on this query (#14347 deferral).
+                        None => self.defer_unexpanded_type_arg(arg),
+                    }
                 } else {
-                    arg
+                    // The `typeof` symbol resolves to no def yet (#14347 deferral).
+                    self.defer_unexpanded_type_arg(arg)
                 }
             }
             TypeData::Application(_)
@@ -353,13 +356,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // `ApplyDefaultOptions`/`RequiredKeysOf`, #13609). Resolve the
                 // name to its def and follow the same alias-chain expansion as
                 // the `Lazy` arm; keep the name opaque only when it genuinely
-                // does not resolve (registration-window artifact, preserved by
-                // the `else => arg` fallthrough below).
+                // does not resolve (a registration-window artifact deferred via
+                // `defer_unexpanded_type_arg` in the `else` below).
                 let name = self.interner.resolve_atom(atom);
                 if let Some(def_id) = self.resolver.resolve_unresolved_type_name(&name) {
                     self.expand_lazy_arg_chain(def_id, arg)
                 } else {
-                    arg
+                    // The name resolves to no def yet (#14347 deferral).
+                    self.defer_unexpanded_type_arg(arg)
                 }
             }
             _ => arg,
@@ -377,14 +381,38 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut current_def = def_id;
         for _ in 0..MAX_LAZY_CHAIN_DEPTH {
             let Some(body) = self.resolver.resolve_lazy(current_def, self.interner) else {
-                return fallback;
+                // The alias body is not registered on this query (a cross-file
+                // alias whose declaring file has not published it yet): keep the
+                // argument opaque and record the registration-window taint so the
+                // enclosing application's under-expanded result is kept out of the
+                // `TypeId`-keyed evaluation caches (#14347).
+                return self.defer_unexpanded_type_arg(fallback);
             };
             match self.interner.lookup(body) {
                 Some(TypeData::Lazy(next_def)) => current_def = next_def,
                 _ => return body,
             }
         }
-        // Circular or unusually deep alias chain.
+        // Circular or unusually deep alias chain — a depth bail, not an
+        // unresolved-body artifact: keep it opaque without the taint.
+        fallback
+    }
+
+    /// Keep an unexpanded type-argument opaque and record that its alias/name
+    /// could not be expanded because the declaring body is not yet registered.
+    ///
+    /// The un-expanded argument flows into the enclosing
+    /// application/instantiation evaluation, so that result is a function of the
+    /// *registration window* it ran in, not of the input `TypeId` alone: once the
+    /// declaring file publishes the real body, a fresh expansion yields a
+    /// different, fully-reduced argument. Marking `unresolved_def_seen` keeps the
+    /// registration-window result out of the `TypeId`-keyed evaluation caches
+    /// (`closed_eval_cache` / `application_eval_cache` / the checker's env-eval
+    /// backstop), exactly as the type-position `Lazy` visit ([`Self::visit_lazy`])
+    /// and the application-base deferrals (`evaluate/application.rs`) already do.
+    /// This is the type-argument arm of the `#14347` cache-purity invariant.
+    const fn defer_unexpanded_type_arg(&mut self, fallback: TypeId) -> TypeId {
+        self.mark_unresolved_def_seen();
         fallback
     }
 
