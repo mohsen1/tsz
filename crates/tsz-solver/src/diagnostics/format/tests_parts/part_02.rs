@@ -1207,6 +1207,31 @@ fn store_union_origin_preserves_source_order_for_type_parameter_union() {
 }
 
 #[test]
+fn store_union_origin_preserves_source_order_for_tuple_union() {
+    let db = TypeInterner::new();
+
+    // Force allocation order away from source order: `[number, string]` gets
+    // the lower TypeId, but the source union is `[] | [number, string]`.
+    let pair = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::NUMBER),
+        crate::types::TupleElement::fixed(TypeId::STRING),
+    ]);
+    let empty = db.tuple(vec![]);
+    let origin = vec![empty, pair];
+    let union_id = db.union(origin.clone());
+
+    {
+        let mut fmt = TypeFormatter::new(&db);
+        assert_eq!(fmt.format(union_id), "[number, string] | []");
+    }
+
+    db.store_union_origin(union_id, origin);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union_id), "[] | [number, string]");
+}
+
+#[test]
 fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
     let db = TypeInterner::new();
 

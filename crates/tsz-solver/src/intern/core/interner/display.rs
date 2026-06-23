@@ -301,6 +301,8 @@ impl TypeInterner {
                     current.as_ref(),
                     &origin_members,
                 )
+                || self
+                    .union_origin_overrides_canonical_tuple_sort(current.as_ref(), &origin_members)
                 || self.union_origin_overrides_canonical_keyof_literal_sort(
                     current.as_ref(),
                     &origin_members,
@@ -495,6 +497,34 @@ impl TypeInterner {
         }
 
         is_array_of(self, origin[0], origin[1]) || is_array_of(self, origin[1], origin[0])
+    }
+
+    /// Preserve source-written order for unions of tuple types.
+    ///
+    /// Tuple type IDs are allocated through normal structural interning, so
+    /// unrelated eager/lib prewarming can change the canonical order of a
+    /// source union like `[] | [number, string]`. `tsc` keeps the
+    /// as-written tuple-branch order in diagnostics.
+    fn union_origin_overrides_canonical_tuple_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        origin
+            .iter()
+            .all(|&id| matches!(self.lookup(id), Some(TypeData::Tuple(_))))
     }
 
     fn union_origin_overrides_canonical_keyof_literal_sort(

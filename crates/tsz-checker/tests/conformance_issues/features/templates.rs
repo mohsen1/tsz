@@ -726,10 +726,15 @@ fn test_ts2882_regular_import_still_emits_ts2307() {
     );
 }
 
-/// Node.js built-in modules should NOT trigger TS2882 when using Node module resolution.
-/// TSC resolves these via @types/node; we suppress them for known builtins.
+/// A side-effect import of a Node.js built-in under `noUncheckedSideEffectImports`
+/// with **no `@types/node` present** is reported by tsc 6.0.2 as TS2882
+/// ("Cannot find module or type declarations for side-effect import of 'fs'.") —
+/// the builtin is only resolvable when `@types/node` supplies its declarations,
+/// which this single-file harness does not. tsz matches tsc exactly (no
+/// non-tsc builtin-name suppression). Verified against `tsc --strict --module
+/// node16 --noUncheckedSideEffectImports`.
 #[test]
-fn test_ts2882_node_builtin_suppressed() {
+fn test_ts2882_node_builtin_without_types_node() {
     let opts = CheckerOptions {
         module: tsz_common::common::ModuleKind::Node16,
         no_unchecked_side_effect_imports: true,
@@ -737,18 +742,14 @@ fn test_ts2882_node_builtin_suppressed() {
     };
     let diagnostics = compile_imports_and_get_diagnostics(r#"import "fs";"#, opts);
     assert!(
-        !has_error(&diagnostics, 2882),
-        "Should NOT emit TS2882 for Node.js built-in 'fs'.\nActual: {diagnostics:?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 2307),
-        "Should NOT emit TS2307 for Node.js built-in 'fs'.\nActual: {diagnostics:?}"
+        has_error(&diagnostics, 2882),
+        "Should emit TS2882 for an unresolvable Node.js built-in 'fs' without @types/node (matching tsc 6.0.2).\nActual: {diagnostics:?}"
     );
 }
 
-/// Node.js built-in modules with node: prefix should also be suppressed.
+/// Same as above for the `node:` prefix form.
 #[test]
-fn test_ts2882_node_builtin_prefix_suppressed() {
+fn test_ts2882_node_builtin_prefix_without_types_node() {
     let opts = CheckerOptions {
         module: tsz_common::common::ModuleKind::Node16,
         no_unchecked_side_effect_imports: true,
@@ -756,8 +757,8 @@ fn test_ts2882_node_builtin_prefix_suppressed() {
     };
     let diagnostics = compile_imports_and_get_diagnostics(r#"import "node:fs";"#, opts);
     assert!(
-        !has_error(&diagnostics, 2882),
-        "Should NOT emit TS2882 for Node.js built-in 'node:fs'.\nActual: {diagnostics:?}"
+        has_error(&diagnostics, 2882),
+        "Should emit TS2882 for an unresolvable Node.js built-in 'node:fs' without @types/node (matching tsc 6.0.2).\nActual: {diagnostics:?}"
     );
 }
 

@@ -73,21 +73,65 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn simple_enum_access_member_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
+        self.enum_member_access_canonical_text(expr_idx)
+    }
+
+    /// Canonical `Base.Member` declaration text for an enum access that resolves
+    /// to a specific enum-member *literal*, or `None` when the access is a
+    /// reverse mapping (numeric / computed / non-member index → `string`) or is
+    /// otherwise not a member literal.
+    ///
+    /// Mirrors `tsc`'s declaration emit (`createLiteralConstValue`): only an
+    /// enum-member literal type is preserved as a member reference, and it is
+    /// always rendered in property-access spelling — so `E["B"]` normalizes to
+    /// `E.B` and a reverse mapping like `E[0]` / `E[E.B]` (type `string`) yields
+    /// `None` so the caller falls back to a `: string` type annotation. The base
+    /// and member are reconstructed from structured entity-name nodes, never a
+    /// raw source slice, so parentheses/non-null punctuation cannot leak into the
+    /// output (e.g. `(E.B)` renders as `E.B`, not `E.B)`).
+    pub(in crate::declaration_emitter) fn enum_member_access_canonical_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
         let expr_node = self.arena.get(expr_idx)?;
         let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
+
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
+            // `E.B` / `ns.E.B` — a dotted entity name already names the member.
+            return self.entity_name_text(expr_idx);
         }
 
         if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
+            let base = self.entity_name_text(access.expression)?;
+            // Only a string-literal member name names an enum-member literal type.
+            // Numeric / computed indices are reverse mappings whose type is
+            // `string`, so they must not be preserved as a member reference.
+            let member_name = self.string_literal_member_name(access.name_or_argument)?;
+            // tsc normalizes `E["valid"]` to property spelling `E.valid`, but a
+            // member name that is not a valid identifier (e.g. `"hyphen-member"`)
+            // must stay in bracket form `E["hyphen-member"]`.
+            if crate::transforms::emit_utils::is_valid_identifier_name(&member_name) {
+                return Some(format!("{base}.{member_name}"));
+            }
+            let escaped = super::escape_string_for_double_quote(&member_name);
+            return Some(format!("{base}[\"{escaped}\"]"));
         }
 
         None
+    }
+
+    /// The (unquoted) member name when `expr_idx` is a string-literal element
+    /// access argument, e.g. the `B` in `E["B"]`. Returns `None` for any other
+    /// argument (numeric / computed / asserted), which is a reverse mapping.
+    fn string_literal_member_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        self.arena
+            .get_literal(expr_node)
+            .map(|lit| lit.text.clone())
     }
 
     pub(crate) fn enum_member_access_initializer_text(
@@ -111,7 +155,10 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
+        // Render in canonical `Base.Member` spelling rather than a raw source
+        // slice: this normalizes `E["B"]` to `E.B` and prevents parenthesis /
+        // non-null punctuation from leaking into the declaration output.
+        self.enum_member_access_canonical_text(expr_idx)
     }
 
     fn entity_access_chain_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
@@ -244,18 +291,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
-        }
-
-        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
-        }
-
-        None
+        self.enum_member_access_canonical_text(expr_idx)
     }
 
     fn enum_declaration_is_const_named(&self, stmt_idx: NodeIndex, base_name: &str) -> bool {

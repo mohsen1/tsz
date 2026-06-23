@@ -86,6 +86,22 @@ fn lib_resolution_mark(name: &str) -> Option<LibResolutionMark> {
     })
 }
 
+/// Kill-switch: set `TSZ_DISABLE_LIB_GENERIC_PREWARM_DEFER` to a non-empty,
+/// non-`0` value to restore the legacy behavior of fully resolving every
+/// generic lib type reference reached during the `resolve_lib_type_by_name`
+/// prewarm. Default (unset) defers to `prime_referenced_lib_type_params` (see
+/// its doc for the defer semantics and issue #12101). The deferred form is
+/// speed-only: with the switch on vs. off the produced types and diagnostics
+/// are identical for every input.
+fn lib_generic_prewarm_defer_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_LIB_GENERIC_PREWARM_DEFER")
+            .is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Record `name`'s lib-resolution marker.
 fn set_lib_resolution_mark(name: &str, mark: LibResolutionMark) {
     LIB_RESOLUTION_MARKS.with(|marks| {
@@ -320,6 +336,32 @@ pub(crate) fn augmentation_def_id_from_node(
     } else {
         Some(ctx.get_lib_def_id(sym_id))
     }
+}
+
+/// Collect every node index reachable from `decl_idx`'s `extends`/`implements`
+/// heritage clauses (the clause nodes and their full subtrees). Used by the
+/// `resolve_lib_type_by_name` prewarm to keep heritage-base generic references
+/// eager while deferring member/parameter-position ones (#12101). Returns an
+/// empty set for non-interface declarations (type aliases have no heritage).
+fn collect_heritage_subtree_nodes(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+) -> rustc_hash::FxHashSet<NodeIndex> {
+    let mut nodes = rustc_hash::FxHashSet::default();
+    let Some(clauses) = arena
+        .get(decl_idx)
+        .and_then(|node| arena.get_interface(node))
+        .and_then(|iface| iface.heritage_clauses.as_ref())
+    else {
+        return nodes;
+    };
+    let mut stack: Vec<NodeIndex> = clauses.nodes.to_vec();
+    while let Some(node_idx) = stack.pop() {
+        if nodes.insert(node_idx) {
+            stack.extend(arena.get_children(node_idx));
+        }
+    }
+    nodes
 }
 
 /// Resolve a lib node through node bindings, lexical scopes, and file-level symbols.
@@ -585,6 +627,29 @@ impl<'a> CheckerState<'a> {
     /// base was dropped mid-cycle (used to propagate the taint to derived types).
     pub(crate) fn lib_name_heritage_incomplete(&self, name: &str) -> bool {
         lib_resolution_mark(name) == Some(LibResolutionMark::Incomplete)
+    }
+
+    /// Prime a generic lib type referenced from a declaration being lowered:
+    /// register its `DefId` and type parameters without materializing its
+    /// member body. The lowered `Application` then carries the correct arity
+    /// while the referenced interface's body resolves on demand when the
+    /// application is structurally consumed (issue #12101). Shared by both the
+    /// generic (type-argument) and non-generic reference arms of the
+    /// `resolve_lib_type_by_name` prewarm walk.
+    fn prime_referenced_lib_type_params(
+        &mut self,
+        name: &str,
+        prewarmed: &mut FxHashMap<tsz_solver::DefId, Vec<tsz_solver::TypeParamInfo>>,
+    ) {
+        self.prime_lib_type_params(name);
+        if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
+            let def_id = self.ctx.get_lib_def_id(ref_sym_id);
+            if let Some(params) = self.ctx.get_def_type_params(def_id)
+                && !params.is_empty()
+            {
+                prewarmed.insert(def_id, params);
+            }
+        }
     }
 
     /// Resolve a library type by name, draining cycle-incomplete names at the
@@ -875,7 +940,19 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
+                // Defer generic-reference bodies by default (#12101): prime only
+                // the referenced type's arity and resolve its body on demand,
+                // instead of eagerly materializing it during the prewarm walk.
+                let defer_generic_prewarm = !lib_generic_prewarm_defer_disabled();
                 for (decl_idx, decl_arena) in &decls_with_arenas {
+                    // Generic references in a `extends`/`implements` heritage
+                    // clause are NOT deferred: the base's members are merged into
+                    // this interface and feed structural checks (assignability,
+                    // rest/spread arity), so the base must materialize during
+                    // lowering rather than as a deferred `Application`. Only
+                    // member/parameter-position generic references (e.g. the
+                    // `MessageEvent<T>` in an `on*` handler property) defer.
+                    let heritage_nodes = collect_heritage_subtree_nodes(decl_arena, *decl_idx);
                     let mut stack = vec![*decl_idx];
                     while let Some(node_idx) = stack.pop() {
                         let Some(node) = decl_arena.get(node_idx) else {
@@ -907,7 +984,15 @@ impl<'a> CheckerState<'a> {
                                     })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
-                                    let _ = self.resolve_lib_type_by_name(&ref_name);
+                                    if defer_generic_prewarm && !heritage_nodes.contains(&node_idx)
+                                    {
+                                        self.prime_referenced_lib_type_params(
+                                            &ref_name,
+                                            &mut prewarmed_lazy_type_params,
+                                        );
+                                    } else {
+                                        let _ = self.resolve_lib_type_by_name(&ref_name);
+                                    }
                                 }
                             }
                             if !has_type_args
@@ -916,15 +1001,10 @@ impl<'a> CheckerState<'a> {
                                 && let Some(name) =
                                     decl_arena.get_identifier_text(type_ref.type_name)
                             {
-                                self.prime_lib_type_params(name);
-                                if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
-                                    let def_id = self.ctx.get_lib_def_id(ref_sym_id);
-                                    if let Some(params) = self.ctx.get_def_type_params(def_id)
-                                        && !params.is_empty()
-                                    {
-                                        prewarmed_lazy_type_params.insert(def_id, params);
-                                    }
-                                }
+                                self.prime_referenced_lib_type_params(
+                                    name,
+                                    &mut prewarmed_lazy_type_params,
+                                );
                             }
                         }
                         stack.extend(decl_arena.get_children(node_idx));
