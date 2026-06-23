@@ -788,7 +788,7 @@ impl<'a> TypeInstantiator<'a> {
                     .as_deref()
                     .map_or(canonical_members.as_ref(), Vec::as_slice);
                 if let Some(instantiated) = self.instantiate_type_list_if_changed(members) {
-                    let result = self.interner.union(instantiated.clone());
+                    let result = self.interner.union_from_slice(&instantiated);
                     self.interner.store_union_origin(result, instantiated);
                     result
                 } else {

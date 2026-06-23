@@ -864,7 +864,7 @@ impl<'a> InferenceContext<'a> {
         let names_union = if name_literals.len() == 1 {
             name_literals[0]
         } else {
-            self.interner.union(name_literals.clone())
+            self.interner.union_from_slice(&name_literals)
         };
         self.infer_from_types(names_union, mapped.constraint, priority)?;
 

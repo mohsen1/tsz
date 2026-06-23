@@ -1169,7 +1169,7 @@ fn widen_union_literal_members(
         return type_id;
     };
 
-    let result = db.union(mapped.clone());
+    let result = db.union_from_slice(&mapped);
     display_provenance::record_union_origin(
         db,
         UnionOriginProvenance {
@@ -1547,7 +1547,7 @@ fn widen_annotation_union_first_display_member(
             }
         })
         .collect();
-    let rebuilt = db.union(mapped.clone());
+    let rebuilt = db.union_from_slice(&mapped);
     match db.lookup(rebuilt) {
         Some(TypeData::Union(new_list)) => {
             let new_members = db.type_list(new_list);
@@ -1793,7 +1793,7 @@ fn widen_annotation_walk(
             if mapped == display_members {
                 type_id
             } else {
-                let widened = db.union(mapped.clone());
+                let widened = db.union_from_slice(&mapped);
                 display_provenance::record_union_origin(
                     db,
                     UnionOriginProvenance {

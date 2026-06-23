@@ -787,7 +787,7 @@ impl<'a> TypeFormatter<'a> {
                 }
             })
             .collect();
-        let union = self.interner.union(distributed.clone());
+        let union = self.interner.union_from_slice(&distributed);
         self.interner.store_union_origin(union, distributed);
         Some(union)
     }

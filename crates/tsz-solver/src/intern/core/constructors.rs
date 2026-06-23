@@ -1991,4 +1991,36 @@ mod union_preserve_members_tests {
             "ordinary members are unaffected"
         );
     }
+
+    /// `union(Vec)` and `union_from_slice(&[..])` both delegate to the same
+    /// `union_from_iter` normalizer, so they must return a byte-identical
+    /// `TypeId` for the same member sequence. The hot evaluation/instantiation/
+    /// inference/widening/narrowing paths rely on this equivalence to construct
+    /// unions from a borrowed slice (`union_from_slice`) instead of cloning the
+    /// member vector into `union` — a pure allocation cut with no result change.
+    /// This pins the contract so a future divergence in either constructor is
+    /// caught here rather than as a silent diagnostic drift downstream.
+    #[test]
+    fn union_from_slice_matches_owned_union() {
+        let interner = TypeInterner::new();
+        let cases: &[Vec<TypeId>] = &[
+            vec![TypeId::STRING, TypeId::NUMBER],
+            // Order that requires sorting/normalization.
+            vec![TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
+            // Duplicates that must dedup identically.
+            vec![TypeId::STRING, TypeId::STRING, TypeId::NUMBER],
+            // Sentinel absorption (`any | T` == `any`).
+            vec![TypeId::ANY, TypeId::STRING],
+            // Single-member and empty edge cases.
+            vec![TypeId::STRING],
+            vec![],
+        ];
+        for members in cases {
+            assert_eq!(
+                interner.union(members.clone()),
+                interner.union_from_slice(members),
+                "union(Vec) and union_from_slice(&[..]) must agree for {members:?}",
+            );
+        }
+    }
 }
