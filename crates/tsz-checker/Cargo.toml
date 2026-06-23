@@ -57,6 +57,9 @@ path = "tests/as_const_object_property_inference_tests.rs"
 name = "object_literal_unique_symbol_member_tests"
 path = "tests/object_literal_unique_symbol_member_tests.rs"
 [[test]]
+name = "unique_symbol_grammar_tests"
+path = "tests/unique_symbol_grammar_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
