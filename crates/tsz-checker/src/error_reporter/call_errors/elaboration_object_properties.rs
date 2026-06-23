@@ -103,24 +103,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // When the source object literal is missing required properties from the
-        // target, don't elaborate into per-property TS2322 errors. tsc reports
-        // TS2345 at the argument level with "Property 'X' is missing" elaboration
-        // in these cases, rather than TS2322 on individual matching properties.
-        // Without this guard, widened property types (e.g., a string literal `'name'`
-        // widened to `string`) can produce false TS2322 errors like
-        // `Type '"name"' is not assignable to type '"name"'`.
-        let mapped_surface_names =
-            self.generic_mapped_receiver_explicit_property_names(effective_param_type);
-        if self.target_has_missing_required_properties_from_source(
-            &obj,
-            source_type,
-            effective_param_type,
-        ) && mapped_surface_names.is_empty()
-        {
-            return false;
-        }
-
+        // A missing required property does NOT pre-empt per-property elaboration.
+        // Like tsc's `elaborateObjectLiteral`, the loop below reports each present
+        // property's type mismatch; the missing-property diagnostic (TS2741/TS2739,
+        // or the argument-level TS2345 "Property 'X' is missing") is only the
+        // fallback the caller emits when this function returns `false` (i.e. no
+        // present mismatch was elaborated). The per-property check re-tests the
+        // un-widened literal/contextual source type, so a widened literal (`'name'`
+        // → `string`) does not produce a spurious mismatch against a `'name'`
+        // target — the false positive a prior up-front bail tried to avoid.
         let diagnostics_before_epc = self.ctx.diagnostics.len();
         self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
         // `check_object_literal_excess_properties` can trigger a contextual-type
@@ -1051,123 +1042,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// Check whether the target type has required properties that are not present
-    /// in the source object literal.
-    ///
-    /// When missing required properties are detected, tsc reports TS2345 at the
-    /// whole argument level with "Property 'X' is missing" elaboration. Elaborating
-    /// into per-property TS2322 errors in this case produces misleading diagnostics
-    /// because widened literal types (e.g., `'name'` widened to `string`) can fail
-    /// comparison against their inferred target literal types.
-    fn target_has_missing_required_properties_from_source(
-        &mut self,
-        obj: &tsz_parser::parser::node::LiteralExprData,
-        source_type: TypeId,
-        target_type: TypeId,
-    ) -> bool {
-        // Collect source property names from the object literal.
-        let mut source_prop_names = std::collections::HashSet::new();
-        for &elem_idx in &obj.elements.nodes {
-            if let Some(prop_name) = self.object_literal_property_name_from_elem(elem_idx) {
-                source_prop_names.insert(prop_name);
-            }
-        }
-        // Spreads contribute properties that are not represented as named AST
-        // elements. Include the synthesized source shape so `{ ...m, title:
-        // undefined }` is not treated as missing `yearReleased` from `m`.
-        let source_type = self.evaluate_type_for_assignability(source_type);
-        if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_type)
-        {
-            for prop in &shape.properties {
-                source_prop_names.insert(self.ctx.types.resolve_atom(prop.name).to_string());
-            }
-        }
-
-        // Get target property names and check for missing required ones.
-        // We use the solver's object shape to get the canonical set of target properties.
-        let original_target_type = target_type;
-        let target_type = self.resolve_type_for_property_access(target_type);
-        let target_type = self.evaluate_type_with_env(target_type);
-        let target_type = self.resolve_lazy_type(target_type);
-        let target_type = self.evaluate_application_type(target_type);
-
-        // Object.prototype methods that are implicitly present on all objects.
-        // These should not count as "missing" for the purpose of suppressing
-        // per-property elaboration, matching `should_suppress_object_literal_call_mismatch`.
-        static OBJECT_PROTO_METHODS: &[&str] = &[
-            "constructor",
-            "toString",
-            "toLocaleString",
-            "valueOf",
-            "hasOwnProperty",
-            "isPrototypeOf",
-            "propertyIsEnumerable",
-        ];
-
-        // For type parameters with index signature constraints, don't consider properties
-        // as "missing" - index signatures accept any property name.
-        let has_index_signature = [original_target_type, target_type]
-            .into_iter()
-            .chain(crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                original_target_type,
-            ))
-            .chain(crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                target_type,
-            ))
-            .filter_map(|candidate| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
-            })
-            .any(|shape| shape.string_index.is_some() || shape.number_index.is_some());
-
-        if has_index_signature {
-            return false;
-        }
-
-        if let Some(shape) = crate::query_boundaries::assignability::object_shape_for_type(
-            self.ctx.types,
-            target_type,
-        ) {
-            for prop in shape.properties.iter() {
-                if prop.optional {
-                    continue;
-                }
-                let name = self.ctx.types.resolve_atom(prop.name);
-                if !source_prop_names.contains(name.as_str())
-                    && !OBJECT_PROTO_METHODS.contains(&name.as_str())
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Extract a property name from an object literal element node.
-    /// Falls back to type-level resolution for computed property names
-    /// (e.g., unique symbols, const-evaluated keys).
-    fn object_literal_property_name_from_elem(&mut self, elem_idx: NodeIndex) -> Option<String> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let elem_node = self.ctx.arena.get(elem_idx)?;
-        let name_idx = match elem_node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                self.ctx.arena.get_property_assignment(elem_node)?.name
-            }
-            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                self.ctx.arena.get_shorthand_property(elem_node)?.name
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.ctx.arena.get_method_decl(elem_node)?.name
-            }
-            _ => return None,
-        };
-        self.object_literal_property_name_text(name_idx)
-            .or_else(|| self.get_property_name_resolved(name_idx))
     }
 
     /// Elaborate array literal element type mismatches with TS2322.

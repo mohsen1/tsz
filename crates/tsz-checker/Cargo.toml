@@ -1690,6 +1690,9 @@ path = "tests/generic_property_mismatch_display_tests.rs"
 name = "object_literal_property_target_display_tests"
 path = "tests/object_literal_property_target_display_tests.rs"
 [[test]]
+name = "object_literal_present_mismatch_precedence_tests"
+path = "tests/object_literal_present_mismatch_precedence_tests.rs"
+[[test]]
 name = "nominal_application_call_suppression_tests"
 path = "tests/nominal_application_call_suppression_tests.rs"
 [[test]]
