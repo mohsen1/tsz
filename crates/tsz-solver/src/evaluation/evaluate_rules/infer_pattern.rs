@@ -2289,7 +2289,7 @@ mod infer_match_expansion_guard_tests {
                 InferMatchExpansionGuard::enter().expect("enter within budget must succeed");
             held.push(guard);
             assert_eq!(
-                INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()),
+                INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get),
                 expected_prev + 1
             );
         }
@@ -2300,7 +2300,7 @@ mod infer_match_expansion_guard_tests {
         );
 
         held.clear();
-        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()), 0);
+        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get), 0);
         assert!(
             InferMatchExpansionGuard::enter().is_some(),
             "after unwinding, a fresh expansion must be allowed again"

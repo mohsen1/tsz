@@ -781,7 +781,7 @@ fn restore_alpha_index_signature(
 /// bisect regressions.
 fn project_instantiation_cache_enabled() -> bool {
     #[cfg(any(test, debug_assertions))]
-    if PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.get()) {
+    if PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(std::cell::Cell::get) {
         return false;
     }
     use std::sync::OnceLock;
