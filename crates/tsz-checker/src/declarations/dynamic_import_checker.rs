@@ -411,70 +411,34 @@ impl<'a> CheckerState<'a> {
 
         let module_name = &literal.text;
 
-        // TS2846: Check for .d.ts/.d.mts/.d.cts extensions in dynamic imports.
-        // Dynamic import() calls are always value-level, so a .d.ts import
-        // should always trigger TS2846 (unlike static `import type` which is OK).
-        let dts_ext = if module_name.ends_with(".d.ts") {
-            Some((".d.ts", ".ts", ".js"))
-        } else if module_name.ends_with(".d.mts") {
-            Some((".d.mts", ".mts", ".mjs"))
-        } else if module_name.ends_with(".d.cts") {
-            Some((".d.cts", ".cts", ".cjs"))
-        } else {
-            None
-        };
-        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let base = module_name.trim_end_matches(dts_suffix);
-            let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                format!("{base}{ts_ext}")
-            } else {
-                use tsz_common::common::ModuleKind;
-                match self.ctx.compiler_options.module {
-                    ModuleKind::CommonJS
-                    | ModuleKind::AMD
-                    | ModuleKind::UMD
-                    | ModuleKind::System
-                    | ModuleKind::None => base.to_string(),
-                    _ => format!("{base}{js_ext}"),
-                }
-            };
-            let message = format_message(
-                diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                &[&suggested],
-            );
-            let arg_start = arg_node.pos;
-            let arg_length = arg_node.end.saturating_sub(arg_node.pos);
-            self.error_at_position(
-                arg_start,
-                arg_length,
-                &message,
-                diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-            );
-        }
-
-        // TS5097: Check for .ts/.tsx/.mts/.cts extensions in dynamic imports
-        if !self.ctx.compiler_options.allow_importing_ts_extensions
-            && !self.ctx.compiler_options.rewrite_relative_import_extensions
-            && let Some(ext) = super::import::declaration::ts_extension_suffix(module_name)
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                    diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
-                    &[ext],
-                );
-            let arg_start = arg_node.pos;
-            let arg_length = arg_node.end.saturating_sub(arg_node.pos);
-            self.error_at_position(
-                    arg_start,
-                    arg_length,
-                    &message,
-                    diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
-                );
-        }
-
         let request_kind = crate::context::ResolutionRequestKind::DynamicImport;
         let request_resolution_mode = self.ctx.resolution_mode_for_request(request_kind, None);
+
+        // TS2846/TS5097: a dynamic `import()` specifier obeys the same
+        // TypeScript-extension rule as `import ... from`, `export ... from`,
+        // and `import = require(...)`. tsc emits these only on the *resolved*
+        // module (the `sourceFile` branch of `resolveExternalModule`): an
+        // unresolved `./x.ts` / `./x.d.ts` specifier reports TS2307 alone, with
+        // no extension diagnostic stacked on top. The previous inline blocks
+        // emitted TS5097/TS2846 unconditionally — including for unresolved
+        // specifiers, which then *also* hit the TS2307 path below, producing a
+        // double diagnostic tsc never reports. Routing through the shared
+        // gateway keeps dynamic imports in lockstep with every other
+        // module-specifier form and inherits its resolution gate, declaration-
+        // file exemption, and jsx-not-set suppression. Dynamic `import()` is
+        // always value-level, so it is never type-only; when the gateway emits
+        // an extension diagnostic the module resolved, so we skip TS2307.
+        let arg_start = arg_node.pos;
+        let arg_length = arg_node.end.saturating_sub(arg_node.pos);
+        if self.check_module_specifier_ts_extension(
+            module_name,
+            arg_start,
+            arg_length,
+            /* is_type_only */ false,
+            request_resolution_mode,
+        ) {
+            return;
+        }
 
         // Check if this exact dynamic-import request was resolved by the CLI driver.
         if self
