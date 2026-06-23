@@ -948,7 +948,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if all_same_base {
                         let t_app_args = t_app.args.clone();
                         for (i, t_arg) in t_app_args.iter().enumerate() {
-                            let combined = self.interner.union(combined_args[i].clone());
+                            let combined = self.interner.union_from_slice(&combined_args[i]);
                             self.constrain_types(ctx, var_map, combined, *t_arg, priority);
                         }
                     } else {

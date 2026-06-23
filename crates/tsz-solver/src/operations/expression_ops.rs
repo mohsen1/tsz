@@ -989,7 +989,7 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, &widened) {
         if resolver.is_some() {
             let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
-            return interner.union(reduced.to_vec());
+            return interner.union_from_slice(&reduced);
         }
         return interner.union(widened);
     }
@@ -1070,7 +1070,7 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
 
     // Step 4: Default to union of all types
-    interner.union(reduced.to_vec())
+    interner.union_from_slice(&reduced)
 }
 
 fn common_base_class_for_bct<R: TypeResolver>(

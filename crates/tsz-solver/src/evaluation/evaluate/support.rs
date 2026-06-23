@@ -725,7 +725,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Deep structural simplification using SubtypeChecker
         self.simplify_union_members(&mut evaluated_members);
 
-        let result = self.interner.union(evaluated_members.clone());
+        let result = self.interner.union_from_slice(&evaluated_members);
         display_provenance::record_union_origin(
             self.interner,
             UnionOriginProvenance {

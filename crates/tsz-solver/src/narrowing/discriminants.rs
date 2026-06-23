@@ -642,7 +642,7 @@ impl<'a> NarrowingContext<'a> {
         match index.get(&literal_value) {
             Some(matching) if matching.is_empty() => Some(TypeId::NEVER),
             Some(matching) if matching.len() == 1 => Some(matching[0]),
-            Some(matching) => Some(self.db.union(matching.clone())),
+            Some(matching) => Some(self.db.union_from_slice(matching)),
             None => {
                 // No exact match — try subtype matching for non-literal discriminants
                 // This handles cases like `type: string` matching `type: "specific"`.
