@@ -35,6 +35,9 @@ mod build_tests;
 #[path = "../tests/config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
+#[path = "../tests/cross_file_imported_const_computed_key_identity_tests.rs"]
+mod cross_file_imported_const_computed_key_identity_tests;
+#[cfg(test)]
 #[path = "../tests/cross_file_local_callee_symbol_identity_tests.rs"]
 mod cross_file_local_callee_symbol_identity_tests;
 #[cfg(test)]
