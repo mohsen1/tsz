@@ -249,14 +249,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let (constraint_source, is_identity_template) =
             match keyof_inner_type(self.interner, mapped.constraint) {
                 Some(source) => {
+                    // A homomorphic *identity* mapped source (`keyof Id<S>`,
+                    // where `Id<S> = { [P in keyof S]: S[P] }`) is interchangeable
+                    // with `S` itself, because `keyof Id<S> = keyof S` and
+                    // `Id<S>[K] = S[K]`. Peeling it collapses nested
+                    // `Prettify<Prettify<T>>` / `Id<Id<T>>` wrappers to the
+                    // single-level case so a source type parameter `T` is
+                    // recognised as assignable.
+                    let source = self.peel_homomorphic_identity_mapped_source(source);
                     // Classic case: detect an identity `S[P]` template so the
-                    // general check can be skipped.
-                    let identity = index_access_parts(self.interner, mapped.template)
-                        .and_then(|(template_obj, template_idx)| {
-                            let idx_param = type_param_info(self.interner, template_idx)?;
-                            Some(idx_param.name == mapped.type_param.name && template_obj == source)
-                        })
-                        .unwrap_or(false);
+                    // general check can be skipped. The template's indexed object
+                    // is peeled the same way so a template written over a nested
+                    // identity wrapper (`Id<S>[P]`) still matches the peeled
+                    // source `S`.
+                    let identity = match index_access_parts(self.interner, mapped.template) {
+                        Some((template_obj, template_idx)) => {
+                            let name_matches = type_param_info(self.interner, template_idx)
+                                .is_some_and(|idx_param| idx_param.name == mapped.type_param.name);
+                            name_matches
+                                && self.peel_homomorphic_identity_mapped_source(template_obj)
+                                    == source
+                        }
+                        None => false,
+                    };
                     (source, identity)
                 }
                 None => {
@@ -280,7 +295,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if !self.mapped_key_constraint_covers(full_key_set, mapped.constraint) {
                         return false;
                     }
-                    (template_obj, true)
+                    // Peel a nested identity wrapper here too, mirroring the
+                    // classic-`keyof S` arm above, so `Pick<Id<S>, K>` recognises
+                    // the underlying source.
+                    (
+                        self.peel_homomorphic_identity_mapped_source(template_obj),
+                        true,
+                    )
                 }
             };
 
