@@ -25,10 +25,12 @@ fn minimal_checker_ctx() -> (
     )
 }
 
-/// Pins the dual-env wiring invariant introduced in #8269:
-/// `ensure_both_envs_have_definition_store` must give `type_environment`
-/// (the flow-analyzer snapshot) the `DefinitionStore` fallback, so that
-/// `get_def_kind` works there without relying on the clone-over in
+/// Pins the dual-env store-wiring invariant as updated for #14348: the shared
+/// `DefinitionStore` reaches the authoritative evaluator env (`type_env`)
+/// EAGERLY, and the flow-analyzer env (`type_environment`) receives the same
+/// `Arc` through the reconcile-boundary `overlay_missing_from` (not an eager
+/// mirror). `get_def_kind` must work in both — `type_env` immediately, and
+/// `type_environment` after reconcile — without relying on the clone-over in
 /// `source_file.rs`.
 #[test]
 fn ensure_both_envs_wires_store_into_type_environment() {
@@ -62,14 +64,38 @@ fn ensure_both_envs_wires_store_into_type_environment() {
         "type_environment must not find a store-only DefKind before wiring"
     );
 
-    // Wire both environments.
+    // Wire the store into the authoritative evaluator env.
     ctx.ensure_both_envs_have_definition_store();
 
-    // Now type_environment reaches the kind via the store fallback.
+    // The evaluator env reaches the kind via the store fallback immediately.
+    assert_eq!(
+        ctx.type_env.borrow().get_def_kind(def_id),
+        Some(DefKind::TypeAlias),
+        "type_env (authoritative) must find store-only DefKind eagerly"
+    );
+
+    // The flow-analyzer env is no longer eagerly mirrored (#14348): it still
+    // lacks the store until the reconcile-boundary overlay runs.
+    assert_eq!(
+        ctx.type_environment.borrow().get_def_kind(def_id),
+        None,
+        "type_environment is no longer eagerly mirrored; the store arrives via reconcile overlay"
+    );
+
+    // Drive the reconcile overlay exactly as `reconcile_flow_and_evaluator_envs`
+    // does (overlay the evaluator env into the flow env).
+    {
+        let eval_snapshot = ctx.type_env.borrow();
+        ctx.type_environment
+            .borrow_mut()
+            .overlay_missing_from(&eval_snapshot);
+    }
+
+    // Now type_environment reaches the kind via the same shared-Arc fallback.
     assert_eq!(
         ctx.type_environment.borrow().get_def_kind(def_id),
         Some(DefKind::TypeAlias),
-        "type_environment must find store-only DefKind via fallback after ensure_both_envs_have_definition_store"
+        "type_environment must find store-only DefKind via reconcile overlay after ensure_both_envs_have_definition_store"
     );
 }
 
