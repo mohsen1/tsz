@@ -14,6 +14,27 @@
 
 use super::*;
 
+/// Whether a generic type-alias application whose body is a *genuinely
+/// registered* `unknown` (e.g. `type C<T> = unknown`, or a utility alias that
+/// reduces to `unknown`) is allowed to reduce to the canonical `unknown` instead
+/// of staying an opaque `Application`.
+///
+/// Default-on; `TSZ_DISABLE_GENUINE_UNKNOWN_ALIAS_REDUCTION=1` is the kill switch
+/// that restores the prior behavior, where every `unknown`-bodied application was
+/// kept opaque. That blanket bail conflates a registration-window placeholder
+/// (a cross-file alias whose declaring file has not published its body yet, where
+/// staying opaque is correct) with a genuine, finalized `unknown` body, so the
+/// genuine case minted an identity-distinct `Application` that the relation layer
+/// could not see was `unknown` — a false `unknown` ≠ `unknown` (TS2719) or
+/// `unknown` ≰ `C<...>` (TS2322) in member position (issue #13212).
+fn genuine_unknown_alias_reduction_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_GENUINE_UNKNOWN_ALIAS_REDUCTION").is_ok_and(|v| v == "1")
+    })
+}
+
 struct ApplicationFinalizeContext<'a> {
     original_args: &'a [TypeId],
     expanded_args: &'a [TypeId],
@@ -328,15 +349,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 return ApplicationEvalOutcome::Computed(original_type_id);
             };
-            // When the resolver returns `unknown` for the alias body, the
-            // body hasn't been registered yet (e.g. cross-file alias whose
-            // declaring file is still being processed in parallel
-            // checking). Substituting an `unknown` body would collapse
+            // When the resolver returns `unknown` for the alias body, it is
+            // EITHER a registration-window placeholder — a cross-file alias
+            // whose declaring file is still being processed in parallel
+            // checking, where the body has not been published yet — OR a
+            // genuine, finalized `unknown` body (`type C<T> = unknown`, or a
+            // utility alias that reduces to `unknown`).
+            //
+            // For the placeholder, substituting the `unknown` would collapse
             // `Foo<Args>` to bare `unknown` and erase its structural shape
-            // downstream. Bail out and keep the original `Application`
-            // opaque so later evaluator passes (with a populated body) can
-            // expand it correctly.
+            // downstream, so we keep the original `Application` opaque and let a
+            // later pass (with a populated body) expand it.
+            //
+            // For the genuine case we must NOT stay opaque: the opaque
+            // `Application` is identity-distinct from `TypeId::UNKNOWN`, so a
+            // member typed `() => C<number>` reaches the relation layer as a
+            // deferred application the relation cannot recognize as `unknown`,
+            // producing a false `unknown` ≠ `unknown` / `unknown` ≰ `C<...>`
+            // (TS2719 / TS2322, issue #13212). The two cases are distinguished
+            // by `get_def_raw_body`: a genuine body is recorded in the
+            // definition store at alias-registration time, whereas the
+            // placeholder `unknown` comes from an unresolved symbol-type
+            // fallback with no registered body. When the body is genuinely
+            // `unknown`, return the canonical intrinsic directly: the body is
+            // parameter-free, so the known-params instantiation/cache/display
+            // path cannot refine it and only widens the observable surface of
+            // this special case.
             if resolved == TypeId::UNKNOWN {
+                let genuine_unknown_body = genuine_unknown_alias_reduction_enabled()
+                    && self.resolver.get_def_raw_body(def_id, self.interner)
+                        == Some(TypeId::UNKNOWN);
+                if genuine_unknown_body {
+                    return ApplicationEvalOutcome::Computed(TypeId::UNKNOWN);
+                }
                 self.mark_unresolved_def_seen();
                 crate::evaluation::eval_materialization_probe::record_application_body_path(
                     crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
