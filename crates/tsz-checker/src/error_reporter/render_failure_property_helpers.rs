@@ -598,6 +598,15 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
+            // The excess emit may anchor directly on the offending property
+            // element (e.g. mapped-type targets report on the property element,
+            // not the enclosing literal), so resolve the name from there too.
+            if let Some(name_idx) = self.property_element_name_idx(node)
+                && let Some(display) =
+                    self.property_name_node_source_display(name_idx, property_name)
+            {
+                return Some(display);
+            }
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 && let Some(paren) = self.ctx.arena.get_parenthesized(node)
             {
@@ -659,48 +668,81 @@ impl<'a> CheckerState<'a> {
         literal_idx: NodeIndex,
         property_name: tsz_common::interner::Atom,
     ) -> Option<String> {
-        use tsz_parser::parser::syntax_kind_ext;
         let node = self.ctx.arena.get(literal_idx)?;
         let literal = self.ctx.arena.get_literal_expr(node)?;
         for &elem in &literal.elements.nodes {
             let elem_node = self.ctx.arena.get(elem)?;
-            let maybe_name_idx = if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                self.ctx
-                    .arena
-                    .get_property_assignment(elem_node)
-                    .map(|prop| prop.name)
-            } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                self.ctx
-                    .arena
-                    .get_shorthand_property(elem_node)
-                    .map(|prop| prop.name)
-            } else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                self.ctx
-                    .arena
-                    .get_method_decl(elem_node)
-                    .map(|method| method.name)
-            } else {
-                None
-            };
-            let Some(name_idx) = maybe_name_idx else {
+            let Some(name_idx) = self.property_element_name_idx(elem_node) else {
                 continue;
             };
 
-            let Some(name_node) = self.ctx.arena.get(name_idx) else {
-                continue;
-            };
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                && self.property_name_matches_atom(name_idx, property_name)
-            {
-                let display = self
-                    .get_source_text_for_node(name_idx)
-                    .trim()
-                    .trim_end_matches(':')
-                    .trim_end()
-                    .to_string();
-                if !display.is_empty() {
-                    return Some(display);
-                }
+            if let Some(display) = self.property_name_node_source_display(name_idx, property_name) {
+                return Some(display);
+            }
+        }
+        None
+    }
+
+    /// The property-name node of an object-literal member (property assignment,
+    /// shorthand, or method), if `node` is one. Shared by the literal-walk and
+    /// property-element-anchored excess-property name resolution paths.
+    fn property_element_name_idx(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            self.ctx
+                .arena
+                .get_property_assignment(node)
+                .map(|prop| prop.name)
+        } else if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            self.ctx
+                .arena
+                .get_shorthand_property(node)
+                .map(|prop| prop.name)
+        } else if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            self.ctx
+                .arena
+                .get_method_decl(node)
+                .map(|method| method.name)
+        } else {
+            None
+        }
+    }
+
+    /// Render a property-name node by its source text when `tsc` would — a
+    /// computed name (`[sym]`) keeps its brackets and a string-literal name
+    /// (`'someKey'`) keeps its quotes, so the excess-property message reads
+    /// `''someKey''` (outer quotes from the diagnostic template, inner from the
+    /// literal). Identifier and numeric keys fall through to `None` so the caller
+    /// uses the interned-atom default. `name_idx` is the property-name node.
+    fn property_name_node_source_display(
+        &self,
+        name_idx: NodeIndex,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if !self.property_name_matches_atom(name_idx, property_name) {
+            return None;
+        }
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let display = self
+                .get_source_text_for_node(name_idx)
+                .trim()
+                .trim_end_matches(':')
+                .trim_end()
+                .to_string();
+            return (!display.is_empty()).then_some(display);
+        }
+        // A string-literal property name: recover the quoted source text the
+        // interned atom dropped. Gated on a quote-prefixed source so it never
+        // fires for identifier or numeric keys regardless of node-kind encoding.
+        if self.ctx.arena.get_literal(name_node).is_some() {
+            let display = self.get_source_text_for_node(name_idx).trim().to_string();
+            if display.len() >= 2 && (display.starts_with('\'') || display.starts_with('"')) {
+                return Some(display);
             }
         }
         None
