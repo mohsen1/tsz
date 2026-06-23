@@ -1029,9 +1029,30 @@ impl CheckerState<'_> {
                     {
                         return TypeId::ERROR;
                     }
+                    // Key the application base to the *declaration* def when the
+                    // alias reaches a generic interface/class through a re-export
+                    // chain. A renamed re-export
+                    // (`export { Original as Renamed } from './origin'`) resolves
+                    // `target_sym_id` to the renaming hop, whose own name
+                    // ("Renamed") and alias (`TypeAlias`) kind carry no type
+                    // parameters, so `Renamed<number>` would stay an opaque
+                    // `Application` with its argument never substituted — a free
+                    // type parameter leaks to member reads (false TS2322). The
+                    // canonical declaration def (whose parameters resolve on
+                    // demand) substitutes correctly, matching the non-renamed
+                    // re-export forms. Mirrors the entity-name / heritage paths.
                     let def_id = self
                         .ctx
-                        .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .and_then(|local_sym| {
+                            self.reexported_declaration_def_id_for_lowering(local_sym, name)
+                        })
+                        .unwrap_or_else(|| {
+                            self.ctx
+                                .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name)
+                        });
                     let base = self.ctx.types.factory().lazy(def_id);
                     return self.ctx.types.factory().application(base, type_args);
                 }

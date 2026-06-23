@@ -110,16 +110,19 @@ fn member_access_value_consumer() {
     );
 }
 
-// --- renamed re-export through nested barrels ---
+// --- renamed re-export (`export { Original as Renamed } from`) ---
 //
-// Follow-up: a *renamed* re-export (`export type { Original as Renamed }`)
-// forwarded again through `export *` keys the application base to the renaming
-// hop rather than the declaration, so the receiver is not recognized as a
-// non-lib interface application and the type argument is still dropped. This is
-// the re-export-chain def-identity gap (resolution layer), distinct from the
-// receiver-materialization path fixed here. Pinned (ignored) so it is tracked.
+// A renamed re-export resolves the chain to a declaration whose own name
+// differs from the name used at the import site, so the type-reference lowering
+// keyed the application base to the renaming *hop* (an alias symbol minted as a
+// `TypeAlias` named "Renamed", carrying no type parameters) rather than to the
+// `Original` interface declaration. `Renamed<number>` then stayed an opaque
+// `Application` and its argument was never substituted, leaking a free type
+// parameter to member reads (false TS2322). The lowering now canonicalizes a
+// re-export alias that reaches a generic interface/class declaration to the
+// declaration def (the same chase the entity-name and heritage paths use),
+// keying `def_id_for_declaration_in_file` to the declaration's own name.
 #[test]
-#[ignore = "renamed re-export forwarded through export * keys the base def to the renaming hop (#13212 / #10663 resolution-layer follow-up)"]
 fn member_access_through_renamed_nested_barrels() {
     assert_clean(
         &[
@@ -138,6 +141,83 @@ fn member_access_through_renamed_nested_barrels() {
             ),
         ],
         "./client.ts",
+    );
+}
+
+// Rename applied at the import site (`import { Original as Renamed }`): the
+// alias already carries `import_name = "Original"`, so this worked before — kept
+// as a control that the canonicalization does not perturb it.
+#[test]
+fn member_access_through_renamed_direct_import() {
+    assert_clean(
+        &[
+            (
+                "./origin.ts",
+                "export interface Original<P> { field: P; }\n",
+            ),
+            (
+                "./client.ts",
+                "import type { Original as Renamed } from './origin';\ndeclare const r: Renamed<number>;\nconst n: number = r.field;\n",
+            ),
+        ],
+        "./client.ts",
+    );
+}
+
+// Rename applied at a single named barrel, consumed directly (no `export *`):
+// the minimal renamed-hop reproduction.
+#[test]
+fn member_access_through_renamed_single_barrel() {
+    assert_clean(
+        &[
+            (
+                "./origin.ts",
+                "export interface Original<P> { field: P; }\n",
+            ),
+            (
+                "./mid.ts",
+                "export type { Original as Renamed } from './origin';\n",
+            ),
+            (
+                "./client.ts",
+                "import type { Renamed } from './mid';\ndeclare const r: Renamed<number>;\nconst n: number = r.field;\n",
+            ),
+        ],
+        "./client.ts",
+    );
+}
+
+// Control: the same two-hop `export *` chain *without* a rename was already
+// clean; the rename is the only differing factor above.
+#[test]
+fn member_access_through_nonrenamed_nested_star() {
+    assert_clean(
+        &[
+            (
+                "./origin.ts",
+                "export interface Original<P> { field: P; }\n",
+            ),
+            ("./mid.ts", "export type { Original } from './origin';\n"),
+            ("./top.ts", "export * from './mid';\n"),
+            (
+                "./client.ts",
+                "import type { Original } from './top';\ndeclare const r: Original<number>;\nconst n: number = r.field;\n",
+            ),
+        ],
+        "./client.ts",
+    );
+}
+
+// Control: same-file `interface Crate extends Container<number>` substitutes the
+// inherited member correctly (the cross-file heritage case below does not).
+#[test]
+fn extends_same_file_generic_interface_inherited_member() {
+    assert_clean(
+        &[(
+            "./hmain.ts",
+            "interface Container<T> { value: T; }\ninterface Crate extends Container<number> { extra: string; }\ndeclare const c: Crate;\nconst n: number = c.value;\n",
+        )],
+        "./hmain.ts",
     );
 }
 
@@ -212,14 +292,17 @@ fn wrong_type_argument_still_errors() {
     );
 }
 
-// --- documented follow-up: a member *inherited* from a re-exported generic
-// base (`interface Local extends ReExported<number>`) still drops the type
-// argument. That is the cross-file generic-interface *heritage* materialization
-// path (#13767 / #13803 family), distinct from the receiver-application path
-// fixed here. Pinned (ignored) so the remaining gap is tracked, not lost. ---
+// --- documented follow-up: a member *inherited* from a generic base declared
+// in another file (`interface Local extends Base<number>`) still drops the type
+// argument. This is NOT re-export-specific — it reproduces with a *direct*
+// cross-file import too (see `extends_same_file_generic_interface_inherited_member`
+// for the passing same-file control), so the barrel here is incidental. The
+// owner is the cross-file generic-interface *heritage* materialization path
+// (#13767 / #13803 family), distinct from the type-reference application path
+// fixed in this change. Pinned (ignored) so the remaining gap is tracked. ---
 
 #[test]
-#[ignore = "inherited-via-heritage member of a re-exported generic base needs cross-file heritage materialization (#13767 / #13212)"]
+#[ignore = "inherited-via-heritage member of a cross-file generic base needs cross-file heritage materialization; reproduces with a direct import too (#13767 / #13212)"]
 fn extends_reexported_generic_interface_inherited_member() {
     assert_clean(
         &[
