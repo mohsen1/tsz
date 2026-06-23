@@ -50,7 +50,21 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    const fn should_preserve_missing_property_diagnostic(
+    /// Whether the relation failed at a concrete *member* of the source/target
+    /// shape — a missing required property, or a present property whose value
+    /// type is incompatible.
+    ///
+    /// `tsc` always drills into such failures (`Types of property 'x' are
+    /// incompatible.` and the nested root reason), even when the target is a
+    /// generic application like `A<T>`. The coarse "outer assignment" path
+    /// (`target_prefers_outer_assignment_diagnostic`) is meant only for the
+    /// type-argument / indexed-access / conditional / mapped surfaces where
+    /// drilling into the evaluated shape would be misleading (e.g. same-generic
+    /// `C<A>` vs `C<B>`); a genuine member mismatch must keep its elaboration.
+    /// The rich `analyze_assignability_failure` path already produces the
+    /// correct reason — the structural property chain for a plain-object source
+    /// and the direct type-argument reason for a same-generic application.
+    const fn should_preserve_structural_property_diagnostic(
         &self,
         outcome: &crate::query_boundaries::assignability::RelationOutcome,
     ) -> bool {
@@ -58,6 +72,7 @@ impl<'a> CheckerState<'a> {
             outcome.failure,
             Some(RelationFailure::MissingProperty { .. })
                 | Some(RelationFailure::MissingProperties { .. })
+                | Some(RelationFailure::IncompatiblePropertyValue { .. })
         )
     }
 
@@ -750,7 +765,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self.target_prefers_outer_assignment_diagnostic(target)
-            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && !self.should_preserve_structural_property_diagnostic(&outcome)
             && self
                 .missing_required_properties_from_index_signature_source(source, target)
                 .is_none()
@@ -999,7 +1014,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self.target_prefers_outer_assignment_diagnostic(target)
-            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && !self.should_preserve_structural_property_diagnostic(&outcome)
             && self
                 .missing_required_properties_from_index_signature_source(source, target)
                 .is_none()
