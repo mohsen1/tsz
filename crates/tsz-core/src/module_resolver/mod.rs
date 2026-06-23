@@ -115,21 +115,6 @@ impl ModuleResolverCacheStatistics {
     }
 }
 
-fn explicit_ts_extension(specifier: &str) -> Option<String> {
-    if specifier.ends_with(".d.ts")
-        || specifier.ends_with(".d.mts")
-        || specifier.ends_with(".d.cts")
-    {
-        return None;
-    }
-    for ext in [".ts", ".tsx", ".mts", ".cts"] {
-        if specifier.ends_with(ext) {
-            return Some(ext.to_string());
-        }
-    }
-    None
-}
-
 /// Module resolver that implements TypeScript's resolution algorithms
 #[derive(Debug)]
 pub struct ModuleResolver {
@@ -158,7 +143,6 @@ pub struct ModuleResolver {
     module_suffixes: Vec<String>,
     resolve_json_module: bool,
     allow_arbitrary_extensions: bool,
-    allow_importing_ts_extensions: bool,
     jsx: Option<JsxEmit>,
     /// Cache of resolved modules
     resolution_cache: FxHashMap<ResolutionCacheKey, Result<ResolvedModule, ResolutionFailure>>,
@@ -251,7 +235,6 @@ impl ModuleResolver {
             module_suffixes,
             resolve_json_module: options.resolve_json_module,
             allow_arbitrary_extensions: options.allow_arbitrary_extensions,
-            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             jsx: options.jsx,
             resolution_cache: FxHashMap::default(),
             custom_conditions: options.custom_conditions.clone(),
@@ -293,7 +276,6 @@ impl ModuleResolver {
             module_suffixes: vec![String::new()],
             resolve_json_module: false,
             allow_arbitrary_extensions: false,
-            allow_importing_ts_extensions: false,
             jsx: None,
             resolution_cache: FxHashMap::default(),
             custom_conditions: Vec::new(),
@@ -393,7 +375,7 @@ impl ModuleResolver {
         }
         Self::increment_counter(&self.resolution_cache_misses);
 
-        let (mut result, path_mapping_attempted) = self.resolve_uncached(
+        let (mut result, _) = self.resolve_uncached(
             specifier,
             &containing_dir,
             &containing_file_str,
@@ -403,21 +385,17 @@ impl ModuleResolver {
             importer_package_type,
         );
 
-        if !self.allow_importing_ts_extensions
-            && !self.allow_arbitrary_extensions
-            && !self.rewrite_relative_import_extensions
-            && (self.paths_base.is_some() || self.path_mappings.is_empty())
-            && let Some(extension) = explicit_ts_extension(specifier)
-            && !path_mapping_attempted
-            && matches!(result, Err(ResolutionFailure::NotFound { .. }))
-        {
-            result = Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
-                extension,
-                containing_file: containing_file_str.clone(),
-                span: specifier_span,
-            });
-        }
-
+        // TS5097 is *not* a resolution-failure code: `tsc` emits it only on the
+        // `sourceFile` branch of `resolveExternalModule` — i.e. when the
+        // `.ts`/`.tsx`/`.mts`/`.cts` specifier actually resolves to a real input
+        // file (`resolvedUsingTsExtension`). A specifier that does not resolve is
+        // a plain "cannot find module" (TS2307); upgrading that NotFound to
+        // TS5097 here diverged from `tsc` (which reports TS2307 for a missing
+        // `./x.ts`) and, for dynamic `import()`, stacked a second extension
+        // diagnostic on top. The resolved-file case is owned by the checker
+        // (`check_module_specifier_ts_extension` /
+        // `module_target_is_typescript_input_file`), which sees the resolved
+        // target's real extension, so no resolver upgrade is needed.
         if let Ok(resolved) = &result {
             if matches!(
                 resolved.extension,

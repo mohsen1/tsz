@@ -71,6 +71,16 @@ impl CheckerState<'_> {
         if let Some(alias) = self.local_import_alias(sym_id) {
             return Some(alias);
         }
+        // NOTE: this read deliberately keeps the dynamic-overlay-first resolver.
+        // For a re-exported import-alias `SymbolId`, the followed chain endpoint
+        // is recorded only in the dynamic `cross_file_symbol_targets` overlay
+        // (`resolve_import_alias_chain_and_register`); the immutable
+        // `global_symbol_file_index` declaring index points at the alias's own
+        // binding file, not the terminal target. Preferring the declaring index
+        // here breaks re-exported `unique symbol` / aliased member resolution
+        // (regression witnessed by `reexported_symbol_keyed_member_tests`). The
+        // #13255 stabilization is applied at the delegation DECISION + cache-KEY
+        // sites below, not at the symbol-flags read.
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -90,7 +100,8 @@ impl CheckerState<'_> {
             }
         }
         // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
-        //    file via resolve_symbol_file_index, go directly to that binder.
+        //    file via the resolver, go directly to that binder. (Dynamic-first:
+        //    see the note above on re-exported alias chains.)
         {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
             if let Some(file_idx) = file_idx
@@ -129,6 +140,9 @@ impl CheckerState<'_> {
         &self,
         sym_id: SymbolId,
     ) -> Option<&tsz_binder::Symbol> {
+        // Dynamic-overlay-first: this reads a *resolved import target*, whose
+        // owner is recorded in the overlay by the chain resolver; see the note
+        // in `get_symbol_globally`.
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -147,6 +161,8 @@ impl CheckerState<'_> {
         if let Some(alias) = self.local_import_alias(sym_id) {
             return Some(alias);
         }
+        // Dynamic-overlay-first: see the note in `get_symbol_globally` on
+        // re-exported alias chains.
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
@@ -438,21 +454,30 @@ impl CheckerState<'_> {
         }
 
         // Use recorded cross-file targets only when local merge handling is not required.
+        //
+        // The delegation DECISION and the resulting body/symbol-type cache KEY
+        // (`cross_file_idx`) must be order-independent: the dynamic-overlay-first
+        // `resolve_symbol_file_index` is schedule-dependent, so two parallel
+        // arenas could disagree on whether to delegate (and under which owner
+        // file_idx to key the shared bucket), splitting the symbol's type
+        // identity (#13255 cross-arena body-cache residual). The stable resolver
+        // prefers the immutable declaring-file index; it routes back to the
+        // dynamic resolver when `TSZ_DISABLE_ORDER_INDEP_RESOLUTION=1`.
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = !interface_has_local_decl
             && !function_has_local_decl
             && delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
-                .resolve_symbol_file_index(sym_id)
+                .resolve_symbol_file_index_stable(sym_id)
                 .is_some_and(|file_idx| {
                     let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
-                "needs_cross_file_delegation derived from has_symbol_file_index returning true",
+            let file_idx = self.ctx.resolve_symbol_file_index_stable(sym_id).expect(
+                "needs_cross_file_delegation derived from resolve_symbol_file_index_stable returning Some",
             );
             cross_file_idx = Some(file_idx);
         }
@@ -1191,11 +1216,16 @@ impl CheckerState<'_> {
             .map(std::convert::AsRef::as_ref);
         let mut delegate_file_idx = None;
 
+        // Order-independent delegation decision + cache key (#13255): see the
+        // comment in `delegate_cross_arena_symbol_resolution`. The stable
+        // resolver keys the cross-file class-instance bucket on the immutable
+        // declaring-file index so parallel arenas converge; it falls back to the
+        // dynamic resolver under `TSZ_DISABLE_ORDER_INDEP_RESOLUTION=1`.
         let needs_cross_file_delegation = delegate_arena
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
-                .resolve_symbol_file_index(sym_id)
+                .resolve_symbol_file_index_stable(sym_id)
                 .is_some_and(|file_idx| {
                     let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
                     !std::ptr::eq(target_arena, self.ctx.arena)
@@ -1214,8 +1244,8 @@ impl CheckerState<'_> {
         }
 
         if needs_cross_file_delegation {
-            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
-                "needs_cross_file_delegation derived from resolve_symbol_file_index returning true",
+            let file_idx = self.ctx.resolve_symbol_file_index_stable(sym_id).expect(
+                "needs_cross_file_delegation derived from resolve_symbol_file_index_stable returning Some",
             );
             delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
             delegate_file_idx = Some(file_idx);
@@ -1402,19 +1432,24 @@ impl CheckerState<'_> {
             .map(std::convert::AsRef::as_ref);
         let mut delegate_file_idx = None;
 
+        // Order-independent delegation decision + cache key (#13255): see the
+        // comment in `delegate_cross_arena_symbol_resolution`. The interface
+        // body bucket is keyed on the stable declaring-file index so parallel
+        // arenas converge; falls back to the dynamic resolver under
+        // `TSZ_DISABLE_ORDER_INDEP_RESOLUTION=1`.
         let needs_cross_file_delegation = delegate_arena
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
-                .resolve_symbol_file_index(sym_id)
+                .resolve_symbol_file_index_stable(sym_id)
                 .is_some_and(|file_idx| {
                     let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
-                "needs_cross_file_delegation derived from has_symbol_file_index returning true",
+            let file_idx = self.ctx.resolve_symbol_file_index_stable(sym_id).expect(
+                "needs_cross_file_delegation derived from resolve_symbol_file_index_stable returning Some",
             );
             delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
             delegate_file_idx = Some(file_idx);

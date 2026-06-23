@@ -91,22 +91,26 @@ fn evaluate_application_known_params_instantiates_alias_body() {
     );
 }
 
-/// Phase 5 — UNKNOWN body. When the resolver returns `unknown` (because
-/// the declaring file is still being processed in parallel checking),
-/// the orchestrator must bail and keep the `Application` opaque so a
-/// later pass with a populated body can expand it.
+/// Phase 5 — GENUINE `unknown` body. When the alias body is genuinely
+/// registered as `unknown` (`type C<T> = unknown`, or a utility alias that
+/// reduces to `unknown`), the application MUST reduce to the canonical
+/// `unknown` `TypeId`. Keeping it opaque mints an identity-distinct
+/// `Application` that the relation layer cannot recognize as `unknown`,
+/// producing a false `unknown` ≠ `unknown` / `unknown` ≰ `C<...>`
+/// (TS2719 / TS2322) in member position (issue #13212).
 #[test]
-fn evaluate_application_unknown_body_keeps_application_opaque() {
+fn evaluate_application_genuine_unknown_body_reduces_to_canonical_unknown() {
     let interner = TypeInterner::new();
     let t_param = unconstrained_param(&interner, "T");
 
     let mut env = TypeEnvironment::new();
+    // A registered `unknown` body — `get_def_raw_body` sees it, so it is the
+    // genuine case, not a registration-window placeholder.
     let app = alias_application(
         &interner,
         &mut env,
         DefId(202),
         DefKind::TypeAlias,
-        // Unknown sentinel mirrors the cross-file race condition.
         TypeId::UNKNOWN,
         vec![t_param],
         vec![TypeId::STRING],
@@ -116,8 +120,73 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
     let result = evaluator.evaluate(app);
 
     assert_eq!(
+        result,
+        TypeId::UNKNOWN,
+        "a genuine `unknown` alias body must reduce `C<Args>` to canonical `unknown`"
+    );
+}
+
+/// A resolver that reports a `DefId` as a generic type alias whose body
+/// resolves to `unknown` (via `resolve_lazy`) but has **no** body registered
+/// at alias-registration time (`get_def_raw_body` is `None`). This is the
+/// cross-file registration-window race: the declaring file has not published
+/// the alias body to the shared `DefinitionStore` yet, and the consuming
+/// file's `unknown` is an unresolved symbol-type fallback, not a finalized
+/// body.
+struct PlaceholderUnknownResolver {
+    def_id: DefId,
+    params: Vec<TypeParamInfo>,
+    name: tsz_common::interner::Atom,
+}
+
+impl TypeResolver for PlaceholderUnknownResolver {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (def_id == self.def_id).then_some(TypeId::UNKNOWN)
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        (def_id == self.def_id).then(|| self.params.clone())
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<DefKind> {
+        (def_id == self.def_id).then_some(DefKind::TypeAlias)
+    }
+
+    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
+        (def_id == self.def_id).then_some(self.name)
+    }
+
+    // No registered body: `get_def_raw_body` keeps the default `None`, marking
+    // this as a registration-window placeholder rather than a genuine body.
+}
+
+/// Phase 5 — PLACEHOLDER `unknown`. When `resolve_lazy` yields `unknown` but
+/// no body was registered at alias-registration time (`get_def_raw_body` is
+/// `None`), the `unknown` is a cross-file race placeholder. The orchestrator
+/// must keep the `Application` opaque so a later pass with the populated body
+/// can expand it — never collapse `C<Args>` to bare `unknown`.
+#[test]
+fn evaluate_application_placeholder_unknown_body_stays_opaque() {
+    let interner = TypeInterner::new();
+    let t_param = unconstrained_param(&interner, "T");
+
+    let resolver = PlaceholderUnknownResolver {
+        def_id: DefId(303),
+        params: vec![t_param],
+        name: interner.intern_string("C"),
+    };
+    let app = interner.application(interner.lazy(DefId(303)), vec![TypeId::STRING]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &resolver);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
         result, app,
-        "unknown alias body must not collapse `Foo<Args>` to bare `unknown`"
+        "a placeholder `unknown` (no registered body) must keep `C<Args>` opaque"
     );
 }
 
