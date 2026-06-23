@@ -93,3 +93,54 @@ fn fully_resolvable_type_is_still_persisted_to_env_eval_cache() {
         );
     });
 }
+
+/// An `IndexAccess` whose object is a `Lazy(DefId)` with nothing registered is
+/// the same registration-window artifact as the unresolved-base `Application`:
+/// the indexed-access evaluator (`visit_lazy`) cannot resolve a body, so it falls
+/// back to the deferred `IndexAccess(Lazy, K)` that re-interns to the input
+/// `TypeId` (no progress). Before the indexed-access taint (issue #14347) this
+/// opaque result was persisted in the `TypeId`-keyed `env_eval_cache` and would
+/// permanently shadow the real member type once the declaring file published the
+/// body. The evaluator now marks `unresolved_def_seen`, so the backstop must
+/// refuse the write — mirroring the `Application`/`keyof`/conditional deferrals.
+#[test]
+fn unresolved_lazy_index_access_is_not_persisted_to_env_eval_cache() {
+    let types = TypeInterner::new();
+    let unregistered = types.lazy(DefId(987_655));
+    let index_access = types.index_access(unregistered, TypeId::STRING);
+
+    with_trivial_checker(&types, |checker| {
+        let _ = checker.evaluate_type_with_env(index_access);
+        assert!(
+            checker.ctx.lookup_env_eval_cache(index_access).is_none(),
+            "an index access whose object def was unresolved is a registration-window \
+             artifact and must not be persisted in the TypeId-keyed env_eval_cache \
+             (issue #14347)",
+        );
+    });
+}
+
+/// Precision floor for the indexed-access taint: a fully-resolvable index access
+/// (`string[][number]` → `string`) observes no unresolved def and makes real
+/// progress on the root, so the backstop must leave its `env_eval_cache` write
+/// intact. This proves the indexed-access taint is keyed on an actually-missing
+/// body, not a blanket disablement of the index-access result memo.
+#[test]
+fn resolvable_index_access_is_still_persisted_to_env_eval_cache() {
+    let types = TypeInterner::new();
+    let index_access = types.index_access(types.array(TypeId::STRING), TypeId::NUMBER);
+
+    with_trivial_checker(&types, |checker| {
+        let result = checker.evaluate_type_with_env(index_access);
+        assert_eq!(
+            result,
+            TypeId::STRING,
+            "string[][number] must evaluate to string",
+        );
+        assert!(
+            checker.ctx.lookup_env_eval_cache(index_access).is_some(),
+            "a fully-resolvable index access observed no unresolved def, so the backstop \
+             must not suppress its env_eval_cache write (issue #14347)",
+        );
+    });
+}
