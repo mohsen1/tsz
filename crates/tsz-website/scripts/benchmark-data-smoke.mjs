@@ -501,9 +501,12 @@ try {
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Utility types project/);
+  // rxjs is a tsgo 3.0x win (tsz 3x slower), so it is NOT a timed chart bar; it
+  // is surfaced in the "not charted" list with a slow label instead.
   assert.match(charts, /RxJS project/);
-  assert.match(charts, /tsgo 3\.0x faster/);
-  assert.match(charts, /Compile canaries and incomplete project timings/);
+  assert.match(charts, /tsz 3\.0x slower than tsgo/);
+  assert.doesNotMatch(charts, /tsgo 3\.0x faster/);
+  assert.match(charts, /Not charted: canaries, incomplete, or tsz slower than tsgo/);
   assert.match(charts, /type-challenges solutions project/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
@@ -523,10 +526,12 @@ try {
   const failedOnlyCharts = getBenchmarkCharts();
   assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
   assert.doesNotMatch(failedOnlyCharts, /No successful project benchmark timing pairs/);
-  assert.match(failedOnlyCharts, /Large repositories/);
+  // large-ts-repo is a tsgo 100x win (tsz 100x slower): not a chart bar, listed
+  // in the "not charted" section with a slow label.
   assert.match(failedOnlyCharts, /Large ts repo project/);
-  assert.match(failedOnlyCharts, /tsgo 100\.0x faster/);
-  assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
+  assert.match(failedOnlyCharts, /tsz 100\.0x slower than tsgo/);
+  assert.doesNotMatch(failedOnlyCharts, /tsgo 100\.0x faster/);
+  assert.match(failedOnlyCharts, /Not charted: canaries, incomplete, or tsz slower than tsgo/);
   assert.match(failedOnlyCharts, /RxJS project/);
   const failedOnlyCompatibility = getProjectCompatibilityDashboard();
   assert.match(failedOnlyCompatibility, /data-compat-sort="project"/);
