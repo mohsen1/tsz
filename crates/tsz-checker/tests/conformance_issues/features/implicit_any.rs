@@ -738,7 +738,14 @@ fn test_ts7022_and_ts7023_emitted_for_for_of_iterator_method_self_reference() {
         target: ScriptTarget::ES2015,
         ..CheckerOptions::default()
     };
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    // The for-of iterator protocol resolves through the real `Iterator` /
+    // `IterableIterator` lib types, so this witness must load the lib; the bare
+    // (no-lib) harness only sees TS2488 (no iterator protocol available) and
+    // never reaches the TS7022 circular-implicit-any path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r"
 declare const Symbol: { readonly iterator: unique symbol };
 class MyIterator {
@@ -768,7 +775,12 @@ fn test_ts7022_and_ts7023_emitted_for_for_of_next_value_self_reference() {
         target: ScriptTarget::ES2015,
         ..CheckerOptions::default()
     };
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    // See sibling test: the for-of iterator protocol needs the real lib types,
+    // so load the lib; the no-lib harness only reaches TS2488.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r"
 declare const Symbol: { readonly iterator: unique symbol };
 class MyIterator {
