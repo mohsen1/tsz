@@ -441,7 +441,7 @@ impl<'a> CheckerState<'a> {
             let prop_list: Vec<String> = all_missing
                 .iter()
                 .take(4)
-                .map(|name| self.missing_property_list_name_for_display(*name))
+                .map(|name| self.missing_property_list_name_for_display(*name, target))
                 .collect();
             let props_joined = prop_list.join(", ");
             let (message, code) = if all_missing.len() > 4 {
@@ -500,7 +500,9 @@ impl<'a> CheckerState<'a> {
                 let prop_list: Vec<String> = ordered_names
                     .iter()
                     .take(5)
-                    .map(|name| self.missing_property_list_name_for_display(*name))
+                    .map(|name| {
+                        self.missing_property_list_name_for_display(*name, target_display_type)
+                    })
                     .collect();
                 let props_joined = prop_list.join(", ");
                 let message = format_message(
@@ -690,7 +692,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             )
         } else {
-            let (props_joined, more) = self.truncated_missing_property_list(&ordered);
+            let (props_joined, more) = self.truncated_missing_property_list(&ordered, member);
             if let Some(more_count) = more {
                 let more_count = more_count.to_string();
                 (
@@ -1258,7 +1260,9 @@ impl<'a> CheckerState<'a> {
                 let prop_list: Vec<String> = ordered_names
                     .iter()
                     .take(5)
-                    .map(|name| self.missing_property_list_name_for_display(*name))
+                    .map(|name| {
+                        self.missing_property_list_name_for_display(*name, target_display_type)
+                    })
                     .collect();
                 let props_joined = prop_list.join(", ");
                 let message = format_message(
@@ -1450,7 +1454,8 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_diagnostic(target_type)
         };
-        let (props_joined, more) = self.truncated_missing_property_list(&ordered_names);
+        let (props_joined, more) =
+            self.truncated_missing_property_list(&ordered_names, target_type);
         if let Some(more_count) = more {
             let more_count = more_count.to_string();
             let message = format_message(
