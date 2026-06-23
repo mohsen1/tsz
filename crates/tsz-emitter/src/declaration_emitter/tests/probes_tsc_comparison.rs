@@ -1482,3 +1482,67 @@ fn explore_generic_class_with_default_type() {
         "Should emit default type param: {output}"
     );
 }
+
+// Regression: an `async` arrow / function-expression initializer's inferred
+// return type must be wrapped in `Promise<...>` in declaration emit, matching
+// tsc (the body-derived inference otherwise yields the unwrapped body type).
+// Covers the variable-declaration path and the object-literal-member path;
+// generators, explicit annotations, and non-async functions are untouched.
+
+#[test]
+fn async_arrow_initializer_return_wrapped_in_promise() {
+    let output = emit_dts("export const f = async (x: number) => x;");
+    assert!(
+        output.contains("const f: (x: number) => Promise<number>;"),
+        "async arrow return must be Promise-wrapped: {output}"
+    );
+}
+
+#[test]
+fn async_arrow_void_body_return_wrapped_in_promise() {
+    let output = emit_dts("export const g = async () => {};");
+    assert!(
+        output.contains("const g: () => Promise<void>;"),
+        "async void arrow must emit Promise<void>: {output}"
+    );
+}
+
+#[test]
+fn async_function_expression_return_wrapped_in_promise() {
+    let output = emit_dts("export const h = async function (x: number) { return x; };");
+    assert!(
+        output.contains("const h: (x: number) => Promise<number>;"),
+        "async function expression return must be Promise-wrapped: {output}"
+    );
+}
+
+#[test]
+fn async_arrow_explicit_annotation_not_double_wrapped() {
+    let output = emit_dts("export const i = async (x: number): Promise<number> => x;");
+    assert!(
+        output.contains("const i: (x: number) => Promise<number>;"),
+        "explicit Promise annotation must not be re-wrapped: {output}"
+    );
+    assert!(
+        !output.contains("Promise<Promise<"),
+        "must not double-wrap an explicit Promise return: {output}"
+    );
+}
+
+#[test]
+fn async_object_member_arrow_return_wrapped_in_promise() {
+    let output = emit_dts("export const o = { m: async (x: number) => x };");
+    assert!(
+        output.contains("m: (x: number) => Promise<number>;"),
+        "async object-member arrow return must be Promise-wrapped: {output}"
+    );
+}
+
+#[test]
+fn non_async_arrow_initializer_return_unchanged() {
+    let output = emit_dts("export const s = (x: number) => x;");
+    assert!(
+        output.contains("const s: (x: number) => number;"),
+        "non-async arrow return must stay unwrapped: {output}"
+    );
+}

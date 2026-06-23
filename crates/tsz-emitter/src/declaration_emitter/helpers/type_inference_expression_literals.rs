@@ -584,22 +584,39 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.write(") => ");
         if func.type_annotation.is_some() {
             scratch.emit_type(func.type_annotation);
-        } else if func.body.is_some() && scratch.body_returns_void(func.body) {
-            scratch.write("void");
-        } else if let Some(return_type) = scratch.expression_body_parameter_return_type_text(func) {
-            scratch.write(&return_type);
-        } else if func.body.is_some()
-            && let Some(return_type) = scratch
-                .function_expression_return_type_text(func, depth + 1)
-                .filter(|text| !text.is_empty() && text != "any")
-        {
-            scratch.write(&return_type);
-        } else if let Some(return_type) =
-            scratch.function_body_preferred_return_type_text(func.body)
-        {
-            scratch.write(&return_type);
         } else {
-            scratch.write("any");
+            let inferred_return = if func.body.is_some() && scratch.body_returns_void(func.body) {
+                "void".to_string()
+            } else if let Some(return_type) =
+                scratch.expression_body_parameter_return_type_text(func)
+            {
+                return_type
+            } else if func.body.is_some()
+                && let Some(return_type) = scratch
+                    .function_expression_return_type_text(func, depth + 1)
+                    .filter(|text| !text.is_empty() && text != "any")
+            {
+                return_type
+            } else if let Some(return_type) =
+                scratch.function_body_preferred_return_type_text(func.body)
+            {
+                return_type
+            } else {
+                "any".to_string()
+            };
+            // Wrap the body-derived text in `Promise<...>` for async
+            // non-generators (see `wrap_async_function_return_type_text`). The
+            // body return type drives the double-wrap guard, so it is only
+            // resolved on the async non-generator path.
+            let body_return_type_id = (func.is_async && !func.asterisk_token)
+                .then(|| self.function_body_return_value_type_id(func))
+                .flatten();
+            let inferred_return = scratch.wrap_async_function_return_type_text(
+                func,
+                inferred_return,
+                body_return_type_id,
+            );
+            scratch.write(&inferred_return);
         }
         Some(scratch.writer.take_output())
     }

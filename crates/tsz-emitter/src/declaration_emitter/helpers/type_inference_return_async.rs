@@ -1,7 +1,8 @@
 //! Async method return-type helpers for declaration inference.
 
 use super::super::DeclarationEmitter;
-use tsz_parser::parser::node::MethodDeclData;
+use tsz_parser::parser::node::{FunctionData, MethodDeclData};
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
@@ -43,6 +44,54 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn method_is_async(&self, method: &MethodDeclData) -> bool {
         self.arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+    }
+
+    /// Wrap a source-faithful, *unwrapped* function-body return-type text in
+    /// `Promise<...>` when the function is an `async` non-generator, mirroring the
+    /// method path's [`wrap_async_method_return_type_text`].
+    ///
+    /// The AST-walking declaration paths (`emit_function_initializer_type_annotation`,
+    /// `function_expression_type_text_from_ast_at`) derive the return type from the
+    /// function body, which yields the body's own return type. tsc reports an async
+    /// function's return type as `Promise<Awaited<T>>`; when the body itself already
+    /// produces a global `Promise<...>` value (`Awaited` collapses the nesting) the
+    /// text is left as-is to avoid a spurious `Promise<Promise<...>>`. The
+    /// `body_return_type_id` is the body's *unwrapped* return type (not the function
+    /// signature's already-wrapped return type), so the global-`Promise` check
+    /// distinguishes the two cases. Generators (`async function*`) flow through the
+    /// generator-yield path and are skipped here.
+    pub(in crate::declaration_emitter) fn wrap_async_function_return_type_text(
+        &self,
+        func: &FunctionData,
+        text: String,
+        body_return_type_id: Option<tsz_solver::types::TypeId>,
+    ) -> String {
+        if !func.is_async || func.asterisk_token {
+            return text;
+        }
+        if body_return_type_id
+            .is_some_and(|type_id| self.type_id_is_global_promise_application(type_id))
+        {
+            return text;
+        }
+        format!("Promise<{text}>")
+    }
+
+    /// The body's *unwrapped* return value type for a concise-body arrow or a
+    /// single-`return` block body, used to decide whether an async wrapper would
+    /// double-wrap an already-`Promise` body (see
+    /// [`wrap_async_function_return_type_text`]).
+    pub(in crate::declaration_emitter) fn function_body_return_value_type_id(
+        &self,
+        func: &FunctionData,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let return_expr = self.function_body_single_return_expression(func.body)?;
+            self.get_node_type(return_expr)
+        } else {
+            self.get_node_type(func.body)
+        }
     }
 
     fn type_id_is_global_promise_application(&self, type_id: tsz_solver::types::TypeId) -> bool {
