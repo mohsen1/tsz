@@ -1,16 +1,20 @@
 use super::super::core::*;
 
+// Indexing a *concrete* object type by a string-literal key that is not a member
+// (`Obj["c"]`) is reported by tsc 6.0.2 as TS2339 ("Property 'c' does not exist
+// on type 'Obj'."), not TS2536 — TS2536 is the *generic* `T[K]` constraint form.
+// tsz matches tsc exactly here.
 #[test]
-fn test_ts2536_still_emitted_for_concrete_invalid_index() {
+fn test_ts2339_emitted_for_concrete_invalid_index() {
     let code = r#"
 type Obj = { a: string; b: number; };
 type Bad = Obj["c"];
 "#;
     let diagnostics = compile_and_get_diagnostics(code);
-    let has_2536 = diagnostics.iter().any(|(code, _)| *code == 2536);
+    let has_2339 = diagnostics.iter().any(|(code, _)| *code == 2339);
     assert!(
-        has_2536,
-        "TS2536 should be emitted for concrete invalid index 'c'.\nActual: {diagnostics:?}"
+        has_2339,
+        "TS2339 should be emitted for concrete invalid index 'c' (matching tsc 6.0.2).\nActual: {diagnostics:?}"
     );
 }
 

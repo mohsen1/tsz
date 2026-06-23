@@ -29,11 +29,12 @@ export {};
         "no TS2536 expected — `M` is keyed by `string | number | symbol`, so `M[symbol]` \
          is a valid indexed access. Actual: {diagnostics:#?}"
     );
-    // Negative control: `symbol` is a valid index *kind*, but a mapped type whose
-    // key set is only `string | number` carries no symbol index, so `M2[symbol]`
-    // must still report TS2536 — exactly tsc's behavior. (Indexing by a non-index
-    // type such as `boolean` is the different TS2538 family, so it is not used
-    // here.) This keeps the control on the same `symbol` axis as the positive case.
+    // Negative control: a mapped type whose key set is only `string | number`
+    // carries no symbol index, so indexing it by the bare primitive `symbol`
+    // reports TS2538 ("Type 'symbol' cannot be used as an index type") — exactly
+    // tsc 6.0.2's behavior, and what makes the positive case meaningful
+    // (`M[symbol]` is accepted *because* `M` has a symbol index, while `M2[symbol]`
+    // is rejected). This keeps the control on the same `symbol` index axis.
     let neg = compile_and_get_diagnostics(
         r#"
 type M2 = { [K in string | number]: number };
@@ -42,9 +43,9 @@ export {};
 "#,
     );
     assert!(
-        has_error(&neg, 2536),
-        "TS2536 expected — `M2` is keyed by `string | number` only, so it has no symbol \
-         index for `M2[symbol]`. Actual: {neg:#?}"
+        has_error(&neg, 2538),
+        "TS2538 expected — `M2` is keyed by `string | number` only, so the bare \
+         primitive `symbol` cannot index it. Actual: {neg:#?}"
     );
 }
 

@@ -363,6 +363,12 @@ class Implementation extends DerivedAbstractClass {
 
 #[test]
 fn test_generic_indexed_access_variance_failure_preserves_ts2322() {
+    // `Pick` is a lib intrinsic, so this witness must be checked with the lib
+    // loaded; the bare (no-lib) helper only yields `TS2304 Cannot find name
+    // 'Pick'` and never exercises the alias-application variance surface.
+    if !lib_files_available() {
+        return;
+    }
     let source = r#"
 class A {
     x: string = 'A';
@@ -388,7 +394,7 @@ b = a;
 c = d;
 "#;
 
-    let diagnostics = compile_and_get_diagnostics(source);
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
     let ts2322: Vec<&(u32, String)> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2322)
@@ -440,13 +446,26 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = compile_and_get_diagnostics_with_lib(source);
-    // tsc produces 0 errors for this code. With NEEDS_STRUCTURAL_FALLBACK set
-    // for indexed access variance, the false positives from variance-based rejection
-    // are eliminated — the structural fallback correctly determines compatibility.
-    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    // tsc 6.0.2 reports this recursively-`this`-typed, invariant generic as an
+    // error: `Num` (which `extends Runtype<number>`) is not assignable to
+    // `Runtype<any>` because `Runtype<A>.constraint: Constraint<this>` makes the
+    // self-reference invariant. Two sites trip it: `const wat: Runtype<any> = Num`
+    // and `const Foo = Obj({ foo: Num })` (the `Obj` argument inference). tsz
+    // matches tsc exactly — two `TS2322`s with the same elaboration.
+    let ts2322: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
     assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
+        ts2322.len(),
+        2,
+        "Expected two TS2322 errors (matching tsc 6.0.2). Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|(_, message)| message.contains("'Num' is not assignable to type 'Runtype<any>'")),
+        "Expected the Num -> Runtype<any> elaboration. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
