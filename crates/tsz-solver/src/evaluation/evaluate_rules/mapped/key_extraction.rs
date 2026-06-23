@@ -642,21 +642,62 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         template: TypeId,
         iter_name: Atom,
     ) -> Option<TypeId> {
+        self.extract_template_index_source_bounded(template, iter_name, 0)
+    }
+
+    /// Recursively search `template` for a `source[K]` indexed access whose key is
+    /// the mapped iteration variable `iter_name`, returning the indexed `source`.
+    ///
+    /// The template of a homomorphic mapped type need not be the bare `T[K]`: a
+    /// utility wrapper such as `{ [K in keyof T]: F<T[K]> }` keeps the source `T`
+    /// homomorphic (every key still reads `T[K]`, the result merely passes through
+    /// `F`). When the constraint `keyof T` has already been eagerly evaluated to a
+    /// literal-key union (the post-instantiation form), the source can no longer be
+    /// recovered from the constraint, so it is recovered here from the template.
+    /// We therefore look through `Application` arguments (the `F<…>` wrapper) and
+    /// `ReadonlyType` wrappers in addition to the union/intersection/conditional
+    /// shapes, so tuple/array structure preservation is not lost just because the
+    /// per-element value is computed through another utility.
+    fn extract_template_index_source_bounded(
+        &mut self,
+        template: TypeId,
+        iter_name: Atom,
+        depth: usize,
+    ) -> Option<TypeId> {
+        const MAX_TEMPLATE_SOURCE_DEPTH: usize = 16;
+        if depth > MAX_TEMPLATE_SOURCE_DEPTH {
+            return None;
+        }
         match self.interner().lookup(template) {
             Some(TypeData::IndexAccess(obj, idx)) => match self.interner().lookup(idx) {
                 Some(TypeData::TypeParameter(param)) if param.name == iter_name => Some(obj),
-                _ => None,
+                _ => self.extract_template_index_source_bounded(obj, iter_name, depth + 1),
             },
             Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
                 let members = self.interner().type_list(list_id);
-                members
-                    .iter()
-                    .find_map(|&member| self.extract_template_index_source(member, iter_name))
+                members.iter().find_map(|&member| {
+                    self.extract_template_index_source_bounded(member, iter_name, depth + 1)
+                })
             }
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner().get_conditional(cond_id);
-                self.extract_template_index_source(cond.true_type, iter_name)
-                    .or_else(|| self.extract_template_index_source(cond.false_type, iter_name))
+                self.extract_template_index_source_bounded(cond.true_type, iter_name, depth + 1)
+                    .or_else(|| {
+                        self.extract_template_index_source_bounded(
+                            cond.false_type,
+                            iter_name,
+                            depth + 1,
+                        )
+                    })
+            }
+            Some(TypeData::Application(app_id)) => {
+                let args = self.interner().type_application(app_id).args.clone();
+                args.iter().find_map(|&arg| {
+                    self.extract_template_index_source_bounded(arg, iter_name, depth + 1)
+                })
+            }
+            Some(TypeData::ReadonlyType(inner)) => {
+                self.extract_template_index_source_bounded(inner, iter_name, depth + 1)
             }
             _ => None,
         }

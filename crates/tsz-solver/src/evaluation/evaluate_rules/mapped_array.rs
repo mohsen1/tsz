@@ -334,6 +334,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
+        // Deferred resolvable rest (`...Util<R>`): the spread operand is an
+        // alias/conditional/indexed-access that *resolves to* a tuple or array
+        // but could not be evaluated to a concrete shape in this frame — e.g. a
+        // recursive utility reached at a deep `def_depth`, or a cross-file alias
+        // mid-registration. Collapsing it through the opaque `F<source[index]>`
+        // path below loses per-element identity (every spread index folds onto
+        // the same `source[index]`). Instead keep the rest as a homomorphic map
+        // over the *rest itself* (`...{ [K in keyof R]: F<R[K]> }`): a later
+        // evaluation pass — most importantly the top-level element access, where
+        // the `def_depth` budget is fresh and the resolver is fully populated —
+        // resolves `R` to its concrete tuple and the deferred map flattens to the
+        // correct per-element values. Genuine opaque rests (a bare `...T` type
+        // parameter, which is not a "needs-evaluation" deferral) fall through to
+        // the indexed-access path below, preserving the reverse-inference link.
+        if elem.rest
+            && !matches!(rest_inner_kind, Some(Some(TypeData::Array(_))))
+            && self.mapped_tuple_rest_needs_evaluation(rest_inner)
+        {
+            let mut inner_mapped = self.rebind_mapped_source(mapped, source, evaluated_rest_type);
+            // The mapped constraint may have been eagerly evaluated to a literal
+            // key union of the *outer* tuple; re-anchor it on `keyof R` so the
+            // deferred map is recognized as homomorphic over the rest when it is
+            // finally evaluated.
+            inner_mapped.constraint = self.interner().keyof(evaluated_rest_type);
+            let deferred = self.interner().mapped(inner_mapped);
+            return TupleElement {
+                type_id: deferred,
+                name: elem.name,
+                optional: elem.optional,
+                rest: true,
+            };
+        }
+
         // Opaque variadic rests (`...T`) must keep the source tuple in the
         // indexed access. Rewriting to `T[number]` loses the relationship that
         // reverse inference uses to infer `T` from mapped tuple rest elements.

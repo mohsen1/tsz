@@ -330,7 +330,20 @@ impl<'a> CheckerState<'a> {
                 // solver's own element-access evaluator is resolver-less and
                 // would leave the spread opaque.
                 let resolved = self.resolve_lazy_type(elem.type_id);
-                let resolved = self.evaluate_application_type(resolved);
+                let mut resolved = self.evaluate_application_type(resolved);
+                // A homomorphic-map-over-rest spread
+                // (`...{ [K in keyof R]: F<R[K]> }`, produced by the solver when
+                // a recursive utility's rest could not be flattened eagerly in
+                // the resolver-less / depth-limited evaluation frame) is neither
+                // a `Lazy` nor an `Application`, so the resolution above leaves it
+                // opaque. Evaluate it through the full env-backed evaluator so the
+                // spread inlines its now-concrete tuple instead of surfacing as a
+                // single nested-tuple element.
+                if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved)
+                    .is_some()
+                {
+                    resolved = self.evaluate_type_with_env(resolved);
+                }
                 if resolved != elem.type_id {
                     changed = true;
                 }
