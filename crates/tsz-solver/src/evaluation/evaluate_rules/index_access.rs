@@ -1073,6 +1073,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     .recurse_index_access(resolved, self.index_type),
             );
         }
+        // The object is a `Lazy(DefId)` with no resolvable body on this query (the
+        // declaring file has not published one yet — the cross-file registration
+        // window). `evaluate_index_access` then falls back to the deferred
+        // `IndexAccess(Lazy, K)`, a function of *which* refs were resolved when the
+        // pass ran rather than of the input `TypeId`; caching it would let the
+        // under-resolved answer shadow the real member type once the body registers.
+        // Mark the taint so the TypeId-keyed eval-cache backstops refuse the write
+        // and the authoritative pass recomputes — the registration-window-artifact
+        // discipline shared with the `Application`/`keyof`/conditional deferrals
+        // (#14347).
+        self.evaluator.mark_unresolved_def_seen();
         None
     }
 
@@ -1104,11 +1115,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         {
             self.evaluator
                 .resolver()
-                .resolve_lazy(def_id, self.evaluator.interner())?
+                .resolve_lazy(def_id, self.evaluator.interner())
         } else {
             self.evaluator
                 .resolver()
-                .resolve_symbol_ref(symbol_ref, self.evaluator.interner())?
+                .resolve_symbol_ref(symbol_ref, self.evaluator.interner())
+        };
+        let Some(resolved) = resolved else {
+            // The referenced symbol/def has no resolvable body yet, so this access
+            // falls back to a deferred `IndexAccess(Ref, K)` — the same
+            // registration-window artifact as the `Lazy` arm above. Keep it out of
+            // the `TypeId`-keyed eval caches (#14347).
+            self.evaluator.mark_unresolved_def_seen();
+            return None;
         };
         if resolved == self.object_type {
             Some(
