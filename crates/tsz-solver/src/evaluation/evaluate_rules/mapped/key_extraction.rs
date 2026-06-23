@@ -482,12 +482,39 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             TypeData::Lazy(def_id) => {
                 // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
-                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
-                    && resolved != type_id
-                {
-                    return self.extract_mapped_keys(resolved);
+                match self.resolver().resolve_lazy(def_id, self.interner()) {
+                    Some(resolved) if resolved != type_id => self.extract_mapped_keys(resolved),
+                    // Resolved to itself (recursive alias, no progress): a
+                    // deterministic defer that stays a pure function of the
+                    // constraint `TypeId` — leave it cacheable, mirroring the
+                    // bare-`Lazy` `visit_lazy` path.
+                    Some(_) => None,
+                    // No resolvable body on this query: the `Lazy(DefId)` is
+                    // mid-registration, or owned by a file whose checker has not
+                    // yet published it (the cross-file / cross-arena registration
+                    // window). Deferring the mapped type because of an unresolved
+                    // body is a *registration-window artifact*, not a stable
+                    // function of the constraint `TypeId`: once the declaring
+                    // file registers the body, the same constraint extracts
+                    // concrete keys. The callers that pass a *raw* (un-`evaluate`d)
+                    // `mapped.constraint` here —
+                    // `try_evaluate_mapped_template_per_concrete_key` /
+                    // `try_evaluate_remapped_mapped_template_for_index` on the
+                    // indexed-access-over-mapped path — never route this `Lazy`
+                    // through the evaluator's `visit_lazy`, so this is the only
+                    // place the taint can be recorded for them. Mark it so a
+                    // `TypeId`-keyed result memo refuses to persist the deferred
+                    // mapped/index result and re-derives it once the body
+                    // registers — the same cache-purity discipline applied at
+                    // `evaluate_application`, conditional reduction,
+                    // `evaluate_keyof`, the indexed-access visitor, and the
+                    // bare-`Lazy` `visit_lazy` path (#14347; witnessed by #13484
+                    // / #10663).
+                    None => {
+                        self.mark_unresolved_def_seen();
+                        None
+                    }
                 }
-                None
             }
             TypeData::TypeQuery(sym_ref) => {
                 // `typeof sym` can be a concrete unique-symbol key. Resolve the
