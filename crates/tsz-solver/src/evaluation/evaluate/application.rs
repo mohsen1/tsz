@@ -14,6 +14,22 @@
 
 use super::*;
 
+/// Kill-switch (`TSZ_DISABLE_GENERIC_ALIAS_UNKNOWN_BODY_REDUCTION=1`) for the
+/// genuine-`unknown`-body alias reduction in [`TypeEvaluator::evaluate_application_body`].
+///
+/// Default is enabled: a generic type alias whose *registered* body is
+/// `unknown` reduces its application to canonical `unknown` (tsc parity).
+/// Setting the variable restores the prior always-opaque behavior, where such
+/// an application stayed un-reduced and a later `unknown <: Foo<Args>` relation
+/// failed reflexivity.
+fn generic_alias_unknown_body_reduction_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_GENERIC_ALIAS_UNKNOWN_BODY_REDUCTION").is_ok_and(|v| v == "1")
+    })
+}
+
 struct ApplicationFinalizeContext<'a> {
     original_args: &'a [TypeId],
     expanded_args: &'a [TypeId],
@@ -274,6 +290,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Canonical `unknown` reduction for a generic alias whose **genuinely
+    /// registered** body (shared `DefinitionStore` raw body) is `unknown`.
+    ///
+    /// An `unknown` alias body contains no type parameters, so `Foo<Args>`
+    /// reduces to canonical `unknown` for *any* arguments — independent of
+    /// whether this query's resolver has cached the def's params/body. That
+    /// makes the reduction correct even on the relation `type_env`, where a
+    /// transitively-reached local alias may be absent. Returns `None` when the
+    /// raw body is not a published `unknown` (a non-`unknown` body, or an
+    /// unregistered registration-window placeholder whose raw body is absent),
+    /// leaving the caller's existing opaque-bail in force.
+    fn genuine_unknown_alias_reduction(&self, def_id: DefId) -> Option<TypeId> {
+        (generic_alias_unknown_body_reduction_enabled()
+            && self.resolver.get_def_raw_body(def_id, self.interner) == Some(TypeId::UNKNOWN))
+        .then_some(TypeId::UNKNOWN)
+    }
+
     /// Phase-5 dispatch between the canonical known-params path and the
     /// lite-resolver fallback that extracts parameters from the resolved
     /// type's shape.
@@ -318,6 +351,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
+                // A genuine `type Foo<T> = unknown` whose registered body the
+                // shared store still exposes reduces to canonical `unknown` even
+                // when this query's resolver lacks the body (the relation
+                // `type_env` for a transitively-reached local alias). See
+                // `genuine_unknown_alias_reduction`.
+                if let Some(reduced) = self.genuine_unknown_alias_reduction(def_id) {
+                    return ApplicationEvalOutcome::Computed(reduced);
+                }
                 // Generic def with registered params but no body: the def is
                 // mid-registration (or owned by a file whose checker has not
                 // published it yet). The opaque result is a registration-window
@@ -337,11 +378,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // opaque so later evaluator passes (with a populated body) can
             // expand it correctly.
             if resolved == TypeId::UNKNOWN {
-                self.mark_unresolved_def_seen();
-                crate::evaluation::eval_materialization_probe::record_application_body_path(
-                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
-                );
-                return ApplicationEvalOutcome::Computed(original_type_id);
+                // The opaque-bail guards `Foo<Args>` against collapsing to bare
+                // `unknown` when the body is an UNREGISTERED placeholder — a
+                // cross-file alias whose declaring file has not yet published its
+                // body under parallel checking, where the resolver answers
+                // `unknown` as a stand-in. But a genuine `type Foo<T> = unknown`
+                // has `unknown` as its real, *registered* body and MUST reduce:
+                // tsc eagerly substitutes a type-alias application
+                // (`getTypeAliasInstantiation`), so the result is canonical
+                // `unknown`. Keeping it opaque leaves `Foo<Args>` un-reduced, and
+                // a later relation `unknown <: Foo<Args>` (an interface/object
+                // member typed by exactly this alias) then wrongly fails
+                // reflexivity (false TS2322 "`unknown` not assignable to
+                // `Foo<Args>`"). Distinguish the two via the `DefinitionStore`'s
+                // raw body: a *published* body of `unknown` is the genuine alias;
+                // an absent raw body is the registration-window placeholder.
+                if self.genuine_unknown_alias_reduction(def_id).is_none() {
+                    self.mark_unresolved_def_seen();
+                    crate::evaluation::eval_materialization_probe::record_application_body_path(
+                        crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
+                    );
+                    return ApplicationEvalOutcome::Computed(original_type_id);
+                }
             }
 
             // The same situation arises when the body resolves to the alias's
@@ -428,6 +486,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 ApplicationEvalOutcome::Computed(original_type_id)
             }
+        } else if let Some(reduced) = self.genuine_unknown_alias_reduction(def_id) {
+            // A genuine `type Foo<...> = unknown` whose body the shared store
+            // still exposes reduces to canonical `unknown` for any args, even
+            // when neither params nor body are registered on this query's
+            // resolver. See `genuine_unknown_alias_reduction`.
+            ApplicationEvalOutcome::Computed(reduced)
         } else {
             // Neither type parameters nor a body are registered for the base
             // def (e.g. an import-alias `DefId` that was never forwarded to

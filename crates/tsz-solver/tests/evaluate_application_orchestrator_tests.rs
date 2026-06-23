@@ -91,12 +91,14 @@ fn evaluate_application_known_params_instantiates_alias_body() {
     );
 }
 
-/// Phase 5 — UNKNOWN body. When the resolver returns `unknown` (because
-/// the declaring file is still being processed in parallel checking),
-/// the orchestrator must bail and keep the `Application` opaque so a
-/// later pass with a populated body can expand it.
+/// Phase 5 — genuine `unknown` alias body. A type alias whose *registered*
+/// body is `unknown` (`type Foo<T> = unknown`) reduces its application to
+/// canonical `unknown` for any args, matching tsc's eager alias substitution
+/// (`getTypeAliasInstantiation`). The prior behavior kept it opaque, which
+/// broke a later reflexive relation `unknown <: Foo<Args>` on an
+/// interface/object member typed by exactly this alias (false TS2322).
 #[test]
-fn evaluate_application_unknown_body_keeps_application_opaque() {
+fn evaluate_application_genuine_unknown_body_reduces_to_unknown() {
     let interner = TypeInterner::new();
     let t_param = unconstrained_param(&interner, "T");
 
@@ -106,7 +108,7 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
         &mut env,
         DefId(202),
         DefKind::TypeAlias,
-        // Unknown sentinel mirrors the cross-file race condition.
+        // A genuinely registered `unknown` body — `type Foo<T> = unknown`.
         TypeId::UNKNOWN,
         vec![t_param],
         vec![TypeId::STRING],
@@ -116,8 +118,41 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
     let result = evaluator.evaluate(app);
 
     assert_eq!(
+        result,
+        TypeId::UNKNOWN,
+        "a genuine `type Foo<T> = unknown` application must reduce to canonical unknown"
+    );
+}
+
+/// Phase 5 — UNREGISTERED body (the real cross-file race). When the alias's
+/// body is *not registered* on this query — its declaring file is still being
+/// processed in parallel checking, so the resolver has no body to answer —
+/// the orchestrator keeps the `Application` opaque so a later pass with a
+/// populated body can expand it, and taints `unresolved_def_seen` so the
+/// registration-window result stays out of the persistent caches. This is the
+/// scenario the `unknown`-body bail was originally meant to guard; it is
+/// distinguished from a genuine `= unknown` alias by the *absent* raw body
+/// (`get_def_raw_body` → `None`), not by the resolved value alone.
+#[test]
+fn evaluate_application_unregistered_body_keeps_application_opaque() {
+    let interner = TypeInterner::new();
+
+    // Register only the def's kind — no body, no params — mirroring a
+    // cross-file alias whose declaring file has not yet published anything.
+    let mut env = TypeEnvironment::new();
+    env.insert_def_kind(DefId(303), DefKind::TypeAlias);
+    let app = interner.application(interner.lazy(DefId(303)), vec![TypeId::STRING]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
         result, app,
-        "unknown alias body must not collapse `Foo<Args>` to bare `unknown`"
+        "an unregistered alias body must keep `Foo<Args>` opaque for a later pass"
+    );
+    assert!(
+        evaluator.is_unresolved_def_seen(),
+        "an unregistered-body deferral must taint `unresolved_def_seen`"
     );
 }
 

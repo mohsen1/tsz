@@ -657,3 +657,91 @@ export {}
         result.diagnostics
     );
 }
+
+// ---------------------------------------------------------------------------
+// A generic type alias whose body is `unknown` (`type Foo<T> = unknown`) must
+// reduce its applications to canonical `unknown`, matching tsc's eager alias
+// substitution. Previously the evaluator kept `Foo<Args>` opaque whenever its
+// body resolved to `unknown` (a guard meant for unregistered cross-file
+// placeholders), so a later reflexive relation `unknown <: Foo<Args>` on an
+// interface/object member typed by exactly this alias produced a false TS2322
+// (`'unknown' is not assignable to 'Foo<Args>'`). Binder names vary across the
+// cases (alias/interface/param identifiers) so no name string drives the fix.
+// ---------------------------------------------------------------------------
+#[test]
+fn compile_generic_alias_with_unknown_body_reduces_in_member_and_return_positions() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "es2020"
+  },
+  "files": ["main.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare const top: unknown;
+
+// Generic alias whose body ignores its parameter and is exactly `unknown`.
+type Boxed<TElement> = unknown;
+
+// Member position (object literal -> interface).
+interface Holder { slot: Boxed<number>; }
+const viaLiteral: Holder = { slot: top };
+
+// Member position (non-fresh variable source).
+declare const holderSrc: { slot: unknown };
+const viaVariable: Holder = holderSrc;
+
+// Function-return position, concrete argument.
+const viaReturn: () => Boxed<string> = () => top;
+
+// Function-argument position.
+declare function consume(holder: Holder): void;
+function callConsume(): void {
+    consume({ slot: top });
+}
+
+// Standalone generic function-return position (alias arg is a type parameter).
+function generic<TParam>(): void {
+    const localReturn: () => Boxed<TParam> = () => top;
+    void localReturn;
+}
+
+// A different alias name, used as a plain (non-function) member.
+type AnyShape<TKey> = unknown;
+interface Wrapper<TKey> { payload: AnyShape<TKey>; }
+function makeWrapper<TKey>(): Wrapper<TKey> {
+    return { payload: top };
+}
+
+void viaLiteral;
+void viaVariable;
+void viaReturn;
+void callConsume;
+void generic;
+void makeWrapper;
+export {};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != 2322 && d.code != 2345),
+        "a generic alias with an `unknown` body must reduce to `unknown` in member \
+         and return positions (no false TS2322/TS2345). Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
