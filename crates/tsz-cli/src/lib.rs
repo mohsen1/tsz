@@ -65,6 +65,9 @@ mod lib_heritage_import_order_cli_tests;
 #[path = "../tests/lib_shadow_cli_tests.rs"]
 mod lib_shadow_cli_tests;
 #[cfg(test)]
+#[path = "../tests/prettify_empty_object_intersection_cli_tests.rs"]
+mod prettify_empty_object_intersection_cli_tests;
+#[cfg(test)]
 #[path = "../tests/reporter_tests.rs"]
 mod reporter_tests;
 #[cfg(test)]
