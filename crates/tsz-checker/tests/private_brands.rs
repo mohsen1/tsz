@@ -391,6 +391,33 @@ fn test_ts18016_private_id_on_any_outside_class() {
     );
 }
 
+/// Private identifier on an `any`-typed receiver, accessed outside any class
+/// body, where the private name *is* declared in another class in the same file.
+///
+/// tsc resolves a private name only against the *lexically enclosing* classes
+/// (`lookupSymbolForPrivateIdentifierDeclaration`). A class declared elsewhere in
+/// the file is not in lexical scope at a top-level access site, so the any-like
+/// branch still hits the grammar error TS18016 — NOT the TS18013 "not accessible
+/// outside class" path, which is reserved for a concretely-typed receiver whose
+/// class declares the member. This is the regression guard for a bug where tsz
+/// downgraded TS18016 to TS18013 whenever the name appeared in any class.
+#[test]
+fn test_ts18016_private_id_on_any_outside_class_when_declared_elsewhere() {
+    let source = r"
+        class C { #x = 1; }
+        declare const c: any;
+        c.#x;
+    ";
+    assert!(
+        has_error_code(source, 18016),
+        "Should emit TS18016 for a private name on an any receiver outside any class body, even when the name is declared in another class"
+    );
+    assert!(
+        !has_error_code(source, 18013),
+        "Should NOT emit TS18013 for an any-typed receiver outside a class body"
+    );
+}
+
 /// Private identifier on a function prototype assignment outside class body -> TS18016.
 #[test]
 fn test_ts18016_private_id_on_js_prototype_assignment_outside_class() {
