@@ -652,7 +652,13 @@ function test(x: string | (() => string) | undefined) {
     }
 }
 "#;
-    let diagnostics = compile_and_get_diagnostics(source);
+    // `Extract` and `Function` are lib intrinsics; the narrowed-callable check
+    // only resolves with the lib loaded (the no-lib harness leaves
+    // `Extract<T, Function>` unresolved and spuriously reports TS2349).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
     let call_errors: Vec<_> = diagnostics
         .iter()
         .filter(|(c, _)| *c == 2348 || *c == 2349)

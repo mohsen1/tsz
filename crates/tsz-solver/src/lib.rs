@@ -165,6 +165,11 @@ pub mod computation {
 
     // Instantiation
     pub use crate::instantiation::application::ApplicationEvaluator;
+    /// Test-only (`test`/`debug_assertions`): disable the project-wide
+    /// instantiation cache on this thread so per-file `QueryCache` wiring tests
+    /// in dependent crates can assert per-file statistics in isolation (#14345).
+    #[cfg(any(test, debug_assertions))]
+    pub use crate::instantiation::instantiate::ProjectInstCacheDisabledGuard;
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
         instantiate_function_with_type_args, instantiate_generic, instantiate_generic_cached,

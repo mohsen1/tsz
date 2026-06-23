@@ -69,6 +69,9 @@ path = "tests/qualified_namespace_generic_substitution_tests.rs"
 name = "heritage_reexport_generic_type_params_tests"
 path = "tests/heritage_reexport_generic_type_params_tests.rs"
 [[test]]
+name = "anonymous_object_intersection_display_tests"
+path = "tests/anonymous_object_intersection_display_tests.rs"
+[[test]]
 name = "any_propagation"
 path = "tests/any_propagation.rs"
 [[test]]

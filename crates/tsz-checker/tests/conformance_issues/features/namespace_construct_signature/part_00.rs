@@ -344,7 +344,13 @@ function partial(x: Basic) {
 }
 "#;
 
-    let diagnostics = compile_and_get_diagnostics(source);
+    // The `Basic` union references the lib intrinsic `Function`, so the witness
+    // must load the lib; the no-lib harness reports a spurious TS2304
+    // ("Cannot find name 'Function'.") that masks the narrowing behavior.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
     let relevant: Vec<(u32, String)> = diagnostics
         .into_iter()
         .filter(|(code, _)| *code != 2318)

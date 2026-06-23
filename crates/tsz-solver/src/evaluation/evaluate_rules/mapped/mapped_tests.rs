@@ -53,6 +53,9 @@ fn build_instantiated_homomorphic_mapped(
 
 #[test]
 fn mapped_property_template_uses_preserving_instantiation_cache() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 
@@ -113,6 +116,9 @@ fn mapped_property_template_uses_preserving_instantiation_cache() {
 
 #[test]
 fn remapped_key_type_uses_preserving_instantiation_cache() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 
@@ -165,6 +171,9 @@ fn remapped_key_type_uses_preserving_instantiation_cache() {
 
 #[test]
 fn mapped_index_template_uses_instantiation_cache_per_concrete_key() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 
@@ -631,5 +640,65 @@ fn partial_style_instantiated_mapped_over_intersection_distributes() {
     assert!(
         !matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
         "Partial<A & B> must not remain a deferred Mapped type"
+    );
+}
+
+/// Cache-purity taint (#14347): extracting mapped keys from a constraint that is
+/// a bare `Lazy(DefId)` whose body is not registered on this query is a
+/// *registration-window artifact* — once the declaring file publishes the body
+/// the same constraint yields concrete keys. The Lazy arm of
+/// `extract_mapped_keys_impl` resolves the body directly (it does not route the
+/// `Lazy` through the evaluator's `visit_lazy`), so it is the only site that can
+/// record the taint for the callers that pass a *raw* `mapped.constraint`
+/// (`try_evaluate_mapped_template_per_concrete_key` /
+/// `try_evaluate_remapped_mapped_template_for_index` on the indexed-access path).
+/// Without the mark, the deferred mapped/index result computed under the
+/// unresolved body would be persisted in a `TypeId`-keyed result memo and shadow
+/// the real expansion (the cross-arena member-degradation class, #13484 /
+/// #10663).
+#[test]
+fn extract_mapped_keys_taints_on_unresolved_lazy_constraint() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let unresolved = interner.lazy(crate::def::DefId(987_654));
+
+    let keys = evaluator.extract_mapped_keys(unresolved);
+
+    assert!(
+        keys.is_none(),
+        "an unresolved Lazy(DefId) constraint cannot yield concrete mapped keys"
+    );
+    assert!(
+        evaluator.is_unresolved_def_seen(),
+        "extract_mapped_keys must mark the unresolved-def taint when the constraint's \
+         Lazy body has nothing registered, so the deferred mapped/index result is kept \
+         out of the TypeId-keyed caches (#14347)"
+    );
+}
+
+/// Precision floor for the mapped-key extraction taint (#14347): a constraint
+/// with a fully-resolvable, concrete key set observes no unresolved def, so the
+/// taint must stay clear — proving the mark is keyed on an actually-missing
+/// `Lazy(DefId)` body, not fired for every `None`/structural defer (which would
+/// over-suppress caching for legitimate generic mapped types).
+#[test]
+fn extract_mapped_keys_does_not_taint_on_resolvable_constraint() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let concrete = interner.union(vec![
+        interner.literal_string("a"),
+        interner.literal_string("b"),
+    ]);
+
+    let keys = evaluator.extract_mapped_keys(concrete);
+
+    assert!(
+        keys.is_some(),
+        "a concrete string-literal union constraint must yield extractable keys"
+    );
+    assert!(
+        !evaluator.is_unresolved_def_seen(),
+        "a fully-resolvable constraint observed no unresolved def, so the mapped-key \
+         extraction taint must stay clear (#14347)"
     );
 }

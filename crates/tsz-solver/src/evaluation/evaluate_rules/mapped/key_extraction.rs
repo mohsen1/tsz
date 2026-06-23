@@ -482,12 +482,39 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             TypeData::Lazy(def_id) => {
                 // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
-                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
-                    && resolved != type_id
-                {
-                    return self.extract_mapped_keys(resolved);
+                match self.resolver().resolve_lazy(def_id, self.interner()) {
+                    Some(resolved) if resolved != type_id => self.extract_mapped_keys(resolved),
+                    // Resolved to itself (recursive alias, no progress): a
+                    // deterministic defer that stays a pure function of the
+                    // constraint `TypeId` — leave it cacheable, mirroring the
+                    // bare-`Lazy` `visit_lazy` path.
+                    Some(_) => None,
+                    // No resolvable body on this query: the `Lazy(DefId)` is
+                    // mid-registration, or owned by a file whose checker has not
+                    // yet published it (the cross-file / cross-arena registration
+                    // window). Deferring the mapped type because of an unresolved
+                    // body is a *registration-window artifact*, not a stable
+                    // function of the constraint `TypeId`: once the declaring
+                    // file registers the body, the same constraint extracts
+                    // concrete keys. The callers that pass a *raw* (un-`evaluate`d)
+                    // `mapped.constraint` here —
+                    // `try_evaluate_mapped_template_per_concrete_key` /
+                    // `try_evaluate_remapped_mapped_template_for_index` on the
+                    // indexed-access-over-mapped path — never route this `Lazy`
+                    // through the evaluator's `visit_lazy`, so this is the only
+                    // place the taint can be recorded for them. Mark it so a
+                    // `TypeId`-keyed result memo refuses to persist the deferred
+                    // mapped/index result and re-derives it once the body
+                    // registers — the same cache-purity discipline applied at
+                    // `evaluate_application`, conditional reduction,
+                    // `evaluate_keyof`, the indexed-access visitor, and the
+                    // bare-`Lazy` `visit_lazy` path (#14347; witnessed by #13484
+                    // / #10663).
+                    None => {
+                        self.mark_unresolved_def_seen();
+                        None
+                    }
                 }
-                None
             }
             TypeData::TypeQuery(sym_ref) => {
                 // `typeof sym` can be a concrete unique-symbol key. Resolve the
@@ -642,21 +669,62 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         template: TypeId,
         iter_name: Atom,
     ) -> Option<TypeId> {
+        self.extract_template_index_source_bounded(template, iter_name, 0)
+    }
+
+    /// Recursively search `template` for a `source[K]` indexed access whose key is
+    /// the mapped iteration variable `iter_name`, returning the indexed `source`.
+    ///
+    /// The template of a homomorphic mapped type need not be the bare `T[K]`: a
+    /// utility wrapper such as `{ [K in keyof T]: F<T[K]> }` keeps the source `T`
+    /// homomorphic (every key still reads `T[K]`, the result merely passes through
+    /// `F`). When the constraint `keyof T` has already been eagerly evaluated to a
+    /// literal-key union (the post-instantiation form), the source can no longer be
+    /// recovered from the constraint, so it is recovered here from the template.
+    /// We therefore look through `Application` arguments (the `F<…>` wrapper) and
+    /// `ReadonlyType` wrappers in addition to the union/intersection/conditional
+    /// shapes, so tuple/array structure preservation is not lost just because the
+    /// per-element value is computed through another utility.
+    fn extract_template_index_source_bounded(
+        &mut self,
+        template: TypeId,
+        iter_name: Atom,
+        depth: usize,
+    ) -> Option<TypeId> {
+        const MAX_TEMPLATE_SOURCE_DEPTH: usize = 16;
+        if depth > MAX_TEMPLATE_SOURCE_DEPTH {
+            return None;
+        }
         match self.interner().lookup(template) {
             Some(TypeData::IndexAccess(obj, idx)) => match self.interner().lookup(idx) {
                 Some(TypeData::TypeParameter(param)) if param.name == iter_name => Some(obj),
-                _ => None,
+                _ => self.extract_template_index_source_bounded(obj, iter_name, depth + 1),
             },
             Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
                 let members = self.interner().type_list(list_id);
-                members
-                    .iter()
-                    .find_map(|&member| self.extract_template_index_source(member, iter_name))
+                members.iter().find_map(|&member| {
+                    self.extract_template_index_source_bounded(member, iter_name, depth + 1)
+                })
             }
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner().get_conditional(cond_id);
-                self.extract_template_index_source(cond.true_type, iter_name)
-                    .or_else(|| self.extract_template_index_source(cond.false_type, iter_name))
+                self.extract_template_index_source_bounded(cond.true_type, iter_name, depth + 1)
+                    .or_else(|| {
+                        self.extract_template_index_source_bounded(
+                            cond.false_type,
+                            iter_name,
+                            depth + 1,
+                        )
+                    })
+            }
+            Some(TypeData::Application(app_id)) => {
+                let args = self.interner().type_application(app_id).args.clone();
+                args.iter().find_map(|&arg| {
+                    self.extract_template_index_source_bounded(arg, iter_name, depth + 1)
+                })
+            }
+            Some(TypeData::ReadonlyType(inner)) => {
+                self.extract_template_index_source_bounded(inner, iter_name, depth + 1)
             }
             _ => None,
         }
