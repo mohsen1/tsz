@@ -115,7 +115,15 @@ impl TypeInterner {
                     | TypeData::Function(_)
                     | TypeData::Callable(_)
                     | TypeData::TemplateLiteral(_)
-                    | TypeData::UniqueSymbol(_),
+                    | TypeData::UniqueSymbol(_)
+                    // A mapped type `{ [K in ...]: ... }` always evaluates to an
+                    // object type (an empty object at worst when the key set is
+                    // `never`); it can never be `null`/`undefined`. tsc therefore
+                    // counts it under `TypeFlags.Object` and drops the redundant
+                    // empty-object constituent from `{ [K in keyof T]: T[K] } & {}`,
+                    // so a generic source `T` relates to the homomorphic mapped
+                    // identity alone instead of being forced through `T <: {}`.
+                    | TypeData::Mapped(_),
                 ) => true,
 
                 // Union is non-nullish only if ALL members are non-nullish
