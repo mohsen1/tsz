@@ -175,6 +175,7 @@ jobs:
           fetch-depth: 1
 
       - name: Check runner pool health
+        id: pool
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -207,6 +208,7 @@ jobs:
               fi
             } >> "${GITHUB_STEP_SUMMARY}"
 
+            echo "runner_read=error" >> "${GITHUB_OUTPUT}"
             echo "::warning::runner pool probe unavailable; skipping runner-health failure"
             exit 0
           fi
@@ -233,6 +235,17 @@ jobs:
           ")
           idle=$(( online - busy ))
 
+          # Surface pool metrics as step outputs so the follow-on purge step can
+          # act on the offline count and the version-floor step always runs
+          # (issue #13750). Written before the critical exit below so they are
+          # set on every non-error path.
+          {
+            echo "runner_read=ok"
+            echo "online=${online}"
+            echo "offline=${offline}"
+            echo "idle=${idle}"
+          } >> "${GITHUB_OUTPUT}"
+
           in_progress=$(gh api "repos/${repo}/actions/runs?status=in_progress&per_page=50" \
             --jq '.total_count' 2>/dev/null || echo 0)
           queued=$(gh api "repos/${repo}/actions/runs?status=queued&per_page=50" \
@@ -255,23 +268,126 @@ jobs:
               echo ""
               echo "> ⚠️ **Runner pool saturated** — all runners busy, ${queued} run(s) queued"
             fi
-            if [[ "${offline}" -gt 15 ]]; then
+            if [[ "${offline}" -gt 0 ]]; then
               echo ""
-              echo "> ⚠️ **${offline} stale offline runners** — run \`scripts/ci/cleanup-stale-runners.sh\` to purge"
+              echo "> ⚠️ **${offline} stale offline runner(s)** — the purge step below removes them automatically (\`scripts/ci/cleanup-stale-runners.sh\`)"
             fi
             if [[ "${online}" -lt 20 ]]; then
               echo ""
-              echo "> 🔴 **Low runner count (${online})** — CREMA may not be scaling; check GCP console"
+              echo "> 🔴 **Low runner count (${online})** — CREMA may not be scaling; investigate the Cloud Run runner service"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
           echo "runners: online=${online}/${total} busy=${busy} idle=${idle} offline=${offline}"
           echo "runs: in_progress=${in_progress} queued=${queued}"
 
+          # Make the saturation / low-count signals actionable rather than
+          # buried in the step summary (#13750): emit annotations that surface in
+          # the Actions UI and notifications.
+          if [[ "${idle}" -eq 0 && "${in_progress}" -gt 0 ]]; then
+            echo "::warning::Runner pool saturated — all ${online} runner(s) busy with ${queued} run(s) queued"
+          fi
+          if [[ "${online}" -lt 20 && "${online}" -ge 5 ]]; then
+            echo "::warning::Low runner count (${online} online) — CREMA may not be scaling; investigate the Cloud Run runner service"
+          fi
+
           # Fail loudly when runner pool is critically low (blocks future jobs)
           if [[ "${online}" -lt 5 ]]; then
             echo "::error::CRITICAL: only ${online} runners online — CI is effectively down"
             exit 1
+          fi
+
+      # Runner-version-floor check (#13750). Auto-update is disabled on the
+      # fleet (start.sh sets DISABLE_RUNNER_UPDATE=1 / --disableupdate), so the
+      # deployed runner version equals the Dockerfile pin. If that pin trails the
+      # latest actions/runner release far enough, GitHub can eventually reject
+      # registration once it raises its required minimum and wedge the whole
+      # fleet — warn before that happens so a maintainer can bump the FROM tag
+      # and redeploy. Read-only; runs even when the pool probe failed above.
+      - name: Check runner version floor
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Minor-version gap at which the trailing pin escalates from an
+          # informational summary line to a loud annotation. GitHub supports a
+          # range of recent releases, so a small lag is normal; a large gap means
+          # the required-version floor is approaching.
+          RUNNER_VERSION_FLOOR_GAP: '10'
+        run: |
+          set -uo pipefail
+          dockerfile="scripts/infra/cloud-run-gh-runner/Dockerfile"
+          pinned="$(sed -n 's|^FROM .*/actions-runner:\([0-9][0-9.]*\).*|\1|p' "${dockerfile}" | head -n1)"
+          if [[ -z "${pinned}" ]]; then
+            echo "::warning::Could not parse the runner version pin from ${dockerfile}"
+            exit 0
+          fi
+
+          latest_tag="$(gh api repos/actions/runner/releases/latest --jq '.tag_name' 2>/dev/null || true)"
+          latest="${latest_tag#v}"
+
+          {
+            echo "## Runner version floor — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Pinned runner (Dockerfile) | ${pinned} |"
+            echo "| Latest actions/runner release | ${latest:-unknown} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ -z "${latest}" ]]; then
+            echo "Could not determine the latest actions/runner release; skipping the floor comparison."
+            exit 0
+          fi
+
+          echo "runner version: pinned=${pinned} latest=${latest}"
+
+          # Signed minor-version gap (latest - pinned), within or across majors.
+          # >0 behind, 0 current (equal minor / patch-level lag), <0 ahead.
+          # Indented to the block-scalar base so YAML strips it to column-0
+          # Python at runtime (same pattern as the runner-count python above).
+          gap="$(python3 -c "
+          import sys
+          def mm(v):
+              parts = (v.split('.') + ['0', '0'])[:2]
+              return int(parts[0]) * 1000 + int(parts[1])
+          try:
+              print(mm(sys.argv[1]) - mm(sys.argv[2]))
+          except Exception:
+              print(0)
+          " "${latest}" "${pinned}" 2>/dev/null || echo 0)"
+
+          if [[ "${gap}" -le 0 ]]; then
+            echo "> ✅ Runner pin is current (at or ahead of the latest actions/runner release)." >> "${GITHUB_STEP_SUMMARY}"
+          elif [[ "${gap}" -ge "${RUNNER_VERSION_FLOOR_GAP}" ]]; then
+            echo "> 🔴 Pinned runner \`${pinned}\` trails latest \`${latest}\` by ${gap} minor release(s). Auto-update is disabled, so bump \`${dockerfile}\` and redeploy before GitHub raises its required runner-version floor and registration starts failing." >> "${GITHUB_STEP_SUMMARY}"
+            echo "::warning::Runner pin ${pinned} trails latest actions/runner ${latest} by ${gap} minor release(s) (auto-update disabled) — bump the Dockerfile FROM tag and redeploy before the required-version floor rises"
+          else
+            echo "> ⚠️ Pinned runner \`${pinned}\` trails latest \`${latest}\` (gap ${gap} minor release(s)); within the supported range for now. Bump the Dockerfile FROM tag at the next maintenance window." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      # Purge stale offline runner registrations (#13750). The fleet is
+      # ephemeral; a runner that fails to deregister lingers as an `offline`
+      # record until removed. Previously detection-only — the summary merely
+      # suggested running the script by hand, so offline registrations
+      # accumulated. Now the cron purges them automatically. The script deletes
+      # ONLY offline runners, never online/busy ones, so it cannot disrupt
+      # in-flight jobs. Deleting registrations needs repo administration, which
+      # the default GITHUB_TOKEN cannot grant — prefer the PAT when configured
+      # and degrade to a warning otherwise (continue-on-error keeps a token /
+      # permission gap from reddening this job).
+      - name: Purge stale offline runners
+        if: ${{ always() && steps.pool.outputs.runner_read == 'ok' && steps.pool.outputs.offline != '' && steps.pool.outputs.offline != '0' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          echo "Purging ${{ steps.pool.outputs.offline }} stale offline runner registration(s)…"
+          if scripts/ci/cleanup-stale-runners.sh; then
+            echo "Offline runner purge completed." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::cleanup-stale-runners.sh could not purge offline runners (the token may lack repo administration scope); re-run scripts/ci/cleanup-stale-runners.sh with an admin token"
           fi
 
   dns:
