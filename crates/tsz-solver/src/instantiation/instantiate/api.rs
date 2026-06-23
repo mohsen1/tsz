@@ -809,10 +809,16 @@ pub struct ProjectInstCacheDisabledGuard;
 
 #[cfg(any(test, debug_assertions))]
 impl ProjectInstCacheDisabledGuard {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.set(true));
         Self
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Default for ProjectInstCacheDisabledGuard {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
