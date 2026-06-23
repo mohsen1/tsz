@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "files": [
+    "src/index.ts",
+    "src/lattice-builder.ts",
+    "src/lattice-parser.ts",
+    "src/lattice-node.ts"
+  ]
+}

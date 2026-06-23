@@ -217,6 +217,44 @@ const SCOPE_REGISTRY_FIXTURE_FILES: &[(&str, &str)] = &[
 const SCOPE_REGISTRY_FIXTURE_TSCONFIG: &str =
     include_str!("fixtures/parallel_agreement_scope_registry/tsconfig.json");
 
+/// Sixth witness family (#13255 DefId registration-key stabilization): a
+/// declaring module exports cross-file *type-alias unions* and an interface
+/// keyed on them; sibling modules import those same aliases (`import type`) and
+/// use them in `keyof` / indexed-access positions. Each importer's per-file
+/// checker stabilizes the imported alias `SymbolId` into a `DefId`; before the
+/// stable-key swap the registration `file_idx` came from the dynamic, overlay-
+/// first resolver, so two parallel arenas could mint the alias's `DefId` under
+/// `(symbol_id, declaring_file)` vs `(symbol_id, importing_file)` and split the
+/// type identity program-wide. Keying the mint on the order-independent
+/// declaring-file index makes every arena converge on one `DefId`.
+///
+/// Distilled from the kysely cross-file alias-union witness with binders
+/// renamed (anti-hardcoding): kysely's `SetOperator` / `SelectionNodeChild` /
+/// `AccessMode` map to `Junction` / `FacetChild` / `Clearance` here. The
+/// program type-checks clean (matches `tsc`), so the assertion is that the
+/// genuine `par_iter` schedule stays byte-identical to the sequential run.
+const XFILE_ALIAS_FIXTURE_FILES: &[(&str, &str)] = &[
+    (
+        "src/index.ts",
+        include_str!("fixtures/parallel_agreement_xfile_alias/index.ts"),
+    ),
+    (
+        "src/lattice-builder.ts",
+        include_str!("fixtures/parallel_agreement_xfile_alias/lattice-builder.ts"),
+    ),
+    (
+        "src/lattice-parser.ts",
+        include_str!("fixtures/parallel_agreement_xfile_alias/lattice-parser.ts"),
+    ),
+    (
+        "src/lattice-node.ts",
+        include_str!("fixtures/parallel_agreement_xfile_alias/lattice-node.ts"),
+    ),
+];
+
+const XFILE_ALIAS_FIXTURE_TSCONFIG: &str =
+    include_str!("fixtures/parallel_agreement_xfile_alias/tsconfig.json");
+
 /// Run the project, clearing both force-parallel experiment flags first and
 /// then setting exactly `envs` (so a leaked env from the caller's process can
 /// never perturb which checking path is taken).
@@ -361,6 +399,21 @@ fn forced_parallel_scope_registry_alias_republication_matches_sequential() {
         SCOPE_REGISTRY_FIXTURE_FILES,
         SCOPE_REGISTRY_FIXTURE_TSCONFIG,
         7,
+    );
+}
+
+/// Cross-file imported type-alias-union `DefId`s must be schedule-independent:
+/// the genuine `par_iter` fresh-checker pool must mint one converged `DefId`
+/// per alias regardless of which arena (declaring vs importing) reaches it
+/// first. Pre-fix the registration `file_idx` was overlay-first and could
+/// differ across arenas, splitting the alias's type identity.
+#[test]
+fn genuine_parallel_xfile_alias_defid_matches_sequential() {
+    assert_tiny_parallel_matches_sequential(
+        "xfile_alias",
+        XFILE_ALIAS_FIXTURE_FILES,
+        XFILE_ALIAS_FIXTURE_TSCONFIG,
+        8,
     );
 }
 
