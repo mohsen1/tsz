@@ -229,6 +229,16 @@ struct LimitBudgets {
     /// Live cross-operation solver recursion frames (see
     /// [`MAX_SOLVER_STACK_FRAMES`] and `recursion::SolverStackFrame`).
     solver_stack_frames: Cell<u32>,
+    /// Monotonic count of solver-frame-budget curtailments on this thread.
+    /// Bumped each time [`solver_stack_frame_try_enter`] denies a frame because
+    /// [`MAX_SOLVER_STACK_FRAMES`] is already active. A *nested* `evaluate_*`
+    /// curtailed this way returns an under-evaluated form WITHOUT setting the
+    /// outer instantiator's `depth_exceeded` (the instantiator's own frame is
+    /// already on the stack), so the project-wide instantiation cache snapshots
+    /// this counter before/after a walk and refuses to store a result whose
+    /// computation saw a curtailment — the instantiation-layer analog of
+    /// `closed_eval`'s per-node `tainted` limit exclusion.
+    solver_frame_bail_count: Cell<u32>,
 }
 
 impl LimitBudgets {
@@ -242,6 +252,7 @@ impl LimitBudgets {
             global_eval_depth: Cell::new(0),
             evaluation_fuel: Cell::new(0),
             solver_stack_frames: Cell::new(0),
+            solver_frame_bail_count: Cell::new(0),
         }
     }
 
@@ -261,6 +272,7 @@ impl LimitBudgets {
         self.global_eval_depth.set(0);
         self.evaluation_fuel.set(0);
         self.solver_stack_frames.set(0);
+        self.solver_frame_bail_count.set(0);
     }
 }
 
@@ -558,12 +570,28 @@ pub(crate) fn solver_stack_frame_try_enter() -> bool {
     LIMIT_BUDGETS.with(|b| {
         let depth = b.solver_stack_frames.get();
         if depth >= MAX_SOLVER_STACK_FRAMES {
+            // Curtailment: the caller bails with a relation-preserving default
+            // and a nested-eval bail this way is invisible to an outer
+            // instantiator's own limit flags. Bump the monotonic counter so the
+            // instantiation cache can detect a curtailed walk (see
+            // `solver_frame_bail_count`).
+            b.solver_frame_bail_count
+                .set(b.solver_frame_bail_count.get().saturating_add(1));
             false
         } else {
             b.solver_stack_frames.set(depth + 1);
             true
         }
     })
+}
+
+/// Monotonic count of solver-frame-budget curtailments on this thread (see
+/// [`LimitBudgets::solver_frame_bail_count`]). The project-wide instantiation
+/// cache snapshots this before/after a walk and refuses to store a result whose
+/// computation saw a curtailment.
+#[inline]
+pub(crate) fn solver_frame_bail_count() -> u32 {
+    LIMIT_BUDGETS.with(|b| b.solver_frame_bail_count.get())
 }
 
 /// Release one cross-operation solver recursion frame.

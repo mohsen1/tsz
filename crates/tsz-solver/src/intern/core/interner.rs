@@ -297,6 +297,20 @@ pub struct TypeInterner {
     /// collapses the repeated O(N-member) prune walks to O(1), exactly like the
     /// sibling `contains_type_by_id_cache` / `widen_type_cache` pure-function memos.
     pub(super) prune_union_members_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Project-wide (#14345) instantiation result cache.
+    ///
+    /// Keyed by the same `InstantiationCacheKey` the per-file `QueryCache`
+    /// uses. Instantiation is pure structural substitution (resolver-less:
+    /// `with_query_db` forces `query_db=None` inside the instantiator, `Lazy`
+    /// is an instantiation leaf, conditional/mapped bodies are not evaluated),
+    /// so a result is a pure function of `(body, subst, options, this_type)`
+    /// and the immutable interner — query_db-INDEPENDENT (`r1==r2` proven by
+    /// `instantiate_generic_cached_no_query_db_disables_cache`). Lifting it to
+    /// the interner lets the 99.98% `query_db=None` callers reuse it. Only
+    /// non-`depth_exceeded` results are stored (the depth/frame budget is the
+    /// one context-dependence).
+    pub(super) proto_instantiation_cache:
+        DashMap<crate::caches::instantiation_cache::InstantiationCacheKey, TypeId, FxBuildHasher>,
     /// Result memo for `collect_contravariant_infer_names`, keyed by the pattern
     /// `TypeId`.
     ///
@@ -609,6 +623,7 @@ impl TypeInterner {
             extract_type_params_cache: DashMap::with_hasher(FxBuildHasher),
             contains_type_by_id_cache: DashMap::with_hasher(FxBuildHasher),
             prune_union_members_cache: DashMap::with_hasher(FxBuildHasher),
+            proto_instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
@@ -728,6 +743,22 @@ impl TypeInterner {
     #[inline]
     pub(crate) fn set_tuple_too_large(&self) {
         self.tuple_too_large.store(true, Ordering::Relaxed);
+    }
+
+    /// Peek the sticky `tuple_too_large` flag without clearing it (mirrors
+    /// [`Self::is_union_too_complex`]). Used by the project-wide instantiation
+    /// cache's limit gate to refuse caching a tuple-length-limited result.
+    #[inline]
+    pub fn is_tuple_too_large(&self) -> bool {
+        self.tuple_too_large.load(Ordering::Relaxed)
+    }
+
+    /// Peek the interner-poison flag (type-count budget exceeded; new
+    /// non-intrinsic interning degrades to `TypeId::ERROR`). A result produced
+    /// under a poisoned interner is degraded and must not be cached.
+    #[inline]
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::Relaxed)
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
@@ -908,6 +939,25 @@ impl TypeInterner {
     #[inline]
     pub fn set_prune_union_members_memo(&self, type_id: TypeId, result: TypeId) {
         self.prune_union_members_cache.insert(type_id, result);
+    }
+
+    /// Look up a project-wide (#14345) instantiation result.
+    #[inline]
+    pub fn proto_instantiation_memo(
+        &self,
+        key: &crate::caches::instantiation_cache::InstantiationCacheKey,
+    ) -> Option<TypeId> {
+        self.proto_instantiation_cache.get(key).map(|v| *v)
+    }
+
+    /// Record a project-wide (#14345) instantiation result.
+    #[inline]
+    pub fn set_proto_instantiation_memo(
+        &self,
+        key: crate::caches::instantiation_cache::InstantiationCacheKey,
+        result: TypeId,
+    ) {
+        self.proto_instantiation_cache.insert(key, result);
     }
 
     /// Look up the memoized `collect_contravariant_infer_names` name list for a
