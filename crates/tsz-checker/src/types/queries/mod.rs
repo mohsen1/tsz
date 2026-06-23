@@ -21,6 +21,8 @@ pub(crate) mod lib;
 pub(crate) mod lib_aliases;
 pub(crate) mod lib_augmentations;
 pub(crate) mod lib_decls;
+#[cfg(test)]
+mod lib_heritage_recursion_depth_tests;
 pub(crate) mod lib_misc;
 mod lib_name_text;
 pub(crate) mod lib_namespace_direct;
