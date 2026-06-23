@@ -26,12 +26,12 @@ issue #13750.
   auto-update-disabled fleet can hard-fail registration en masse with no in-repo
   remediation. Bumping the `FROM` tag here and rebuilding/redeploying is the
   remediation.
-- **TODO (version-floor alert):** extend the existing `runner-health` job in
-  `.github/workflows/ci-health.yml` to compare the deployed runner version
-  against GitHub's current required minimum and warn *before* the fleet
-  hard-fails. Not implemented here to keep this change scoped to the
-  build/deploy pipeline and avoid editing the health workflow. Tracked under
-  issue #13750.
+- **Version-floor alert (implemented):** the `runner-health` job in
+  `.github/workflows/ci-health.yml` reads this pin (auto-update is disabled, so
+  the pin equals the deployed version), compares it against the latest
+  `actions/runner` release, and warns *before* the fleet hard-fails — a loud
+  annotation once the pin trails by `RUNNER_VERSION_FLOOR_GAP` minor releases
+  (default `10`), an informational summary line for a smaller lag.
 
 ## Build / deploy pipeline
 
@@ -93,12 +93,25 @@ the source of truth, reconcile it with the live service
 cost decision (per-job queue-wait data, #13715), since `minScale>0` defeats
 scale-to-zero.
 
-## Related follow-ups (issue #13750)
+## Health automation (issue #13750)
 
-- **Wire `scripts/ci/cleanup-stale-runners.sh` into the ci-health cron.** It
-  safely removes only `offline` runner registrations but is currently
-  detection-only (`ci-health.yml` merely prints a suggestion to run it), so
-  stale ephemeral registrations accumulate until a human runs it by hand.
-- **Add the runner-version-floor check** described above to `runner-health`.
-- **Make the low-runner-count health response actionable** rather than
-  observe-only.
+The `runner-health` job in `.github/workflows/ci-health.yml` (cron every 15
+minutes) now closes the in-repo follow-ups that previously lived here:
+
+- **Stale-offline purge.** It runs `scripts/ci/cleanup-stale-runners.sh`
+  automatically when offline registrations are present, instead of only
+  printing a suggestion to run it by hand. The script deletes **only** `offline`
+  runners, so it cannot disrupt in-flight jobs. Deleting registrations needs
+  repo administration, which the default `GITHUB_TOKEN` cannot grant, so the
+  step prefers `TSZ_PR_AUTOMATION_TOKEN` and degrades to a warning if no token
+  has the scope.
+- **Runner-version-floor check.** See the section above.
+- **Actionable low-runner-count signal.** Saturation and low-count conditions
+  now emit `::warning::` annotations (surfaced in the Actions UI / notifications)
+  in addition to the step-summary lines.
+
+## Remaining infra follow-ups (issue #13750, need GCP access)
+
+- A dedicated build pool so a bench burst cannot throttle the required
+  merge-queue submit (see #13751), and baking the runner image's apt/Node/pnpm
+  bootstrap into a prebuilt image to remove the per-shard network SPOF.
