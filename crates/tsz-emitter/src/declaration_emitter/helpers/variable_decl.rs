@@ -625,6 +625,10 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = widened_type_text;
                 }
+                // DTS text boundary (#14142): `type_text` here has already been
+                // through several declaration-text rewrites above (widening, etc.)
+                // with no single in-scope `TypeId`; a `string` rendering is the
+                // trigger for the template-index-signature refinement.
                 if keyword == "const"
                     && type_text == "string"
                     && let Some(template_index_type) =
@@ -729,6 +733,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                // DTS text boundary (#14142): `preferred_expression_type_text`
+                // returns rendered declaration text (no in-scope `TypeId`); an
+                // `any` rendering means there is no preferred annotation to emit.
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
                 && type_text != "any"
             {
@@ -1901,6 +1908,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.js_extends_entity_reference_declared_type_text(expr_idx)
                     .map(|type_text| self.jsdoc_type_text_for_declaration_emit(&type_text))
             });
+        // DTS text boundary (#14142): although `type_id` exists above, a `never`
+        // rendering is not equivalent to `type_id == NEVER` — an alias to `never`
+        // or a collapsed union also prints `never`, and the choice here is between
+        // two already-rendered declaration strings (`type_text` vs the source
+        // heritage text), so the comparison stays on the rendered text.
         let prefer_source_text = type_text == "never"
             || source_type_text.as_ref().is_some_and(|source_type_text| {
                 Self::should_prefer_synthetic_extends_source_type_text(source_type_text, &type_text)
