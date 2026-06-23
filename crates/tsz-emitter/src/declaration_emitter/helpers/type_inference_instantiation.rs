@@ -467,6 +467,11 @@ impl<'a> DeclarationEmitter<'a> {
         (include_right_parts, widen_right_parts)
     }
 
+    // DTS text boundary (#14142): the `short_circuit_*` helpers below classify the
+    // already-rendered constituent type-text of a `&&`/`||` short-circuit union.
+    // They operate on declaration text split into parts (`ShortCircuitTypePart`)
+    // with no in-scope `TypeId`, so the intrinsic-spelling comparisons (`"true"`,
+    // `"string"`, `"number"`, `"bigint"`) are the correct boundary here.
     fn short_circuit_or_literal_needs_right(
         type_text: &str,
         right_parts: &[ShortCircuitTypePart],

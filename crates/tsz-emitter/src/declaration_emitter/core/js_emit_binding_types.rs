@@ -878,6 +878,9 @@ impl<'a> DeclarationEmitter<'a> {
             .and_then(|expr_idx| {
                 self.js_constructor_assignment_expression_type_text(expr_idx, params, 0)
             })
+            // DTS text boundary (#14142): this JS-to-DTS return inference works on
+            // rendered declaration text (no in-scope `TypeId`); an empty or `any`
+            // rendering means "no usable annotation", so the caller falls back.
             .filter(|type_text| !type_text.is_empty() && type_text != "any")
     }
 
