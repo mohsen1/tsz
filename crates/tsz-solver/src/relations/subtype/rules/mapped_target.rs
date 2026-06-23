@@ -471,7 +471,7 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
 
     fn homomorphic_mapped_constraint_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
         if let Some(source) = keyof_inner_type(self.interner, mapped.constraint) {
-            return Some(source);
+            return Some(self.peel_homomorphic_identity_mapped_source(source));
         }
 
         let (template_obj, template_idx) = index_access_parts(self.interner, mapped.template)?;
@@ -484,10 +484,80 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         if self.mapped_key_constraint_covers(mapped.constraint, full_key_set)
             && self.mapped_key_constraint_covers(full_key_set, mapped.constraint)
         {
-            Some(template_obj)
+            Some(self.peel_homomorphic_identity_mapped_source(template_obj))
         } else {
             None
         }
+    }
+
+    /// Collapse a homomorphic *identity* mapped type to the source object it
+    /// preserves, recursively.
+    ///
+    /// A homomorphic identity mapped type `{ [P in keyof S]: S[P] }` (no name
+    /// remap, no `readonly`/`?` modifier change) is interchangeable with `S` as
+    /// the picked-from object of an enclosing homomorphic mapped type, because
+    /// `tsc` reduces `keyof { [P in keyof S]: S[P] }` to `keyof S` and
+    /// `{ [P in keyof S]: S[P] }[K]` to `S[K]`. Nested `Prettify<Prettify<T>>` /
+    /// `Id<Id<T>>` wrappers therefore collapse to the single-level case, so a
+    /// source type parameter `T` relates to `Id<Id<T>>` exactly as it does to
+    /// `Id<T>`. The peel is bounded against pathological self-referential
+    /// nesting and only follows pure identity mapped types, so it never widens
+    /// the accepted key/value domain (it preserves `tsc` semantics rather than
+    /// relaxing them).
+    pub(crate) fn peel_homomorphic_identity_mapped_source(&mut self, source: TypeId) -> TypeId {
+        let mut current = source;
+        for _ in 0..8 {
+            // Fast path: a bare type parameter (the common source, and the peel's
+            // own terminal) can never be a mapped type, so skip the evaluation.
+            if matches!(
+                self.interner.lookup(current),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                break;
+            }
+            // Normalize an alias application (`Id<X>`) to its mapped body so the
+            // identity shape is observable regardless of the deferred-vs-evaluated
+            // representation a nested instantiation happened to mint.
+            let normalized = self.evaluate_type(current);
+            let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(normalized) else {
+                break;
+            };
+            let mapped = self.interner.get_mapped(mapped_id);
+            if mapped.name_type.is_some()
+                || mapped.optional_modifier.is_some()
+                || mapped.readonly_modifier.is_some()
+            {
+                break;
+            }
+            let Some(inner_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+                break;
+            };
+            let Some((template_obj, template_idx)) =
+                index_access_parts(self.interner, mapped.template)
+            else {
+                break;
+            };
+            let Some(idx_param) = type_param_info(self.interner, template_idx) else {
+                break;
+            };
+            if idx_param.name != mapped.type_param.name {
+                break;
+            }
+            // The template's indexed object must be the *same type* as the
+            // constraint's `keyof` source for this to be a genuine identity mapped
+            // `{ [P in keyof S]: S[P] }` (rather than `{ [P in keyof A]: B[P] }`,
+            // which is not identity-preserving). Structural identity — not handle
+            // equality — so a nested instantiation that minted `S` as two
+            // distinct-but-equal representations still matches.
+            if template_obj != inner_source
+                && !(self.check_subtype(template_obj, inner_source).is_true()
+                    && self.check_subtype(inner_source, template_obj).is_true())
+            {
+                break;
+            }
+            current = inner_source;
+        }
+        current
     }
 
     /// Distribute a homomorphic mapped type over an intersection argument.

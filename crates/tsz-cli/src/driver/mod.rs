@@ -28,3 +28,7 @@ mod declare_global_interface_keyof_merge_tests;
 #[cfg(test)]
 #[path = "cross_file_type_only_namespace_unique_symbol_tests.rs"]
 mod cross_file_type_only_namespace_unique_symbol_tests;
+
+#[cfg(test)]
+#[path = "nested_homomorphic_mapped_identity_tests.rs"]
+mod nested_homomorphic_mapped_identity_tests;
