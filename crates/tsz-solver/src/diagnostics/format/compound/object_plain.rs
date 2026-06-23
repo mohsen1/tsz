@@ -3,6 +3,7 @@
 use super::super::TypeFormatter;
 use super::super::needs_property_name_quotes;
 use crate::types::{PropertyInfo, TypeData, TypeId};
+use tsz_binder::SymbolId;
 
 impl<'a> TypeFormatter<'a> {
     fn object_display_tail_index(&self, props: &[&PropertyInfo]) -> usize {
@@ -191,31 +192,57 @@ impl<'a> TypeFormatter<'a> {
         self.format_object_parts(formatted)
     }
 
+    /// A symbol-valued computed property key (`{ [sym]: T }`) is stored
+    /// internally under the synthetic binding-identity atom `__unique_<SymbolId>`
+    /// so that distinct unique symbols key distinct members. `tsc` never shows
+    /// that internal atom; it displays the key as `[<symbolName>]` (e.g.
+    /// `[sym]`). Recover that display form for symbol-named properties.
+    ///
+    /// Returns `None` (so the caller falls back to normal name rendering) when:
+    /// - the property is not symbol-named (a user-authored string property that
+    ///   merely *looks* like `"__unique_3"` must stay a string key), or
+    /// - the key is a well-known symbol already stored in bracketed form
+    ///   (`[Symbol.iterator]`), which the `__unique_` prefix check skips, or
+    /// - the backing symbol cannot be resolved.
+    fn symbol_keyed_property_display_name(&self, prop: &PropertyInfo) -> Option<String> {
+        if !prop.is_symbol_named {
+            return None;
+        }
+        let raw = self.interner.resolve_atom_ref(prop.name);
+        let id: u32 = raw.as_ref().strip_prefix("__unique_")?.parse().ok()?;
+        let symbol = self.symbol_arena?.get(SymbolId(id))?;
+        Some(format!("[{}]", symbol.escaped_name))
+    }
+
     pub(super) fn format_property(&mut self, prop: &PropertyInfo) -> String {
         let optional = if prop.optional { "?" } else { "" };
         let readonly = if prop.readonly { "readonly " } else { "" };
-        let raw_name = self.atom(prop.name);
-        let name = if needs_property_name_quotes(&raw_name) {
-            // tsc uses double quotes for JSX-specific property names
-            // (namespace-prefixed like "ns:attr" and data attributes like "data-foo"),
-            // for names starting with a digit, and for names containing any
-            // character outside [a-zA-Z0-9_-] (e.g. "*"). Single quotes are used
-            // for all other quoted property names (e.g. 'stage-0', '').
-            let use_double = raw_name.contains(':')
-                || raw_name.starts_with("data-")
-                || raw_name.chars().next().is_some_and(|c| c.is_ascii_digit())
-                || raw_name
-                    .chars()
-                    .any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'));
-            if use_double {
-                let escaped = raw_name.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("\"{escaped}\"")
-            } else {
-                let escaped = raw_name.replace('\\', "\\\\").replace('\'', "\\'");
-                format!("'{escaped}'")
-            }
+        let name = if let Some(symbol_name) = self.symbol_keyed_property_display_name(prop) {
+            symbol_name
         } else {
-            raw_name.to_string()
+            let raw_name = self.atom(prop.name);
+            if needs_property_name_quotes(&raw_name) {
+                // tsc uses double quotes for JSX-specific property names
+                // (namespace-prefixed like "ns:attr" and data attributes like "data-foo"),
+                // for names starting with a digit, and for names containing any
+                // character outside [a-zA-Z0-9_-] (e.g. "*"). Single quotes are used
+                // for all other quoted property names (e.g. 'stage-0', '').
+                let use_double = raw_name.contains(':')
+                    || raw_name.starts_with("data-")
+                    || raw_name.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    || raw_name
+                        .chars()
+                        .any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+                if use_double {
+                    let escaped = raw_name.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{escaped}\"")
+                } else {
+                    let escaped = raw_name.replace('\\', "\\\\").replace('\'', "\\'");
+                    format!("'{escaped}'")
+                }
+            } else {
+                raw_name.to_string()
+            }
         };
 
         // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`

@@ -184,6 +184,117 @@ const bad: typeof other = tag;
 }
 
 #[test]
+fn object_member_display_renders_unique_symbol_key_as_bracketed_name() {
+    // TS2339 against an object whose only member is a unique-symbol-keyed
+    // property must render the type as `{ [sym]: number; }`, never leaking the
+    // internal `__unique_<n>` binding atom.
+    let diags = check_source_diagnostics(
+        r#"
+declare const sym: unique symbol;
+const obj = { [sym]: 1 };
+const bad = obj.nope;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "expected one TS2339; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    let msg = &ts2339[0].message_text;
+    assert!(
+        !msg.contains("__unique_"),
+        "object-member display must not leak the synthetic atom; got: {msg}"
+    );
+    assert!(
+        msg.contains("[sym]"),
+        "object-member display must render the unique-symbol key as `[sym]`; got: {msg}"
+    );
+}
+
+#[test]
+fn missing_property_display_renders_unique_symbol_key_as_bracketed_name() {
+    // TS2741 (single missing) must name the missing unique-symbol key `[sym]`.
+    let diags = check_source_diagnostics(
+        r#"
+declare const sym: unique symbol;
+interface Target { [sym]: number; a: number; }
+const t: Target = { a: 1 };
+"#,
+    );
+    let missing: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2741 || d.code == 2739)
+        .collect();
+    assert!(
+        !missing.is_empty(),
+        "expected a missing-property diagnostic; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    for d in &missing {
+        assert!(
+            !d.message_text.contains("__unique_"),
+            "missing-property display must not leak the synthetic atom; got: {}",
+            d.message_text
+        );
+        assert!(
+            d.message_text.contains("[sym]"),
+            "missing-property display must render `[sym]`; got: {}",
+            d.message_text
+        );
+    }
+}
+
+#[test]
+fn renamed_unique_symbol_key_uses_its_own_binder_name_in_display() {
+    // Structural, not name-keyed: the bracketed display name tracks the binder
+    // name of the symbol, not a fixed `sym`.
+    let diags = check_source_diagnostics(
+        r#"
+declare const brandKey: unique symbol;
+const obj = { [brandKey]: 1 };
+const bad = obj.nope;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 1);
+    assert!(
+        ts2339[0].message_text.contains("[brandKey]")
+            && !ts2339[0].message_text.contains("__unique_"),
+        "expected `[brandKey]`; got: {}",
+        ts2339[0].message_text
+    );
+}
+
+#[test]
+fn user_string_property_named_like_unique_atom_stays_a_string_key_in_display() {
+    // Control: a user-authored string property whose text matches the internal
+    // `__unique_<n>` shape is NOT symbol-named and must keep its string spelling
+    // (here, a valid-identifier string is shown unquoted, matching tsc), never
+    // being rewritten to a bracketed `[..]` computed key.
+    let diags = check_source_diagnostics(
+        r#"
+const obj: { "__unique_5": string } = { "__unique_5": "x" };
+const bad = obj.nope;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 1);
+    let msg = &ts2339[0].message_text;
+    assert!(
+        msg.contains("__unique_5") && !msg.contains("[__unique_5]"),
+        "user string key must stay a string key, not a bracketed computed key; got: {msg}"
+    );
+}
+
+#[test]
 fn keyof_keeps_computed_unique_like_string_property_as_string_key() {
     let source = r#"
 const k = "__unique_1" as const;

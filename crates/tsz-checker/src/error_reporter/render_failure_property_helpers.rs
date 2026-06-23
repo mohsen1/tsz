@@ -18,7 +18,43 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.enum_mapped_property_name_for_display(property_name, target) {
             return display;
         }
+        if let Some(display) = self.symbol_keyed_property_name_for_display(property_name, target) {
+            return display;
+        }
         self.ctx.types.resolve_atom_ref(property_name).to_string()
+    }
+
+    /// Render a symbol-valued computed property key (`[sym]`) for missing-property
+    /// diagnostics. Unique-symbol keys are stored internally under the synthetic
+    /// `__unique_<SymbolId>` binding-identity atom; `tsc` displays them as
+    /// `[<symbolName>]`, never the internal atom.
+    ///
+    /// `owner` is the type that requires the property. It is consulted so a
+    /// user-authored string property that merely *looks* like `"__unique_3"`
+    /// (and is therefore not symbol-named) keeps its string spelling, matching
+    /// `tsc`. Returns `None` when the key is not a resolvable symbol key.
+    pub(super) fn symbol_keyed_property_name_for_display(
+        &mut self,
+        property_name: tsz_common::interner::Atom,
+        owner: TypeId,
+    ) -> Option<String> {
+        let key = self.ctx.types.resolve_atom_ref(property_name).to_string();
+        let id: u32 = key.strip_prefix("__unique_")?.parse().ok()?;
+        let prop =
+            crate::query_boundaries::common::find_property_by_str(self.ctx.types, owner, &key)
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(owner);
+                    crate::query_boundaries::common::find_property_by_str(
+                        self.ctx.types,
+                        evaluated,
+                        &key,
+                    )
+                })?;
+        if !prop.is_symbol_named {
+            return None;
+        }
+        let symbol = self.ctx.binder.get_symbol(tsz_binder::SymbolId(id))?;
+        Some(format!("[{}]", symbol.escaped_name))
     }
 
     /// Render a property key for the multi-property TS2739/TS2740 list
@@ -31,7 +67,11 @@ impl<'a> CheckerState<'a> {
     pub(super) fn missing_property_list_name_for_display(
         &mut self,
         property_name: tsz_common::interner::Atom,
+        owner: TypeId,
     ) -> String {
+        if let Some(display) = self.symbol_keyed_property_name_for_display(property_name, owner) {
+            return display;
+        }
         self.ctx.types.resolve_atom_ref(property_name).to_string()
     }
 
@@ -42,13 +82,14 @@ impl<'a> CheckerState<'a> {
     pub(super) fn truncated_missing_property_list(
         &mut self,
         ordered: &[tsz_common::interner::Atom],
+        owner: TypeId,
     ) -> (String, Option<usize>) {
         let is_truncated = ordered.len() > 5;
         let display_count = if is_truncated { 4 } else { 5 };
         let joined = ordered
             .iter()
             .take(display_count)
-            .map(|name| self.missing_property_list_name_for_display(*name))
+            .map(|name| self.missing_property_list_name_for_display(*name, owner))
             .collect::<Vec<_>>()
             .join(", ");
         let more = is_truncated.then(|| ordered.len() - display_count);
