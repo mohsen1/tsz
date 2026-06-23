@@ -152,8 +152,13 @@ function durationLabelFitsBar(label, widthPx) {
   return width >= approximateTextWidth + horizontalPadding;
 }
 
+// A real bar never renders below this width, so a large row in the same chart
+// cannot crush a smaller (but genuine) row to an invisible sub-pixel sliver.
+// A zero value (no timing) stays zero -- no bar is drawn.
+const MIN_VISIBLE_BAR_PX = 3;
 function renderBenchmarkBar(kind, widthPx, label) {
-  const width = Number.isFinite(Number(widthPx)) ? Math.max(0, Number(widthPx)) : 0;
+  const raw = Number.isFinite(Number(widthPx)) ? Math.max(0, Number(widthPx)) : 0;
+  const width = raw > 0 ? Math.max(MIN_VISIBLE_BAR_PX, raw) : 0;
   const placementClass = durationLabelFitsBar(label, width) ? "" : " value-outside";
   return `<div class="bench-bar ${kind}${placementClass}" style="width: ${width.toFixed(2)}px">
           <span class="bench-bar-value">${label}</span>
@@ -1626,12 +1631,15 @@ function generateCharts(data, mode = "projects") {
       return categoryTitle(a).localeCompare(categoryTitle(b));
     });
   const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
+  // Scale bars only against rows that actually render bars. Failed/excluded rows
+  // (too slow, incomplete) are listed as text below, so their timings must NOT
+  // inflate the bar scale -- otherwise one off-chart slow row (e.g. a 7s outlier)
+  // shrinks every on-chart bar to an unreadable sliver.
   const chartMaxMs = Math.max(
     1,
     ...visibleCategories
       .flatMap((category) => entriesForCategory(category))
       .flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
-    ...visibleFailedResults.flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
   );
 
   let html = "";
@@ -1752,7 +1760,19 @@ export function getBenchmarkEnvironmentSummary() {
 export function getProjectCompatibilityDashboard() {
   const data = loadBenchmarks();
   const allResults = withExpectedProjectRows(data?.results);
-  const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults, data));
+  // Only show rows we actually measured. A "gray" / "Not measured" row (no
+  // compatibility artifact, oracle unavailable, or fixture not recorded) carries
+  // no signal, so it is excluded rather than rendered as "Not measured".
+  const rows = COMPATIBILITY_CORPUS_ROWS
+    .map((definition) => compatibilityRowFor(definition, allResults, data))
+    .filter((row) => row.className !== "gray");
+
+  if (!rows.length) {
+    return `<section class="compat-dashboard">
+  <h2>Project compatibility</h2>
+  <p class="compat-dashboard-intro">No measured project compatibility rows are available in this build yet.</p>
+</section>`;
+  }
 
   const numericSortValue = (value) => {
     const number = finiteNumber(value);
