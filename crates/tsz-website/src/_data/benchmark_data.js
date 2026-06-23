@@ -902,7 +902,11 @@ function loadBenchmarks() {
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...benchmarkArtifactFiles(),
     snapshotPath,
-  ], { minimumProjectTimingPairs: 1, requireApplicationCompat: true });
+  ], {
+    minimumProjectTimingPairs: 1,
+    requireApplicationCompat: true,
+    requireGreenProjectTimingPairs: true,
+  });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }

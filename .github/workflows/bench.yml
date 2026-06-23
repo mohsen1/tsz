@@ -1684,6 +1684,7 @@ jobs:
           node scripts/bench/check-artifact-readiness.mjs \
             --json \
             --require-application-compat \
+            --require-green-project-timing-pairs \
             --require-project-timing-pairs=1 \
             "$GITHUB_WORKSPACE/bench-results.json" \
             > "$GITHUB_WORKSPACE/bench-results-readiness.json"
