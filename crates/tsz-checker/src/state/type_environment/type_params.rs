@@ -662,6 +662,15 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Symbol-path fallback: deliberately keeps the dynamic-overlay-first
+            // resolver. For a re-exported alias the followed-chain owner lives
+            // only in the dynamic overlay; preferring the declaring index reads
+            // the type-params from the wrong arena and produces spurious member
+            // mismatches through re-exported alias intersections (regression
+            // witnessed by `cross_file_recursive_alias_intersection_tests`). The
+            // arena-path above (`declaration_arenas`) is already order-
+            // independent; the #13255 stabilization is applied at the delegation
+            // cache-KEY sites (`delegate_cross_arena_*`), not here.
             if !checked_local && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 if !std::ptr::eq(arena, self.ctx.arena) {
