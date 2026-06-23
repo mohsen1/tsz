@@ -53,6 +53,9 @@ fn build_instantiated_homomorphic_mapped(
 
 #[test]
 fn mapped_property_template_uses_preserving_instantiation_cache() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 
@@ -113,6 +116,9 @@ fn mapped_property_template_uses_preserving_instantiation_cache() {
 
 #[test]
 fn remapped_key_type_uses_preserving_instantiation_cache() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 
@@ -165,6 +171,9 @@ fn remapped_key_type_uses_preserving_instantiation_cache() {
 
 #[test]
 fn mapped_index_template_uses_instantiation_cache_per_concrete_key() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = crate::instantiation::instantiate::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
 

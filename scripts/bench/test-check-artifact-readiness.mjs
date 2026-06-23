@@ -501,6 +501,57 @@ withTempDir((dir) => {
 console.log("✅ --require-application-compat accepts complete compile-only app rows");
 
 // ---------------------------------------------------------------------------
+// Test: --require-green-project-timing-pairs rejects green perf-timed rows that
+// only have compile compatibility. They would otherwise appear green in the
+// compatibility table while being absent from the vs-tsgo chart.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) =>
+    makeRow(name, "green", {
+      errorStatus: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+    }),
+  );
+  writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+  const result = run(file, [
+    "--json",
+    "--require-application-compat",
+    "--require-green-project-timing-pairs",
+  ]);
+  assert.equal(result.status, 1, "green compile-only perf-timed rows should fail the chart timing gate");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.require_green_project_timing_pairs, true);
+  assert.equal(parsed.green_project_timing_pair_gaps, APPLICATION_PROJECT_ROWS.length);
+  assert.match(result.stderr, /green perf-timed project row\(s\) missing tsz\/tsgo timing pairs/);
+  assert.match(result.stderr, new RegExp(APPLICATION_PROJECT_ROWS[0]));
+});
+console.log("✅ --require-green-project-timing-pairs rejects green app rows without charts");
+
+// ---------------------------------------------------------------------------
+// Test: --require-green-project-timing-pairs accepts green perf-timed rows once
+// the benchmark artifact includes real tsz/tsgo timings for them.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const applicationRows = APPLICATION_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+  const result = run(file, [
+    "--json",
+    "--require-application-compat",
+    "--require-green-project-timing-pairs",
+  ]);
+  assert.equal(result.status, 0, `green timed application rows should pass:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.green_project_timing_pair_gaps, 0);
+});
+console.log("✅ --require-green-project-timing-pairs accepts green timed app rows");
+
+// ---------------------------------------------------------------------------
 // Test: complete gray application compatibility is still authoritative data.
 // Fixture-invalid/reference-failed app rows should not block publishing green
 // timed app rows; only missing or partial compatibility metadata should.

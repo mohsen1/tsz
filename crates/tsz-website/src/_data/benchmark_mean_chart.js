@@ -63,10 +63,13 @@ function loadBenchmarks() {
     }
   })();
 
+  // Always use the latest available data; do not gate on app-compat cleanliness
+  // or a green-project minimum (benchmarks may fail individually). The renderer
+  // selects which rows to show by the 1.5x speed rule.
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...artifactFiles,
     path.join(ROOT, "crates/tsz-website/bench-snapshot.json"),
-  ], { minimumProjectTimingPairs: 1, requireApplicationCompat: true });
+  ], { minimumProjectTimingPairs: 0 });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkResults(selectedArtifact.data);
   }

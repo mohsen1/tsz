@@ -1062,6 +1062,10 @@ impl<'a> DeclarationEmitter<'a> {
                         Self::expand_parameters_utility_tuple_type_text(&type_text)
                             .unwrap_or(type_text)
                     })
+                    // DTS text boundary (#14142): `reused_type_text` is already a
+                    // rendered declaration string with no in-scope `TypeId`; an
+                    // empty or `any` rendering means "no usable reuse", so the
+                    // fallbacks below are tried instead.
                     .filter(|type_text| !type_text.is_empty() && type_text != "any");
                 reused_type_text
                     .or_else(|| {
@@ -1104,6 +1108,12 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.get_node_type_or_names(&[expr_idx])
                         .map(|type_id| self.print_type_id(type_id))
+                        // DTS text boundary (#14142): filtering on the *rendered*
+                        // text (not `type_id != ANY`) is intentional — a node type
+                        // that is not the `any` singleton can still print as `any`
+                        // (alias-to-`any`, recovered/opaque types), and those must
+                        // fall through to the AST-derived text rather than emit a
+                        // bare `any`. Branching on the `TypeId` would miss them.
                         .filter(|type_text| type_text != "any")
                         .or(ast_type_text)
                 }

@@ -34,6 +34,9 @@ fn object_with(interner: &TypeInterner, type_id: TypeId) -> TypeId {
 
 #[test]
 fn instantiate_generic_boundary_uses_query_cache() {
+    // Per-file tier in isolation (#14345): disable the project-wide instantiation
+    // cache so the repeat hit lands on the per-file QueryCache statistics.
+    let _g = tsz_solver::computation::ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
     let param_name = interner.intern_string("T");

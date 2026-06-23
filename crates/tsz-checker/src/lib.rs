@@ -676,6 +676,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[path = "tests/assign_to_import_shadowing_local_tests.rs"]
 mod assign_to_import_shadowing_local_tests;
 #[cfg(test)]
+#[path = "tests/base_type_param_default_inheritance_tests.rs"]
+mod base_type_param_default_inheritance_tests;
+#[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
@@ -1342,6 +1345,9 @@ mod recursive_tuple_rest_cycle_tests;
 #[path = "tests/reexport_resolution_cache_tests.rs"]
 mod reexport_resolution_cache_tests;
 #[cfg(test)]
+#[path = "tests/reexported_generic_interface_property_tests.rs"]
+mod reexported_generic_interface_property_tests;
+#[cfg(test)]
 #[path = "tests/ref_type_params_cache_tests.rs"]
 mod ref_type_params_cache_tests;
 #[cfg(test)]
@@ -1524,6 +1530,9 @@ mod unique_symbol_assignment_ts2322_tests;
 #[cfg(test)]
 #[path = "tests/unique_symbol_member_lookup_family_tests.rs"]
 mod unique_symbol_member_lookup_family_tests;
+#[cfg(test)]
+#[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
+mod unresolved_def_eval_cache_backstop_tests;
 #[cfg(test)]
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;

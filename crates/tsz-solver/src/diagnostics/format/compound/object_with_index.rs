@@ -1,7 +1,7 @@
 //! Indexed object formatting helpers.
 
 use super::super::TypeFormatter;
-use crate::types::{IndexSignature, ObjectShape, PropertyInfo, TypeId};
+use crate::types::{IndexSignature, ObjectShape, PropertyInfo, TypeData, TypeId};
 
 impl<'a> TypeFormatter<'a> {
     pub(crate) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
@@ -9,14 +9,18 @@ impl<'a> TypeFormatter<'a> {
         let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
         // Render index signatures in `string`, `number`, then `symbol` order
-        // (tsc's display order for `Record<PropertyKey, V>`-shaped types).
-        for idx in [
-            shape.string_index_signature(),
-            shape.number_index.as_ref(),
-            shape.symbol_index_signature(),
-        ]
-        .into_iter()
-        .flatten()
+        // (tsc's display order for `Record<PropertyKey, V>`-shaped types). A
+        // union-keyed string index (`[k: A | B]: V`) is rendered as one clause per
+        // member — `[k: A]: V; [k: B]: V` — matching `getIndexInfosOfType`, which
+        // yields a separate index info per union constituent.
+        if let Some(idx) = shape.string_index_signature() {
+            for part in self.format_index_signature_parts(idx) {
+                parts.push(part);
+            }
+        }
+        for idx in [shape.number_index.as_ref(), shape.symbol_index_signature()]
+            .into_iter()
+            .flatten()
         {
             let part = self.format_index_signature_part(idx);
             parts.push(part);
@@ -96,15 +100,46 @@ impl<'a> TypeFormatter<'a> {
         (rank, prop.declaration_order)
     }
 
+    /// Render an index signature, splitting a union key into one clause per
+    /// member (`[k: A | B]: V` → `[k: A]: V`, `[k: B]: V`). `tsc` models a
+    /// union-keyed index as a separate index info per constituent, so the display
+    /// must too. A non-union key yields a single clause; intersection keys
+    /// (`A & B`) stay as one clause, matching `tsc`.
+    fn format_index_signature_parts(&mut self, idx: &IndexSignature) -> Vec<String> {
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(idx.key_type) {
+            let members = self.interner.type_list(list_id).to_vec();
+            if members.len() >= 2 {
+                // Render members in the same source-ordered sequence the union
+                // itself displays in, so the split clauses match tsc's order.
+                let ordered = self.order_union_members_by_source(members);
+                return ordered
+                    .into_iter()
+                    .map(|member| self.format_index_signature_part_with_key(idx, member))
+                    .collect();
+            }
+        }
+        vec![self.format_index_signature_part(idx)]
+    }
+
     /// Render one index signature as `[name: key]: value`, with an optional
     /// `readonly ` prefix. Shared by the string/number/symbol slots.
     fn format_index_signature_part(&mut self, idx: &IndexSignature) -> String {
+        self.format_index_signature_part_with_key(idx, idx.key_type)
+    }
+
+    /// Like [`Self::format_index_signature_part`], but renders the clause with an
+    /// explicit `key_type` (used when splitting a union-keyed index per member).
+    fn format_index_signature_part_with_key(
+        &mut self,
+        idx: &IndexSignature,
+        key_type: TypeId,
+    ) -> String {
         let key_name = idx
             .param_name
             .map(|a| self.atom(a).to_string())
             .unwrap_or_else(|| "x".to_owned());
         let ro = if idx.readonly { "readonly " } else { "" };
-        let key_type_str = self.format(idx.key_type);
+        let key_type_str = self.format(key_type);
         let value_str = self.format_index_signature_value(idx.value_type);
         format!("{ro}[{key_name}: {key_type_str}]: {value_str}")
     }

@@ -290,6 +290,9 @@ impl<'a> DeclarationEmitter<'a> {
         let expr_node = self.arena.get(expr_idx)?;
         let assertion = self.arena.get_type_assertion(expr_node)?;
         let type_node = self.arena.get(assertion.type_node)?;
+        // Source-syntax check, not a rendered-type predicate (#14142): `type_text`
+        // is the verbatim source slice of the assertion's type node, so this
+        // recognizes the `as const` assertion spelling itself, not a computed type.
         let type_text = self.get_source_slice(type_node.pos, type_node.end)?;
         if type_text != "const" {
             return None;

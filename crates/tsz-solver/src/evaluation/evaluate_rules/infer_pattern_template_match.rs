@@ -470,6 +470,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Wildcards and other intrinsics fall through to generic handling.
                 _ => None,
             },
+            // A template span that is an intrinsic string mapping wrapping an
+            // `infer` (e.g. `${Uppercase<infer P>}`). tsc matches such a span
+            // only when the captured segment is a fixpoint of the mapping (an
+            // already-uppercase run for `Uppercase`, etc.) and infers the
+            // variable as `string` — the intrinsic's domain — not the literal
+            // segment (`"ABC" extends \`${Uppercase<infer P>}\` ? P : never` is
+            // `string`, and a non-uppercase source takes the false branch).
+            // Without this the span is unhandled and the conditional wrongly
+            // collapses to its false branch.
+            TypeData::StringIntrinsic { kind, type_arg } => {
+                let Some(TypeData::Infer(info)) = self.interner().lookup(type_arg) else {
+                    return None;
+                };
+                for end in self.cached_candidate_template_capture_ends(
+                    source,
+                    cursor.pos,
+                    pattern,
+                    cursor.index,
+                    scratch,
+                ) {
+                    let segment = &source[cursor.pos..end];
+                    // The segment must be unchanged by the mapping; otherwise
+                    // no `string` argument could have produced it.
+                    if self.apply_string_transform(kind, segment) != segment {
+                        continue;
+                    }
+                    let mut next_bindings = bindings.clone();
+                    if !self.bind_infer(&info, TypeId::STRING, &mut next_bindings, checker) {
+                        continue;
+                    }
+                    if self.match_template_literal_string_from(
+                        source,
+                        pattern,
+                        end,
+                        cursor.index + 1,
+                        &mut next_bindings,
+                        checker,
+                        scratch,
+                    ) {
+                        *bindings = next_bindings;
+                        return Some(true);
+                    }
+                }
+                Some(false)
+            }
             _ => None,
         }
     }

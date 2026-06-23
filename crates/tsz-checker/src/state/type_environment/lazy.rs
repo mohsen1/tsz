@@ -171,8 +171,26 @@ impl CheckerState<'_> {
         // top-level result memo (`use_cache`) below affects correctness.
         let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
 
+        // When the evaluator observes an `Application` over a `DefId` whose body
+        // is not yet registered, it reports the registration window via
+        // `unresolved_def_seen`. Only an opaque no-progress result from that pass
+        // is the cache-poisoning artifact: persisting `input -> input` in the
+        // `TypeId`-keyed `env_eval_cache` would permanently shadow the expansion
+        // available after the def registers (issue #13980). A tainted pass can
+        // still make useful progress on the root while observing an unresolved
+        // sub-term; declaration-portability checks rely on caching those resolved
+        // roots, so the poison bit below is gated on both the flag and no progress.
+        //
+        // The intermediate seed/persist memo remains speed-only:
+        // `persist_env_eval_cache_entries` already filters unsafe shapes.
+        let backstop_active =
+            !crate::context::env_eval_cache::unresolved_def_cache_backstop_disabled();
+
         let mut depth_exceeded = false;
         let first_pass_silent_bailed;
+        // Whether the first pass's result is an unresolved-def artifact that must
+        // not be persisted (the solver's flag, masked by the active backstop).
+        let first_pass_poisoned;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
@@ -204,8 +222,11 @@ impl CheckerState<'_> {
                 self.ctx.depth_exceeded.set(true);
             }
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
-            // Persist intermediate evaluation results to the shared cache.
-            // Skip entries whose result contains unbound `infer` types or type queries.
+            first_pass_poisoned =
+                backstop_active && eval_result.unresolved_def_seen && eval_result.result == type_id;
+            // Persist intermediate evaluation results to the shared cache. The
+            // helper skips entries whose result contains unbound `infer` types
+            // or type queries; the top-level poisoned root is gated below.
             if seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
@@ -280,7 +301,7 @@ impl CheckerState<'_> {
                 // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
-        let final_result = if needs_resolver_pass {
+        let (final_result, final_poisoned) = if needs_resolver_pass {
             // Recompute the speed-only seed/persist gate after the first pass:
             // persisting first-pass intermediates can push the cache over the
             // structural cap, so the second pass must not reuse a stale `true`
@@ -316,21 +337,36 @@ impl CheckerState<'_> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            let second_pass_input = if first_pass_unresolved_application {
+                result
+            } else {
+                type_id
+            };
+            let second_pass_poisoned = backstop_active
+                && eval_result.unresolved_def_seen
+                && eval_result.result == second_pass_input;
             if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
+            // When the resolver pass makes no progress (`result == type_id`),
+            // `final_result` is the first pass's value, so its taint governs;
+            // otherwise the resolver pass produced the value and its own flag
+            // governs (issue #13980).
             if eval_result.result == type_id {
-                result
+                (result, first_pass_poisoned)
             } else {
-                eval_result.result
+                (eval_result.result, second_pass_poisoned)
             }
         } else {
-            result
+            (result, first_pass_poisoned)
         };
 
         // Same Infer guard for the top-level result: don't cache results
-        // containing unbound infer types from partially-evaluated conditional types.
+        // containing unbound infer types from partially-evaluated conditional
+        // types, nor an opaque registration-window artifact from an unresolved
+        // def (issue #13980).
         if use_cache
+            && !final_poisoned
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
@@ -526,148 +562,6 @@ impl CheckerState<'_> {
         };
 
         self.prune_impossible_object_union_members_with_env(resolved)
-    }
-
-    pub(crate) fn prune_impossible_object_union_members_with_env(
-        &mut self,
-        type_id: TypeId,
-    ) -> TypeId {
-        // Guard against infinite mutual recursion: evaluate → prune → evaluate members → prune.
-        // Pruning calls evaluate_type_with_resolution on each union member, which can resolve
-        // to new unions that get pruned again. Since pruning is a speculative optimization
-        // (removing provably-impossible union members), skipping nested calls is always safe.
-        if self.ctx.pruning_union_members {
-            return type_id;
-        }
-        self.ctx.pruning_union_members = true;
-        let result = self.prune_impossible_object_union_members_inner(type_id);
-        self.ctx.pruning_union_members = false;
-        result
-    }
-
-    fn prune_impossible_object_union_members_inner(&mut self, type_id: TypeId) -> TypeId {
-        let Some(members) =
-            crate::query_boundaries::state::checking::union_members(self.ctx.types, type_id)
-        else {
-            return type_id;
-        };
-        let total_members = members.len();
-
-        let retained: Vec<_> = members
-            .into_iter()
-            .filter(|&member| {
-                !self.intersection_has_impossible_literal_discriminants_with_env(member)
-                    && !self.object_member_has_impossible_required_property_with_env(member)
-            })
-            .collect();
-
-        match retained.len() {
-            0 => TypeId::NEVER,
-            len if len == total_members => type_id,
-            1 => retained[0],
-            _ => self.ctx.types.union_preserve_members(retained),
-        }
-    }
-
-    fn intersection_has_impossible_literal_discriminants_with_env(
-        &mut self,
-        type_id: TypeId,
-    ) -> bool {
-        let Some(members) =
-            crate::query_boundaries::state::checking::intersection_members(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-
-        let mut discriminants: rustc_hash::FxHashMap<tsz_common::Atom, Vec<TypeId>> =
-            rustc_hash::FxHashMap::default();
-
-        for member in members {
-            let evaluated_member = self.evaluate_type_with_resolution(member);
-            let Some(shape) = crate::query_boundaries::state::checking::object_shape(
-                self.ctx.types,
-                evaluated_member,
-            ) else {
-                continue;
-            };
-
-            for prop in &shape.properties {
-                if !crate::query_boundaries::state::checking::is_unit_type(
-                    self.ctx.types,
-                    prop.type_id,
-                ) {
-                    continue;
-                }
-
-                let seen = discriminants.entry(prop.name).or_default();
-                if seen.iter().any(|&other| {
-                    !self.diagnostic_subtype_outcome(prop.type_id, other).related
-                        && !self.diagnostic_subtype_outcome(other, prop.type_id).related
-                }) {
-                    return true;
-                }
-                if !seen.contains(&prop.type_id) {
-                    seen.push(prop.type_id);
-                }
-            }
-        }
-
-        false
-    }
-
-    fn object_member_has_impossible_required_property_with_env(&mut self, type_id: TypeId) -> bool {
-        let evaluated_type = self.evaluate_type_with_resolution(type_id);
-        let Some(shape) =
-            crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_type)
-        else {
-            return false;
-        };
-
-        shape.properties.iter().any(|prop| {
-            !prop.optional && self.type_is_impossible_unit_intersection_with_env(prop.type_id)
-        })
-    }
-
-    fn type_is_impossible_unit_intersection_with_env(&mut self, type_id: TypeId) -> bool {
-        let evaluated = self.evaluate_type_with_resolution(type_id);
-        if evaluated == TypeId::NEVER {
-            return true;
-        }
-
-        let Some(members) = crate::query_boundaries::state::checking::intersection_members(
-            self.ctx.types,
-            evaluated,
-        ) else {
-            return false;
-        };
-
-        let mut units = Vec::new();
-        for member in members {
-            let evaluated_member = self.evaluate_type_with_resolution(member);
-            if !crate::query_boundaries::state::checking::is_unit_type(
-                self.ctx.types,
-                evaluated_member,
-            ) {
-                continue;
-            }
-
-            if units.iter().any(|&other| {
-                !self
-                    .diagnostic_subtype_outcome(evaluated_member, other)
-                    .related
-                    && !self
-                        .diagnostic_subtype_outcome(other, evaluated_member)
-                        .related
-            }) {
-                return true;
-            }
-
-            if !units.contains(&evaluated_member) {
-                units.push(evaluated_member);
-            }
-        }
-
-        false
     }
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
@@ -1836,9 +1730,8 @@ impl CheckerState<'_> {
                 let resolved = if symbol.as_ref().is_some_and(|s| {
                     s.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::VARIABLE)
                 }) {
-                    let value_decl = symbol
-                        .map(|s| s.value_declaration)
-                        .unwrap_or(tsz_parser::NodeIndex::NONE);
+                    let value_decl =
+                        symbol.map_or(tsz_parser::NodeIndex::NONE, |s| s.value_declaration);
                     self.type_of_value_declaration_for_symbol(sym_id, value_decl)
                 } else {
                     self.get_type_of_symbol(sym_id)

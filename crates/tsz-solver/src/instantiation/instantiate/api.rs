@@ -775,7 +775,139 @@ fn restore_alpha_index_signature(
 /// empty / identity / leaf shortcuts) before reaching this function so the
 /// allocation-free shortcuts in `instantiate_type_cached` keep working.
 #[inline]
+/// Debug kill-switch for the project-wide instantiation cache (#14345).
+/// Set `TSZ_DISABLE_INSTANTIATION_CACHE=1` to bypass both reads and writes,
+/// mirroring `TSZ_DISABLE_CLOSED_EVAL_CACHE`. Defaults to enabled; used only to
+/// bisect regressions.
+fn project_instantiation_cache_enabled() -> bool {
+    #[cfg(any(test, debug_assertions))]
+    if PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(std::cell::Cell::get) {
+        return false;
+    }
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_INSTANTIATION_CACHE").is_err())
+}
+
+#[cfg(any(test, debug_assertions))]
+thread_local! {
+    /// Per-thread test override letting the per-file `QueryCache` wiring tests
+    /// (in this crate and the checker crate) disable the project-wide cache so
+    /// they can assert per-file hit/miss statistics in isolation. Held via
+    /// [`ProjectInstCacheDisabledGuard`].
+    static PROJECT_INST_CACHE_DISABLED_FOR_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// RAII guard that disables the project-wide instantiation cache on this thread
+/// for the per-file `QueryCache` wiring tests; re-enables on drop. Hold one at
+/// the top of a test that asserts per-file instantiation cache statistics.
+/// Available in `test`/`debug_assertions` builds so the checker crate's wiring
+/// tests can use it too (mirrors `force_enable_perf_counters_for_tests`).
+#[cfg(any(test, debug_assertions))]
+pub struct ProjectInstCacheDisabledGuard;
+
+#[cfg(any(test, debug_assertions))]
+impl ProjectInstCacheDisabledGuard {
+    pub fn new() -> Self {
+        PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.set(true));
+        Self
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Default for ProjectInstCacheDisabledGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Drop for ProjectInstCacheDisabledGuard {
+    fn drop(&mut self) {
+        PROJECT_INST_CACHE_DISABLED_FOR_TEST.with(|d| d.set(false));
+    }
+}
+
 pub(crate) fn instantiate_with_request_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    allow_alpha_cache: bool,
+    request: InstantiationRequest<'_>,
+) -> InstantiationResult {
+    // Project-wide instantiation cache (#14345), consulted by ALL callers —
+    // including the `query_db=None` evaluators that bypass the per-file
+    // `QueryCache` instantiation cache and otherwise re-mint the same
+    // `(body, subst, options, this_type)` walk. Sound because instantiation is
+    // pure structural substitution: the instantiator runs resolver-less
+    // (`with_query_db` forces `query_db=None`), `Lazy`/`TypeQuery` are leaves,
+    // and conditional/mapped bodies are not evaluated during the walk, so the
+    // result is a pure function of the key and the immutable interner —
+    // query_db-independent (proven by
+    // `instantiate_generic_cached_no_query_db_disables_cache`). The store-gate
+    // below refuses any result produced under a limit, mirroring the
+    // substitution-independent `closed_eval_cache`'s limit-gate set.
+    let proto_key = if project_instantiation_cache_enabled() {
+        let key = request.cache_key();
+        if let Some(cached) = interner.lookup_proto_instantiation_cache(&key) {
+            return InstantiationResult::ok(cached);
+        }
+        Some(key)
+    } else {
+        None
+    };
+    if let Some(proto_key) = proto_key {
+        // COMPLETE limit gate (mirrors closed_eval_cache's full predicate set,
+        // adapted to the instantiation layer). A result produced under ANY
+        // sticky, diagnostic-producing limit must NOT be cached, or a later
+        // cache hit would short-circuit that diagnostic on re-instantiation (the
+        // #13889-class trap one layer down). Snapshot the sticky flags BEFORE so
+        // a newly-tripped flag is attributed to THIS instantiation, not an
+        // earlier sibling that already set it.
+        let union_too_complex_before = interner.is_union_too_complex();
+        let tuple_too_large_before = interner.is_tuple_too_large();
+        let frame_bail_before = crate::recursion::solver_frame_bail_count();
+        let result =
+            instantiate_with_request_cached_inner(interner, query_db, allow_alpha_cache, request);
+        // Limit signals, each a reason a result is bounded/degraded:
+        //  - depth_exceeded: per-instance depth cap OR the shared solver-frame
+        //    budget tripping on the instantiator's OWN entry — the
+        //    recursion-limit analog of closed_eval's `recursion_limit_hit`
+        //    (already carried on the result).
+        //  - union_too_complex (TS2590) / tuple_too_large (TS2799): sticky flags
+        //    a nested `evaluate_*` (mapped/conditional body) can trip; gate on
+        //    NEWLY-tripped so a pre-existing sibling flag does not block an
+        //    unrelated result.
+        //  - evaluation fuel exhausted: the global fuel budget; an exhausted run
+        //    yields a bounded result.
+        //  - poisoned: the interner type-count budget degraded new construction
+        //    to `TypeId::ERROR`.
+        //  - solver-frame curtailment: a NESTED `evaluate_*` (instantiate.rs
+        //    evaluate_type/index_access/keyof) curtailed by the shared frame
+        //    budget returns an under-evaluated form WITHOUT flipping the
+        //    instantiator's own `depth_exceeded` (the instantiator's frame is
+        //    already on the stack). This is closed_eval's per-node `tainted`
+        //    exclusion at the instantiation layer: a budget-rich walk would
+        //    otherwise cache an under-evaluated result a budget-poor walk should
+        //    re-derive. The monotonic counter changing across the walk detects it.
+        let newly_too_complex = interner.is_union_too_complex() && !union_too_complex_before;
+        let newly_tuple_too_large = interner.is_tuple_too_large() && !tuple_too_large_before;
+        let frame_curtailed = crate::recursion::solver_frame_bail_count() != frame_bail_before;
+        let limit_tripped = result.depth_exceeded()
+            || newly_too_complex
+            || newly_tuple_too_large
+            || frame_curtailed
+            || interner.is_evaluation_fuel_exhausted()
+            || interner.is_poisoned();
+        if !limit_tripped {
+            interner.insert_proto_instantiation_cache(proto_key, result.type_id());
+        }
+        return result;
+    }
+    instantiate_with_request_cached_inner(interner, query_db, allow_alpha_cache, request)
+}
+
+fn instantiate_with_request_cached_inner(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
     allow_alpha_cache: bool,
@@ -1025,6 +1157,105 @@ pub fn instantiate_type_params_to_constraints_uncached(
     } else {
         instantiate_type(interner, type_id, &substitution)
     }
+}
+
+/// Maximum number of substitution passes [`resolve_unbound_type_params_to_defaults`]
+/// makes. A parameter default may reference an earlier base parameter
+/// (`B = A[]`), so one pass can re-introduce a now-resolvable parameter; the
+/// bound plus the per-pass no-progress check terminate self-referential
+/// defaults (`T = T`).
+const MAX_UNBOUND_DEFAULT_DEPTH: usize = 8;
+
+/// Resolve "dangling" free type parameters in `member_type` — those that are
+/// free in the member but NOT present in `in_scope` — to their declared
+/// `default → constraint → unknown`, matching tsc's `fillMissingTypeArguments`.
+///
+/// A value-position member read can resolve to a type that still mentions a
+/// base class's type parameter when the class extended that base WITHOUT type
+/// arguments (`class Der extends Base`, where `Base<P = …>`): the omitted
+/// argument is never bound, so the bare `P` would otherwise leak into the
+/// member's value type (a false `TS2339`/`TS7053`/`TS2322` — the raw-parameter
+/// sibling of the `error`/`never`-in-a-type-argument-slot leak family). `tsc`
+/// binds such an omitted base argument to the parameter's default.
+///
+/// `in_scope` holds the type parameters legitimately bound by the enclosing
+/// generic context (the class's / function's own parameters, e.g. `T` of a
+/// generic `Box<T>`); those are preserved, so only genuinely unbound base
+/// parameters are resolved. Type parameters bound by an enclosing callable
+/// signature are already excluded by [`free_type_parameter_ids_in`].
+pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+) -> TypeId {
+    resolve_type_params_to_defaults_core(db, member_type, |param_id, _info| {
+        !in_scope.contains(&param_id)
+    })
+}
+
+/// Resolve the type parameters whose declared name is in `names` and appear
+/// free in `ty` to their `default → constraint → unknown`, matching tsc's
+/// instantiation of a *failed* generic call's result with default type
+/// arguments (`getInferredTypes` falling back to `getDefaultTypeArgumentType`).
+///
+/// When a generic call (function or constructor) fails the argument-count check
+/// before inference runs, tsc still produces a best-effort result type by
+/// substituting each of the *signature's own* type parameters with its default,
+/// then its constraint, then `unknown`. Resolving only the named (signature-own)
+/// parameters preserves any enclosing-scope type parameter the result legitimately
+/// mentions (e.g. a nested generic referencing an outer parameter), which must
+/// stay abstract. This is the value-position sibling of
+/// [`resolve_unbound_type_params_to_defaults`]: both stop a bare, unbound generic
+/// parameter from leaking into a value type (a false `TS2322`/`TS2339`).
+pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    names: &std::collections::HashSet<tsz_common::Atom, S>,
+) -> TypeId {
+    if names.is_empty() {
+        return ty;
+    }
+    resolve_type_params_to_defaults_core(db, ty, |_param_id, info| names.contains(&info.name))
+}
+
+/// Shared driver for the default-type-argument fallback. `should_resolve`
+/// decides, per free type parameter, whether it is replaced by its
+/// `default → constraint → unknown` fill (true) or preserved (false). The
+/// multi-pass loop lets a parameter default that references an earlier
+/// (already-resolved) parameter settle, bounded by [`MAX_UNBOUND_DEFAULT_DEPTH`].
+fn resolve_type_params_to_defaults_core(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    should_resolve: impl Fn(TypeId, &crate::types::TypeParamInfo) -> bool,
+) -> TypeId {
+    use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
+
+    let mut current = ty;
+    for _ in 0..MAX_UNBOUND_DEFAULT_DEPTH {
+        let mut substitution = TypeSubstitution::new();
+        for param_id in free_type_parameter_ids_in(db, [current]) {
+            let Some(TypeData::TypeParameter(info)) = db.lookup(param_id) else {
+                continue;
+            };
+            if !should_resolve(param_id, &info) {
+                continue;
+            }
+            let usable = |t: Option<TypeId>| t.filter(|&t| t != TypeId::ERROR);
+            let fill = usable(info.default)
+                .or_else(|| usable(info.constraint))
+                .unwrap_or(TypeId::UNKNOWN);
+            substitution.insert(info.name, fill);
+        }
+        if substitution.is_empty() {
+            return current;
+        }
+        let next = instantiate_type(db, current, &substitution);
+        if next == current {
+            return current;
+        }
+        current = next;
+    }
+    current
 }
 
 fn collect_type_param_constraint_substitutions(

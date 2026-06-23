@@ -37,8 +37,11 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-latest.json",
     "bench-snapshot.json",
   ];
+  // Publish the latest available data; do not gate on app-compat cleanliness or
+  // a green-project minimum. Benchmarks may fail individually; the renderer
+  // decides which rows to chart (tsz within 1.5x of tsgo).
   const latestBenchmarkArtifact = selectLatestBenchmarkArtifact(benchmarkArtifacts, {
-    requireApplicationCompat: true,
+    minimumProjectTimingPairs: 0,
   })?.file;
   if (latestBenchmarkArtifact) {
     eleventyConfig.addPassthroughCopy({

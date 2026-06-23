@@ -26,6 +26,7 @@ use crate::diagnostics::display_provenance::{
 };
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationResult;
+use crate::evaluation::result::TerminationKind;
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::instantiation::instantiate::instantiate_generic;
@@ -139,6 +140,17 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// could short-circuit the expansion that re-derives `TS2589`. See the
     /// `closed_eval` module.
     deep_recursion_seen: bool,
+    /// Set when the per-evaluator *iteration* limit
+    /// (`RecursionResult::IterationExceeded`) cut a walk short during the
+    /// current top-level request. Distinct from the shared `deep_recursion_seen`
+    /// bool (which a cycle / depth / iteration bail all set, so it cannot name
+    /// the kind), this records the specific iteration-limit bail so
+    /// `evaluate_request_result` can surface `Termination::Incomplete{
+    /// IterationExceeded }` (#14346 stage 2). Cleared at every
+    /// `evaluate_request_result` entry so the verdict is scoped to one request
+    /// and never leaks across reused-evaluator requests; the recursive
+    /// `self.evaluate` calls do not re-enter `evaluate_request_result`.
+    iteration_exceeded_this_request: bool,
     /// Monotonic counter of *limit events* (cycle / depth / iteration / divergence
     /// bails) seen so far in this run. Unlike the sticky `deep_recursion_seen` /
     /// `silent_depth_bailed` booleans — which, once set by the first bail anywhere,
@@ -293,6 +305,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             silent_depth_bailed: false,
             detection_growth_runs: FxHashMap::default(),
             deep_recursion_seen: false,
+            iteration_exceeded_this_request: false,
             limit_epoch: 0,
             app_body_limit_epoch: 0,
             unresolved_def_seen: false,
@@ -564,9 +577,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a normalized request and return the typed result stage.
+    ///
+    /// The sole producer of [`EvaluationResult`]. As of #14346 stage 2 it
+    /// reports `Termination::Incomplete{ IterationExceeded }` when the
+    /// per-evaluator iteration-limit bail (`RecursionResult::IterationExceeded`)
+    /// fired anywhere within this request — the first real producer of the
+    /// `Incomplete` arm. `self.evaluate` still collapses that bail to the
+    /// opaque, relation-preserving `TypeId` internally and the scaffold's
+    /// `EvaluationResult::incomplete` carries that same `TypeId` as its
+    /// `partial`, so every consumer's `into_type_id` collapse — and therefore
+    /// the emitted type and diagnostics — is byte-identical to the pre-channel
+    /// evaluator. The remaining bail classes still report
+    /// `Termination::Complete` until later stages wire them in.
+    ///
+    /// The `iteration_exceeded_this_request` signal is cleared on entry so the
+    /// verdict is scoped to this single top-level request and cannot leak from
+    /// a prior request on a reused evaluator; the recursive `self.evaluate`
+    /// calls never re-enter this boundary.
     pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
-        EvaluationResult::new(self.evaluate(request.type_id()))
+        self.iteration_exceeded_this_request = false;
+        let type_id = self.evaluate(request.type_id());
+        request_result_verdict(type_id, self.iteration_exceeded_this_request)
     }
 
     // =========================================================================
@@ -874,10 +906,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Check if depth was already exceeded in a previous call
         if self.guard.is_exceeded() {
+            // #14346 observability (no-op when counters off): record which
+            // guard cut this walk short. The bail outcome is unchanged.
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::DepthExceeded,
+            );
             return TypeId::ERROR;
         }
         // Cross-instance per-query operation budget (see `query_budget`).
         let Some(_query_frame) = self.enter_eval_query_budget() else {
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::QueryOpBudget,
+            );
             return type_id;
         };
 
@@ -895,6 +935,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // proceed at a shallower depth without inheriting a sticky
                 // exceeded flag. See the analogous DepthExceeded arm below.
                 self.mark_silent_depth_bailed();
+                tsz_common::perf_counters::record_eval_termination_guard(
+                    tsz_common::perf_counters::EvaluationTerminationGuard::CrossEvalCycle,
+                );
                 return type_id;
             }
             let result = self.evaluate_guarded(type_id);
@@ -928,6 +971,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         crate::recursion::with_solver_frame(|| self.evaluate_guarded_inner(type_id)).unwrap_or_else(
             || {
                 self.mark_silent_depth_bailed();
+                tsz_common::perf_counters::record_eval_termination_guard(
+                    tsz_common::perf_counters::EvaluationTerminationGuard::SolverStackFrames,
+                );
                 type_id
             },
         )
@@ -1091,6 +1137,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::IterationExceeded => {
                 // Iteration-limit bail: also a bounded run.
                 self.mark_deep_recursion_seen();
+                // Record the kind so the top-level `evaluate_request_result`
+                // boundary can surface `Termination::Incomplete{ IterationExceeded }`
+                // (#14346 stage 2). The returned `type_id` (the opaque,
+                // relation-preserving partial) and the `deep_recursion_seen`
+                // cache taint are unchanged, so the collapse via `into_type_id`
+                // is byte-identical.
+                self.iteration_exceeded_this_request = true;
                 self.memo_insert(limit_epoch_at_entry, type_id, type_id);
                 return type_id;
             }
@@ -1111,6 +1164,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.mark_depth_exceeded();
             self.guard.leave(type_id);
             self.memo_insert(limit_epoch_at_entry, type_id, TypeId::ERROR);
+            tsz_common::perf_counters::record_eval_termination_guard(
+                tsz_common::perf_counters::EvaluationTerminationGuard::FuelExhausted,
+            );
             return TypeId::ERROR;
         }
 
@@ -1156,6 +1212,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     // Additional evaluator support methods live in the nested support module.
+}
+
+/// Translate a finished `evaluate` result plus the per-request iteration-bail
+/// flag into the typed [`EvaluationResult`] verdict (#14346 stage 2).
+///
+/// `EvaluationResult::incomplete` carries `type_id` as its `partial`, so
+/// `into_type_id` is identical for both arms — the verdict is additive metadata,
+/// not a value change, keeping every consumer byte-identical. Factored out (and
+/// free of the evaluator's `R`/lifetime) so the `Complete`/`Incomplete`
+/// selection is unit-testable without driving a real >100k-iteration bail.
+#[inline]
+pub(crate) const fn request_result_verdict(
+    type_id: TypeId,
+    iteration_exceeded: bool,
+) -> EvaluationResult {
+    if iteration_exceeded {
+        EvaluationResult::incomplete(type_id, TerminationKind::IterationExceeded)
+    } else {
+        EvaluationResult::complete(type_id)
+    }
 }
 
 impl<R: TypeResolver> Drop for TypeEvaluator<'_, R> {

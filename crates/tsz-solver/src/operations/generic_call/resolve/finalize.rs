@@ -1398,8 +1398,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // `in_const_assertion = true` (producing one TypeId) while the solver's
                     // inference engine applies `apply_const_assertion` separately (producing
                     // a different TypeId). Both represent the same readonly/literal type.
+                    //
+                    // This holds ONLY when the parameter was actually inferred from the
+                    // argument. If the type parameter instead fell back to its *constraint*
+                    // because the argument supplied no valid lower bound (recorded in
+                    // `constraint_fallback_tp_names`), the argument was NOT inferred from —
+                    // it is genuinely not assignable to the constraint-instantiated
+                    // parameter, so the mismatch is real and must be reported. This lets a
+                    // later overload whose constraint the argument *does* satisfy win
+                    // instead of locking onto this candidate via a spurious `Success`.
                     let is_bare_const_type_param = func.type_params.iter().any(|tp| {
                         tp.is_const
+                            && !constraint_fallback_tp_names.contains(&tp.name)
                             && matches!(
                                 self.interner.lookup(param_type),
                                 Some(TypeData::TypeParameter(info)) if info.name == tp.name

@@ -3,6 +3,7 @@ pub(crate) mod request_cache;
 pub mod state;
 pub mod state_checking;
 pub(crate) mod state_checking_members;
+pub(crate) mod this_relative;
 pub mod type_analysis;
 pub mod type_environment;
 pub mod type_resolution;

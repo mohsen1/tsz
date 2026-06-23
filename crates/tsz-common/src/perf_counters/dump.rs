@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -105,7 +107,10 @@ impl PerfCounters {
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n\
              Stable identity:\n  \
-             raw SymbolRef lazy fallback{:>12}\n",
+             raw SymbolRef lazy fallback{:>12}\n  \
+             wrong-decl collisions      {:>12}\n  \
+             symbol_def_index hits      {:>12}\n  \
+             symbol_def_index misses    {:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -190,6 +195,9 @@ impl PerfCounters {
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
             snap.identity.type_environment_raw_symbol_lazy_fallbacks,
+            snap.identity.identity_collision_wrong_decl_suppressed,
+            snap.identity.symbol_def_index_lookup_hits,
+            snap.identity.symbol_def_index_lookup_misses,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_shared_instantiation_cache(&snap)
             + &Self::dump_relation_limit_cache(&snap)
@@ -922,6 +930,11 @@ impl PerfCounters {
 
     fn dump_evaluator_memo(snap: &PerfCounterSnapshot) -> String {
         let counters = &snap.evaluator_memo;
+        let termination_total: u64 = counters
+            .termination_guard_fires
+            .iter()
+            .map(|g| g.count)
+            .sum();
         if counters.constructions == 0
             && counters.local_memo_hits == 0
             && counters.compute_nodes == 0
@@ -934,10 +947,11 @@ impl PerfCounters {
             && counters.lost_memo_recomputes_other == 0
             && counters.dropped_memo_entries == 0
             && counters.dropped_aux_entries == 0
+            && termination_total == 0
         {
             return String::new();
         }
-        format!(
+        let mut out = format!(
             "\nEvaluator memo lifecycle:\n  \
              constructions             {:>12}\n  \
              local memo hits           {:>12}\n  \
@@ -963,7 +977,20 @@ impl PerfCounters {
             counters.lost_memo_recomputes_other,
             counters.dropped_memo_entries,
             counters.dropped_aux_entries,
-        )
+        );
+        // #14346: which guard cut a walk short, and how often. The
+        // firing-order signal — a nonzero bucket fingerprints which bound a
+        // runaway recursive walk hits first.
+        if termination_total > 0 {
+            out.push_str("  termination guard fires:\n");
+            for guard in &counters.termination_guard_fires {
+                if guard.count > 0 {
+                    writeln!(&mut out, "    {:<26} {:>12}", guard.name, guard.count)
+                        .expect("writing to String cannot fail");
+                }
+            }
+        }
+        out
     }
 
     fn dump_slow_check_timings(snap: &PerfCounterSnapshot) -> String {

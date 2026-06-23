@@ -10,8 +10,8 @@ use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedType, MappedTypeId,
-    ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData,
-    TypeId, TypeListId, TypeParamInfo,
+    ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleListId, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use crate::visitor::{
     TypeVisitor, intersection_list_id, keyof_inner_type, literal_number, type_param_info,
@@ -1073,6 +1073,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     .recurse_index_access(resolved, self.index_type),
             );
         }
+        // The object is a `Lazy(DefId)` with no resolvable body on this query (the
+        // declaring file has not published one yet — the cross-file registration
+        // window). `evaluate_index_access` then falls back to the deferred
+        // `IndexAccess(Lazy, K)`, a function of *which* refs were resolved when the
+        // pass ran rather than of the input `TypeId`; caching it would let the
+        // under-resolved answer shadow the real member type once the body registers.
+        // Mark the taint so the TypeId-keyed eval-cache backstops refuse the write
+        // and the authoritative pass recomputes — the registration-window-artifact
+        // discipline shared with the `Application`/`keyof`/conditional deferrals
+        // (#14347).
+        self.evaluator.mark_unresolved_def_seen();
         None
     }
 
@@ -1104,11 +1115,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         {
             self.evaluator
                 .resolver()
-                .resolve_lazy(def_id, self.evaluator.interner())?
+                .resolve_lazy(def_id, self.evaluator.interner())
         } else {
             self.evaluator
                 .resolver()
-                .resolve_symbol_ref(symbol_ref, self.evaluator.interner())?
+                .resolve_symbol_ref(symbol_ref, self.evaluator.interner())
+        };
+        let Some(resolved) = resolved else {
+            // The referenced symbol/def has no resolvable body yet, so this access
+            // falls back to a deferred `IndexAccess(Ref, K)` — the same
+            // registration-window artifact as the `Lazy` arm above. Keep it out of
+            // the `TypeId`-keyed eval caches (#14347).
+            self.evaluator.mark_unresolved_def_seen();
+            return None;
         };
         if resolved == self.object_type {
             Some(
@@ -1743,52 +1762,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         TypeId::UNDEFINED
-    }
-
-    /// Evaluate property access on an object type with index signatures.
-    pub(crate) fn evaluate_object_with_index(
-        &self,
-        shape: &ObjectShape,
-        index_type: TypeId,
-    ) -> TypeId {
-        super::index_access_object_with_index::evaluate_object_with_index(self, shape, index_type)
-    }
-
-    pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        crate::utils::optional_property_type(self.interner(), prop)
-    }
-
-    pub(crate) fn add_undefined_if_unchecked(&self, type_id: TypeId) -> TypeId {
-        if !self.no_unchecked_indexed_access() || type_id == TypeId::UNDEFINED {
-            return type_id;
-        }
-        self.interner().union2(type_id, TypeId::UNDEFINED)
-    }
-
-    pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        super::index_access_keys::rest_element_type(self.interner(), type_id)
-    }
-
-    /// Evaluate index access on a tuple type
-    pub(crate) fn evaluate_tuple_index(
-        &self,
-        elements: &[TupleElement],
-        index_type: TypeId,
-    ) -> TypeId {
-        super::index_access_keys::evaluate_tuple_index(
-            self.interner(),
-            elements,
-            index_type,
-            self.no_unchecked_indexed_access(),
-        )
-    }
-
-    pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
-        super::index_access_keys::evaluate_array_index(
-            self.interner(),
-            elem,
-            index_type,
-            self.no_unchecked_indexed_access(),
-        )
     }
 }

@@ -33,6 +33,15 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "failed_generic_call_default_type_args_tests"
+path = "tests/failed_generic_call_default_type_args_tests.rs"
+[[test]]
+name = "index_signature_branded_key_applicability_tests"
+path = "tests/index_signature_branded_key_applicability_tests.rs"
+[[test]]
+name = "recursive_utility_tuple_index_14518_tests"
+path = "tests/recursive_utility_tuple_index_14518_tests.rs"
+[[test]]
 name = "readonly_to_mutable_alias_display_tests"
 path = "tests/readonly_to_mutable_alias_display_tests.rs"
 [[test]]
@@ -59,6 +68,9 @@ path = "tests/qualified_namespace_generic_substitution_tests.rs"
 [[test]]
 name = "heritage_reexport_generic_type_params_tests"
 path = "tests/heritage_reexport_generic_type_params_tests.rs"
+[[test]]
+name = "anonymous_object_intersection_display_tests"
+path = "tests/anonymous_object_intersection_display_tests.rs"
 [[test]]
 name = "any_propagation"
 path = "tests/any_propagation.rs"
@@ -207,6 +219,9 @@ path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
 name = "homomorphic_mapped_index_display_tests"
 path = "tests/homomorphic_mapped_index_display_tests.rs"
 [[test]]
+name = "homomorphic_mapped_alias_readonly_index_source_tests"
+path = "tests/homomorphic_mapped_alias_readonly_index_source_tests.rs"
+[[test]]
 name = "intersection_modifier_merge_tests"
 path = "tests/intersection_modifier_merge_tests.rs"
 [[test]]
@@ -216,8 +231,14 @@ path = "tests/array_declaration_display_summary_tests.rs"
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 [[test]]
+name = "return_type_literal_union_widening_tests"
+path = "tests/return_type_literal_union_widening_tests.rs"
+[[test]]
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
+[[test]]
+name = "return_literal_union_widening_tests"
+path = "tests/return_literal_union_widening_tests.rs"
 [[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
@@ -497,11 +518,20 @@ path = "tests/private_brands.rs"
 name = "lazy_class_constructor_type_tests"
 path = "tests/lazy_class_constructor_type_tests.rs"
 [[test]]
+name = "this_array_field_method_call_tests"
+path = "tests/this_array_field_method_call_tests.rs"
+[[test]]
 name = "this_type_tests"
 path = "tests/this_type_tests.rs"
 [[test]]
+name = "this_typed_value_into_this_field_tests"
+path = "tests/this_typed_value_into_this_field_tests.rs"
+[[test]]
 name = "this_type_indexed_access_receiver_tests"
 path = "tests/this_type_indexed_access_receiver_tests.rs"
+[[test]]
+name = "this_array_field_method_param_14512_tests"
+path = "tests/this_array_field_method_param_14512_tests.rs"
 [[test]]
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
@@ -704,8 +734,14 @@ path = "tests/ts2322_tests.rs"
 name = "accessor_assignment_read_surface_tests"
 path = "tests/accessor_assignment_read_surface_tests.rs"
 [[test]]
+name = "inferred_getter_return_property_access_tests"
+path = "tests/inferred_getter_return_property_access_tests.rs"
+[[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
+[[test]]
+name = "object_literal_set_only_accessor_type_tests"
+path = "tests/object_literal_set_only_accessor_type_tests.rs"
 [[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
@@ -791,8 +827,20 @@ path = "tests/binding_pattern_inference_tests.rs"
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 [[test]]
+name = "template_intrinsic_infer_tests"
+path = "tests/template_intrinsic_infer_tests.rs"
+[[test]]
 name = "enum_discriminant_excess_property_tests"
 path = "tests/enum_discriminant_excess_property_tests.rs"
+[[test]]
+name = "inherited_constructor_defaulted_type_arg_tests"
+path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
+[[test]]
+name = "ts2454_indexed_access_undefined_tests"
+path = "tests/ts2454_indexed_access_undefined_tests.rs"
+[[test]]
+name = "intersection_infer_last_member_tests"
+path = "tests/intersection_infer_last_member_tests.rs"
 [[test]]
 name = "excess_property_check_recursive_intersection_tests"
 path = "tests/excess_property_check_recursive_intersection_tests.rs"
@@ -1021,6 +1069,9 @@ path = "tests/kysely_callback_context_tests.rs"
 [[test]]
 name = "inline_mapped_array_return_tests"
 path = "tests/inline_mapped_array_return_tests.rs"
+[[test]]
+name = "overload_constraint_fallback_applicability_tests"
+path = "tests/overload_constraint_fallback_applicability_tests.rs"
 [[test]]
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"
@@ -1481,6 +1532,9 @@ path = "tests/union_index_access_function_application_param_tests.rs"
 name = "union_index_annotation_missing_key_tests"
 path = "tests/union_index_annotation_missing_key_tests.rs"
 [[test]]
+name = "indexed_access_keyof_wrapper_ts2536_tests"
+path = "tests/indexed_access_keyof_wrapper_ts2536_tests.rs"
+[[test]]
 name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
 [[test]]
@@ -1638,6 +1692,9 @@ path = "tests/generic_property_mismatch_display_tests.rs"
 [[test]]
 name = "object_literal_property_target_display_tests"
 path = "tests/object_literal_property_target_display_tests.rs"
+[[test]]
+name = "object_literal_present_mismatch_precedence_tests"
+path = "tests/object_literal_present_mismatch_precedence_tests.rs"
 [[test]]
 name = "nominal_application_call_suppression_tests"
 path = "tests/nominal_application_call_suppression_tests.rs"

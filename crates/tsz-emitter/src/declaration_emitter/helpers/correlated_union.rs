@@ -452,6 +452,9 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let binder = self.binder?;
         for sym_id in binder.symbols.find_all_by_name(interface_name) {
+            // DTS text boundary (#14142): the member's declared annotation is read
+            // as rendered declaration text (no in-scope `TypeId`); an `any`
+            // rendering is treated as no usable annotation, so the search continues.
             if let Some(type_text) =
                 self.type_member_declared_type_annotation_text(*sym_id, member_name)
                 && type_text != "any"

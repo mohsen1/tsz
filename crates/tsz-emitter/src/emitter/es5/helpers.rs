@@ -17,10 +17,15 @@ pub(in crate::emitter) enum ArraySegment<'a> {
 impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
     /// Uses TypeScript's __spreadArray helper for exact tsc matching.
+    /// The third (`pack`) argument of each segment follows tsc: it is `false`
+    /// when the spread source is already dense — a packed array literal or a
+    /// `__read(...)`-wrapped spread — and `true` otherwise (see
+    /// `spread_segment_pack`).
     /// Pattern: [...a] -> __spreadArray([], a, true)
     /// Pattern: [...a, 1] -> __spreadArray(__spreadArray([], a, true), [1], false)
     /// Pattern: [1, ...a] -> __spreadArray([1], a, true)
     /// Pattern: [1, ...a, 2] -> __spreadArray(__spreadArray([1], a, true), [2], false)
+    /// Pattern: [1, ...[2, 3], 4] -> __spreadArray(__spreadArray([1], [2, 3], false), [4], false)
     pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if let Some(flattened) = self.flatten_single_spread_array_literal(elements) {
             self.write("[");
@@ -66,24 +71,18 @@ impl<'a> Printer<'a> {
             match &segments[0] {
                 ArraySegment::Elements(elems) => {
                     // No spreads, emit normally
-                    self.write("[");
-                    self.emit_comma_separated(elems);
-                    self.write("]");
+                    self.emit_array_spread_segment(elems);
                 }
                 ArraySegment::Spread(spread_idx) => {
-                    // Only a spread element: [...a] -> __spreadArray([], a, true)
-                    // When __read wraps the spread, the pack arg is false because
-                    // __read already produces an array.
+                    // Only a spread element: [...a] -> __spreadArray([], a, true).
+                    // The pack arg is false when the source is already dense (a
+                    // packed array literal, or a `__read(...)`-wrapped spread).
                     self.write_helper("__spreadArray");
                     self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
-                    if wrap_spread_with_read {
-                        self.write(", false)");
-                    } else {
-                        self.write(", true)");
-                    }
+                    self.write_spread_pack_arg(*spread_idx, wrap_spread_with_read);
                 }
             }
         } else {
@@ -97,23 +96,18 @@ impl<'a> Printer<'a> {
             // Emit the first segment as the innermost base.
             match &segments[0] {
                 ArraySegment::Elements(elems) => {
-                    self.write("[");
-                    self.emit_comma_separated(elems);
-                    self.write("]");
+                    self.emit_array_spread_segment(elems);
                 }
                 ArraySegment::Spread(spread_idx) => {
                     // First segment is spread: base is __spreadArray([], spread, true)
-                    // unless __read already packed the spread source.
+                    // unless the source is already dense (packed array literal or
+                    // a `__read(...)`-wrapped spread).
                     self.write_helper("__spreadArray");
                     self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
-                    if wrap_spread_with_read {
-                        self.write(", false)");
-                    } else {
-                        self.write(", true)");
-                    }
+                    self.write_spread_pack_arg(*spread_idx, wrap_spread_with_read);
                 }
             }
 
@@ -121,9 +115,9 @@ impl<'a> Printer<'a> {
             for segment in &segments[1..] {
                 match segment {
                     ArraySegment::Elements(elems) => {
-                        self.write(", [");
-                        self.emit_comma_separated(elems);
-                        self.write("], false)");
+                        self.write(", ");
+                        self.emit_array_spread_segment(elems);
+                        self.write(", false)");
                     }
                     ArraySegment::Spread(spread_idx) => {
                         self.write(", ");
@@ -133,14 +127,69 @@ impl<'a> Printer<'a> {
                                 wrap_spread_with_read,
                             );
                         }
-                        if wrap_spread_with_read {
-                            self.write(", false)");
-                        } else {
-                            self.write(", true)");
-                        }
+                        self.write_spread_pack_arg(*spread_idx, wrap_spread_with_read);
                     }
                 }
             }
+        }
+    }
+
+    /// Emit one non-spread `[ ... ]` segment of an ES5 spread transform.
+    /// Mirrors the standalone array-literal printer's elision handling: a
+    /// trailing hole (stored as `NodeIndex::NONE`) keeps its comma so that
+    /// `[1, ,]` / `[,]` round-trip exactly, matching tsc.
+    fn emit_array_spread_segment(&mut self, elems: &[NodeIndex]) {
+        self.write("[");
+        self.emit_comma_separated(elems);
+        if elems.last().is_some_and(NodeIndex::is_none) {
+            self.write(",");
+        }
+        self.write("]");
+    }
+
+    /// Mirror tsc's `isPackedArrayLiteral`: an array literal expression whose
+    /// every element is present (no elision holes) and is not itself a spread.
+    /// tsc spreads such a value with `pack = false` because it is already a
+    /// dense array; any other source spreads with `pack = true`.
+    fn is_packed_array_literal(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        literal.elements.nodes.iter().all(|&elem_idx| {
+            // Elision holes are stored as `NodeIndex::NONE`; a spread element
+            // makes the result's length non-static, so neither is "packed".
+            elem_idx != NodeIndex::NONE && !emit_utils::is_spread_element(self.arena, elem_idx)
+        })
+    }
+
+    /// Compute the `pack` argument for one `__spreadArray(to, from, pack)`
+    /// segment, mirroring tsc. A spread of a packed array literal — or of a
+    /// `__read(...)`-wrapped source under `downlevelIteration` — already yields
+    /// a dense array, so `pack` is `false`; every other source needs `true`.
+    fn spread_segment_pack(&self, spread_idx: NodeIndex, wrap_spread_with_read: bool) -> bool {
+        if wrap_spread_with_read {
+            return false;
+        }
+        self.arena
+            .get(spread_idx)
+            .and_then(|node| self.arena.get_spread(node))
+            .map(|spread| spread.expression)
+            .is_none_or(|expr_idx| !self.is_packed_array_literal(expr_idx))
+    }
+
+    /// Write the trailing `, true)` / `, false)` pack argument of a
+    /// `__spreadArray(to, from, pack)` spread segment.
+    fn write_spread_pack_arg(&mut self, spread_idx: NodeIndex, wrap_spread_with_read: bool) {
+        if self.spread_segment_pack(spread_idx, wrap_spread_with_read) {
+            self.write(", true)");
+        } else {
+            self.write(", false)");
         }
     }
 

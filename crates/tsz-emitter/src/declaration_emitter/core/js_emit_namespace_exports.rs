@@ -386,6 +386,13 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| {
                     resolved_type
                         .as_ref()
+                        // DTS text boundary (#14142): `type_id != ANY` is the
+                        // structural gate; the `emitted_type_text != "any"` guard
+                        // additionally rejects a type that is not the `any`
+                        // singleton yet still *renders* as `any` (e.g. an alias
+                        // `type X = any`, whose own `TypeId != ANY`). The TypeId
+                        // check alone cannot see that, so this rendered-string
+                        // check is the correct boundary and is not redundant.
                         .filter(|resolved| {
                             resolved.type_id != tsz_solver::types::TypeId::ANY
                                 && resolved.emitted_type_text != "any"

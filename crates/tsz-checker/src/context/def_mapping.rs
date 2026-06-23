@@ -784,23 +784,32 @@ impl CheckerContext<'_> {
         def_id
     }
 
-    /// Ensure **both** `TypeEnvironment` instances have a reference to the shared
-    /// `DefinitionStore`.
+    /// Ensure both `TypeEnvironment` instances end up with a reference to the
+    /// shared `DefinitionStore`, by writing it to the authoritative evaluator
+    /// env and letting reconcile propagate it to the flow-analyzer env.
     ///
-    /// Both `type_env` (primary evaluator) and `type_environment` (flow-analyzer)
-    /// need the `DefinitionStore` fallback so that `get_def_kind` can locate
-    /// entries that were not written directly due to `RefCell` borrow conflicts
-    /// during recursive resolution.
+    /// `type_env` (primary evaluator) needs the `DefinitionStore` fallback so
+    /// that `get_def_kind` can locate entries not written directly due to
+    /// `RefCell` borrow conflicts during recursive resolution; it is written
+    /// here (race-safe, via the same deferral discipline as every other
+    /// evaluator-env registration).
     ///
-    /// Wiring only `type_env` and leaving `type_environment` without the store
-    /// forces callers to clone one environment over the other just to propagate
-    /// the pointer — this helper eliminates that need.
+    /// The flow-analyzer env (`type_environment`) receives the *same* `Arc`
+    /// through `overlay_missing_from` at the file-prep reconcile boundary
+    /// (`reconcile_flow_and_evaluator_envs`), which runs before flow analysis
+    /// reads the env. The `DefinitionStore` is a single content-identical shared
+    /// pointer regardless of which env holds it, so eagerly *mirroring* it into
+    /// the flow env is pure redundancy with the reconcile vacancy-fill. Dropping
+    /// that mirror removes the `SetDefinitionStore` op from the flow-env mirror
+    /// set as the first provably zero-delta step of the dual-`TypeEnvironment`
+    /// collapse (#14348) — the eager mirror added work (and a possible deferred
+    /// replay) for a pointer reconcile already installs.
     ///
     /// `set_definition_store` is idempotent when the same `Arc` pointer is
     /// reinstalled (checked via `Arc::ptr_eq`), so calling this function
     /// multiple times across registration sites is safe.
     pub fn ensure_both_envs_have_definition_store(&self) {
-        self.register_in_envs(DeferredFlowEnvWrite::SetDefinitionStore(Arc::clone(
+        self.apply_to_eval_env(DeferredFlowEnvWrite::SetDefinitionStore(Arc::clone(
             &self.definition_store,
         )));
     }

@@ -173,6 +173,19 @@ pub(crate) fn type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::get_type_parameter_default(db, type_id)
 }
 
+/// Resolve "dangling" free type parameters in a property-access result — those
+/// free in `member_type` but not present in `in_scope` (the enclosing generic
+/// context's own parameters) — to their declared `default → constraint →
+/// unknown`, matching tsc's `fillMissingTypeArguments`.
+/// See [`tsz_solver::computation::resolve_unbound_type_params_to_defaults`].
+pub(crate) fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+) -> TypeId {
+    tsz_solver::computation::resolve_unbound_type_params_to_defaults(db, member_type, in_scope)
+}
+
 /// Check if a type parameter has a constraint that contains a conditional type.
 /// This is used to suppress false-positive TS2339 errors when accessing properties
 /// on generic conditional types like `Parameters<T>["length"]` where the property

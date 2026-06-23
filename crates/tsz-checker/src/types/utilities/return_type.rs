@@ -12,6 +12,19 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// One block-body return contribution, collected *unwidened* so that a union of
+/// distinct fresh literals (`return "a"; return "b"` → `"a" | "b"`) is preserved
+/// rather than widened per branch. `widen_expr` is `Some(expr)` when this
+/// contribution is a fresh-literal return that would be widened on its own (no
+/// contextual / `satisfies` / `preserve_literal` / `const`-assertion /
+/// conditional carve-out); it is the expression node so the AST-aware widener
+/// (`widen_return_contribution_preserving_const`) can run if the union collapses
+/// to a single literal. See `infer_return_type_from_body_inner` (#14530).
+struct ReturnContribution {
+    type_id: TypeId,
+    widen_expr: Option<NodeIndex>,
+}
+
 impl<'a> CheckerState<'a> {
     fn inference_context_for_block_return_expression(
         &mut self,
@@ -426,27 +439,48 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         return_context: Option<TypeId>,
     ) -> TypeId {
+        if self.return_contribution_is_widenable(expr_idx, type_id, return_context) {
+            return self.widen_return_contribution_preserving_const(expr_idx, type_id);
+        }
+        type_id
+    }
+
+    /// Whether a single return-expression contribution would be widened by
+    /// `maybe_widen_return_contribution` — i.e. it is a fresh literal expression
+    /// with none of the per-expression carve-outs (contextual return type,
+    /// `satisfies`, `preserve_literal_types`, a `const` assertion, or a
+    /// conditional expression).
+    ///
+    /// Block-body inference collects the *unwidened* contributions, unions them,
+    /// and widens the union only when it collapses to a single literal (tsc's
+    /// `getWidenedType(getUnionType(unwidenedReturnTypes))`). Two distinct fresh
+    /// literals (`return "a"; return "b"`) must stay a literal union, so the
+    /// per-branch widen is deferred to that single-literal check. This predicate
+    /// records, per branch, whether that survivor would have been widenable.
+    fn return_contribution_is_widenable(
+        &mut self,
+        expr_idx: NodeIndex,
+        type_id: TypeId,
+        return_context: Option<TypeId>,
+    ) -> bool {
         if let Some(ctx_type) = return_context
             && (!self.ctx.in_satisfies_operand
                 || self.contextual_type_allows_literal(ctx_type, type_id))
         {
-            return type_id;
+            return false;
         }
         if self.ctx.preserve_literal_types {
-            return type_id;
+            return false;
         }
         if self.return_expression_is_const_assertion(expr_idx) {
-            return type_id;
+            return false;
         }
         if self.ctx.arena.get(expr_idx).is_some_and(|node| {
             node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_EXPRESSION
         }) {
-            return type_id;
+            return false;
         }
-        if self.is_fresh_literal_expression(expr_idx) {
-            return self.widen_return_contribution_preserving_const(expr_idx, type_id);
-        }
-        type_id
+        self.is_fresh_literal_expression(expr_idx)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal
@@ -1057,8 +1091,14 @@ impl<'a> CheckerState<'a> {
             // When a function has value-returning paths AND also falls through
             // (or has empty `return;`), the non-returning paths contribute
             // `undefined` to the union, not `void`. tsc behaves the same way:
-            // `function f(x) { if (x) return 1; }` → `number | undefined`
-            return_types.push(TypeId::UNDEFINED);
+            // `function f(x) { if (x) return 1; }` → `number | undefined`.
+            // `undefined` is never a widenable literal contribution, so it keeps
+            // a literal+undefined union (`"a" | undefined`) from collapsing to a
+            // single-literal widen.
+            return_types.push(ReturnContribution {
+                type_id: TypeId::UNDEFINED,
+                widen_expr: None,
+            });
         }
 
         // Filter out ERROR types from return type inference when there are
@@ -1068,12 +1108,27 @@ impl<'a> CheckerState<'a> {
         // reference), but the base case `return 0` provides a concrete `number` type.
         // tsc filters out circular contributions and infers the return type from
         // non-circular branches only, so `fn1` gets return type `number`.
-        let has_non_error = return_types.iter().any(|&t| t != TypeId::ERROR);
+        let has_non_error = return_types.iter().any(|c| c.type_id != TypeId::ERROR);
         if has_non_error {
-            return_types.retain(|&t| t != TypeId::ERROR);
+            return_types.retain(|c| c.type_id != TypeId::ERROR);
         }
 
-        factory.union(return_types)
+        // Union the UNWIDENED contributions, then widen ONLY when the union
+        // collapses to a single literal (tsc's `getWidenedType(getUnionType(...))`).
+        // `factory.union` dedups and flattens a single surviving member to a
+        // scalar, so a multi-member literal union (`"a" | "b"`, `1 | 2`,
+        // `"a" | undefined`) is NOT a literal type and is returned unwidened,
+        // while a single fresh literal (`return "x"`, or `return "a"; return "a"`
+        // deduped to one) is widened via its originating expression's AST-aware
+        // widener — preserving per-property `const` subtrees (#14530).
+        let widen_expr = return_types.iter().find_map(|c| c.widen_expr);
+        let union = factory.union(return_types.iter().map(|c| c.type_id).collect());
+        if let Some(expr_idx) = widen_expr
+            && crate::query_boundaries::common::is_literal_type(self.ctx.types, union)
+        {
+            return self.widen_return_contribution_preserving_const(expr_idx, union);
+        }
+        union
     }
 
     /// Resolve a Lazy class type to a `TypeQuery` (constructor/value-position type).
@@ -1254,7 +1309,7 @@ impl<'a> CheckerState<'a> {
     fn collect_return_types_in_statement(
         &mut self,
         stmt_idx: NodeIndex,
-        return_types: &mut Vec<TypeId>,
+        return_types: &mut Vec<ReturnContribution>,
         saw_empty: &mut bool,
         return_context: Option<TypeId>,
     ) {
@@ -1282,12 +1337,20 @@ impl<'a> CheckerState<'a> {
                             return_type,
                             return_context,
                         );
-                        let widened = self.maybe_widen_return_contribution(
+                        // Collect the contribution UNWIDENED, recording whether it
+                        // would have been widened. The union of two distinct fresh
+                        // literals must stay a literal union (`"a" | "b"`); only a
+                        // union that collapses to a single literal is widened, in
+                        // `infer_return_type_from_body_inner` (tsc parity, #14530).
+                        let widenable = self.return_contribution_is_widenable(
                             return_data.expression,
                             return_type,
                             return_context,
                         );
-                        return_types.push(widened);
+                        return_types.push(ReturnContribution {
+                            type_id: return_type,
+                            widen_expr: widenable.then_some(return_data.expression),
+                        });
                     }
                 }
             }

@@ -206,6 +206,72 @@ fn test_spread_in_call() {
     );
 }
 
+#[test]
+fn test_array_spread_pack_flag_matches_tsc_per_segment() {
+    // tsc sets the third `__spreadArray(to, from, pack)` argument to `false`
+    // when `from` is a packed array literal (dense, no holes/spreads) and to
+    // `true` for any other source. tsz previously hardcoded `true` for every
+    // array-literal spread segment.
+
+    // Packed array literal in the middle: that segment packs `false`.
+    let output = emit_es5("const a = [1, ...[2, 3], 4];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([1], [2, 3], false), [4], false)"),
+        "packed array-literal spread must use pack=false.\nOutput:\n{output}"
+    );
+
+    // Leading packed array literal as the base, plus trailing elements.
+    let output = emit_es5("const a = [...[2, 3], 4];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([], [2, 3], false), [4], false)"),
+        "leading packed array-literal base must use pack=false.\nOutput:\n{output}"
+    );
+
+    // Two packed array literals: both pack `false`.
+    let output = emit_es5("const a = [...[1, 2], ...[3, 4]];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([], [1, 2], false), [3, 4], false)"),
+        "consecutive packed array literals must each use pack=false.\nOutput:\n{output}"
+    );
+
+    // A non-array-literal source (a binding) is not packed: pack stays `true`.
+    let output = emit_es5("declare const x: number[];\nconst a = [1, ...x, 2];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([1], x, true), [2], false)"),
+        "non-array-literal spread source must keep pack=true.\nOutput:\n{output}"
+    );
+
+    // An array literal that contains a hole is not packed: pack stays `true`.
+    let output = emit_es5("const a = [0, ...[, 3], 4];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([0], [, 3], true), [4], false)"),
+        "array literal with an elision hole is not packed (pack=true).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_array_spread_preserves_trailing_elision_in_segments() {
+    // A non-spread `[ ... ]` segment that ends in an elision hole must keep its
+    // comma, exactly like the standalone array-literal printer (and tsc).
+    let output = emit_es5("declare const x: number[];\nconst a = [, ...x];\n");
+    assert!(
+        output.contains("__spreadArray([,], x, true)"),
+        "leading hole must be preserved in the base segment.\nOutput:\n{output}"
+    );
+
+    let output = emit_es5("declare const x: number[];\nconst a = [1, , ...x];\n");
+    assert!(
+        output.contains("__spreadArray([1, ,], x, true)"),
+        "trailing hole in a populated base segment must be preserved.\nOutput:\n{output}"
+    );
+
+    let output = emit_es5("declare const x: number[];\nconst a = [...x, ,];\n");
+    assert!(
+        output.contains("__spreadArray(__spreadArray([], x, true), [,], false)"),
+        "trailing-elision segment after a spread must keep its comma.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Exponentiation Transform (ES2016)
 // =============================================================================

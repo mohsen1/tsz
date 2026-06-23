@@ -821,6 +821,18 @@ pub fn solver_stack_frame_depth() -> u32 {
     crate::limits::solver_stack_frame_depth()
 }
 
+/// Monotonic count of solver-frame-budget curtailments on this thread.
+///
+/// Bumped whenever [`try_enter_solver_frame`] denies a frame because the
+/// budget is exhausted. The project-wide instantiation cache snapshots this
+/// before/after a walk to detect a nested-eval curtailment that does not flip
+/// the instantiator's own `depth_exceeded` (a budget-rich walk would otherwise
+/// cache an under-evaluated result a budget-poor walk should re-derive).
+#[inline]
+pub fn solver_frame_bail_count() -> u32 {
+    crate::limits::solver_frame_bail_count()
+}
+
 /// Reset the thread-local solver frame counter to zero.
 ///
 /// The counter is RAII-balanced, so it returns to zero on its own after any

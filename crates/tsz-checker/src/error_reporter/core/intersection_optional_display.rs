@@ -3,19 +3,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::error_reporter) fn format_collapsed_object_for_assignability_display(
-        &mut self,
-        type_id: TypeId,
-    ) -> String {
-        let mut formatter = self
-            .ctx
-            .create_diagnostic_type_formatter()
-            .with_display_properties()
-            .with_skip_object_display_alias()
-            .with_preserve_optional_parameter_surface_syntax(true);
-        formatter.format(type_id).into_owned()
-    }
-
     pub(in crate::error_reporter) fn collapsed_anonymous_object_intersection_for_assignability_display(
         &mut self,
         ty: TypeId,

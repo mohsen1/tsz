@@ -31,16 +31,16 @@ fn build_module_augmentation_indices(
 
 #[test]
 fn global_module_augmentations_index_merges_across_binders() {
-    let mut binder1 = BinderState::new();
-    std::sync::Arc::make_mut(&mut binder1.module_augmentations).insert(
+    let mut first_file_binder = BinderState::new();
+    std::sync::Arc::make_mut(&mut first_file_binder.module_augmentations).insert(
         "./module-a".to_string(),
         vec![ModuleAugmentation::new(
             "MyInterface".to_string(),
             NodeIndex(10),
         )],
     );
-    let mut binder2 = BinderState::new();
-    std::sync::Arc::make_mut(&mut binder2.module_augmentations).insert(
+    let mut second_file_binder = BinderState::new();
+    std::sync::Arc::make_mut(&mut second_file_binder.module_augmentations).insert(
         "./module-a".to_string(),
         vec![ModuleAugmentation::new(
             "MyOtherInterface".to_string(),
@@ -48,7 +48,7 @@ fn global_module_augmentations_index_merges_across_binders() {
         )],
     );
 
-    let binders = vec![Arc::new(binder1), Arc::new(binder2)];
+    let binders = vec![Arc::new(first_file_binder), Arc::new(second_file_binder)];
     let (aug_index, _) = build_module_augmentation_indices(&binders);
 
     let entries = &aug_index["./module-a"];
@@ -81,16 +81,16 @@ fn global_module_augmentations_index_separates_module_specifiers() {
 
 #[test]
 fn global_augmentation_targets_index_maps_module_to_symbols() {
-    let mut binder1 = BinderState::new();
-    std::sync::Arc::make_mut(&mut binder1.augmentation_target_modules)
+    let mut target_file_binder = BinderState::new();
+    std::sync::Arc::make_mut(&mut target_file_binder.augmentation_target_modules)
         .insert(SymbolId(100), "./target".to_string());
-    let mut binder2 = BinderState::new();
-    std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
+    let mut mixed_file_binder = BinderState::new();
+    std::sync::Arc::make_mut(&mut mixed_file_binder.augmentation_target_modules)
         .insert(SymbolId(200), "./target".to_string());
-    std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
+    std::sync::Arc::make_mut(&mut mixed_file_binder.augmentation_target_modules)
         .insert(SymbolId(201), "./other".to_string());
 
-    let binders = vec![Arc::new(binder1), Arc::new(binder2)];
+    let binders = vec![Arc::new(target_file_binder), Arc::new(mixed_file_binder)];
     let (_, targets_index) = build_module_augmentation_indices(&binders);
 
     let target_entries = &targets_index["./target"];

@@ -1440,14 +1440,34 @@ impl<'a> CheckerState<'a> {
                                 for &arg_idx in &args.nodes {
                                     type_args.push(self.get_type_from_type_node(arg_idx));
                                 }
-                                // Fill missing args with defaults/constraints
+                                // Fill missing args with defaults/constraints,
+                                // instantiated against the substitution built so
+                                // far so a default that references an earlier
+                                // (supplied) param — `Items = T[]` with the
+                                // subclass writing `extends Base<number>` —
+                                // resolves `T` to `number` instead of leaving it
+                                // free in the inherited constructor. Mirrors the
+                                // instance-side path in `instance_merge.rs`.
                                 if type_args.len() < base_type_params.len() {
-                                    for param in base_type_params.iter().skip(type_args.len()) {
+                                    for (param_index, param) in
+                                        base_type_params.iter().enumerate().skip(type_args.len())
+                                    {
                                         let fallback = param
                                             .default
                                             .or(param.constraint)
                                             .unwrap_or(TypeId::UNKNOWN);
-                                        type_args.push(fallback);
+                                        let substitution = TypeSubstitution::from_args(
+                                            self.ctx.types,
+                                            &base_type_params[..param_index],
+                                            &type_args,
+                                        );
+                                        type_args.push(
+                                            crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                                self.ctx.types,
+                                                fallback,
+                                                &substitution,
+                                            ),
+                                        );
                                     }
                                 }
                                 if type_args.len() > base_type_params.len() {
@@ -1554,12 +1574,28 @@ impl<'a> CheckerState<'a> {
                                 type_args_vec.push(self.get_type_from_type_node(arg_idx));
                             }
                             if type_args_vec.len() < base_type_params.len() {
-                                for param in base_type_params.iter().skip(type_args_vec.len()) {
+                                // Instantiate each unsupplied default through the
+                                // substitution so far (see the sibling loop above)
+                                // so inter-param default references resolve.
+                                for (param_index, param) in
+                                    base_type_params.iter().enumerate().skip(type_args_vec.len())
+                                {
                                     let fallback = param
                                         .default
                                         .or(param.constraint)
                                         .unwrap_or(TypeId::UNKNOWN);
-                                    type_args_vec.push(fallback);
+                                    let substitution = TypeSubstitution::from_args(
+                                        self.ctx.types,
+                                        &base_type_params[..param_index],
+                                        &type_args_vec,
+                                    );
+                                    type_args_vec.push(
+                                        crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                            self.ctx.types,
+                                            fallback,
+                                            &substitution,
+                                        ),
+                                    );
                                 }
                             }
                             if type_args_vec.len() > base_type_params.len() {
@@ -1659,12 +1695,28 @@ impl<'a> CheckerState<'a> {
                             self.push_type_parameters(&base_class.type_parameters);
 
                         if type_args.len() < base_type_params.len() {
-                            for param in base_type_params.iter().skip(type_args.len()) {
+                            // Instantiate each unsupplied default through the
+                            // substitution so far (see the sibling loops above)
+                            // so inter-param default references resolve.
+                            for (param_index, param) in
+                                base_type_params.iter().enumerate().skip(type_args.len())
+                            {
                                 let fallback = param
                                     .default
                                     .or(param.constraint)
                                     .unwrap_or(TypeId::UNKNOWN);
-                                type_args.push(fallback);
+                                let substitution = TypeSubstitution::from_args(
+                                    self.ctx.types,
+                                    &base_type_params[..param_index],
+                                    &type_args,
+                                );
+                                type_args.push(
+                                    crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                        self.ctx.types,
+                                        fallback,
+                                        &substitution,
+                                    ),
+                                );
                             }
                         }
                         if type_args.len() > base_type_params.len() {

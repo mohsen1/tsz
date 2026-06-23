@@ -352,6 +352,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .this_type
                         .is_some_and(|this_type| self.type_contains_infer_inner(this_type, visited))
                     || self.type_contains_infer_inner(shape.return_type, visited)
+                    // A type-guard return (`x is infer R`) carries its infer in the
+                    // predicate target, not the boolean return type.
+                    || shape
+                        .type_predicate
+                        .and_then(|predicate| predicate.type_id)
+                        .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
@@ -363,6 +369,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.type_contains_infer_inner(this_type, visited)
                         })
                         || self.type_contains_infer_inner(sig.return_type, visited)
+                        || sig
+                            .type_predicate
+                            .and_then(|predicate| predicate.type_id)
+                            .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
                 }) || shape.construct_signatures.iter().any(|sig| {
                     sig.params
                         .iter()
@@ -371,6 +381,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.type_contains_infer_inner(this_type, visited)
                         })
                         || self.type_contains_infer_inner(sig.return_type, visited)
+                        || sig
+                            .type_predicate
+                            .and_then(|predicate| predicate.type_id)
+                            .is_some_and(|type_id| self.type_contains_infer_inner(type_id, visited))
                 }) || shape
                     .properties
                     .iter()
@@ -1836,7 +1850,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // the constituent the pattern targets.
         if let Some(TypeData::Intersection(members)) = self.interner().lookup(source) {
             let members = self.interner().type_list(members);
-            for &member in members.iter() {
+            // For a function/callable pattern, tsc's `infer` settles on the
+            // LAST matching member of an intersection (last-wins), for both
+            // covariant-return (`(()=>"x")&(()=>"y")&(()=>"z")` vs
+            // `() => infer R` → "z") and contravariant-parameter
+            // (`((k:"a")=>void)&((k:"b")=>void)` vs `(k: infer K) => void` → "b")
+            // positions — the UnionToIntersection/LastOfUnion idiom. Iterate in
+            // reverse so the last matching callable member binds. For every
+            // other pattern keep declaration order (first structurally-matching
+            // constituent wins), the long-standing behavior used to pick the
+            // callable constituent out of a `callable & brand` intersection.
+            let pattern_is_signature = matches!(
+                self.interner().lookup(pattern),
+                Some(TypeData::Function(_) | TypeData::Callable(_))
+            );
+            let ordered: Vec<TypeId> = if pattern_is_signature {
+                members.iter().rev().copied().collect()
+            } else {
+                members.iter().copied().collect()
+            };
+            for member in ordered {
                 if member == source {
                     continue;
                 }
@@ -2256,7 +2289,7 @@ mod infer_match_expansion_guard_tests {
                 InferMatchExpansionGuard::enter().expect("enter within budget must succeed");
             held.push(guard);
             assert_eq!(
-                INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()),
+                INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get),
                 expected_prev + 1
             );
         }
@@ -2267,7 +2300,7 @@ mod infer_match_expansion_guard_tests {
         );
 
         held.clear();
-        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()), 0);
+        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get), 0);
         assert!(
             InferMatchExpansionGuard::enter().is_some(),
             "after unwinding, a fresh expansion must be allowed again"

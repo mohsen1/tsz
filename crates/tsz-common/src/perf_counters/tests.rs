@@ -473,7 +473,12 @@ mod json_tests {
         assert_section_keys(
             &json,
             "identity",
-            &["type_environment_raw_symbol_lazy_fallbacks"],
+            &[
+                "type_environment_raw_symbol_lazy_fallbacks",
+                "identity_collision_wrong_decl_suppressed",
+                "symbol_def_index_lookup_hits",
+                "symbol_def_index_lookup_misses",
+            ],
         );
         assert_eq!(json["wired"]["stable_identity"], true);
     }

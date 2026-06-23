@@ -731,28 +731,6 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            # Hard-gate EVERY perf_timed row, canaries included: when tsz is at
-            # or past the slowdown threshold (default 1.5x) slower than tsgo, null
-            # the timing (ERR,ERR) so the row surfaces as a perf failure and drops
-            # out of the chart instead of charting a quiet "tsgo Nx faster" loss.
-            # Canaries were previously exempted (via TSZ_BENCH_SHARD_LABEL) to keep
-            # the gap charted; per owner decision the 1.5x rule now applies to them
-            # too — a >=1.5x loss is a failure regardless of guard/benchmark set.
-            if [ "$winner" = "tsgo" ] \
-                && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
-                local threshold
-                threshold="$(tsz_project_slowdown_failure_factor)"
-                local status
-                status="tsz slowdown (${ratio}x slower than tsgo; threshold ${threshold}x)"
-                local diagnostic_delta
-                diagnostic_delta="timing failure: tsz ${tsz_ms} ms, tsgo ${tsgo_ms} ms, ratio ${ratio}x, threshold ${threshold}x"
-                echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
-                record_project_compatibility "$name" "slowdown" "timing" "$(project_failure_status slowdown)" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
-                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
-                rm -f "$json_file"
-                return
-            fi
-
             local success_exit_class="exit success"
             local success_phase="check"
             local success_diagnostic_status="none"

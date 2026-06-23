@@ -364,6 +364,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         let name = self.js_define_property_name(args.nodes[1])?;
         let (mut type_text, readonly, value) = self.js_define_property_descriptor(args.nodes[2])?;
+        // DTS text boundary (#14142): the descriptor type is recovered as rendered
+        // declaration text (no in-scope `TypeId`); `Object.defineProperty(x, "name",
+        // …)` with an uninferable value renders `any`, which is narrowed to the
+        // `Function.name: string` shape, matching tsc's JS declaration emit.
         if name == "name" && type_text == "any" {
             type_text = "string".to_string();
         }

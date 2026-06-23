@@ -229,6 +229,34 @@ pub fn application_base_is_mapped_type_db<R: TypeResolver>(
     crate::visitors::visitor_predicates::is_mapped_type(type_db, body)
 }
 
+/// True when an object shape carries the `slice`/`concat` marker methods that
+/// distinguish a genuine (`Readonly`)`Array` lib shape from a plain object that
+/// merely happens to have a numeric index signature.
+///
+/// A bare `{ readonly [k: number]: V }` has a readonly numeric index signature
+/// but no array methods; `tsc` maps `{ [K in keyof T]: T[K] }` over it to an
+/// object with a readonly numeric index signature, **not** to `readonly V[]`.
+/// Only a real `ReadonlyArray<V>` (which carries `slice`/`concat`) maps to an
+/// array. Both the mapped-type instantiator and the mapped-type evaluator gate
+/// the readonly-numeric-index → array shortcut on this predicate so they agree.
+pub fn object_shape_has_array_marker_methods_db(
+    db: &dyn TypeDatabase,
+    shape: &crate::types::ObjectShape,
+) -> bool {
+    let slice = db.intern_string("slice");
+    let concat = db.intern_string("concat");
+    let mut has_slice = false;
+    let mut has_concat = false;
+    for prop in &shape.properties {
+        has_slice |= prop.name == slice;
+        has_concat |= prop.name == concat;
+        if has_slice && has_concat {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

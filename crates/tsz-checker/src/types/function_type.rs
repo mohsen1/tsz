@@ -1,10 +1,12 @@
 //! Function, method, and arrow function type resolution.
 mod contextual_arity;
 mod function_name_diagnostics;
+mod generator_declaration_yield;
 mod js_prototype;
 mod jsx_body_context;
 mod literal_context;
 
+use self::generator_declaration_yield::GeneratorDeclarationYieldCtx;
 use super::function_type_helpers::{
     ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
     GeneratorBodyReturnCheckCtx,
@@ -35,23 +37,14 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-        // Determine if this is a function expression or arrow function (a closure)
         let is_closure = matches!(
             node.kind,
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
-        // Track object-literal method shorthand for implicit-any like an
-        // arrow/function-expression member; `is_closure` (which also drives
-        // narrowing depth) stays arrow/function-expression only. Rationale and
-        // class-method exclusion: see `is_object_literal_method`.
         let tracks_implicit_any = is_closure || self.is_object_literal_method(idx);
-        // Rule #42: Increment closure depth when entering a function expression or arrow function
-        // This causes mutable variables (let/var) to lose narrowing inside the closure
         if is_closure {
             self.ctx.inside_closure_depth += 1;
         }
-        // Helper macro to decrement closure depth before returning
-        // This ensures we properly track closure depth even on early returns
         macro_rules! return_with_cleanup {
             ($expr:expr) => {{
                 if is_closure {
@@ -114,7 +107,6 @@ impl<'a> CheckerState<'a> {
                 (false, false)
             };
 
-        // Function declarations don't report implicit any for parameters (handled by check_statement)
         let is_function_declaration = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
         let is_method_or_constructor = matches!(
             node.kind,
@@ -122,12 +114,9 @@ impl<'a> CheckerState<'a> {
         );
         let is_arrow_function = node.kind == syntax_kind_ext::ARROW_FUNCTION;
 
-        // Check for duplicate parameter names in function expressions and arrow functions (TS2300)
         if !is_function_declaration && !is_method_or_constructor {
-            // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters, Some(idx));
             self.check_binding_pattern_optionality(&parameters.nodes, body.is_some(), Some(idx));
-            // Check that rest parameters have array types (TS2370)
             self.check_rest_parameter_types(&parameters.nodes);
             self.check_strict_mode_reserved_parameter_names(
                 &parameters.nodes,
@@ -143,7 +132,6 @@ impl<'a> CheckerState<'a> {
             function_is_generator,
         );
 
-        // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
         self.exclude_params_for_type_param_constraints(parameters);
@@ -155,12 +143,10 @@ impl<'a> CheckerState<'a> {
             self.check_type_parameters_for_missing_names(type_parameters);
         }
 
-        // Check for unused type parameters (TS6133) in function expressions and arrows
         if !is_function_declaration && !is_method_or_constructor {
             self.check_unused_type_params(type_parameters, idx);
         }
 
-        // Collect parameter info using solver's ParamInfo struct
         let mut params = Vec::new();
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
@@ -1913,26 +1899,41 @@ impl<'a> CheckerState<'a> {
                         name_for_error: name_for_error.as_deref(),
                     });
 
-                // Restore outer generator's yield collection state
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
                 self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
-                // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;
                 self.ctx.label_stack.truncate(saved_cf_context.2);
                 self.ctx.had_outer_loop = saved_cf_context.3;
             }
+
+            if is_function_declaration
+                && is_generator
+                && !has_type_annotation
+                && final_generator_yield_type.is_none()
+            {
+                final_generator_yield_type =
+                    self.infer_generator_declaration_yield_type(GeneratorDeclarationYieldCtx {
+                        body,
+                        contextual_type,
+                        has_type_annotation,
+                        annotated_return_type,
+                        return_type,
+                        type_annotation,
+                        idx,
+                        function_is_async,
+                        early_yield_type,
+                    });
+            }
             self.pop_return_type();
             self.ctx.pop_yield_type();
             self.ctx.pop_generator_next_type();
 
-            // Exit async context
             if is_async_for_context {
                 self.ctx.exit_async_context();
             }
 
-            // Restore function_depth (incremented at body entry)
             self.ctx.function_depth -= 1;
         }
 

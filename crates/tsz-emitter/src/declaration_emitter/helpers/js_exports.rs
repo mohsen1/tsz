@@ -1304,6 +1304,10 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            // DTS text boundary (#14142): CommonJS export value types are gathered
+            // as rendered declaration text (no in-scope `TypeId`); an `undefined`
+            // rendering is tracked separately so it is appended once to the emitted
+            // union rather than duplicated among the value types.
             if type_text == "undefined" {
                 has_undefined = true;
                 continue;

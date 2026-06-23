@@ -256,6 +256,20 @@ pub trait TypeTupleLimitSignal {
 
     /// Mark that a tuple spread synthesis was aborted due to the element-count limit.
     fn mark_tuple_too_large(&self) {}
+
+    /// Peek the sticky `tuple_too_large` flag without clearing it (mirrors
+    /// `is_union_too_complex`). Used by the project-wide instantiation cache's
+    /// limit gate. Default `false`.
+    fn is_tuple_too_large(&self) -> bool {
+        false
+    }
+
+    /// Peek the interner-poison flag (type-count budget exceeded → new
+    /// interning degrades to `TypeId::ERROR`). Used by the project-wide
+    /// instantiation cache's limit gate. Default `false`.
+    fn is_poisoned(&self) -> bool {
+        false
+    }
 }
 
 /// Diagnostic display and provenance hooks for interned types.
@@ -396,6 +410,22 @@ pub trait TypeCompilerOptions {
 /// application-eval cache access a narrow cache capability instead of growing
 /// the general type storage interface.
 pub trait TypeApplicationEvalCache {
+    /// Project-wide (#14345) instantiation result lookup. Default `None`.
+    fn lookup_proto_instantiation_cache(
+        &self,
+        _key: &crate::caches::instantiation_cache::InstantiationCacheKey,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Project-wide (#14345) instantiation result store. Default no-op.
+    fn insert_proto_instantiation_cache(
+        &self,
+        _key: crate::caches::instantiation_cache::InstantiationCacheKey,
+        _result: TypeId,
+    ) {
+    }
+
     /// Look up a shared cache entry for evaluated generic applications.
     ///
     /// The default returns `None` so raw `TypeInterner` backends and tests opt
@@ -1015,6 +1045,14 @@ impl TypeTupleLimitSignal for TypeInterner {
     fn mark_tuple_too_large(&self) {
         self.set_tuple_too_large();
     }
+
+    fn is_tuple_too_large(&self) -> bool {
+        Self::is_tuple_too_large(self)
+    }
+
+    fn is_poisoned(&self) -> bool {
+        Self::is_poisoned(self)
+    }
 }
 
 impl TypeDisplayProvenance for TypeInterner {
@@ -1097,7 +1135,23 @@ impl TypeCompilerOptions for TypeInterner {
     }
 }
 
-impl TypeApplicationEvalCache for TypeInterner {}
+impl TypeApplicationEvalCache for TypeInterner {
+    // #14345: the interner backs the project-wide instantiation cache.
+    fn lookup_proto_instantiation_cache(
+        &self,
+        key: &crate::caches::instantiation_cache::InstantiationCacheKey,
+    ) -> Option<TypeId> {
+        self.proto_instantiation_memo(key)
+    }
+
+    fn insert_proto_instantiation_cache(
+        &self,
+        key: crate::caches::instantiation_cache::InstantiationCacheKey,
+        result: TypeId,
+    ) {
+        self.set_proto_instantiation_memo(key, result);
+    }
+}
 
 impl TypeWidenCache for TypeInterner {
     fn widen_type_memo(&self, type_id: TypeId) -> Option<TypeId> {

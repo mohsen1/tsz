@@ -179,23 +179,67 @@ pub(crate) fn stable_call_recovery_return_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
+    // Identity leaf: return the signature's raw return type, type parameters
+    // left intact (callers that want default type arguments use the variant
+    // below).
+    stable_call_recovery_return_type_impl(db, type_id, &|_db, return_type, _type_params| {
+        return_type
+    })
+}
+
+/// Like [`stable_call_recovery_return_type`], but instantiates the recovered
+/// signature's *own* type parameters with their `default → constraint →
+/// unknown` fallback.
+///
+/// When a generic call fails the argument-count check, tsc reports TS2554/TS2555
+/// yet still produces a best-effort result type by substituting each signature
+/// type parameter with its default type argument (`getInferredTypes` →
+/// `getDefaultTypeArgumentType`). The plain recovery above returns the raw
+/// return type, leaking the bare type parameter (e.g. `T`) into the result and
+/// drawing a spurious `TS2322`/`TS2339` at the use site. Only the signature's
+/// own parameters are resolved; an enclosing-scope parameter the return type
+/// legitimately mentions stays abstract.
+pub(crate) fn stable_call_recovery_return_type_with_default_type_args(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    stable_call_recovery_return_type_impl(
+        db,
+        type_id,
+        &super::super::type_defaults::resolve_signature_default_type_args,
+    )
+}
+
+/// Shared walk for [`stable_call_recovery_return_type`] and its
+/// default-type-argument variant: peel a function / callable / intersection
+/// type down to a single, agreed-upon recovery return type, applying `leaf` to
+/// each signature's `(return_type, type_params)`. An intersection recovers only
+/// when every callable member agrees on the (leaf-transformed) return type.
+fn stable_call_recovery_return_type_impl(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    leaf: &impl Fn(&dyn TypeDatabase, TypeId, &[tsz_solver::TypeParamInfo]) -> TypeId,
+) -> Option<TypeId> {
     if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
-        return Some(shape.return_type);
+        return Some(leaf(db, shape.return_type, &shape.type_params));
     }
 
     if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
-        let first = shape.call_signatures.first()?.return_type;
-        return shape
+        let first = shape.call_signatures.first()?;
+        if shape
             .call_signatures
             .iter()
-            .all(|sig| sig.return_type == first)
-            .then_some(first);
+            .any(|sig| sig.return_type != first.return_type)
+        {
+            return None;
+        }
+        return Some(leaf(db, first.return_type, &first.type_params));
     }
 
     let members = tsz_solver::type_queries::get_intersection_members(db, type_id)?;
     let mut candidate = None;
     for member in members {
-        let Some(return_type) = stable_call_recovery_return_type(db, member) else {
+        let Some(return_type) = stable_call_recovery_return_type_impl(db, member, leaf) else {
             continue;
         };
         if let Some(existing) = candidate {

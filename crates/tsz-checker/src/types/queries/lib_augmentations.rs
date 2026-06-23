@@ -183,24 +183,69 @@ impl<'a> CheckerState<'a> {
             return;
         };
         self.ctx.definition_store.register_type_to_def(ty, def_id);
-        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty) == Some(def_id) {
-            return;
-        }
-        if self.ctx.definition_store.get_body(def_id) == Some(ty) {
-            return;
-        }
-        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        // Publish through the store's finalize entry point first: it bypasses
-        // the deferred-publication drop (the finalized form must replace any
-        // earlier intermediate form), and the env registration below then
-        // write-throughs the identical body (a no-op same-body publication).
-        self.ctx.definition_store.set_body_finalized(
-            def_id,
+        if crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+            self.ctx.types,
             ty,
-            (!type_params.is_empty()).then(|| type_params.clone()),
-        );
+            def_id,
+        ) {
+            return;
+        }
+        let existing_body = self.ctx.definition_store.get_body(def_id);
+        if existing_body == Some(ty) {
+            return;
+        }
+        // Monotone-membership publication for lib interface bodies.
+        //
+        // Lib interface bodies publish to the program-shared `DefinitionStore`
+        // and the per-file `type_env` last-writer-wins (the publish-once freeze
+        // at `resolve_lib_type_by_name`'s tail is opt-in/default-off because it
+        // regresses `declare global` augmentation cases). A later checker can
+        // re-derive a HERITAGE-THIN body for the same def: an iterator interface
+        // momentarily resolved with a heritage-thin base drops the inherited
+        // members (e.g. `SetIterator`/`MapIterator` lose `Iterator.next` reached
+        // through `IteratorObject`). Once that thin form clobbers the complete
+        // one, a consumer materializes against it — `set.values()` becomes a
+        // `next`-less `SetIterator`, drawing false TS2741/TS2322 against
+        // `IterableIterator` (#13942), and the DOM `Node`/`Element` diamond
+        // oscillates the same way (#13862/#12299).
+        //
+        // The published body must only ever GAIN members for a given def, never
+        // lose them: a body whose property set is a STRICT SUBSET of the body
+        // already published is a heritage-thinning re-derivation and is rejected
+        // (we keep and re-mirror the existing, more-complete body). Heritage
+        // completion (thin already published, complete arriving) is a superset
+        // and still wins; augmentation only adds members and still wins; same
+        // member set with refined member types still replaces. The check is
+        // order-independent — the membership-maximal body wins regardless of
+        // which checker finalizes first.
+        //
+        // This guards the FINALIZE entry point, which intentionally bypasses the
+        // store's deferred-publish drop (`set_body_with_params_impl`); the two
+        // guards are complementary — the solver's deferred flag drops thin
+        // NON-finalize re-publications, this drops thin finalize re-publications.
+        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        let keep_existing = existing_body.is_some_and(|prev| {
+            crate::query_boundaries::lib_augmentations::lib_body_strictly_loses_members(
+                self.ctx.types,
+                prev,
+                ty,
+            )
+        });
+        let published = if keep_existing {
+            existing_body.unwrap_or(ty)
+        } else {
+            self.ctx.definition_store.set_body_finalized(
+                def_id,
+                ty,
+                (!type_params.is_empty()).then(|| type_params.clone()),
+            );
+            // The store may still suppress the write (e.g. the opt-in freeze, or
+            // the monotone-deferral guard): mirror the AUTHORITATIVE store body,
+            // not the `ty` we attempted, so the env never diverges below it.
+            self.ctx.definition_store.get_body(def_id).unwrap_or(ty)
+        };
         self.ctx
-            .register_def_auto_params_in_envs(def_id, ty, type_params);
+            .register_def_auto_params_in_envs(def_id, published, type_params);
     }
 
     /// Mutation-isolation campaign: freeze `name`'s lib def body in the
@@ -248,7 +293,10 @@ impl<'a> CheckerState<'a> {
         let Some(type_id) = cached else {
             return true;
         };
-        if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
+        if !crate::query_boundaries::lib_augmentations::type_id_is_known_to_db(
+            self.ctx.types,
+            type_id,
+        ) {
             return false;
         }
         for &def_id in self.ctx.collect_lazy_def_ids_cached(type_id).iter() {
@@ -270,6 +318,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        crate::query_boundaries::common::has_construct_signatures(self.ctx.types, type_id)
+        crate::query_boundaries::lib_augmentations::has_construct_signatures(
+            self.ctx.types,
+            type_id,
+        )
     }
 }

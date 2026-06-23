@@ -10,6 +10,34 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
+    /// Resolve the member-access result type when the (resolved) object type is
+    /// `unknown`, under `strictNullChecks`.
+    ///
+    /// `tsc` forbids accessing a member of a value of type `unknown` — by name
+    /// (`x.p`), by index (`x[k]`), or through an optional chain (`x?.p` / `x?.[k]`)
+    /// — so under `strictNullChecks` we emit the diagnostic and return `Some`:
+    /// `TS18046` (`'x' is of type 'unknown'.`) when the base expression has a
+    /// printable name, otherwise the object form `TS2571` (`Object is of type
+    /// 'unknown'.`), returning `ERROR` to stop cascading diagnostics. When
+    /// `strictNullChecks` is off, `unknown` behaves like `any`; we return `None` so
+    /// each caller can apply its own non-strict fallback (index-signature handling
+    /// for element access, `error_property_not_exist_at` for property access).
+    ///
+    /// This is the single decision gate for the unknown-object access result,
+    /// shared by the element-access `literal_string`/`literal_index` arms and the
+    /// property-access path, so the `TS2571`/`TS18046` choice is not re-derived
+    /// independently in each place.
+    pub(crate) fn unknown_object_access_result(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
+        if !self.ctx.compiler_options.strict_null_checks {
+            return None;
+        }
+        if self.error_is_of_type_unknown(base_expr) {
+            Some(TypeId::ERROR)
+        } else {
+            Some(TypeId::ANY)
+        }
+    }
+
     pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(key_expr_idx)?;
         match node.kind {
@@ -974,6 +1002,53 @@ impl<'a> CheckerState<'a> {
             type_param,
             &mut |ty| self.evaluate_type_with_env(ty),
         )
+    }
+
+    /// `T[K]` where `K`'s constraint is `keyof F<T>` (a transform of the object
+    /// type parameter `T`) is still a valid index when the transformed key space
+    /// is assignable to `keyof T`. Key-preserving transforms keep
+    /// `keyof F<T> = keyof T` — a transparent alias `type Alias<T> = T`,
+    /// `NonNullable<T>` (`T & {}`), `Readonly<T>`, `Partial<T>`. Only a
+    /// key-*changing* transform (a key remap, `Pick`/`Omit`, or a *foreign* type
+    /// parameter's keys such as `keyof U` with `U extends T`) produces keys
+    /// outside `keyof T` and must keep emitting `TS2536`.
+    ///
+    /// The structural `generic_index_mentions_transformed_current_type_param`
+    /// heuristic cannot by itself tell a key-preserving transform from a
+    /// key-changing one (both merely *mention* `T`), so callers gate its
+    /// `TS2536` on this relation-backed query. Returns true when the index key
+    /// space genuinely indexes `object_param` and the diagnostic must be
+    /// suppressed.
+    ///
+    /// Suppression is restricted to a **type-parameter** index `K extends keyof
+    /// F<T>`. tsc allows an unconstrained generic `T` to be indexed by a *key
+    /// parameter* whose constraint reduces to `keyof T`, but a **direct**
+    /// transformed-keyof value such as `k: keyof (T & {})` still draws TS2536
+    /// even though `keyof (T & {})` reduces to `keyof T` (see
+    /// `conformance/types/unknown/unknownControlFlow.ts` `ff3`). Only the
+    /// type-parameter form is suppressed here; a direct keyof expression keeps
+    /// the heuristic's diagnostic.
+    pub(crate) fn transformed_index_key_space_indexes_object(
+        &mut self,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+        object_param: TypeId,
+    ) -> bool {
+        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type) {
+            return false;
+        }
+        let constraint = index_constraint
+            .or_else(|| {
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    index_type,
+                )
+            })
+            .unwrap_or(index_type);
+        let index_key_space = self.evaluate_type_with_env(constraint);
+        let object_key_space = self.ctx.types.evaluate_keyof(object_param);
+        self.indexed_access_key_space_relation_outcome(index_key_space, object_key_space)
+            .related
     }
 
     /// Return the type parameter source when `index_type` is `keyof S` or `K extends keyof S`

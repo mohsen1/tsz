@@ -23,29 +23,7 @@ impl<'a> TypeFormatter<'a> {
         // (e.g. `Refrigerator | "foo"` rather than `"foo" | Refrigerator`),
         // while still preserving discriminated-union order for anonymous
         // object members where tsc keeps declaration order.
-        if let Some(def_store) = self.def_store {
-            let positions: Vec<_> = ordered
-                .iter()
-                .map(|&m| self.get_source_position_for_type(m, def_store))
-                .collect();
-
-            let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
-            let mut anonymous: Vec<TypeId> = Vec::new();
-            for (&id, &pos) in ordered.iter().zip(&positions) {
-                if pos.0 < 2 {
-                    named.push((id, pos));
-                } else {
-                    anonymous.push(id);
-                }
-            }
-            named.sort_by_key(|&(_, pos)| pos);
-
-            ordered = named
-                .into_iter()
-                .map(|(id, _)| id)
-                .chain(anonymous)
-                .collect();
-        }
+        ordered = self.order_union_members_by_source(ordered);
 
         if has_null {
             ordered.push(TypeId::NULL);
@@ -148,6 +126,40 @@ impl<'a> TypeFormatter<'a> {
 
     pub(super) fn format_union_preserving_member_order(&mut self, members: &[TypeId]) -> String {
         self.format_ordered_union_members(members.to_vec())
+    }
+
+    /// Order union members for display by source position: named/built-in
+    /// members (tier 0/1) sorted by source position first, then anonymous
+    /// members (tier 2 — literals, anonymous objects) in their existing
+    /// relative order. The interner stores union members in `DefId`-allocation
+    /// order, which does not match source declaration order; this restores it.
+    /// Shared by [`Self::format_union`] and the union-keyed index-signature split
+    /// so both render members in the same order.
+    pub(super) fn order_union_members_by_source(&mut self, members: Vec<TypeId>) -> Vec<TypeId> {
+        let Some(def_store) = self.def_store else {
+            return members;
+        };
+        let positions: Vec<_> = members
+            .iter()
+            .map(|&m| self.get_source_position_for_type(m, def_store))
+            .collect();
+
+        let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
+        let mut anonymous: Vec<TypeId> = Vec::new();
+        for (&id, &pos) in members.iter().zip(&positions) {
+            if pos.0 < 2 {
+                named.push((id, pos));
+            } else {
+                anonymous.push(id);
+            }
+        }
+        named.sort_by_key(|&(_, pos)| pos);
+
+        named
+            .into_iter()
+            .map(|(id, _)| id)
+            .chain(anonymous)
+            .collect()
     }
 
     fn format_ordered_union_members(&mut self, mut ordered: Vec<TypeId>) -> String {

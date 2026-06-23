@@ -215,6 +215,80 @@ pub fn get_type_query_symbol_ref(
     }
 }
 
+/// True when `type_id` is a surface type constructor over the canonical
+/// polymorphic `this`, such as `this[]`, `readonly this[]`, `this | undefined`,
+/// or `Foo & this`.
+///
+/// This deliberately walks only constructor surfaces. It does not inspect object
+/// members, lazy class/interface bodies, or type-parameter constraints, because
+/// those can mention `this` without making the receiver itself a `this`-relative
+/// wrapper.
+pub fn is_compound_this_relative_surface_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> bool {
+    type_id != this_type && has_surface_this_relative_wrapper(db, type_id, this_type)
+}
+
+fn has_surface_this_relative_wrapper(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    let mut stack = vec![type_id];
+    let mut fuel = 64usize;
+    while let Some(current) = stack.pop() {
+        if current == this_type {
+            return true;
+        }
+        if current.is_intrinsic() || fuel == 0 {
+            continue;
+        }
+        fuel -= 1;
+
+        match db.lookup(current) {
+            Some(
+                TypeData::Array(element)
+                | TypeData::ReadonlyType(element)
+                | TypeData::NoInfer(element)
+                | TypeData::KeyOf(element),
+            ) => stack.push(element),
+            Some(TypeData::Tuple(elements)) => {
+                stack.extend(
+                    db.tuple_list(elements)
+                        .iter()
+                        .map(|element| element.type_id),
+                );
+            }
+            Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
+                stack.extend(db.type_list(list).iter().copied());
+            }
+            Some(TypeData::Application(application)) => {
+                stack.extend(db.type_application(application).args.iter().copied());
+            }
+            Some(TypeData::IndexAccess(object, index)) => {
+                stack.push(object);
+                stack.push(index);
+            }
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => stack.push(type_arg),
+            Some(TypeData::Substitution {
+                base_type,
+                constraint,
+            }) => {
+                stack.push(base_type);
+                stack.push(constraint);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Get the mapped type ID if the type is a Mapped type.
 pub fn get_mapped_type_id(
     db: &dyn TypeDatabase,

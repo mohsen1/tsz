@@ -93,6 +93,50 @@ await fs.writeFile(artifact, `${JSON.stringify({
       },
     },
     {
+      name: "rxjs-project",
+      lines: 12000,
+      kb: 900,
+      tsz_ms: 300,
+      tsgo_ms: 100,
+      winner: "tsgo",
+      factor: 3,
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 12,
+        files_reached_reason: null,
+        peak_memory_bytes: 104857600,
+        peak_memory_bytes_reason: null,
+        fixture_sources: [
+          {
+            name: "rxjs",
+            repository: "https://github.com/ReactiveX/rxjs.git",
+            ref: "rxjs-ref",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
       name: "type-challenges-solutions-project",
       lines: 78,
       kb: 0,
@@ -457,7 +501,12 @@ try {
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Utility types project/);
-  assert.match(charts, /Compile canaries and incomplete project timings/);
+  // rxjs is a tsgo 3.0x win (tsz 3x slower), so it is NOT a timed chart bar; it
+  // is surfaced in the "not charted" list with a slow label instead.
+  assert.match(charts, /RxJS project/);
+  assert.match(charts, /tsz 3\.0x slower than tsgo/);
+  assert.doesNotMatch(charts, /tsgo 3\.0x faster/);
+  assert.match(charts, /Not charted: canaries, incomplete, or tsz slower than tsgo/);
   assert.match(charts, /type-challenges solutions project/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
@@ -472,15 +521,20 @@ try {
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.match(compatibilityDashboard, /umami[\s\S]*compat-state green[\s\S]*204 files[\s\S]*200 MiB peak/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
+  // Unmeasured (gray) rows are excluded entirely; the dashboard never renders "Not measured".
+  assert.doesNotMatch(compatibilityDashboard, /Not measured/);
+  assert.doesNotMatch(compatibilityDashboard, /compat-state gray/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
   assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
   assert.doesNotMatch(failedOnlyCharts, /No successful project benchmark timing pairs/);
-  assert.match(failedOnlyCharts, /Large repositories/);
+  // large-ts-repo is a tsgo 100x win (tsz 100x slower): not a chart bar, listed
+  // in the "not charted" section with a slow label.
   assert.match(failedOnlyCharts, /Large ts repo project/);
-  assert.match(failedOnlyCharts, /tsgo 100\.0x faster/);
-  assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
+  assert.match(failedOnlyCharts, /tsz 100\.0x slower than tsgo/);
+  assert.doesNotMatch(failedOnlyCharts, /tsgo 100\.0x faster/);
+  assert.match(failedOnlyCharts, /Not charted: canaries, incomplete, or tsz slower than tsgo/);
   assert.match(failedOnlyCharts, /RxJS project/);
   const failedOnlyCompatibility = getProjectCompatibilityDashboard();
   assert.match(failedOnlyCompatibility, /data-compat-sort="project"/);
@@ -490,7 +544,10 @@ try {
   assert.match(failedOnlyCompatibility, /data-compat-sort="files"/);
   assert.match(failedOnlyCompatibility, /data-compat-sort="peak"/);
   assert.match(failedOnlyCompatibility, /RxJS[\s\S]*compat-state yellow[\s\S]*diagnostic mismatch[\s\S]*12 files[\s\S]*100 MiB peak/);
-  assert.match(failedOnlyCompatibility, /large-ts-repo[\s\S]*compat-state gray[\s\S]*oracle unavailable[\s\S]*6,061 files/);
+  // Gray "oracle unavailable" / unmeasured rows (e.g. large-ts-repo) are excluded.
+  assert.doesNotMatch(failedOnlyCompatibility, /large-ts-repo/);
+  assert.doesNotMatch(failedOnlyCompatibility, /Not measured/);
+  assert.doesNotMatch(failedOnlyCompatibility, /compat-state gray/);
   assert.match(failedOnlyCompatibility, /utility-types[\s\S]*compat-state red[\s\S]*exit success[\s\S]*10 files[\s\S]*—/);
 
   const slugs = new Map();

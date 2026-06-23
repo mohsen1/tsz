@@ -42,9 +42,21 @@ const artifact = {
       winner: "tsz",
     },
     {
+      // tsz is 3x slower than tsgo here — past the 1.5x slowdown-failure
+      // threshold, so this row must NOT count toward the README headline
+      // even though the website benchmark page still charts its timing pair.
       name: "utility-types-project",
       lines: 2000,
       tsz_ms: 9000,
+      tsgo_ms: 3000,
+      winner: "tsgo",
+    },
+    {
+      // tsz is ~1.17x slower — within the 1.5x threshold, so this project row
+      // DOES count toward the headline.
+      name: "rxjs-project",
+      lines: 1500,
+      tsz_ms: 3500,
       tsgo_ms: 3000,
       winner: "tsgo",
     },
@@ -60,14 +72,16 @@ const artifact = {
 };
 
 const summary = createReadmePerfSummary(artifact);
+// utility-types-project (tsz 3x slower) is excluded from the README headline by
+// the 1.5x slowdown threshold; only the within-threshold rxjs-project counts.
 assert.equal(summary.rows, 1);
 assert.equal(summary.projectRows, 1);
 assert.equal(summary.microRows, 3);
 assert.equal(summary.rowKind, "project");
-assert.equal(summary.totalRows, 5);
-assert.equal(summary.tszMs, 9000);
+assert.equal(summary.totalRows, 6);
+assert.equal(summary.tszMs, 3500);
 assert.equal(summary.tsgoMs, 3000);
-assert.equal(summary.speedup, 1 / 3);
+assert.equal(summary.speedup, 3000 / 3500);
 assert.equal(summary.winner, "tsgo");
 assert.equal(summary.generatedAt, "2026-05-28T02:14:24Z");
 assert.equal(summary.sourceCommit, "0123456789ab");
@@ -84,9 +98,9 @@ assert.doesNotMatch(renderReadmePerfSvg(artifact, { theme: "dark" }), /fill="#0d
 assert.doesNotMatch(svg, />Latest benchmark snapshot</);
 assert.doesNotMatch(svg, />2 successful micro rows</);
 assert.doesNotMatch(svg, />tsz 3\.0x faster</);
-assert.match(svg, />tsgo is 3\.0x faster</);
+assert.match(svg, />tsgo is 1\.2x faster</);
 assert.match(svg, />1 project rows</);
-assert.match(svg, /9\.0s/);
+assert.match(svg, /3\.5s/);
 assert.match(svg, /3\.0s/);
 assert.doesNotMatch(svg, /Project-mode and tiny startup fixtures are excluded/);
 

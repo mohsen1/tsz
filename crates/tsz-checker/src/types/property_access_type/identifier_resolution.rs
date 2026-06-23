@@ -32,6 +32,59 @@ impl<'a> CheckerState<'a> {
         name_node: &Node,
         request: IdentifierPropertyAccessRequest,
     ) -> TypeId {
+        let is_this_access = request.is_this_access;
+        let member_type =
+            self.resolve_identifier_property_access_inner(idx, access, name_node, request);
+        self.bind_omitted_base_type_args_for_this_member(member_type, is_this_access)
+    }
+
+    /// Bind "dangling" base-class type parameters of a `this`-member read to the
+    /// base parameter's `default → constraint → unknown`.
+    ///
+    /// When a class extends a generic base WITHOUT type arguments
+    /// (`class Der extends Base`, where `Base<P = …>`), the omitted argument is
+    /// never bound on the `this`-member resolution path (an external receiver
+    /// reads the already-defaulted instance shape, so it is unaffected). The bare
+    /// parameter `P` would otherwise leak into the value's type — a false
+    /// `TS2339`/`TS7053`/`TS2322` on `this.member`, the raw-parameter sibling of
+    /// the `error`/`never`-in-a-type-argument-slot leak family (#13484). `tsc`
+    /// binds such an omitted base argument to its default
+    /// (`fillMissingTypeArguments`); this does the same.
+    ///
+    /// Type parameters of the enclosing generic context (a class's / function's
+    /// own parameters, e.g. `T` of a generic `Box<T>`) stay in scope and are
+    /// preserved, so only genuinely unbound base parameters are resolved. Gated on
+    /// the `this`-receiver flag and the cheap memoized free-parameter predicate so
+    /// concrete results and non-`this` deferred-generic reads are untouched.
+    fn bind_omitted_base_type_args_for_this_member(
+        &mut self,
+        member_type: TypeId,
+        is_this_access: bool,
+    ) -> TypeId {
+        if !is_this_access
+            || !crate::query_boundaries::common::contains_free_type_parameters(
+                self.ctx.types,
+                member_type,
+            )
+        {
+            return member_type;
+        }
+        let in_scope: rustc_hash::FxHashSet<TypeId> =
+            self.ctx.type_parameter_scope.values().copied().collect();
+        crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
+            self.ctx.types,
+            member_type,
+            &in_scope,
+        )
+    }
+
+    fn resolve_identifier_property_access_inner(
+        &mut self,
+        idx: NodeIndex,
+        access: &AccessExprData,
+        name_node: &Node,
+        request: IdentifierPropertyAccessRequest,
+    ) -> TypeId {
         let IdentifierPropertyAccessRequest {
             object_type,
             original_object_type,
@@ -763,7 +816,23 @@ impl<'a> CheckerState<'a> {
                 // instead of `(other: Dog) => boolean`, which diverges from tsc.
                 let this_substitution_target = if self.is_super_expression(access.expression) {
                     self.current_this_type().unwrap_or(original_object_type)
-                } else if direct_class_this_receiver {
+                } else if direct_class_this_receiver
+                    || crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        original_object_type,
+                    )
+                {
+                    // Either the receiver *is* `this`, or its type still refers to
+                    // the enclosing class's polymorphic `this` (e.g.
+                    // `this.children: this[]`, `this.pair: [this, this]`). Such a
+                    // receiver is not a concrete anchor for `this`: a member whose
+                    // type also mentions `this` — the element `this` of
+                    // `Array<this>.push`/`indexOf`, a `[this, this]` slot — is
+                    // already in the correct scope and must stay `this`.
+                    // Substituting `this` with the receiver type would conflate the
+                    // member's `this` with the whole receiver shape (turning the
+                    // `this` element of `this[]` into `this[]`), drawing a spurious
+                    // TS2345.
                     self.ctx.types.this_type()
                 } else {
                     original_object_type
@@ -776,8 +845,24 @@ impl<'a> CheckerState<'a> {
                 // instead of D, causing assignment mismatches in polymorphic
                 // `this` checks (e.g., `this.self = this.self2` would fail
                 // because D_subst != D even though they're semantically equal).
-                if crate::query_boundaries::common::contains_this_type(self.ctx.types, prop_type)
-                    && prop_type != this_substitution_target
+                // When the substitution target is itself a *compound* `this`-relative
+                // type (e.g. accessing a member on `this.children: this[]` inside the
+                // class body), the apparent type's own `this` was already bound to the
+                // receiver by the solver, and any `this` remaining in `prop_type` is
+                // element-derived — it is the *same* polymorphic `this` and must stay
+                // polymorphic. Substituting it with the this-bearing receiver would
+                // spuriously nest `this` (e.g. `push(...items: this[])` would become
+                // `this[][]`, drawing a false TS2345). The empty branch also
+                // short-circuits the raw-recovery `else if` below, which would
+                // otherwise re-introduce the same nesting.
+                if self.receiver_expr_is_this_relative(access.expression)
+                    && self.type_is_compound_this_relative(this_substitution_target)
+                {
+                    // Leave `prop_type` as the solver produced it.
+                } else if crate::query_boundaries::common::contains_this_type(
+                    self.ctx.types,
+                    prop_type,
+                ) && prop_type != this_substitution_target
                 {
                     prop_type = crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,
