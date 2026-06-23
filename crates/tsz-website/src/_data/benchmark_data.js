@@ -5,7 +5,6 @@ import { marked } from "marked";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
-  PERF_TIMED_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
@@ -231,35 +230,27 @@ function hasSuccessfulTimingPair(row) {
     && hasTiming(row?.tsgo_ms);
 }
 
-function hasSuccessfulTiming(row) {
-  return hasSuccessfulTimingPair(row);
-}
-
-const PERF_TIMED_PROJECT_SET = new Set(PERF_TIMED_PROJECT_ROWS);
-
-// A perf-timed optional row may produce a tsz/tsgo timing pair while still
-// diverging from `tsc` (yellow) or failing tsz (red). Such rows must NOT join
-// the perf comparison chart: only promote a perf-timed optional row once it
-// checks green.
-// Required rows keep their existing behavior (timing pair is sufficient) so this
-// only gates the opt-in timing set, never the required corpus.
+// We run every benchmark and let individual ones fail; the chart renders only
+// the ones that "succeeded", where success means SPEED, not tsc-compatibility:
+// both compilers produced a timing AND tsgo is not >= 1.5x faster than tsz.
+// A row that keeps up with tsgo renders even if it diverges from tsc (yellow);
+// a row where tsz is >= 1.5x slower, errored, or timed out simply does not
+// render — it never blocks the rest of the chart.
+const CHART_MAX_TSZ_TO_TSGO_RATIO = 1.5;
 function isChartEligible(row) {
-  if (!hasSuccessfulTiming(row)) return false;
-  if (PERF_TIMED_PROJECT_SET.has(row?.name)) {
-    return hasGreenProjectCompatibility(row);
-  }
-  return true;
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (!(tsz > 0) || !(tsgo > 0) || row?.winner === "error") return false;
+  return tsz < tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO;
 }
 
-// A perf-timed optional row that produced a timing pair but is not green is
-// excluded from the chart by isChartEligible. It still has a timing pair, so the
+// A row that produced a real timing pair but is too slow to chart (tsgo is
+// >= 1.5x faster, so isChartEligible() drops it) still has a timing pair, so the
 // normal isFailedBenchmark() check would treat it as "successful" and drop it
-// from the failures list too. Surface it explicitly in the canaries/incomplete
-// section so a timed-but-diverging row stays visible instead of vanishing.
-function isExcludedNonGreenCanary(row) {
-  return PERF_TIMED_PROJECT_SET.has(row?.name)
-    && hasSuccessfulTiming(row)
-    && !hasGreenProjectCompatibility(row);
+// from the failures list too. Surface it explicitly in the excluded/incomplete
+// section so a timed-but-too-slow row stays visible instead of vanishing.
+function isExcludedSlowTimedRow(row) {
+  return hasSuccessfulTimingPair(row) && !isChartEligible(row);
 }
 
 function isFailedBenchmark(row) {
@@ -268,7 +259,13 @@ function isFailedBenchmark(row) {
 }
 
 function statusLabel(row) {
-  return String(row?.status || "timing unavailable");
+  if (row?.status) return String(row.status);
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (tsz > 0 && tsgo > 0 && tsz >= tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO) {
+    return `tsz ${(tsz / tsgo).toFixed(1)}x slower than tsgo`;
+  }
+  return "timing unavailable";
 }
 
 function firstPresent(...values) {
@@ -899,13 +896,16 @@ function loadBenchmarks() {
   }
 
   const snapshotPath = path.join(ROOT, "crates/tsz-website/bench-snapshot.json");
+  // Always use the latest available data. We do NOT gate selection on every app
+  // being clean, on green-only project timing pairs, or on a minimum count —
+  // benchmarks are allowed to fail individually; isChartEligible() decides which
+  // rows render (tsz within 1.5x of tsgo). Gating selection here is what left the
+  // whole dashboard empty whenever a canary/app legitimately crashed or timed out.
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...benchmarkArtifactFiles(),
     snapshotPath,
   ], {
-    minimumProjectTimingPairs: 1,
-    requireApplicationCompat: true,
-    requireGreenProjectTimingPairs: true,
+    minimumProjectTimingPairs: 0,
   });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
@@ -1517,7 +1517,7 @@ function buildGroupedBenchmarks(data) {
     ...[...grouped.values()].flat().map((row) => row.name),
   ]);
   const failedResults = allResults.filter((row) => (
-    (isFailedBenchmark(row) || isExcludedNonGreenCanary(row)) && !successfulNames.has(row.name)
+    (isFailedBenchmark(row) || isExcludedSlowTimedRow(row)) && !successfulNames.has(row.name)
   ));
 
   const order = [
@@ -1635,7 +1635,7 @@ function generateCharts(data, mode = "projects") {
   );
 
   let html = "";
-  if (mode === "projects" && visibleCategories.length === 0) {
+  if (mode === "projects" && visibleCategories.length === 0 && visibleFailedResults.length === 0) {
     html += `<div class="bench-placeholder">No successful project benchmark timing pairs are available in this artifact yet. Project rows below are still tracked for compile readiness.</div>\n`;
   }
 
@@ -1705,10 +1705,12 @@ function generateCharts(data, mode = "projects") {
   }
 
   if (visibleFailedResults.length > 0) {
-    const failedTitle = mode === "projects" ? "Compile canaries and incomplete project timings" : "Incomplete timings";
+    const failedTitle = mode === "projects"
+      ? "Not charted: canaries, incomplete, or tsz slower than tsgo"
+      : "Not charted: incomplete or tsz slower than tsgo";
     const failedDescription = mode === "projects"
-      ? "Rows that are tracked for compile readiness but are not part of the timed vs-tsgo chart yet."
-      : "Rows recorded by CI without a full tsz and tsgo timing pair.";
+      ? "Rows that ran but are not in the timed chart: compile canaries, rows without a full tsz and tsgo timing pair, or rows where tsz is at least 1.5x slower than tsgo."
+      : "Rows without a full tsz and tsgo timing pair, or where tsz is at least 1.5x slower than tsgo.";
     html += `<section class="bench-category bench-failures">
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
