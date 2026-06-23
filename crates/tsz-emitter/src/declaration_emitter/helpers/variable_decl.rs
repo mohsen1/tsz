@@ -625,10 +625,9 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = widened_type_text;
                 }
-                // DTS text boundary (#14142): `type_text` here has already been
-                // through several declaration-text rewrites above (widening, etc.)
-                // with no single in-scope `TypeId`; a `string` rendering is the
-                // trigger for the template-index-signature refinement.
+                // DTS text boundary (#14142): `type_text` has already passed
+                // declaration-text rewrites; `string` triggers template-index
+                // refinement with no single in-scope `TypeId`.
                 if keyword == "const"
                     && type_text == "string"
                     && let Some(template_index_type) =
@@ -734,8 +733,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                 // DTS text boundary (#14142): `preferred_expression_type_text`
-                // returns rendered declaration text (no in-scope `TypeId`); an
-                // `any` rendering means there is no preferred annotation to emit.
+                // returns rendered declaration text; `any` means no preferred
+                // annotation to emit.
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
                 && type_text != "any"
             {
@@ -1908,11 +1907,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.js_extends_entity_reference_declared_type_text(expr_idx)
                     .map(|type_text| self.jsdoc_type_text_for_declaration_emit(&type_text))
             });
-        // DTS text boundary (#14142): although `type_id` exists above, a `never`
-        // rendering is not equivalent to `type_id == NEVER` — an alias to `never`
-        // or a collapsed union also prints `never`, and the choice here is between
-        // two already-rendered declaration strings (`type_text` vs the source
-        // heritage text), so the comparison stays on the rendered text.
+        // DTS text boundary (#14142): a `never` rendering is not equivalent to
+        // `type_id == NEVER`; aliases or collapsed unions also print `never`.
+        // The choice is between rendered declaration strings, so compare text.
         let prefer_source_text = type_text == "never"
             || source_type_text.as_ref().is_some_and(|source_type_text| {
                 Self::should_prefer_synthetic_extends_source_type_text(source_type_text, &type_text)
