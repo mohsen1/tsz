@@ -22,9 +22,10 @@
 
 use crate::caches::query_cache::QueryCache;
 use crate::instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_generic_cached, instantiate_type,
-    instantiate_type_cached, instantiate_type_preserving_cached,
-    substitute_this_type_at_return_position, substitute_this_type_cached,
+    MAX_INSTANTIATION_DEPTH, ProjectInstCacheDisabledGuard, TypeSubstitution,
+    instantiate_generic_cached, instantiate_type, instantiate_type_cached,
+    instantiate_type_preserving_cached, substitute_this_type_at_return_position,
+    substitute_this_type_cached,
 };
 use crate::intern::TypeInterner;
 use crate::types::{ConditionalType, PropertyInfo, TypeId, TypeParamInfo, Visibility};
@@ -110,6 +111,9 @@ fn object_with_pair(interner: &TypeInterner, t_id: TypeId, u_id: TypeId) -> Type
 fn cache_hit_after_first_instantiate_type() {
     // Two back-to-back instantiate_type_cached calls with the same key must
     // produce exactly one miss followed by one hit.
+    // Per-file tier in isolation (#14345): disable the project-wide cache so the
+    // second call's hit is observed on the per-file QueryCache statistics.
+    let _g = ProjectInstCacheDisabledGuard::new();
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -174,6 +178,7 @@ fn cache_distinct_substitutions_do_not_alias() {
 
 #[test]
 fn cache_canonicalizes_substitution_insertion_order() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // The cache key is the canonical substitution payload, not the source
     // FxHashMap's insertion order. Rebuilding the same semantic substitution in
     // reverse order must hit the first cache entry instead of creating a second.
@@ -216,6 +221,7 @@ fn cache_canonicalizes_substitution_insertion_order() {
 
 #[test]
 fn substitute_this_type_caches_per_this() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // substitute_this_type_cached with the same (type_id, this_type) hits
     // the cache; different this_type values miss.
     let interner = TypeInterner::new();
@@ -250,6 +256,7 @@ fn substitute_this_type_caches_per_this() {
 
 #[test]
 fn shallow_this_return_position_caches_with_distinct_mode() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // The shallow return-position variant uses a different walk shape than
     // deep substitute_this_type_cached, so it must cache under a distinct
     // mode bit while still hitting for repeated shallow calls.
@@ -373,6 +380,7 @@ fn concrete_body_short_circuits_before_cache_with_non_empty_substitution() {
 
 #[test]
 fn concrete_body_with_meta_type_still_walks_and_caches() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // `instantiate_type_cached` can only skip concrete bodies that are true
     // identity walks. Concrete meta-types still need the instantiator's
     // normalization pass; otherwise an unrelated substitution would leave
@@ -409,6 +417,7 @@ fn concrete_body_with_meta_type_still_walks_and_caches() {
 
 #[test]
 fn instantiate_generic_cached_keeps_concrete_meta_type_normalization() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // `instantiate_generic_cached` is also the entry point for alias/application
     // body normalization. Even when a body contains no type parameters, it must
     // still run the staged instantiator so concrete meta-types such as
@@ -556,6 +565,7 @@ fn depth_exceeded_result_is_not_cached() {
 
 #[test]
 fn instantiate_generic_cached_hits_cache_on_repeat() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // Mirrors `cache_hit_after_first_instantiate_type` but exercises the
     // substitution-building entry that recursive utility expansion uses.
     let interner = TypeInterner::new();
@@ -586,6 +596,7 @@ fn instantiate_generic_cached_hits_cache_on_repeat() {
 
 #[test]
 fn instantiate_generic_cached_shares_slot_with_instantiate_type_cached() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // The two entry points share the canonical-substitution cache slot, so
     // recursive utility expansion benefits from the cache regardless of which
     // entry point the calling site uses.
@@ -756,6 +767,115 @@ fn instantiate_generic_cached_no_query_db_disables_cache() {
     );
 }
 
+/// Build the project-wide instantiation `InstantiationCacheKey` for a
+/// `(body, param -> arg)` single-substitution request, matching what
+/// `instantiate_generic_cached` consults internally.
+fn proto_key_for(
+    interner: &TypeInterner,
+    body: TypeId,
+    param: &TypeParamInfo,
+    arg: TypeId,
+) -> crate::caches::instantiation_cache::InstantiationCacheKey {
+    let subst = TypeSubstitution::from_args(interner, std::slice::from_ref(param), &[arg]);
+    crate::instantiation::request::InstantiationRequest::new(body, &subst).cache_key()
+}
+
+/// #14345 limit gate (positive control): a non-limited instantiation IS stored
+/// project-wide, so the negative tests below are not vacuously passing. Pins the
+/// positive path: a clean `(body, subst)` populates the project-wide cache for
+/// the `query_db=None` callers to reuse.
+#[test]
+fn clean_instantiation_is_cached_project_wide() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let param = param_info(t_atom);
+    let body = object_with(&interner, t_id);
+    let key = proto_key_for(&interner, body, &param, TypeId::BOOLEAN);
+
+    assert!(interner.proto_instantiation_memo(&key).is_none());
+    let r = instantiate_generic_cached(
+        &interner,
+        Some(&db),
+        body,
+        &[param.clone()],
+        &[TypeId::BOOLEAN],
+    );
+    assert_eq!(
+        interner.proto_instantiation_memo(&key),
+        Some(r),
+        "a clean instantiation must be stored project-wide for query_db=None reuse"
+    );
+}
+
+/// #14345 limit gate: a depth-exceeded walk produces a bounded result that must
+/// NOT enter the project-wide cache — a later hit would lock the alias to the
+/// truncated value (the construction-layer analog of
+/// `instantiate_generic_cached_depth_overflow_not_cached`'s per-file guard).
+/// This exercises the `result.depth_exceeded()` arm of the store-gate through a
+/// real walk (the recursion-limit analog of `closed_eval`'s `recursion_limit_hit`).
+#[test]
+fn depth_exceeded_instantiation_not_cached_project_wide() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let param = param_info(t_atom);
+    let depth = (MAX_INSTANTIATION_DEPTH as usize) + 2;
+    let mut body = t_id;
+    for _ in 0..depth {
+        body = interner.array(body);
+    }
+    let key = proto_key_for(&interner, body, &param, TypeId::STRING);
+
+    let _ = instantiate_generic_cached(
+        &interner,
+        Some(&db),
+        body,
+        &[param.clone()],
+        &[TypeId::STRING],
+    );
+    assert!(
+        interner.proto_instantiation_memo(&key).is_none(),
+        "a depth-exceeded instantiation must not be stored project-wide"
+    );
+}
+
+/// #14345 limit gate (before/after correctness): a sticky limit flag left set by
+/// an EARLIER sibling instantiation must NOT block caching an unrelated clean
+/// result. The store-gate snapshots `tuple_too_large` / `union_too_complex`
+/// before the walk and refuses only a NEWLY-tripped result — mirroring
+/// `closed_eval_cache`'s `union_too_complex_before` snapshot. Without this, one
+/// pathological sibling would poison the cache for every later instantiation.
+#[test]
+fn pre_existing_limit_flag_does_not_block_clean_instantiation() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let param = param_info(t_atom);
+    let body = object_with(&interner, t_id);
+    let key = proto_key_for(&interner, body, &param, TypeId::NUMBER);
+
+    // A sibling already tripped both sticky flags; this clean walk does not.
+    interner.set_tuple_too_large();
+    interner.set_union_too_complex();
+
+    let r = instantiate_generic_cached(
+        &interner,
+        Some(&db),
+        body,
+        &[param.clone()],
+        &[TypeId::NUMBER],
+    );
+    assert_eq!(
+        interner.proto_instantiation_memo(&key),
+        Some(r),
+        "a pre-existing sibling limit flag must not block a clean instantiation"
+    );
+}
+
 #[test]
 fn instantiate_generic_cached_depth_overflow_not_cached() {
     // A depth-overflow walk returns a relation-preserving partial type (no
@@ -801,6 +921,7 @@ fn instantiate_generic_cached_depth_overflow_not_cached() {
 
 #[test]
 fn instantiate_generic_cached_is_invariant_to_type_param_renaming() {
+    let _g = ProjectInstCacheDisabledGuard::new();
     // The cache key uses canonical (Atom, TypeId) pairs, so two callers whose
     // `TypeParamInfo` differ only in non-name metadata (constraint, default)
     // must hit the same cache slot.

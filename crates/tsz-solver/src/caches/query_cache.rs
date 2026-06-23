@@ -762,6 +762,14 @@ impl TypeTupleLimitSignal for QueryCache<'_> {
     fn mark_tuple_too_large(&self) {
         self.interner.set_tuple_too_large();
     }
+
+    fn is_tuple_too_large(&self) -> bool {
+        self.interner.is_tuple_too_large()
+    }
+
+    fn is_poisoned(&self) -> bool {
+        self.interner.is_poisoned()
+    }
 }
 
 impl TypeDisplayProvenance for QueryCache<'_> {
@@ -850,6 +858,23 @@ impl TypeCompilerOptions for QueryCache<'_> {
 }
 
 impl TypeApplicationEvalCache for QueryCache<'_> {
+    // #14345: delegate the project-wide instantiation cache to the interner
+    // so query_db=Some passes share the same table the query_db=None callers read.
+    fn lookup_proto_instantiation_cache(
+        &self,
+        key: &crate::caches::instantiation_cache::InstantiationCacheKey,
+    ) -> Option<TypeId> {
+        self.interner.proto_instantiation_memo(key)
+    }
+
+    fn insert_proto_instantiation_cache(
+        &self,
+        key: crate::caches::instantiation_cache::InstantiationCacheKey,
+        result: TypeId,
+    ) {
+        self.interner.set_proto_instantiation_memo(key, result);
+    }
+
     fn lookup_application_eval_cache(
         &self,
         def_id: DefId,
