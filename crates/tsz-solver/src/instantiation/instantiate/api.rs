@@ -1075,10 +1075,10 @@ pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
 /// stay abstract. This is the value-position sibling of
 /// [`resolve_unbound_type_params_to_defaults`]: both stop a bare, unbound generic
 /// parameter from leaking into a value type (a false `TS2322`/`TS2339`).
-pub fn resolve_named_type_params_to_defaults(
+pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
     db: &dyn TypeDatabase,
     ty: TypeId,
-    names: &FxHashSet<tsz_common::Atom>,
+    names: &std::collections::HashSet<tsz_common::Atom, S>,
 ) -> TypeId {
     if names.is_empty() {
         return ty;

@@ -21,10 +21,10 @@ pub(crate) fn fill_application_defaults(
 /// inference runs. Type parameters not in `names` (enclosing-scope parameters)
 /// are preserved.
 /// See [`tsz_solver::computation::resolve_named_type_params_to_defaults`].
-pub(crate) fn resolve_named_type_params_to_defaults(
+pub(crate) fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
     db: &dyn TypeDatabase,
     ty: TypeId,
-    names: &FxHashSet<Atom>,
+    names: &std::collections::HashSet<Atom, S>,
 ) -> TypeId {
     tsz_solver::computation::resolve_named_type_params_to_defaults(db, ty, names)
 }
