@@ -223,13 +223,13 @@ pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<Strin
 /// True ties (identical ranking) resolve to the first key in iteration order, so
 /// callers must iterate an insertion-order map (`IndexMap`) and update only on
 /// strict improvement (`>`).
+///
+/// The ranking itself is owned by
+/// [`tsz_common::module_resolution::package_exports::pattern_key_specificity`]
+/// so the tsz-core resolver and the CLI driver cannot drift from each other or
+/// from `comparePatternKeys`.
 pub(crate) fn export_pattern_specificity(pattern: &str) -> (usize, usize, usize) {
-    let len = pattern.len();
-    if let Some(star_pos) = pattern.find('*') {
-        (star_pos + 1, 1, len)
-    } else {
-        (len, 0, len)
-    }
+    tsz_common::module_resolution::package_exports::pattern_key_specificity(pattern)
 }
 
 /// Find the most-specific pattern entry that matches `target`.
