@@ -1524,14 +1524,16 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                // Check if we should suppress TS2769 due to structural errors on the callee
-                let suppress_due_to_structural_errors =
-                    self.should_suppress_no_overload_due_to_structural_errors(callee_expr);
+                // A genuine no-overload-match always reports TS2769, matching tsc,
+                // even when the callee's class/interface/namespace carries its own
+                // structural error (TS2420/TS2430/TS2694). tsc treats the structural
+                // error and the call-site overload failure as independent and emits
+                // both; error-typed callees/arguments are already short-circuited
+                // above via `has_error_surface`.
                 let suppress_due_to_callback_body_errors =
                     self.should_suppress_no_overload_due_to_callback_body_errors(args);
 
-                let should_emit_no_overload_error = !suppress_due_to_structural_errors
-                    && !suppress_due_to_callback_body_errors
+                let should_emit_no_overload_error = !suppress_due_to_callback_body_errors
                     && !self.should_suppress_weak_key_no_overload(callee_expr, args);
 
                 if should_emit_no_overload_error {
@@ -1901,35 +1903,9 @@ impl<'a> CheckerState<'a> {
         expanded
     }
 
-    /// Check if TS2769 (no overload matches) should be suppressed due to structural
-    /// errors on the callee type. When a class/interface has structural errors
-    /// (TS2420, TS2430, TS2694), we suppress "no overload matches" errors because
-    /// the type is known to be broken and the primary errors should be shown instead.
-    fn should_suppress_no_overload_due_to_structural_errors(
-        &mut self,
-        callee_expr: NodeIndex,
-    ) -> bool {
-        // Only check for property access expressions (e.g., Promise.try)
-        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
-            return false;
-        };
-
-        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
-            return false;
-        };
-
-        // Get the base expression (e.g., Promise in Promise.try)
-        let base_expr = access.expression;
-
-        // Resolve the base identifier to its symbol
-        let Some(symbol_id) = self.resolve_identifier_symbol(base_expr) else {
-            return false;
-        };
-
-        // Check if this symbol has structural error diagnostics
-        self.symbol_has_structural_errors(symbol_id)
-    }
-
+    /// Suppress TS2769 (no overload matches) when the failure originates inside a
+    /// callback argument's body. The callback's own diagnostics already explain the
+    /// mismatch, so the outer overload error would be a redundant cascade.
     fn should_suppress_no_overload_due_to_callback_body_errors(&self, args: &[NodeIndex]) -> bool {
         const CALLBACK_BODY_DIAGNOSTIC_CODES: &[u32] = &[2322, 2339, 2345, 2347, 7006, 7019, 7031];
 
@@ -1946,38 +1922,5 @@ impl<'a> CheckerState<'a> {
                         })
                     })
         })
-    }
-
-    /// Check if a symbol has structural error diagnostics (TS2420, TS2430, TS2694).
-    fn symbol_has_structural_errors(&self, symbol_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
-            return false;
-        };
-
-        let structural_error_codes = [
-            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-        ];
-
-        // Check if any structural error diagnostics are within this symbol's declaration spans
-        for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let decl_start = node.pos;
-            let decl_end = node.end;
-
-            for diag in &self.ctx.diagnostics {
-                if structural_error_codes.contains(&diag.code)
-                    && diag.start >= decl_start
-                    && diag.start < decl_end
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 }
