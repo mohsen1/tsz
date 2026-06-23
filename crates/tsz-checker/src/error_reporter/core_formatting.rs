@@ -1664,17 +1664,22 @@ impl<'a> CheckerState<'a> {
                                     *candidate,
                                 )
                             {
-                                source_callable
-                                    .properties
-                                    .iter()
-                                    .any(|p| p.name == prop.name)
+                                crate::query_boundaries::common::find_matching_property(
+                                    &source_callable.properties,
+                                    prop.name,
+                                )
+                                .is_some()
                             } else if let Some(source_shape) =
                                 crate::query_boundaries::common::object_shape_for_type(
                                     self.ctx.types,
                                     *candidate,
                                 )
                             {
-                                source_shape.properties.iter().any(|p| p.name == prop.name)
+                                crate::query_boundaries::common::find_matching_property(
+                                    &source_shape.properties,
+                                    prop.name,
+                                )
+                                .is_some()
                             } else {
                                 false
                             }
@@ -1687,34 +1692,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let source_with_shape = {
-            let direct = source;
-            let resolved = self.resolve_type_for_property_access(direct);
-            let evaluated = self.judge_evaluate(resolved);
-            [direct, resolved, evaluated]
-                .into_iter()
-                .find(|candidate| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        *candidate,
-                    )
-                    .is_some()
-                })?
-        };
-        let target_with_shape = {
-            let direct = target;
-            let resolved = self.resolve_type_for_property_access(direct);
-            let evaluated = self.judge_evaluate(resolved);
-            [direct, resolved, evaluated]
-                .into_iter()
-                .find(|candidate| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        *candidate,
-                    )
-                    .is_some()
-                })?
-        };
+        // Reuse the already-resolved candidate arrays (`[direct, resolved,
+        // evaluated]`) rather than recomputing the resolve/evaluate pipeline.
+        let source_with_shape = source_candidates.into_iter().find(|candidate| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                .is_some()
+        })?;
+        let target_with_shape = target_candidates.into_iter().find(|candidate| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                .is_some()
+        })?;
 
         let source_shape = crate::query_boundaries::common::object_shape_for_type(
             self.ctx.types,
