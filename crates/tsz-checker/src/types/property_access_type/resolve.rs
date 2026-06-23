@@ -358,69 +358,14 @@ impl<'a> CheckerState<'a> {
                 false,
             )
         };
-        // Evaluate Application types to resolve generic type aliases/interfaces.
-        // But preserve original for error messages to maintain nominal identity (e.g., D<string>).
-        //
-        // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
-        // below will resolve property access through `resolve_type_for_property_access`,
-        // and eagerly evaluating applications here is redundant on hot paths.
-        // Keep the wider env evaluation on the imported builder callback case
-        // this PR targets; applying it to ordinary alias property reads
-        // over-normalizes flow-narrowed unions.
-        let is_builder_select_access = self
-            .ctx
-            .arena
-            .get_identifier(name_node)
-            .is_some_and(|prop_ident| prop_ident.escaped_text == "select");
-        let receiver_fallback_def = crate::query_boundaries::common::get_application_lazy_def_id(
-            self.ctx.types,
-            original_object_type,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
-        });
-        // A receiver that is a *generic interface application* over a non-lib
-        // (program) def — e.g. `b: Box<number>` where `Box` is user-declared,
-        // including when reached through a barrel re-export — must be materialized
+        // Evaluate Application types to resolve generic type aliases/interfaces,
+        // preserving the original for error messages (nominal identity, e.g.
+        // `D<string>`). A non-lib generic *interface* application receiver —
+        // including one reached through a barrel re-export — is materialized
         // through the env evaluator so its type arguments substitute into the
-        // members before property lookup. The plain `evaluate_application_type`
-        // path leaves a cross-arena re-exported interface application opaque, so
-        // `b.value` resolved to the unsubstituted member (a free `T`, false
-        // TS2322). This generalizes the prior property-name-gated special case
-        // (which only fired for `.select`) to any non-lib generic application
-        // receiver. Refs #13212 / #10663.
-        let receiver_is_nonlib_generic_application =
-            crate::query_boundaries::common::get_application_lazy_def_id(
-                self.ctx.types,
-                original_object_type,
-            )
-            .filter(|&def_id| {
-                // Restrict to interface applications. Mapped types and other type
-                // aliases lower to `TypeAlias` defs whose application already
-                // resolves through the lighter `evaluate_application_type` path;
-                // routing them through the env evaluator over-normalizes them
-                // (regresses optional-method/mapped-type member resolution).
-                matches!(
-                    self.ctx.definition_store.get_kind(def_id),
-                    Some(tsz_solver::def::DefKind::Interface)
-                )
-            })
-            .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
-            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id));
-        let receiver_needs_env_fallback = (is_builder_select_access
-            || receiver_is_nonlib_generic_application)
-            && (receiver_fallback_def
-                .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
-                .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
-                || crate::query_boundaries::common::is_conditional_type(
-                    self.ctx.types,
-                    original_object_type,
-                )
-                || crate::query_boundaries::common::index_access_types(
-                    self.ctx.types,
-                    original_object_type,
-                )
-                .is_some());
+        // members before lookup; see `receiver_needs_env_materialization`.
+        let receiver_needs_env_fallback =
+            self.receiver_needs_env_materialization(original_object_type, access.name_or_argument);
         let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else if receiver_needs_env_fallback {
