@@ -17,31 +17,42 @@ impl AsyncES5Transformer<'_> {
             self.generator_mode = false;
             return IRNode::Undefined;
         };
-        let (name, mut params, param_binding_names, body_idx, rest_param) = if node.kind
-            == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            if let Some(func) = self.arena.get_function(node) {
-                let name = if func.name.is_none() {
-                    None
+        let (name, mut params, mut param_defaults, param_binding_names, body_idx, rest_param) =
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                if let Some(func) = self.arena.get_function(node) {
+                    let name = if func.name.is_none() {
+                        None
+                    } else {
+                        Some(crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena, func.name,
+                        ))
+                    };
+                    let params = self.collect_parameters(&func.parameters);
+                    let param_defaults = self.collect_parameter_default_irs(&func.parameters);
+                    let mut param_binding_names = Vec::new();
+                    self.collect_parameter_binding_names(
+                        &func.parameters,
+                        &mut param_binding_names,
+                    );
+                    let rest_param = self.identifier_rest_param_info(&func.parameters);
+                    (
+                        name,
+                        params,
+                        param_defaults,
+                        param_binding_names,
+                        func.body,
+                        rest_param,
+                    )
                 } else {
-                    Some(crate::transforms::emit_utils::identifier_text_or_empty(
-                        self.arena, func.name,
-                    ))
-                };
-                let params = self.collect_parameters(&func.parameters);
-                let mut param_binding_names = Vec::new();
-                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
-                let rest_param = self.identifier_rest_param_info(&func.parameters);
-                (name, params, param_binding_names, func.body, rest_param)
+                    self.generator_mode = false;
+                    return IRNode::Undefined;
+                }
             } else {
                 self.generator_mode = false;
                 return IRNode::Undefined;
-            }
-        } else {
-            self.generator_mode = false;
-            return IRNode::Undefined;
-        };
+            };
         // A trailing identifier rest parameter is downleveled to an
         // `arguments`-copy prologue at ES5, identical to a non-generator
         // function. The index variable is hoisted (tsc shares loop-index temps
@@ -50,6 +61,7 @@ impl AsyncES5Transformer<'_> {
         let rest_index_name = rest_param.as_ref().map(|_| self.fresh_reserved_name("_i"));
         if rest_param.is_some() {
             params.pop();
+            param_defaults.pop();
         }
         let has_yield = self.body_contains_await(body_idx);
         self.state.has_await = has_yield;
@@ -61,7 +73,17 @@ impl AsyncES5Transformer<'_> {
         }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
         let mut hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
-        let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
+        let ir_params: Vec<IRParam> = params
+            .iter()
+            .zip(param_defaults)
+            .map(|(name, default)| {
+                let param = IRParam::new(name.clone());
+                match default {
+                    Some(default) => param.with_default(default),
+                    None => param,
+                }
+            })
+            .collect();
         // The rest-loop index joins the first hoisted var group (or seeds one).
         if let Some(index_name) = &rest_index_name {
             if let Some(first) = hoisted_var_groups.first_mut() {

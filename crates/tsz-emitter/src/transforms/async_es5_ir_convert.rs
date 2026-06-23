@@ -111,6 +111,51 @@ impl<'a> AsyncES5Transformer<'a> {
         result
     }
 
+    /// Collect the per-parameter default-initializer expressions (in source
+    /// order) as lowered IR, aligned 1:1 with [`Self::collect_parameters`].
+    ///
+    /// A non-rest identifier parameter with an initializer (`function* g(a = 5)`)
+    /// must reproduce `tsc`'s ES5 default-parameter prologue
+    /// (`if (a === void 0) { a = 5; }`) in the lowered wrapper, exactly like an
+    /// ordinary down-leveled function. The generator IR path previously dropped
+    /// these initializers entirely. A binding-pattern parameter never carries a
+    /// top-level initializer here (its defaults live inside the pattern), so it
+    /// contributes `None`.
+    pub fn collect_parameter_default_irs(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Vec<Option<IRNode>> {
+        // Mirror `collect_parameters`' push condition exactly (one entry per
+        // parameter whose arena lookup succeeds) so the two vectors stay aligned
+        // when the caller `zip`s them.
+        let mut result = Vec::new();
+        for &param_idx in &params.nodes {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                result.push(self.parameter_default_ir(param));
+            }
+        }
+        result
+    }
+
+    /// Lower a single parameter's default initializer to IR, or `None` when it
+    /// has none / is a rest or binding-pattern parameter (whose defaults are
+    /// handled elsewhere).
+    fn parameter_default_ir(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<IRNode> {
+        if param.dot_dot_dot_token || param.initializer.is_none() {
+            return None;
+        }
+        let name_node = self.arena.get(param.name)?;
+        if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        Some(self.expression_to_ir(param.initializer))
+    }
+
     fn source_string_literal_token(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
         let text = self.source_text?;
         let start = crate::transforms::emit_utils::skip_trivia_forward(

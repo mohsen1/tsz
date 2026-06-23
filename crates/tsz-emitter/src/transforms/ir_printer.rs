@@ -25,6 +25,8 @@ use std::sync::Arc;
 
 #[path = "ir_printer_class_emit.rs"]
 mod ir_printer_class_emit;
+#[path = "ir_printer_config.rs"]
+mod ir_printer_config;
 #[path = "ir_printer_generator_state.rs"]
 mod ir_printer_generator_state;
 #[path = "ir_printer_helpers.rs"]
@@ -113,6 +115,16 @@ pub struct IRPrinter<'a> {
     /// a mapping. The next `ASTRef` emitted at that same offset skips its own
     /// automatic mapping to avoid duplicate source-map entries.
     suppress_ast_ref_mapping_at_output_len: Option<usize>,
+    /// When true, this printer is emitting a down-leveled plain `function*`
+    /// generator wrapper. `tsc` synthesizes that wrapper's body as a
+    /// single-line block (`function g() { return __generator(...); }`) — the
+    /// braces hug the lone `return __generator(...)` statement even though its
+    /// inner state machine spans multiple lines. The async-generator inner
+    /// wrapper (`__asyncGenerator(..., function () { ... })`) has the identical
+    /// `[GeneratorBody]` IR shape but `tsc` keeps it multi-line, so this flag —
+    /// set only by `emit_generator_function_es5` — distinguishes the two without
+    /// inspecting the (shared) IR shape.
+    plain_generator_wrapper: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -257,285 +269,6 @@ impl<'a> IRPrinter<'a> {
             if !line.is_empty() {
                 self.write_indent();
                 self.write(line);
-            }
-        }
-    }
-
-    /// Create a new IR printer
-    pub fn new() -> Self {
-        Self {
-            output: String::with_capacity(4096),
-            indent_level: 0,
-            indent_str: "    ",
-            arena: None,
-            source_text: None,
-            transforms: None,
-            suppress_function_trailing_extraction: false,
-            last_emit_ended_with_line_comment: false,
-            ast_arrow_comment_defer_end: None,
-            current_class_iife_name: None,
-            force_iife_multiline_empty: false,
-            in_namespace_iife_body: false,
-            target_es5: false,
-            remove_comments: false,
-            tslib_helpers: TslibHelperNaming::default(),
-            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
-            system_import_meta: false,
-            base_printer_options: None,
-            generator_state_name: "_a",
-            generator_this_arg: "this".to_string(),
-            outer_reserved_for_generator_state: Vec::new(),
-            namespace_ast_name: None,
-            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
-            block_scope_shadowed_names: Vec::new(),
-            block_scope_reserved_names: Vec::new(),
-            pending_commonjs_class_export_name: None,
-            mappings: Vec::new(),
-            source_index: 0,
-            capture_mappings: false,
-            suppress_ast_ref_mapping_at_output_len: None,
-        }
-    }
-
-    /// Create an IR printer with an arena for `ASTRef` handling
-    pub fn with_arena(arena: &'a NodeArena) -> Self {
-        Self {
-            output: String::with_capacity(4096),
-            indent_level: 0,
-            indent_str: "    ",
-            arena: Some(arena),
-            source_text: None,
-            transforms: None,
-            suppress_function_trailing_extraction: false,
-            last_emit_ended_with_line_comment: false,
-            ast_arrow_comment_defer_end: None,
-            current_class_iife_name: None,
-            force_iife_multiline_empty: false,
-            in_namespace_iife_body: false,
-            target_es5: false,
-            remove_comments: false,
-            tslib_helpers: TslibHelperNaming::default(),
-            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
-            system_import_meta: false,
-            base_printer_options: None,
-            generator_state_name: "_a",
-            generator_this_arg: "this".to_string(),
-            outer_reserved_for_generator_state: Vec::new(),
-            namespace_ast_name: None,
-            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
-            block_scope_shadowed_names: Vec::new(),
-            block_scope_reserved_names: Vec::new(),
-            pending_commonjs_class_export_name: None,
-            mappings: Vec::new(),
-            source_index: 0,
-            capture_mappings: false,
-            suppress_ast_ref_mapping_at_output_len: None,
-        }
-    }
-
-    /// Create an IR printer with both arena and source text for `ASTRef` emission
-    pub fn with_arena_and_source(arena: &'a NodeArena, source_text: &'a str) -> Self {
-        Self {
-            output: String::with_capacity(4096),
-            indent_level: 0,
-            indent_str: "    ",
-            arena: Some(arena),
-            source_text: Some(source_text),
-            transforms: None,
-            suppress_function_trailing_extraction: false,
-            last_emit_ended_with_line_comment: false,
-            ast_arrow_comment_defer_end: None,
-            current_class_iife_name: None,
-            force_iife_multiline_empty: false,
-            in_namespace_iife_body: false,
-            target_es5: false,
-            remove_comments: false,
-            tslib_helpers: TslibHelperNaming::default(),
-            commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
-            system_import_meta: false,
-            base_printer_options: None,
-            generator_state_name: "_a",
-            generator_this_arg: "this".to_string(),
-            outer_reserved_for_generator_state: Vec::new(),
-            namespace_ast_name: None,
-            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
-            block_scope_shadowed_names: Vec::new(),
-            block_scope_reserved_names: Vec::new(),
-            pending_commonjs_class_export_name: None,
-            mappings: Vec::new(),
-            source_index: 0,
-            capture_mappings: false,
-            suppress_ast_ref_mapping_at_output_len: None,
-        }
-    }
-
-    pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
-        self.pending_commonjs_class_export_name = name.map(|name| (name.clone(), vec![name]));
-    }
-
-    pub fn set_pending_commonjs_class_export_bindings(
-        &mut self,
-        local_name: String,
-        export_names: Vec<String>,
-    ) {
-        self.pending_commonjs_class_export_name = Some((local_name, export_names));
-    }
-
-    pub(super) const fn take_pending_commonjs_class_export_name(
-        &mut self,
-    ) -> Option<(String, Vec<String>)> {
-        self.pending_commonjs_class_export_name.take()
-    }
-
-    pub fn set_transforms(&mut self, transforms: TransformContext) {
-        self.transforms = Some(transforms);
-    }
-
-    /// Enable `tslib_1.` prefix for runtime helper calls (importHelpers + CJS).
-    pub const fn set_tslib_prefix(&mut self, enable: bool) {
-        self.tslib_helpers.set_prefix(enable);
-    }
-
-    pub fn set_tslib_import_binding(&mut self, binding: String) {
-        self.tslib_helpers.set_binding(binding);
-    }
-
-    /// Set per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`)
-    /// so helper references printed from IR match the import-site aliases.
-    pub fn set_helper_import_aliases(&mut self, aliases: rustc_hash::FxHashMap<String, String>) {
-        self.tslib_helpers.set_aliases(aliases);
-    }
-
-    pub fn set_commonjs_import_substitutions(
-        &mut self,
-        subs: rustc_hash::FxHashMap<String, String>,
-    ) {
-        self.commonjs_import_substitutions = subs;
-    }
-
-    pub const fn set_system_import_meta(&mut self, enabled: bool) {
-        self.system_import_meta = enabled;
-    }
-
-    pub fn set_namespace_ast_qualification(
-        &mut self,
-        namespace: String,
-        names: std::collections::HashSet<String>,
-    ) {
-        self.namespace_ast_name = Some(namespace);
-        self.namespace_ast_exported_names = names.into_iter().collect();
-    }
-
-    pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
-        self.block_scope_shadowed_names = names;
-    }
-
-    pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
-        self.block_scope_reserved_names = names;
-    }
-
-    pub fn block_scope_reserved_names(&self) -> Vec<String> {
-        let mut names = self.block_scope_reserved_names.clone();
-        names.sort();
-        names.dedup();
-        names
-    }
-
-    fn merge_ast_printer_block_scope_reserved_names(&mut self, printer: &AstPrinter<'a>) {
-        self.block_scope_reserved_names
-            .extend(printer.block_scope_reserved_names());
-        self.block_scope_reserved_names.sort();
-        self.block_scope_reserved_names.dedup();
-    }
-
-    fn configure_ast_printer_namespace(&self, printer: &mut AstPrinter<'a>) {
-        if let Some(namespace) = self.namespace_ast_name.clone() {
-            printer.in_namespace_iife = true;
-            printer.current_namespace_name = Some(namespace);
-            printer.namespace_exported_names = self.namespace_ast_exported_names.clone();
-        }
-    }
-
-    /// Build a nested `AstPrinter` that inherits this IR printer's transforms,
-    /// printer options, and source text. Callers that need namespace
-    /// qualification on the embedded output must invoke
-    /// `configure_ast_printer_namespace` themselves; keeping it opt-in avoids
-    /// silently changing emission for arms (e.g. `ASTRefWithGeneratorThis`)
-    /// that historically ran without namespace context.
-    fn build_nested_ast_printer(&self, arena: &'a NodeArena) -> AstPrinter<'a> {
-        let transforms = self.transforms.clone().unwrap_or_default();
-        let mut printer = AstPrinter::with_transforms_and_options(
-            arena,
-            transforms,
-            self.make_ast_printer_options(),
-        );
-        if let Some(source_text) = self.source_text {
-            printer.set_source_text(source_text);
-        }
-        printer.seed_function_scope_shadowed_names(&self.block_scope_shadowed_names);
-        printer.seed_block_scope_reserved_names(&self.block_scope_reserved_names);
-        printer
-    }
-
-    /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is
-    /// active, or substituting the import-site alias (e.g. `__awaiter_1`) when ESM
-    /// importHelpers renamed the helper. Mirrors `Printer::write_helper`.
-    fn write_helper(&mut self, name: &str) {
-        self.tslib_helpers.write_into(&mut self.output, name);
-    }
-
-    /// Set the source text for `ASTRef` emission
-    pub const fn set_source_text(&mut self, text: &'a str) {
-        self.source_text = Some(text);
-    }
-
-    /// Set the indentation level
-    pub const fn set_indent_level(&mut self, level: u32) {
-        self.indent_level = level;
-    }
-
-    /// Mark this printer as targeting ES5 (disables `let`/`const` emission).
-    pub const fn set_target_es5(&mut self, es5: bool) {
-        self.target_es5 = es5;
-    }
-
-    pub const fn set_generator_state_name(&mut self, name: &'static str) {
-        self.generator_state_name = name;
-    }
-
-    pub fn set_generator_this_arg(&mut self, arg: String) {
-        self.generator_this_arg = arg;
-    }
-
-    /// Set names that must not be chosen as the `__generator` state variable.
-    pub fn set_outer_reserved_for_generator_state(&mut self, names: Vec<String>) {
-        self.outer_reserved_for_generator_state = names;
-    }
-
-    /// When true, suppress comment annotations like `/** @class */` in output.
-    pub const fn set_remove_comments(&mut self, remove: bool) {
-        self.remove_comments = remove;
-    }
-
-    pub fn set_base_printer_options(&mut self, options: PrinterOptions) {
-        self.base_printer_options = Some(options);
-    }
-
-    fn make_ast_printer_options(&self) -> PrinterOptions {
-        if let Some(ref base) = self.base_printer_options {
-            let mut opts = base.clone();
-            if self.target_es5 {
-                opts.target = crate::emitter::ScriptTarget::ES5;
-            }
-            opts
-        } else {
-            PrinterOptions {
-                target: if self.target_es5 {
-                    crate::emitter::ScriptTarget::ES5
-                } else {
-                    PrinterOptions::default().target
-                },
-                ..PrinterOptions::default()
             }
         }
     }
@@ -947,6 +680,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
+                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                    return;
+                }
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
                 let is_source_single_line = self.is_body_source_single_line(*body_source_range);
 
@@ -1349,6 +1085,16 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
+                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                    if !self.remove_comments
+                        && !self.suppress_function_trailing_extraction
+                        && let Some(comment) = self.extract_trailing_comment_from_function(node)
+                    {
+                        self.write(" ");
+                        self.write(&comment);
+                    }
+                    return;
+                }
                 let force_multiline_empty =
                     self.current_class_iife_name.as_deref() == Some(&**name);
                 let previous_generator_state_name = self.generator_state_name;
