@@ -371,20 +371,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // definition store at alias-registration time, whereas the
             // placeholder `unknown` comes from an unresolved symbol-type
             // fallback with no registered body. When the body is genuinely
-            // `unknown`, fall through to the known-params instantiation, which
-            // substitutes the type-parameter-free `unknown` to canonical
-            // `unknown`.
+            // `unknown`, return the canonical intrinsic directly: the body is
+            // parameter-free, so the known-params instantiation/cache/display
+            // path cannot refine it and only widens the observable surface of
+            // this special case.
             if resolved == TypeId::UNKNOWN {
                 let genuine_unknown_body = genuine_unknown_alias_reduction_enabled()
                     && self.resolver.get_def_raw_body(def_id, self.interner)
                         == Some(TypeId::UNKNOWN);
-                if !genuine_unknown_body {
-                    self.mark_unresolved_def_seen();
-                    crate::evaluation::eval_materialization_probe::record_application_body_path(
-                        crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
-                    );
-                    return ApplicationEvalOutcome::Computed(original_type_id);
+                if genuine_unknown_body {
+                    return ApplicationEvalOutcome::Computed(TypeId::UNKNOWN);
                 }
+                self.mark_unresolved_def_seen();
+                crate::evaluation::eval_materialization_probe::record_application_body_path(
+                    crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueResolvedUnknown,
+                );
+                return ApplicationEvalOutcome::Computed(original_type_id);
             }
 
             // The same situation arises when the body resolves to the alias's
