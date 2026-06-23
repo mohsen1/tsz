@@ -141,7 +141,7 @@ impl<'a> Printer<'a> {
     fn emit_array_spread_segment(&mut self, elems: &[NodeIndex]) {
         self.write("[");
         self.emit_comma_separated(elems);
-        if elems.last().is_some_and(|idx| idx.is_none()) {
+        if elems.last().is_some_and(NodeIndex::is_none) {
             self.write(",");
         }
         self.write("]");
