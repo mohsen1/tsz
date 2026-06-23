@@ -747,6 +747,38 @@ impl<'a> CheckerState<'a> {
         self.instance_type_from_constructor_type_inner(ctor_type, &mut visited)
     }
 
+    /// Resolve `instance_type`'s references to the construct signature's own type
+    /// parameters to their `default → constraint → unknown` fallback, used to
+    /// recover the instance type of a `new` expression that failed the
+    /// argument-count check (so a bare `T` does not leak into the instance type).
+    pub(crate) fn resolve_constructor_default_type_args(
+        &mut self,
+        ctor_type: TypeId,
+        instance_type: TypeId,
+    ) -> TypeId {
+        let Some(signatures) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            ctor_type,
+        ) else {
+            return instance_type;
+        };
+        // Non-generic constructors (the common case) need no resolution; skip
+        // the name-set allocation. Overloaded constructors fold every
+        // signature's parameters into one name set.
+        if signatures.iter().all(|sig| sig.type_params.is_empty()) {
+            return instance_type;
+        }
+        let names: rustc_hash::FxHashSet<tsz_common::interner::Atom> = signatures
+            .iter()
+            .flat_map(|sig| sig.type_params.iter().map(|tp| tp.name))
+            .collect();
+        crate::query_boundaries::type_defaults::resolve_named_type_params_to_defaults(
+            self.ctx.types,
+            instance_type,
+            &names,
+        )
+    }
+
     pub(crate) fn instance_type_from_named_import_type_reference(
         &mut self,
         alias_type: TypeId,

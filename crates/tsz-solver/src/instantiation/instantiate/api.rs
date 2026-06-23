@@ -1056,18 +1056,58 @@ pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
     member_type: TypeId,
     in_scope: &std::collections::HashSet<TypeId, S>,
 ) -> TypeId {
+    resolve_type_params_to_defaults_core(db, member_type, |param_id, _info| {
+        !in_scope.contains(&param_id)
+    })
+}
+
+/// Resolve the type parameters whose declared name is in `names` and appear
+/// free in `ty` to their `default → constraint → unknown`, matching tsc's
+/// instantiation of a *failed* generic call's result with default type
+/// arguments (`getInferredTypes` falling back to `getDefaultTypeArgumentType`).
+///
+/// When a generic call (function or constructor) fails the argument-count check
+/// before inference runs, tsc still produces a best-effort result type by
+/// substituting each of the *signature's own* type parameters with its default,
+/// then its constraint, then `unknown`. Resolving only the named (signature-own)
+/// parameters preserves any enclosing-scope type parameter the result legitimately
+/// mentions (e.g. a nested generic referencing an outer parameter), which must
+/// stay abstract. This is the value-position sibling of
+/// [`resolve_unbound_type_params_to_defaults`]: both stop a bare, unbound generic
+/// parameter from leaking into a value type (a false `TS2322`/`TS2339`).
+pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    names: &std::collections::HashSet<tsz_common::Atom, S>,
+) -> TypeId {
+    if names.is_empty() {
+        return ty;
+    }
+    resolve_type_params_to_defaults_core(db, ty, |_param_id, info| names.contains(&info.name))
+}
+
+/// Shared driver for the default-type-argument fallback. `should_resolve`
+/// decides, per free type parameter, whether it is replaced by its
+/// `default → constraint → unknown` fill (true) or preserved (false). The
+/// multi-pass loop lets a parameter default that references an earlier
+/// (already-resolved) parameter settle, bounded by [`MAX_UNBOUND_DEFAULT_DEPTH`].
+fn resolve_type_params_to_defaults_core(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    should_resolve: impl Fn(TypeId, &crate::types::TypeParamInfo) -> bool,
+) -> TypeId {
     use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
 
-    let mut current = member_type;
+    let mut current = ty;
     for _ in 0..MAX_UNBOUND_DEFAULT_DEPTH {
         let mut substitution = TypeSubstitution::new();
         for param_id in free_type_parameter_ids_in(db, [current]) {
-            if in_scope.contains(&param_id) {
-                continue;
-            }
             let Some(TypeData::TypeParameter(info)) = db.lookup(param_id) else {
                 continue;
             };
+            if !should_resolve(param_id, &info) {
+                continue;
+            }
             let usable = |t: Option<TypeId>| t.filter(|&t| t != TypeId::ERROR);
             let fill = usable(info.default)
                 .or_else(|| usable(info.constraint))

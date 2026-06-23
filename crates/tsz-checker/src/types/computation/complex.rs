@@ -1805,7 +1805,14 @@ impl<'a> CheckerState<'a> {
                 }
                 // Recover with the constructor instance type so downstream checks
                 // (e.g. property access TS2339) still run after arity diagnostics.
+                // Resolve the construct signature's own type parameters to their
+                // default → constraint → unknown fallback so a bare `T` does not
+                // leak into the instance type (spurious TS2322/TS2339), matching
+                // tsc's instantiation of a failed `new` with default type arguments.
                 self.instance_type_from_constructor_type(constructor_type)
+                    .map(|instance_type| {
+                        self.resolve_constructor_default_type_args(constructor_type, instance_type)
+                    })
                     .unwrap_or(TypeId::ERROR)
             }
             CallResult::OverloadArgumentCountMismatch {
