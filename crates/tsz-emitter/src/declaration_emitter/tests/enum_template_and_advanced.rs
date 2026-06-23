@@ -1496,3 +1496,100 @@ export type Return = nested.NestedProps;
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+// =====================================================================
+// Enum-member access in const / readonly-property initializers (.d.ts)
+//
+// tsc's declaration emit (`createLiteralConstValue`) preserves an enum access
+// as a member reference ONLY when it names a specific enum-member literal, and
+// always renders it in property-access spelling:
+//   - `E.B`            -> `= E.B`
+//   - `E["B"]`         -> `= E.B`            (normalized to identifier spelling)
+//   - `E["hyphen-x"]`  -> `= E["hyphen-x"]`  (non-identifier member stays bracketed)
+//   - `(E.B)`          -> `= E.B`            (no leaked parentheses)
+// A reverse mapping (`E[0]`, `E[E.B]`, computed index) has type `string`, so it
+// is NOT preserved as an initializer — the type annotation path takes over.
+// =====================================================================
+
+#[test]
+fn test_enum_element_access_string_member_normalizes_to_property_spelling() {
+    let output = emit_dts_with_binding("enum E { A, B = 2, C }\nexport const x = E[\"B\"];\n");
+    assert!(
+        output.contains("export declare const x = E.B;"),
+        "Expected E[\"B\"] to normalize to E.B: {output}"
+    );
+    assert!(
+        !output.contains(r#"E["B"]"#),
+        "Should not preserve bracket spelling for an identifier member: {output}"
+    );
+}
+
+#[test]
+fn test_enum_element_access_non_identifier_member_stays_bracketed() {
+    let output = emit_dts_with_binding(
+        "enum E { \"hyphen-member\" = 1, regular = 2 }\nexport const x = E[\"hyphen-member\"];\nexport const y = E.regular;\n",
+    );
+    assert!(
+        output.contains(r#"export declare const x = E["hyphen-member"];"#),
+        "Non-identifier member must keep bracket spelling: {output}"
+    );
+    assert!(
+        output.contains("export declare const y = E.regular;"),
+        "Identifier member uses property spelling: {output}"
+    );
+}
+
+#[test]
+fn test_enum_parenthesized_member_access_drops_parentheses() {
+    let output = emit_dts_with_binding("enum E { A, B = 2, C }\nexport const x = (E.B);\n");
+    assert!(
+        output.contains("export declare const x = E.B;"),
+        "Parenthesized enum access must render as E.B: {output}"
+    );
+    assert!(
+        !output.contains("E.B)"),
+        "Parenthesis must not leak into declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_enum_reverse_mapping_index_not_preserved_as_initializer() {
+    // `E[0]` / `E[E.B]` are reverse mappings (type `string`), never a member
+    // literal — so they must not be emitted as a `= E[...]` initializer, and in
+    // particular must not produce the malformed `E[E.B]]` double-bracket form.
+    let output = emit_dts_with_binding(
+        "enum E { A, B = 2, C }\nexport const c = E[0];\nexport const d = E[E.B];\n",
+    );
+    assert!(
+        !output.contains("= E[0]"),
+        "Numeric reverse-mapping index must not be a preserved initializer: {output}"
+    );
+    assert!(
+        !output.contains("E[E.B]"),
+        "Enum-valued reverse-mapping index must not be a preserved initializer (and never the malformed E[E.B]]): {output}"
+    );
+    assert!(
+        !output.contains("]]"),
+        "Must never emit a doubled closing bracket: {output}"
+    );
+}
+
+#[test]
+fn test_enum_readonly_property_element_access_normalizes() {
+    let output = emit_dts_with_binding(
+        "enum E { A, B = 2, C }\nexport class K {\n  readonly p = E[\"B\"];\n}\n",
+    );
+    assert!(
+        output.contains("readonly p = E.B;"),
+        "Readonly class property with E[\"B\"] must normalize to E.B: {output}"
+    );
+}
+
+#[test]
+fn test_const_enum_element_access_string_member_normalizes() {
+    let output = emit_dts_with_binding("const enum CE { X, Y = 5 }\nexport const x = CE[\"Y\"];\n");
+    assert!(
+        output.contains("export declare const x = CE.Y;"),
+        "const enum CE[\"Y\"] must normalize to CE.Y: {output}"
+    );
+}
