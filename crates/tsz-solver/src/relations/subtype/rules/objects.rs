@@ -1007,6 +1007,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         !self.disable_method_bivariance && value_type.is_any()
     }
 
+    /// Whether a source index signature keyed by `source_key` is applicable to a
+    /// target index whose key is `target_key` — i.e. the source provides a value
+    /// for every key the target index ranges over. Mirrors `tsc`'s
+    /// `isApplicableIndexType(targetKey, sourceKey)` (used by `getApplicableIndexInfo`
+    /// inside `typeRelatedToIndexInfo`): the target key set must be assignable to the
+    /// source key set. Identical keys — the common plain-`string` index — short-circuit
+    /// without a relation query so ordinary index signatures are unaffected.
+    pub(crate) fn index_signature_key_covers(
+        &mut self,
+        source_key: TypeId,
+        target_key: TypeId,
+    ) -> bool {
+        source_key == target_key || self.check_subtype(target_key, source_key).is_true()
+    }
+
     /// Whether an `any`-valued number index signature on `target` imposes no
     /// requirement on a source that declares no numeric index, because `target`
     /// also carries an `any`-valued (non-symbol) string index. The numeric
@@ -1071,8 +1086,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // tsc `typeRelatedToIndexInfo`/`getApplicableIndexInfo`: a source string-like
+        // index only satisfies the target's index when its key *covers* the target
+        // key (every key the target index ranges over is assignable to the source
+        // index key). A source index keyed by an unrelated branded/template/union
+        // string type — e.g. `[k: TaggedString2]` against a target `[k: TaggedString1]`
+        // — is NOT applicable and must fall through to the missing-index handling
+        // below exactly as if the source declared no string index at all (which for a
+        // named interface/class is an error, and for an inferable-index object type is
+        // checked structurally). Identical keys (the common plain-`string` index) are
+        // trivially applicable, so this is a no-op for ordinary index signatures.
+        let target_key = t_string_idx.key_type;
         match source.string_index_signature() {
-            Some(s_string_idx) => {
+            Some(s_string_idx)
+                if self.index_signature_key_covers(s_string_idx.key_type, target_key) =>
+            {
                 // Note: tsc does NOT enforce readonly on index signatures during
                 // assignability. A readonly source index IS assignable to a writable
                 // target index — readonly only prevents mutation through the reference.
@@ -1085,7 +1113,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 SubtypeResult::True
             }
-            None => {
+            // No source string index at all, or one whose key does not cover the
+            // target key (handled identically to a missing index per tsc).
+            _ => {
                 // An *optional* target string index (`[k: string]?: V`, e.g.
                 // `Partial<Record<string, V>>`) imposes no requirement on a
                 // property-less source. tsc accepts `object`, `{}`, an empty

@@ -288,7 +288,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let prop_display = crate::query_boundaries::common::format_excess_property_name(prop_name);
+        // Render the property name from its source text where available so a
+        // string-literal key (`'someKey'`) keeps its quotes and a computed key
+        // (`[sym]`) keeps its brackets, matching `tsc` (and the suggestion-bearing
+        // path in `excess_property_diagnostic_message`).
+        let prop_display = self
+            .excess_property_name_display_for_site(idx, self.ctx.types.intern_string(prop_name))
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or_else(|| {
+                crate::query_boundaries::common::format_excess_property_name(prop_name)
+            });
         let type_str = self.excess_property_target_display_for_site(target, idx);
         let message = format!(
             "Object literal may only specify known properties, and '{prop_display}' does not exist in type '{type_str}'."

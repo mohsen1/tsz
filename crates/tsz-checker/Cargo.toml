@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "failed_generic_call_default_type_args_tests"
 path = "tests/failed_generic_call_default_type_args_tests.rs"
 [[test]]
+name = "index_signature_branded_key_applicability_tests"
+path = "tests/index_signature_branded_key_applicability_tests.rs"
+[[test]]
 name = "recursive_utility_tuple_index_14518_tests"
 path = "tests/recursive_utility_tuple_index_14518_tests.rs"
 [[test]]
