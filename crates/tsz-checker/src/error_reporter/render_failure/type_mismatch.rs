@@ -174,28 +174,6 @@ impl<'a> CheckerState<'a> {
             );
         }
         if depth == 0
-            && (target_str == "Callable" || target_str == "Applicable")
-            && !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
-        {
-            let prop_name = if target_str == "Callable" {
-                "call"
-            } else {
-                "apply"
-            };
-            let message = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                &[prop_name, &source_str, &target_str],
-            );
-            return Diagnostic::error(
-                file_name,
-                start,
-                length,
-                message,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-            );
-        }
-
-        if depth == 0
             && let Some((prop_name, owner_name, visibility)) =
                 self.private_or_protected_member_missing_display(source, target, None)
         {

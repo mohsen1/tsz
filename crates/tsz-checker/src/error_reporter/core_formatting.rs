@@ -1642,73 +1642,6 @@ impl<'a> CheckerState<'a> {
 
         let source_is_function_like = self.is_function_like_type(source);
 
-        let target_name = self.format_type_for_assignability_message(target);
-        if target_name == "Callable" || target_name == "Applicable" {
-            let required_name = if target_name == "Callable" {
-                "call"
-            } else {
-                "apply"
-            };
-            let required_atom = self.ctx.types.intern_string(required_name);
-            let source_has_prop = if source_is_function_like {
-                true
-            } else {
-                source_candidates.iter().any(|candidate| {
-                    if let Some(source_callable) =
-                        crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            *candidate,
-                        )
-                    {
-                        source_callable
-                            .properties
-                            .iter()
-                            .any(|p| p.name == required_atom)
-                    } else if let Some(source_shape) =
-                        crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
-                            *candidate,
-                        )
-                    {
-                        source_shape
-                            .properties
-                            .iter()
-                            .any(|p| p.name == required_atom)
-                    } else {
-                        false
-                    }
-                })
-            };
-            if !source_has_prop {
-                return Some(required_atom);
-            }
-        }
-
-        if !source_is_function_like {
-            for target_candidate in target_candidates {
-                let Some(target_callable) =
-                    crate::query_boundaries::common::callable_shape_for_type(
-                        self.ctx.types,
-                        target_candidate,
-                    )
-                else {
-                    continue;
-                };
-                let Some(sym_id) = target_callable.symbol else {
-                    continue;
-                };
-                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                    continue;
-                };
-                if symbol.escaped_name == "Callable" {
-                    return Some(self.ctx.types.intern_string("call"));
-                }
-                if symbol.escaped_name == "Applicable" {
-                    return Some(self.ctx.types.intern_string("apply"));
-                }
-            }
-        }
-
         for target_candidate in target_candidates {
             if let Some(target_callable) = crate::query_boundaries::common::callable_shape_for_type(
                 self.ctx.types,
@@ -1721,70 +1654,54 @@ impl<'a> CheckerState<'a> {
                     .collect();
                 if required_props.len() == 1 {
                     let prop = required_props[0];
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == "call" || prop_name.as_ref() == "apply" {
-                        let source_has_prop = if source_is_function_like {
-                            true
-                        } else {
-                            source_candidates.iter().any(|candidate| {
-                                if let Some(source_callable) =
-                                    crate::query_boundaries::common::callable_shape_for_type(
-                                        self.ctx.types,
-                                        *candidate,
-                                    )
-                                {
-                                    source_callable
-                                        .properties
-                                        .iter()
-                                        .any(|p| p.name == prop.name)
-                                } else if let Some(source_shape) =
-                                    crate::query_boundaries::common::object_shape_for_type(
-                                        self.ctx.types,
-                                        *candidate,
-                                    )
-                                {
-                                    source_shape.properties.iter().any(|p| p.name == prop.name)
-                                } else {
-                                    false
-                                }
-                            })
-                        };
-                        if !source_has_prop {
-                            return Some(prop.name);
-                        }
+                    let source_has_prop = if source_is_function_like {
+                        true
+                    } else {
+                        source_candidates.iter().any(|candidate| {
+                            if let Some(source_callable) =
+                                crate::query_boundaries::common::callable_shape_for_type(
+                                    self.ctx.types,
+                                    *candidate,
+                                )
+                            {
+                                crate::query_boundaries::common::find_matching_property(
+                                    &source_callable.properties,
+                                    prop.name,
+                                )
+                                .is_some()
+                            } else if let Some(source_shape) =
+                                crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    *candidate,
+                                )
+                            {
+                                crate::query_boundaries::common::find_matching_property(
+                                    &source_shape.properties,
+                                    prop.name,
+                                )
+                                .is_some()
+                            } else {
+                                false
+                            }
+                        })
+                    };
+                    if !source_has_prop {
+                        return Some(prop.name);
                     }
                 }
             }
         }
 
-        let source_with_shape = {
-            let direct = source;
-            let resolved = self.resolve_type_for_property_access(direct);
-            let evaluated = self.judge_evaluate(resolved);
-            [direct, resolved, evaluated]
-                .into_iter()
-                .find(|candidate| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        *candidate,
-                    )
-                    .is_some()
-                })?
-        };
-        let target_with_shape = {
-            let direct = target;
-            let resolved = self.resolve_type_for_property_access(direct);
-            let evaluated = self.judge_evaluate(resolved);
-            [direct, resolved, evaluated]
-                .into_iter()
-                .find(|candidate| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        *candidate,
-                    )
-                    .is_some()
-                })?
-        };
+        // Reuse the already-resolved candidate arrays (`[direct, resolved,
+        // evaluated]`) rather than recomputing the resolve/evaluate pipeline.
+        let source_with_shape = source_candidates.into_iter().find(|candidate| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                .is_some()
+        })?;
+        let target_with_shape = target_candidates.into_iter().find(|candidate| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                .is_some()
+        })?;
 
         let source_shape = crate::query_boundaries::common::object_shape_for_type(
             self.ctx.types,
