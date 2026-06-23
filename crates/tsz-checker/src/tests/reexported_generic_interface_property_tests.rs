@@ -34,7 +34,7 @@ fn check(files: &[(&str, &str)], entry: &str) -> Vec<(u32, String)> {
     let libs = load_default_lib_files();
     check_multi_file_with_libs_stamped(files, entry, opts(), &libs)
         .iter()
-        .map(|d| (d.code, d.message_text.to_string()))
+        .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
 
