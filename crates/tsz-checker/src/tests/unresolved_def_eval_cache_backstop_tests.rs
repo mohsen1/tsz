@@ -75,6 +75,33 @@ fn unresolved_base_application_is_not_persisted_to_env_eval_cache() {
     });
 }
 
+/// A *bare* `Lazy(DefId)` (no `Application` wrapper) whose base has nothing
+/// registered is the same registration-window artifact, reached through the
+/// evaluator's canonical bare-`Lazy` path (`visit_lazy`) rather than the
+/// application path. The evaluator must mark `unresolved_def_seen` there too, so
+/// `evaluate_type_with_env` refuses to persist the opaque `input -> input`
+/// result in the `TypeId`-keyed `env_eval_cache`. Without the mark the
+/// under-resolved `Lazy` would be cached and shadow the real expansion once the
+/// def registers (the cross-arena member-degradation class, #14347 / #13484 /
+/// #10663). This guards every consumer that bottoms out at an unresolved bare
+/// `Lazy` through `evaluate` (template-literal spans, string-intrinsic
+/// arguments, mapped-type constraints, …).
+#[test]
+fn unresolved_bare_lazy_is_not_persisted_to_env_eval_cache() {
+    let types = TypeInterner::new();
+    let unregistered = types.lazy(DefId(987_655));
+
+    with_trivial_checker(&types, |checker| {
+        let _ = checker.evaluate_type_with_env(unregistered);
+        assert!(
+            checker.ctx.lookup_env_eval_cache(unregistered).is_none(),
+            "a bare Lazy(DefId) evaluated while its base def was unresolved is a \
+             registration-window artifact and must not be persisted in the TypeId-keyed \
+             env_eval_cache (issue #14347)",
+        );
+    });
+}
+
 /// Precision floor: a fully-resolvable type with no unresolved reference never
 /// trips `unresolved_def_seen`, so the backstop must leave its `env_eval_cache`
 /// write intact. This proves the suppression is keyed on the taint flag, not a
