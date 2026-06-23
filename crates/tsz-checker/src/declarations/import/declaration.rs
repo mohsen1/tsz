@@ -10,7 +10,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-pub(crate) use super::declaration_helpers::{should_rewrite_module_specifier, ts_extension_suffix};
+pub(crate) use super::declaration_helpers::should_rewrite_module_specifier;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn source_file_has_syntactic_module_indicator(
@@ -237,8 +237,8 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::declaration_helpers::ts_extension_suffix;
     use super::super::declaration_resolution::path_has_node_modules_segment;
-    use super::ts_extension_suffix;
     use crate::context::{CheckerOptions, ScriptTarget};
     use crate::module_resolution::build_module_resolution_maps;
     use crate::state::CheckerState;

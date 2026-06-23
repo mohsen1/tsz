@@ -930,14 +930,13 @@ fn test_lookup_versioned_types_condition_prefers_matching_export_branch() {
 }
 
 #[test]
-fn test_lookup_ts5097_ts_extension_not_found() {
-    // TS5097: Import path ends with a TypeScript extension (.ts)
-    // without allowImportingTsExtensions enabled.
-    // When the specifier has an explicit .ts extension and the file is NOT found,
-    // resolve_with_kind upgrades NotFound -> ImportingTsExtensionNotAllowed.
-    // lookup() then propagates this as a TS5097 error via classify().
+fn test_lookup_missing_ts_extension_is_ts2307_not_ts5097() {
+    // A `.ts` specifier that does NOT resolve is a plain "cannot find module"
+    // (TS2307), exactly like `tsc`: TS5097 is emitted only on the resolved-file
+    // branch of `resolveExternalModule` (`resolvedUsingTsExtension`), which the
+    // checker owns. The resolver must not upgrade a genuine NotFound to TS5097.
     use std::fs;
-    let dir = std::env::temp_dir().join("tsz_test_lookup_ts5097_nf");
+    let dir = std::env::temp_dir().join("tsz_test_lookup_missing_ts_nf");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -966,28 +965,21 @@ fn test_lookup_ts5097_ts_extension_not_found() {
 
     let error = outcome
         .error
-        .expect("Expected TS5097 error for .ts extension import");
+        .expect("Expected a resolution error for a missing .ts import");
     assert_eq!(
-        error.code, IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
-        "Expected TS5097 but got TS{}",
+        error.code, CANNOT_FIND_MODULE,
+        "missing ./utils.ts must report TS2307 (tsc parity), not TS{}",
         error.code
-    );
-    assert!(
-        error.message.contains("allowImportingTsExtensions"),
-        "Error message should mention allowImportingTsExtensions: {}",
-        error.message
     );
 
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn test_lookup_ts5097_mts_extension_not_found() {
-    // TS5097 for .mts extension (not just .ts).
-    // When the specifier has an explicit .mts extension and the file is NOT found,
-    // we should get TS5097 instead of TS2307.
+fn test_lookup_missing_mts_extension_is_ts2307_not_ts5097() {
+    // Same TS2307 (not TS5097) rule for an unresolved `.mts` specifier.
     use std::fs;
-    let dir = std::env::temp_dir().join("tsz_test_lookup_ts5097_mts_nf");
+    let dir = std::env::temp_dir().join("tsz_test_lookup_missing_mts_nf");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -1016,10 +1008,10 @@ fn test_lookup_ts5097_mts_extension_not_found() {
 
     let error = outcome
         .error
-        .expect("Expected TS5097 error for .mts extension import");
+        .expect("Expected a resolution error for a missing .mts import");
     assert_eq!(
-        error.code, IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
-        "Expected TS5097 for .mts but got TS{}",
+        error.code, CANNOT_FIND_MODULE,
+        "missing ./utils.mts must report TS2307 (tsc parity), not TS{}",
         error.code
     );
 
