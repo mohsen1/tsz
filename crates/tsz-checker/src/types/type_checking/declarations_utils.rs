@@ -123,49 +123,6 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if class+interface merged declarations have compatible type
-    /// parameters. Unlike the interface-only check, this allows different
-    /// arity when the declaration with more params has defaults for the
-    /// extras (e.g., React Component pattern: class<P,S> + interface<P,S,SS=any>).
-    /// Only the overlapping parameters are checked for name+constraint identity.
-    pub(crate) fn class_interface_type_parameters_are_merge_compatible(
-        &mut self,
-        first: NodeIndex,
-        second: NodeIndex,
-    ) -> bool {
-        let Some(first_profile) = self.interface_type_parameter_profile(first) else {
-            return false;
-        };
-        let Some(second_profile) = self.interface_type_parameter_profile(second) else {
-            return false;
-        };
-
-        // Check the overlapping portion only
-        let min_len = first_profile.len().min(second_profile.len());
-
-        // Names must match in overlapping positions before canonicalization.
-        for i in 0..min_len {
-            if first_profile[i].name != second_profile[i].name {
-                return false;
-            }
-        }
-
-        // Build the canonicalization scope from the longer profile so positions
-        // present only on one side (e.g. defaulted extras on the interface side
-        // of a class+interface merge) still have an anchor for the shorter
-        // side's constraints to reference symmetrically.
-        let longest = if first_profile.len() >= second_profile.len() {
-            &first_profile
-        } else {
-            &second_profile
-        };
-        let scope = Self::profile_param_scope(longest);
-
-        let overlap_first = &first_profile[..min_len];
-        let overlap_second = &second_profile[..min_len];
-        self.constraints_and_defaults_match_in_scope(overlap_first, overlap_second, &scope)
-    }
-
     /// Collect type parameter names and constraint type ids from an interface
     /// or class declaration.
     fn interface_type_parameter_profile(

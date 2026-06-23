@@ -851,15 +851,19 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|n| self.ctx.arena.get_interface(n).is_some())
                     });
                     if has_class && has_interface {
-                        let mismatch = decls_in_scope.as_slice().split_first().is_some_and(
-                            |(baseline, rest)| {
-                                rest.iter().any(|&decl_idx| {
-                                    !self.class_interface_type_parameters_are_merge_compatible(
-                                        *baseline, decl_idx,
-                                    )
-                                })
-                            },
-                        );
+                        // Reuse the group-merge rule (it builds profiles from
+                        // both class and interface nodes): every type-parameter
+                        // position present on only some declarations must carry
+                        // a default, and overlapping positions must agree on
+                        // name/constraint/default. This rejects an arity
+                        // mismatch with a non-defaulted extra (`class A<T>` +
+                        // `interface A`) — tsc's `areTypeParametersIdentical`
+                        // count-in-[min,max] rule — while still allowing
+                        // defaulted extras (React's `class C<P, S>` +
+                        // `interface C<P, S, SS = any>`). The earlier
+                        // overlap-only check silently accepted the former.
+                        let mismatch = !self
+                            .interface_type_parameters_are_group_merge_compatible(&decls_in_scope);
                         if mismatch {
                             let message = format_message(
                                 diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
