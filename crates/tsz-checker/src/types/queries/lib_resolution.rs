@@ -339,6 +339,32 @@ pub(crate) fn augmentation_def_id_from_node(
     }
 }
 
+/// Collect every node index reachable from `decl_idx`'s `extends`/`implements`
+/// heritage clauses (the clause nodes and their full subtrees). Used by the
+/// `resolve_lib_type_by_name` prewarm to keep heritage-base generic references
+/// eager while deferring member/parameter-position ones (#12101). Returns an
+/// empty set for non-interface declarations (type aliases have no heritage).
+fn collect_heritage_subtree_nodes(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+) -> rustc_hash::FxHashSet<NodeIndex> {
+    let mut nodes = rustc_hash::FxHashSet::default();
+    let Some(clauses) = arena
+        .get(decl_idx)
+        .and_then(|node| arena.get_interface(node))
+        .and_then(|iface| iface.heritage_clauses.as_ref())
+    else {
+        return nodes;
+    };
+    let mut stack: Vec<NodeIndex> = clauses.nodes.iter().copied().collect();
+    while let Some(node_idx) = stack.pop() {
+        if nodes.insert(node_idx) {
+            stack.extend(arena.get_children(node_idx));
+        }
+    }
+    nodes
+}
+
 /// Resolve a lib node through node bindings, lexical scopes, and file-level symbols.
 pub(crate) fn resolve_lib_node_in_arenas(
     binder: &tsz_binder::BinderState,
@@ -920,6 +946,14 @@ impl<'a> CheckerState<'a> {
                 // instead of eagerly materializing it during the prewarm walk.
                 let defer_generic_prewarm = !lib_generic_prewarm_defer_disabled();
                 for (decl_idx, decl_arena) in &decls_with_arenas {
+                    // Generic references in a `extends`/`implements` heritage
+                    // clause are NOT deferred: the base's members are merged into
+                    // this interface and feed structural checks (assignability,
+                    // rest/spread arity), so the base must materialize during
+                    // lowering rather than as a deferred `Application`. Only
+                    // member/parameter-position generic references (e.g. the
+                    // `MessageEvent<T>` in an `on*` handler property) defer.
+                    let heritage_nodes = collect_heritage_subtree_nodes(decl_arena, *decl_idx);
                     let mut stack = vec![*decl_idx];
                     while let Some(node_idx) = stack.pop() {
                         let Some(node) = decl_arena.get(node_idx) else {
@@ -951,7 +985,8 @@ impl<'a> CheckerState<'a> {
                                     })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
-                                    if defer_generic_prewarm {
+                                    if defer_generic_prewarm && !heritage_nodes.contains(&node_idx)
+                                    {
                                         self.prime_referenced_lib_type_params(
                                             &ref_name,
                                             &mut prewarmed_lazy_type_params,
