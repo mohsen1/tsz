@@ -475,6 +475,20 @@ impl CheckerState<'_> {
             self.check_dts_top_level_declare_or_export(&sf.statements.nodes);
         }
 
+        // Grammar: TS1330/1331/1332/1333/1334/1335 (+ TS1005) for misplaced
+        // `unique symbol` type operators. This is a position-independent
+        // sweep — `unique symbol` is only legal on a `const` variable, a
+        // `static readonly` class property, or a `readonly` property
+        // signature — so it must visit every type-operator node regardless of
+        // whether the enclosing annotation's type is otherwise materialized.
+        //
+        // Skip it when a fatal config deprecation (TS5107/TS5101) is present:
+        // tsc 6.0 stops compilation at the deprecation and never reaches the
+        // per-node grammar checks, so emitting these here would diverge.
+        if !suppress_grammar && !self.ctx.capabilities.has_deprecation_diagnostics {
+            self.check_unique_symbol_grammar();
+        }
+
         let mut seen_dts_ambient_violation = false;
         let statement_timing_enabled = tsz_common::perf_counters::enabled_fast();
         for &stmt_idx in &sf.statements.nodes {
@@ -760,6 +774,66 @@ impl CheckerState<'_> {
         self.align_type_guard_interface_diagnostics(&sf.text);
         self.align_complex_recursive_collections_diagnostics(&sf.text);
         self.align_jsx_element_type_diagnostics(&sf.text);
+    }
+
+    /// Grammar pass for misplaced `unique symbol` type operators — the
+    /// `UniqueKeyword` arm of tsc's `checkGrammarTypeOperatorNode`.
+    ///
+    /// `unique symbol` is only legal as the type of a `const` variable in a
+    /// variable statement, a `static readonly` class property, or a `readonly`
+    /// property signature. Everywhere else (function parameters and return
+    /// types, type predicates, type arguments, `let`/`var`, binding patterns,
+    /// type aliases, mapped/union/array types, …) it is rejected. tsc applies
+    /// this as a per-node grammar check during its source-element walk, so a
+    /// position-independent sweep over every type-operator node is the faithful
+    /// shape — it covers nodes whose enclosing annotation type is never
+    /// otherwise materialized (an unused type alias body, a type predicate).
+    fn check_unique_symbol_grammar(&mut self) {
+        use crate::diagnostics::diagnostic_messages;
+        use crate::types_domain::unique_symbol_arena::unique_symbol_grammar_violation;
+
+        for i in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(i as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::TYPE_OPERATOR {
+                continue;
+            }
+            let is_unique = self
+                .ctx
+                .arena
+                .get_type_operator(node)
+                .is_some_and(|op| op.operator == SyntaxKind::UniqueKeyword as u16);
+            if !is_unique {
+                continue;
+            }
+            let Some((code, anchor)) = unique_symbol_grammar_violation(self.ctx.arena, idx) else {
+                continue;
+            };
+            let Some((start, end)) = self.ctx.arena.pos_end_at(anchor) else {
+                continue;
+            };
+            let message = match code {
+                1005 => tsz_common::diagnostics::format_message(
+                    diagnostic_messages::EXPECTED,
+                    &["symbol"],
+                ),
+                1330 => diagnostic_messages::A_PROPERTY_OF_AN_INTERFACE_OR_TYPE_LITERAL_WHOSE_TYPE_IS_A_UNIQUE_SYMBOL_TYPE_MU
+                    .to_string(),
+                1331 => diagnostic_messages::A_PROPERTY_OF_A_CLASS_WHOSE_TYPE_IS_A_UNIQUE_SYMBOL_TYPE_MUST_BE_BOTH_STATIC_AND
+                    .to_string(),
+                1332 => diagnostic_messages::A_VARIABLE_WHOSE_TYPE_IS_A_UNIQUE_SYMBOL_TYPE_MUST_BE_CONST
+                    .to_string(),
+                1333 => diagnostic_messages::UNIQUE_SYMBOL_TYPES_MAY_NOT_BE_USED_ON_A_VARIABLE_DECLARATION_WITH_A_BINDING_NAM
+                    .to_string(),
+                1334 => diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_ONLY_ALLOWED_ON_VARIABLES_IN_A_VARIABLE_STATEMENT
+                    .to_string(),
+                _ => diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE.to_string(),
+            };
+            self.ctx
+                .error(start, end.saturating_sub(start), message, code);
+        }
     }
 
     fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
