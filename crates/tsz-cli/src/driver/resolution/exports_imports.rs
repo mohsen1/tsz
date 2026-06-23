@@ -266,34 +266,33 @@ fn resolve_target_candidates_with_flavor(
     }
 }
 
-/// `(prefix_len, suffix_len)` specificity for a package.json `exports` /
-/// `imports` subpath pattern, per Node.js `PACKAGE_IMPORTS_EXPORTS_RESOLVE`.
-/// Longer prefix beats shorter prefix; longer suffix only breaks
-/// equal-prefix ties. Mirrors `tsz-core`'s `export_pattern_specificity`.
-fn exports_subpath_specificity(pattern: &str) -> (usize, usize) {
-    if let Some(star_pos) = pattern.find('*') {
-        (star_pos, pattern.len() - star_pos - 1)
-    } else {
-        (pattern.len(), 0)
-    }
-}
-
 /// Pick the most-specific pattern entry from `map`. `match_fn` accepts the
 /// captured wildcard portion for a matching key (or returns `None`). Updates
 /// only on strict improvement, so true ties resolve to the first matching
 /// pattern in JSON insertion order (`serde_json` is built with
 /// `preserve_order`).
+///
+/// Specificity is ranked by the shared
+/// [`pattern_key_specificity`](tsz_common::module_resolution::package_exports::pattern_key_specificity)
+/// comparator (Node.js `comparePatternKeys`), so this driver cannot drift from
+/// the tsz-core resolver or from `tsc`. The earlier `(prefix_len, suffix_len)`
+/// 2-tuple dropped the `+1` on a wildcard's base length and the wildcard-beats-
+/// directory tiebreak, so a directory key (`"./"`, `"./lib/"`) tied its
+/// corresponding wildcard (`"./*"`, `"./lib/*"`) and the chosen file flipped
+/// with JSON key order.
 fn find_best_subpath_pattern<'a>(
     map: &'a serde_json::Map<String, serde_json::Value>,
     match_fn: impl Fn(&str) -> Option<String>,
 ) -> Option<(String, &'a serde_json::Value)> {
+    use tsz_common::module_resolution::package_exports::pattern_key_specificity;
+
     let mut best: Option<(String, &'a serde_json::Value)> = None;
-    let mut best_score: Option<(usize, usize)> = None;
+    let mut best_score: Option<(usize, usize, usize)> = None;
     for (key, value) in map {
         let Some(wildcard) = match_fn(key) else {
             continue;
         };
-        let specificity = exports_subpath_specificity(key);
+        let specificity = pattern_key_specificity(key);
         if best_score.is_none_or(|s| specificity > s) {
             best_score = Some(specificity);
             best = Some((wildcard, value));
@@ -555,25 +554,41 @@ mod tests {
         );
     }
 
+    // The `pattern_key_specificity` comparator itself is unit-tested in
+    // `tsz_common::module_resolution::package_exports`; the driver tests below
+    // pin that the resolver actually routes its key selection through it
+    // (end-to-end, in either JSON authoring order).
+
     #[test]
-    fn exports_subpath_specificity_uses_prefix_then_suffix_tuple() {
-        // Covers each branch of the algorithm plus the regression cases:
-        //   * exact/non-wildcard keys score `(pattern.len(), 0)`,
-        //   * patterns with `*` score `(prefix_len, suffix_len)` and so the
-        //     equal-total-length / unequal-prefix pair `./abc/*` vs `./*/abc`
-        //     resolves strictly (the previous `key.len()` heuristic tied them),
-        //   * identical-prefix patterns are broken by suffix length.
-        assert_eq!(exports_subpath_specificity("./exact.js"), (10, 0));
-        assert_eq!(exports_subpath_specificity("./"), (2, 0));
-        assert_eq!(exports_subpath_specificity("./*"), (2, 0));
-        assert_eq!(exports_subpath_specificity("./prefix*"), (8, 0));
-        assert_eq!(exports_subpath_specificity("./*.ts"), (2, 3));
-        assert_eq!(exports_subpath_specificity("./abc/*"), (6, 0));
-        assert_eq!(exports_subpath_specificity("./*/abc"), (2, 4));
-        assert!(exports_subpath_specificity("./abc/*") > exports_subpath_specificity("./*/abc"));
-        assert!(
-            exports_subpath_specificity("./lib/*.d.ts") > exports_subpath_specificity("./lib/*")
-        );
+    fn resolve_exports_subpath_wildcard_beats_directory_key_in_either_order() {
+        // Regression: a `*` key is strictly more specific than the trailing-slash
+        // directory key it shares a base with, so `tsc` always picks the wildcard
+        // target regardless of JSON authoring order. The prior 2-tuple comparator
+        // tied them and let JSON order pick the (wrong) directory target.
+        for exports in [
+            serde_json::json!({ "./lib/": "./d/", "./lib/*": "./s/*" }),
+            serde_json::json!({ "./lib/*": "./s/*", "./lib/": "./d/" }),
+        ] {
+            assert_eq!(
+                resolve_exports_subpath(&exports, "./lib/foo.js", &["default"], TEST_VERSION)
+                    .into_option()
+                    .as_deref(),
+                Some("./s/foo.js"),
+            );
+        }
+
+        // The bare-`"./"` directory sugar vs `"./*"` shows the same fix.
+        for exports in [
+            serde_json::json!({ "./": "./pub/", "./*": "./src/*" }),
+            serde_json::json!({ "./*": "./src/*", "./": "./pub/" }),
+        ] {
+            assert_eq!(
+                resolve_exports_subpath(&exports, "./foo.js", &["default"], TEST_VERSION)
+                    .into_option()
+                    .as_deref(),
+                Some("./src/foo.js"),
+            );
+        }
     }
 
     #[test]
