@@ -436,24 +436,61 @@ impl HelpersNeeded {
         }
     }
 
+    /// Record a no-priority helper (deduped), positioned before the earliest
+    /// already-recorded helper for which `precedes` holds. When none match,
+    /// append — preserving request order among helpers of the same tier.
+    fn remember_unprioritized_before(
+        &mut self,
+        helper: HelperEmitOrder,
+        precedes: impl Fn(HelperEmitOrder) -> bool,
+    ) {
+        if self.unprioritized_order.contains(&helper) {
+            return;
+        }
+        match self
+            .unprioritized_order
+            .iter()
+            .position(|&recorded| precedes(recorded))
+        {
+            Some(pos) => self.unprioritized_order.insert(pos, helper),
+            None => self.unprioritized_order.push(helper),
+        }
+    }
+
+    /// Record a no-priority helper that `tsc` lowers in the ES2018 transform
+    /// pass (object-rest + async-iteration: `__rest`, `__await`,
+    /// `__asyncGenerator`, `__asyncValues`, `__asyncDelegator`).
+    ///
+    /// `tsc` sorts no-priority helpers by transform-pass tier first and request
+    /// order only within a tier. The ES2018 pass runs before the ES2015
+    /// iteration/spread pass, so its helpers are always emitted ahead of
+    /// `__values`/`__read`/`__spreadArray` regardless of source position — e.g.
+    /// a `yield*`/`for..of` that requests `__values` earlier in the file than an
+    /// object-rest destructuring requests `__rest`. Insert this helper before
+    /// the earliest already-recorded ES2015 iteration helper; otherwise append,
+    /// which preserves request order within the ES2018 tier.
+    fn remember_es2018_tier_unprioritized(&mut self, helper: HelperEmitOrder) {
+        self.remember_unprioritized_before(helper, is_es2015_iteration_helper);
+    }
+
     pub fn mark_rest(&mut self) {
         self.rest = true;
-        self.remember_unprioritized(HelperEmitOrder::Rest);
+        self.remember_es2018_tier_unprioritized(HelperEmitOrder::Rest);
     }
 
     pub fn mark_await_helper(&mut self) {
         self.await_helper = true;
-        self.remember_unprioritized(HelperEmitOrder::Await);
+        self.remember_es2018_tier_unprioritized(HelperEmitOrder::Await);
     }
 
     pub fn mark_async_generator(&mut self) {
         self.async_generator = true;
-        self.remember_unprioritized(HelperEmitOrder::AsyncGenerator);
+        self.remember_es2018_tier_unprioritized(HelperEmitOrder::AsyncGenerator);
     }
 
     pub fn mark_async_delegator(&mut self) {
         self.async_delegator = true;
-        self.remember_unprioritized(HelperEmitOrder::AsyncDelegator);
+        self.remember_es2018_tier_unprioritized(HelperEmitOrder::AsyncDelegator);
     }
 
     pub fn mark_values(&mut self) {
@@ -463,19 +500,11 @@ impl HelpersNeeded {
 
     pub fn mark_read(&mut self) {
         self.read = true;
-        if self.unprioritized_order.contains(&HelperEmitOrder::Read) {
-            return;
-        }
-        if let Some(spread_pos) = self
-            .unprioritized_order
-            .iter()
-            .position(|helper| *helper == HelperEmitOrder::SpreadArray)
-        {
-            self.unprioritized_order
-                .insert(spread_pos, HelperEmitOrder::Read);
-        } else {
-            self.unprioritized_order.push(HelperEmitOrder::Read);
-        }
+        // `__read` is consumed by `__spreadArray`, so it stays ahead of it even
+        // when array-spread requested `__spreadArray` first.
+        self.remember_unprioritized_before(HelperEmitOrder::Read, |helper| {
+            helper == HelperEmitOrder::SpreadArray
+        });
     }
 
     pub fn mark_spread_array(&mut self) {
@@ -490,22 +519,10 @@ impl HelpersNeeded {
 
     pub fn mark_async_values(&mut self) {
         self.async_values = true;
-        if self
-            .unprioritized_order
-            .contains(&HelperEmitOrder::AsyncValues)
-        {
-            return;
-        }
-        if let Some(spread_pos) = self
-            .unprioritized_order
-            .iter()
-            .position(|helper| *helper == HelperEmitOrder::SpreadArray)
-        {
-            self.unprioritized_order
-                .insert(spread_pos, HelperEmitOrder::AsyncValues);
-        } else {
-            self.unprioritized_order.push(HelperEmitOrder::AsyncValues);
-        }
+        // `__asyncValues` (for-await-of) is an ES2018 async-iteration helper, so
+        // it precedes the whole ES2015 iteration tier (`__values`/`__read`/
+        // `__spreadArray`), not just `__spreadArray`.
+        self.remember_es2018_tier_unprioritized(HelperEmitOrder::AsyncValues);
     }
 
     pub fn mark_class_private_field_get(&mut self) {
@@ -858,6 +875,15 @@ fn emit_class_private_helpers(
         output,
         emitted,
     );
+}
+
+/// The ES2015 iteration/spread no-priority helpers, which `tsc` emits after the
+/// ES2018-pass helpers (object-rest + async-iteration).
+const fn is_es2015_iteration_helper(helper: HelperEmitOrder) -> bool {
+    matches!(
+        helper,
+        HelperEmitOrder::Values | HelperEmitOrder::Read | HelperEmitOrder::SpreadArray
+    )
 }
 
 const fn is_class_private_helper(helper: HelperEmitOrder) -> bool {
@@ -1515,6 +1541,52 @@ mod tests {
         assert_eq!(
             helpers.needed_names(),
             vec!["__asyncValues", "__spreadArray"]
+        );
+    }
+
+    #[test]
+    fn emit_helpers_rest_precedes_values_when_values_requested_first() {
+        // `__values` (ES2015 iteration) requested first — e.g. `yield*`/`for..of`
+        // earlier in the source than an object-rest destructuring. `__rest`
+        // (ES2018 object-rest pass) must still emit ahead of `__values`, matching
+        // tsc's transform-pass ordering.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_values();
+        helpers.mark_rest();
+
+        let output = emit_helpers(&helpers);
+        let i_rest = find_helper(&output, "__rest");
+        let i_values = find_helper(&output, "__values");
+        assert!(
+            i_rest < i_values,
+            "rest must precede values, got rest={i_rest} values={i_values}",
+        );
+        assert_eq!(helpers.needed_names(), vec!["__rest", "__values"]);
+    }
+
+    #[test]
+    fn emit_helpers_es2018_tier_precedes_whole_es2015_tier_when_requested_last() {
+        // for-await-of (`__asyncValues`, ES2018) requested after the ES2015
+        // iteration/spread constructs must still emit ahead of the entire ES2015
+        // tier (`__values`/`__read`/`__spreadArray`), not merely before
+        // `__spreadArray`.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_values();
+        helpers.mark_read();
+        helpers.mark_spread_array();
+        helpers.mark_async_values();
+
+        let output = emit_helpers(&helpers);
+        let i_async_values = find_helper(&output, "__asyncValues");
+        let i_values = find_helper(&output, "__values");
+        let i_read = find_helper(&output, "__read");
+        let i_spread = find_helper(&output, "__spreadArray");
+        assert!(i_async_values < i_values, "asyncValues must precede values");
+        assert!(i_values < i_read, "values must precede read");
+        assert!(i_read < i_spread, "read must precede spreadArray");
+        assert_eq!(
+            helpers.needed_names(),
+            vec!["__asyncValues", "__values", "__read", "__spreadArray"],
         );
     }
 
