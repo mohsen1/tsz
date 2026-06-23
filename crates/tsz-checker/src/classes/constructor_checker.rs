@@ -772,7 +772,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .flat_map(|sig| sig.type_params.iter().map(|tp| tp.name))
             .collect();
-        crate::query_boundaries::common::resolve_named_type_params_to_defaults(
+        crate::query_boundaries::type_defaults::resolve_named_type_params_to_defaults(
             self.ctx.types,
             instance_type,
             &names,

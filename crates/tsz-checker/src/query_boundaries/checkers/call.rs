@@ -206,7 +206,7 @@ pub(crate) fn stable_call_recovery_return_type_with_default_type_args(
     stable_call_recovery_return_type_impl(
         db,
         type_id,
-        &super::super::common::resolve_signature_default_type_args,
+        &super::super::type_defaults::resolve_signature_default_type_args,
     )
 }
 
