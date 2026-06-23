@@ -1068,15 +1068,6 @@ impl CheckerState<'_> {
         // value type to `any` (false `TS7053` on `obj[K]`, masked real `TS2322`).
         // tsc resolves the const to its declared literal everywhere; honor the
         // current-file declaration here.
-        // NOTE: this read deliberately keeps the dynamic-overlay-first resolver.
-        // For a re-exported import-alias / aliased `unique symbol`, the followed
-        // chain endpoint is recorded only in the dynamic overlay; the immutable
-        // declaring index would point at the alias's binding file and read the
-        // wrong (or empty) body, producing false `TS2464`/`TS2538` on
-        // symbol-keyed members (regression witnessed by
-        // `reexported_symbol_keyed_member_tests`). The #13255 stabilization is
-        // applied at the delegation DECISION + cache-KEY sites
-        // (`delegate_cross_arena_*`), not at this symbol-type owner read.
         let cross_file_owner_idx = self
             .ctx
             .resolve_symbol_file_index(sym_id)

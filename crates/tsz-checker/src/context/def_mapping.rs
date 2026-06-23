@@ -117,17 +117,6 @@ impl CheckerContext<'_> {
         use tsz_solver::def::DefinitionInfo;
         let local_symbol = self.binder.symbols.get(sym_id);
         let authoritative_file_idx = self.resolve_symbol_file_index(sym_id);
-        // The value that KEYS the DefId registration (and its matching lookup
-        // keys) must be order-independent so two parallel arenas mint the same
-        // `(symbol_id, file_idx)` identity and converge on one `DefId`
-        // (issue #13255 DefId identity split). The dynamic-overlay-first
-        // `authoritative_file_idx` is schedule-dependent; the stable resolver
-        // prefers the immutable declaring-file index and only falls back to the
-        // overlay when no static declaring file exists. Collision detection
-        // (`prefer_local_symbol`) and cache-hit validation deliberately stay on
-        // `authoritative_file_idx` for this increment: cache-hit semantics are
-        // unchanged; only new mints use the stable key.
-        let stable_file_idx = self.resolve_symbol_file_index_stable(sym_id);
         let has_cross_file_collision = authoritative_file_idx
             .is_some_and(|file_idx| file_idx != self.current_file_idx)
             && local_symbol.is_some()
@@ -213,9 +202,7 @@ impl CheckerContext<'_> {
         if let Some(symbol) = symbol
             && let Some(def_id) = self.definition_store.lookup_by_symbol(
                 sym_id.0,
-                // Lookup KEY uses the stable, order-independent index so it
-                // matches the key the Step-4 mint registers under (#13255).
-                stable_file_idx
+                authoritative_file_idx
                     .map(|idx| idx as u32)
                     .unwrap_or(symbol.decl_file_idx),
             )
@@ -261,10 +248,7 @@ impl CheckerContext<'_> {
         let file_idx = if prefer_local_symbol && self.current_file_idx != usize::MAX {
             self.current_file_idx as u32
         } else {
-            // Registration KEY: order-independent so parallel arenas converge
-            // on a single `(symbol_id, file_idx)` -> `DefId` identity (#13255).
-            // `prefer_local_symbol` collision detection above is unchanged.
-            stable_file_idx
+            authoritative_file_idx
                 .map(|idx| idx as u32)
                 .unwrap_or(symbol.decl_file_idx)
         };
@@ -1497,12 +1481,7 @@ impl CheckerContext<'_> {
         if let Some(symbol) = symbol
             && let Some(def_id) = self.definition_store.lookup_by_symbol(
                 sym_id.0,
-                // #13255: the read key must match the order-independent key the
-                // mint side (`get_or_create_def_id`) registers under, or two
-                // parallel arenas resolve one declaration to distinct DefIds
-                // (TS2719/TS2590 flap). Use the stable, declaring-file-first
-                // resolver here too.
-                self.resolve_symbol_file_index_stable(sym_id)
+                self.resolve_symbol_file_index(sym_id)
                     .map(|idx| idx as u32)
                     .unwrap_or(symbol.decl_file_idx),
             )
