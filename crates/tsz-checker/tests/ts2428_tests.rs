@@ -593,3 +593,119 @@ type A = {}"#;
         "Should NOT emit TS2300 when TS2395 is emitted: got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Class + interface merges. tsc applies the same `areTypeParametersIdentical`
+// rule across a class/interface merge group: a type-parameter position present
+// on only some declarations must carry a default, otherwise the merge is a
+// TS2428 mismatch. tsz previously compared only the overlapping positions for
+// class+interface merges, silently accepting an arity mismatch whose extra
+// parameter had no default.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn class_generic_and_non_generic_interface_emits_ts2428() {
+    // `class A<T>` + `interface A` — the class's `T` has no default and the
+    // interface omits it, so the declarations are not identical.
+    let source = r#"
+class A<T> {
+    value!: T;
+}
+interface A {
+    extra: number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "class<T> merged with a non-generic interface (no default) must emit TS2428"
+    );
+}
+
+#[test]
+fn non_generic_interface_and_class_generic_reversed_order_emits_ts2428() {
+    // Declaration order must not matter.
+    let source = r#"
+interface B {
+    extra: number;
+}
+class B<T> {
+    value!: T;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "non-generic interface merged with class<T> (no default) must emit TS2428 regardless of order"
+    );
+}
+
+#[test]
+fn class_and_interface_extra_param_without_default_emits_ts2428() {
+    // `class C<T, U>` + `interface C<T>` — the class's extra `U` has no default.
+    let source = r#"
+class C<T, U> {
+    a!: T;
+    b!: U;
+}
+interface C<T> {
+    c: T;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "class<T, U> merged with interface<T> (extra U lacks a default) must emit TS2428"
+    );
+}
+
+#[test]
+fn class_and_interface_extra_param_with_default_no_ts2428() {
+    // React `Component` pattern: the longer side's extra parameter is defaulted,
+    // so the merge is legal.
+    let source = r#"
+class D<P, S> {
+    p!: P;
+    s!: S;
+}
+interface D<P, S, SS = any> {
+    ss?: SS;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "class<P, S> merged with interface<P, S, SS = any> (defaulted extra) must NOT emit TS2428"
+    );
+}
+
+#[test]
+fn non_generic_class_and_interface_with_defaulted_param_no_ts2428() {
+    // The missing position is supplied with a default by the interface, so the
+    // non-generic class declaration is compatible.
+    let source = r#"
+interface E<T = string> {
+    b: T;
+}
+class E {
+    a = 1;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "non-generic class merged with interface<T = string> (defaulted extra) must NOT emit TS2428"
+    );
+}
+
+#[test]
+fn class_and_interface_identical_params_no_ts2428() {
+    // Control: identical type parameters are a valid merge.
+    let source = r#"
+class F<T> {
+    value!: T;
+}
+interface F<T> {
+    extra: T;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "class<T> merged with interface<T> (identical params) must NOT emit TS2428"
+    );
+}
