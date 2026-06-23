@@ -1345,6 +1345,9 @@ mod recursive_tuple_rest_cycle_tests;
 #[path = "tests/reexport_resolution_cache_tests.rs"]
 mod reexport_resolution_cache_tests;
 #[cfg(test)]
+#[path = "tests/reexported_generic_interface_property_tests.rs"]
+mod reexported_generic_interface_property_tests;
+#[cfg(test)]
 #[path = "tests/ref_type_params_cache_tests.rs"]
 mod ref_type_params_cache_tests;
 #[cfg(test)]

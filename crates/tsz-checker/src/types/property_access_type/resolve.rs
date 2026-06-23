@@ -379,7 +379,36 @@ impl<'a> CheckerState<'a> {
         .or_else(|| {
             crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
         });
-        let receiver_needs_env_fallback = is_builder_select_access
+        // A receiver that is a *generic interface application* over a non-lib
+        // (program) def — e.g. `b: Box<number>` where `Box` is user-declared,
+        // including when reached through a barrel re-export — must be materialized
+        // through the env evaluator so its type arguments substitute into the
+        // members before property lookup. The plain `evaluate_application_type`
+        // path leaves a cross-arena re-exported interface application opaque, so
+        // `b.value` resolved to the unsubstituted member (a free `T`, false
+        // TS2322). This generalizes the prior property-name-gated special case
+        // (which only fired for `.select`) to any non-lib generic application
+        // receiver. Refs #13212 / #10663.
+        let receiver_is_nonlib_generic_application =
+            crate::query_boundaries::common::get_application_lazy_def_id(
+                self.ctx.types,
+                original_object_type,
+            )
+            .filter(|&def_id| {
+                // Restrict to interface applications. Mapped types and other type
+                // aliases lower to `TypeAlias` defs whose application already
+                // resolves through the lighter `evaluate_application_type` path;
+                // routing them through the env evaluator over-normalizes them
+                // (regresses optional-method/mapped-type member resolution).
+                matches!(
+                    self.ctx.definition_store.get_kind(def_id),
+                    Some(tsz_solver::def::DefKind::Interface)
+                )
+            })
+            .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id));
+        let receiver_needs_env_fallback = (is_builder_select_access
+            || receiver_is_nonlib_generic_application)
             && (receiver_fallback_def
                 .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
                 .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
