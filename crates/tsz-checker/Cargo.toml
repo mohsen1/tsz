@@ -2193,3 +2193,6 @@ path = "tests/readonly_array_alias_argument_display_tests.rs"
 [[test]]
 name = "try_finally_pre_try_narrowing_tests"
 path = "tests/try_finally_pre_try_narrowing_tests.rs"
+[[test]]
+name = "computed_key_and_iterator_heritage_member_retention_tests"
+path = "tests/computed_key_and_iterator_heritage_member_retention_tests.rs"
