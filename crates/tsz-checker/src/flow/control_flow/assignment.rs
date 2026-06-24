@@ -532,25 +532,21 @@ impl<'a> FlowAnalyzer<'a> {
                     literal_type,
                 );
             }
-            // For a variable declaration with a type annotation, narrow the
-            // declared type by the initializer exactly as tsc's
-            // `getAssignmentReducedType` does. (Primitive-literal initializers
-            // are already handled by the `literal_type_from_node` branch above;
-            // this block covers object/array literals and non-literal
+            // Narrow a variable declaration's declared type by its initializer,
+            // as tsc's `getAssignmentReducedType` does. (Primitive-literal
+            // initializers are handled by the `literal_type_from_node` branch
+            // above; this block covers object/array literals and non-literal
             // initializers such as `new C()` or another reference.)
             //
-            // A `const` is always narrowed. A `let`/`var` is narrowed only when
-            // the variable is *never reassigned* — i.e. it is an effectively
-            // constant reference, mirroring tsc's `isConstantReference`
-            // (`isParameterOrMutableLocalVariable(symbol) &&
-            // !isSymbolAssigned(symbol)`). A reassigned mutable local keeps its
-            // declared type so the flow graph's assignment / loop fixed-point
-            // machinery owns its evolution: narrowing the initializer of a
-            // loop-reassigned variable would evaluate the loop body's first
-            // fixed-point pass against the narrowed entry type and surface
-            // spurious diagnostics (the #8513 `Optional<r>` repro). Narrowing a
-            // never-reassigned local is unconditionally safe because it can
-            // never appear on a loop back-edge.
+            // `const` always narrows; a `let`/`var` narrows only when it is
+            // never reassigned — an effectively constant reference, mirroring
+            // tsc's `isConstantReference`. A reassigned mutable local keeps its
+            // declared type so the loop fixed-point machinery owns its
+            // evolution: narrowing a loop-reassigned initializer would evaluate
+            // the loop body's first fixed-point pass against the narrowed entry
+            // type and surface spurious diagnostics (the #8513 `Optional<r>`
+            // repro). A never-reassigned local can never sit on a loop
+            // back-edge, so narrowing it is always safe.
             if self.is_var_decl_with_type_annotation(assignment_node) {
                 let initializer_narrows_declared_type = self
                     .is_const_variable_declaration(assignment_node)
