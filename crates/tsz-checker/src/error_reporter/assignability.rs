@@ -1949,6 +1949,7 @@ impl<'a> CheckerState<'a> {
                 &tgt_str,
                 anchor.start,
                 anchor.length,
+                0,
             ) {
                 self.emit_render_request_at_anchor(
                     anchor,
