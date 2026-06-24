@@ -91,9 +91,18 @@ pub(crate) fn record_source_alias_rejection_kinds(
 /// - An **intersection** drops the alias name only when it collapses to a
 ///   union of purely primitive/literal members (`T1 & ("a"|"b")` ->
 ///   `"a"|"b"`); a distribution into object-typed members keeps the name.
-/// - A **conditional** or **indexed access** resolves away into its branch /
-///   element type and never carries the alias's `aliasSymbol`, so tsc renders
-///   the evaluated underlying type, including bare object and mapped shapes.
+/// - A **conditional** resolves away into its branch type, which is a
+///   pre-existing type that never carries the alias's `aliasSymbol`, so tsc
+///   renders the evaluated underlying type — including a bare object, mapped
+///   shape, or a primitive/literal union branch (`A extends B ? number |
+///   boolean : never` elaborates as `number | boolean`, never the alias name).
+/// - An **indexed access** is the carve-out: when its result is a *union* (an
+///   index over a union / `keyof` that builds a fresh union via tsc's
+///   `getUnionType(propTypes, …, aliasSymbol)`), that union carries the alias
+///   symbol, so it is **not** computed and tsc keeps the alias name
+///   (`type W = T[keyof T]` -> `W`). Only a single-key access that resolves to
+///   one existing member type (no fresh construction, no alias symbol) is
+///   computed and rendered structurally.
 ///   Unions/intersections that mix in objects stay deferred to the separate
 ///   elaboration path; directly-written aliases sharing a bare object shape are
 ///   protected by the def store's "direct wins" provenance.
@@ -114,12 +123,22 @@ pub(crate) fn alias_declaration_body_is_computed(
     };
     match body_node.kind {
         syntax_kind_ext::INTERSECTION_TYPE => result_is_primitive_literal_union(db, result),
-        syntax_kind_ext::CONDITIONAL_TYPE | syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+        syntax_kind_ext::CONDITIONAL_TYPE => {
             !crate::query_boundaries::common::is_conditional_type(db, result)
                 && !crate::query_boundaries::common::is_index_access_type(db, result)
                 && !crate::query_boundaries::diagnostics::union_or_intersection_with_object(
                     db, result,
                 )
+        }
+        syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+            !crate::query_boundaries::common::is_conditional_type(db, result)
+                && !crate::query_boundaries::common::is_index_access_type(db, result)
+                // A union result is freshly constructed by `getUnionType(…,
+                // aliasSymbol)` and therefore carries the alias symbol — tsc
+                // keeps the alias name, so it is *not* a computed body. A
+                // single-key access yields one existing member type (no alias
+                // symbol) and is rendered structurally.
+                && !crate::query_boundaries::common::is_union_type(db, result)
         }
         // `keyof { ... }` over an inline object *type literal* is a reducing
         // operator like indexed access: it resolves away into the operand's key

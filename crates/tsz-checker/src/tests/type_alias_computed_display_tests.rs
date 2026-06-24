@@ -4,10 +4,20 @@
 //! tsc attaches an `aliasSymbol` (and so renders the alias name) only to
 //! freshly-constructed structural types. A non-generic alias whose declared
 //! body is a *reducing operator* — a conditional or an indexed access — loses
-//! its name once the operator resolves: tsc renders the underlying structural
-//! result instead. Verified against tsc 6.0.2, e.g.
+//! its name once the operator resolves *to a pre-existing type*: tsc renders
+//! the underlying structural result instead. Verified against tsc 6.0.2, e.g.
 //! `type P = true extends true ? [string, number] : never` elaborates as
 //! `[string, number]`, never `P`.
+//!
+//! The one carve-out is an **indexed access over a union / `keyof` index**
+//! (`type W = T[keyof T]`, `type W = T["a" | "b"]`): tsc builds a *fresh* union
+//! via `getUnionType(propTypes, …, aliasSymbol)`, so that union carries the
+//! alias symbol and tsc keeps the name (`W`, never `string | number`). A
+//! single-key access (`T["a"]`) resolves to one pre-existing member type with
+//! no alias symbol and still renders structurally. A non-generic *conditional*
+//! never builds such a union — it returns a pre-existing branch type — so even
+//! a union-typed branch (`A extends B ? number | boolean : never`) renders
+//! structurally as `number | boolean`.
 //!
 //! These tests pin the tuple / array / function / scalar / primitive-union
 //! family, the bare-object family (a conditional / indexed access reducing to an
@@ -193,6 +203,88 @@ const h: Holder = { v: 0 };
     assert!(
         msg.contains("DirectPair"),
         "expected a directly-written tuple alias to keep its name, got: {msg}"
+    );
+}
+
+// ── indexed-access-over-union-index family (fresh union keeps the name) ───
+//
+// `type W = T[keyof T]` / `type W = T["a" | "b"]` indexes by a union, so tsc
+// builds a *fresh* union (`getUnionType(propTypes, …, aliasSymbol)`) that
+// carries the alias symbol — the alias name survives (`W`, never the expanded
+// `string | number`). This is the inverse of the single-key access in test 4,
+// which resolves to one pre-existing member type with no alias symbol. Binder
+// names vary so a hardcoded fix cannot satisfy these.
+
+// 6a. Indexed access by `keyof` over a multi-typed object → fresh union → keeps
+//     the alias name.
+#[test]
+fn indexed_access_by_keyof_to_union_keeps_alias_name() {
+    let msg = ts2322_target(
+        r#"
+type Record1 = { a: number; b: string };
+type AnyValue = Record1[keyof Record1];
+const v: AnyValue = true;
+"#,
+    );
+    assert!(
+        msg.contains("'AnyValue'") && !msg.contains("string | number"),
+        "expected `T[keyof T]` union alias to keep its name, got: {msg}"
+    );
+}
+
+// 6b. Renamed binder, explicit union index key → fresh union → keeps the name.
+//     Proves the rule is structural (a union *result*), not keyed on `keyof` or
+//     any identifier.
+#[test]
+fn indexed_access_by_explicit_union_key_keeps_alias_name() {
+    let msg = ts2322_target(
+        r#"
+type Palette = { primary: number; secondary: string };
+type Swatch = Palette["primary" | "secondary"];
+const s: Swatch = true;
+"#,
+    );
+    assert!(
+        msg.contains("'Swatch'") && !msg.contains("string | number"),
+        "expected `T[\"a\" | \"b\"]` union alias to keep its name, got: {msg}"
+    );
+}
+
+// 6c. Control: a `keyof` index that collapses to a *single* value type resolves
+//     to one member (no fresh union, no alias symbol) and still renders
+//     structurally — the carve-out is gated on a union *result*, not on the
+//     `keyof` spelling.
+#[test]
+fn indexed_access_collapsing_to_single_member_renders_underlying() {
+    let msg = ts2322_target(
+        r#"
+type Uniform = { a: number; b: number };
+type OnlyValue = Uniform[keyof Uniform];
+const v: OnlyValue = "x";
+"#,
+    );
+    assert!(
+        msg.contains("type 'number'") && !msg.contains("OnlyValue"),
+        "expected a single-member indexed access to render structurally, got: {msg}"
+    );
+}
+
+// 6d. Control: a non-generic *conditional* whose branch is a primitive union is
+//     NOT a fresh-union construction — it returns the pre-existing branch type,
+//     so it still renders structurally. Locks the conditional/indexed-access
+//     distinction that this carve-out introduced.
+#[test]
+fn conditional_to_primitive_union_branch_renders_underlying() {
+    let msg = ts2322_target(
+        r#"
+type Branch = string extends string ? number | boolean : never;
+type Holder = { v: Branch };
+const h: Holder = { v: "x" };
+"#,
+    );
+    assert!(
+        msg.contains("number | boolean") && !msg.contains("Branch"),
+        "expected a conditional union branch to render structurally, got: {msg}"
     );
 }
 
