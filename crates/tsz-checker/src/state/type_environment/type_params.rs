@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn extract_simple_type_params_from_decl_in_arena(
+    pub(crate) fn extract_simple_type_params_from_decl_in_arena(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
         flags: u32,
@@ -399,6 +399,17 @@ impl<'a> CheckerState<'a> {
                     || self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
             }
         };
+        // NOTE: a *local* import alias (`import { Generic } from './m'`) is not
+        // followed to its target's params here — only a cross-file overlay alias
+        // is. This is asymmetric with `get_type_of_symbol`, which does follow the
+        // alias to the target body. Threading re-export-chain resolution into this
+        // hot getter is not a safe refactor in isolation: the symbol-path fallback
+        // below (the `!checked_local` block) deliberately keeps the
+        // dynamic-overlay-first owner, because preferring the declaring index for a
+        // re-exported alias reads params from the wrong arena (regression in
+        // `cross_file_recursive_alias_intersection_tests`). The interface-heritage
+        // site compensates for this asymmetry directly via the re-export-chain
+        // recovery in `merge_interface_heritage_types_inner` (#13212).
         if use_dynamic_symbol_owner
             && let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
