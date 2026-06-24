@@ -36,11 +36,19 @@ impl<'a> CheckerState<'a> {
         target_display: &str,
         start: u32,
         length: u32,
+        note_depth: u32,
     ) -> Option<DiagnosticRelatedInformation> {
         if !self.target_is_bare_type_parameter(target) {
             return None;
         }
         let file = self.ctx.file_name.clone();
+        // `note_depth` is the related-info chain depth the caller wants this note
+        // rendered at — directly beneath the failing `Type '{src}' is not
+        // assignable to type '{T}'.` line. `tsc` appends the note at *every*
+        // nesting level a bare-type-parameter target fails at, not only the
+        // top-level mismatch, so the caller threads the failing line's child
+        // depth through here.
+        let note_depth = u8::try_from(note_depth).unwrap_or(u8::MAX);
         let elaboration = |code, message_text| DiagnosticRelatedInformation {
             category: DiagnosticCategory::Message,
             code,
@@ -48,7 +56,7 @@ impl<'a> CheckerState<'a> {
             start,
             length,
             message_text,
-            depth: 0,
+            depth: note_depth,
         };
         let constraint =
             crate::query_boundaries::diagnostics::type_parameter_constraint(self.ctx.types, target)

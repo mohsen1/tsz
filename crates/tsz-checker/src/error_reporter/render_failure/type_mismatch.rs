@@ -566,16 +566,21 @@ impl<'a> CheckerState<'a> {
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
-        if depth == 0
-            && let Some(related) = self.unrelated_type_parameter_target_related_info(
-                source,
-                target,
-                &source_str,
-                &target_str,
-                start,
-                length,
-            )
-        {
+        // The note is a child of the failing mismatch line this function renders
+        // at chain depth `depth`; place it one level deeper, matching the
+        // child-depth idiom used by the other nested-elaboration renderers. The
+        // top-level mismatch is the diagnostic header, so its first child stays
+        // at depth 0.
+        let note_depth = if depth == 0 { 0 } else { depth + 1 };
+        if let Some(related) = self.unrelated_type_parameter_target_related_info(
+            source,
+            target,
+            &source_str,
+            &target_str,
+            start,
+            length,
+            note_depth,
+        ) {
             diagnostic.related_information.push(related);
         }
         diagnostic

@@ -1189,6 +1189,9 @@ mod namespace_property_mismatch_boundary_arch_tests;
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[cfg(test)]
+#[path = "tests/nested_type_parameter_target_elaboration_tests.rs"]
+mod nested_type_parameter_target_elaboration_tests;
+#[cfg(test)]
 #[path = "../tests/never_absorption_call_spread_tests.rs"]
 mod never_absorption_call_spread_tests;
 #[cfg(test)]
