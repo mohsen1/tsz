@@ -310,6 +310,23 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_type) = prop_result {
                 return Some(prop_type);
             }
+            // Whether this local name is a named import (its augmentations are
+            // applied below). Computed once and reused by the #13933 deferral
+            // guard and the module-augmentation block.
+            let module_specifier = self.resolve_named_import_module_for_local_name(name);
+            // #13933: defer a force-eligible non-generic lib interface (e.g.
+            // `Worker`, `MessagePort`, `Event`) to a bare `Lazy(DefId)` instead
+            // of materializing its full transitive heritage closure at the
+            // reference site. This must run *before* `type_reference_symbol_type`,
+            // which would otherwise intern the whole closure regardless of what
+            // we return. A named import takes the augmentation path below, so it
+            // is excluded here. The deferred reference resolves on demand to the
+            // byte-identical body. Gated by `TSZ_DISABLE_DECL_LAZY_LIB`.
+            if module_specifier.is_none()
+                && let Some(lazy) = self.try_defer_eligible_lib_type_reference(sym_id)
+            {
+                return Some(lazy);
+            }
             let mut result = self.type_reference_symbol_type(sym_id);
             if matches!(result, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
                 && self.ctx.has_lib_loaded()
@@ -318,7 +335,7 @@ impl<'a> CheckerState<'a> {
             {
                 result = lib_type;
             }
-            if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
+            if let Some(module_specifier) = module_specifier {
                 result = self.apply_module_augmentations(&module_specifier, name, result);
                 // In type-reference position, a class name means the instance
                 // type, not the constructor. If augmentation produced a Callable
