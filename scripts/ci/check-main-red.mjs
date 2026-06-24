@@ -21,6 +21,14 @@ const WORKFLOW_NAME = "CI";
 const MAIN_EVENTS = new Set(["push", "merge_group"]);
 // Conclusions that do not represent a real verdict on the merged tree.
 const INCONCLUSIVE = new Set(["skipped", "cancelled", "neutral", "stale", null, undefined, ""]);
+// Run/job conclusions that count as a red (failing) verdict on the tree.
+const RED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
+// Step conclusions that mean the step was interrupted before it could report a
+// real verdict (the GitHub work step ends `null` when the Cloud Build
+// submission is interrupted or the orchestrating runner is preempted / "loses
+// communication"). A genuine test failure instead leaves the step `failure`.
+// See issue #14688.
+const INTERRUPTED_STEP_CONCLUSIONS = new Set([null, undefined, "", "cancelled"]);
 const ISSUE_MARKER = "<!-- main-red-sentinel -->";
 const ISSUE_TITLE = "🔴 main CI is red — conformance/parity floor breached";
 const REGRESSED_RE = /REGRESSED:\s*(\S+)/g;
@@ -202,10 +210,51 @@ function createdMs(run) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+// Classify why a *failing* CI run failed, from its jobs+steps payload, so an
+// infra interruption can be told apart from a real conformance/parity-floor
+// regression (issue #14688). A genuine regression always surfaces as a step
+// that concluded `failure`/`timed_out`; an infra interruption (Cloud Build
+// submission interrupted, runner preempted / "lost communication") leaves the
+// work step with `conclusion: null` while no step ever concluded `failure`.
+//
+//   "real"    — a failing job has a step that concluded failure/timed_out, or a
+//               job conclusion that is itself a genuine verdict
+//               (timed_out/startup_failure), or an unattributable failing job.
+//   "infra"   — every failing job is explained solely by an interrupted
+//               (null/cancelled) step with no failing step.
+//   "unknown" — no failing job is visible; the caller must NOT suppress on this.
+//
+// Conservative by construction: anything other than a clean "every failure is
+// an interrupted step" picture returns "real", so a true regression is never
+// masked.
+export function classifyJobsFailure(jobs) {
+  const list = Array.isArray(jobs?.jobs) ? jobs.jobs : Array.isArray(jobs) ? jobs : [];
+  const failing = list.filter((job) => RED_CONCLUSIONS.has(job?.conclusion));
+  if (failing.length === 0) return "unknown";
+  // "infra" only when *every* failing job is explained by an interrupted
+  // (null/cancelled) work step with no failing step. Anything else — a failing
+  // step, a job-level timed_out/startup_failure, or an unattributable failure —
+  // makes the run real, so a true regression is never masked.
+  const allInterrupted = failing.every((job) => {
+    if (job.conclusion === "timed_out" || job.conclusion === "startup_failure") return false;
+    const steps = Array.isArray(job.steps) ? job.steps : [];
+    if (steps.some((s) => s?.conclusion === "failure" || s?.conclusion === "timed_out")) return false;
+    return steps.some((s) => INTERRUPTED_STEP_CONCLUSIONS.has(s?.conclusion));
+  });
+  return allInterrupted ? "infra" : "real";
+}
+
 // Verdict on `main`'s tip: find the most recent *conclusive* CI run from a
 // push/merge_group event and report whether it failed.
+//
+// `options.classifyRun(run) -> "real" | "infra" | "unknown"` (optional) lets the
+// caller inspect a red run's jobs/steps; a red run classified "infra" is treated
+// as inconclusive (skipped) so a Cloud Build / runner interruption with a `null`
+// work step never trips the parity-floor alert. Without it (fixtures / unit
+// tests) behavior is unchanged: the newest conclusive run is the verdict.
 export function mainCiHealth(runs, options = {}) {
   const workflow = options.workflow ?? WORKFLOW_NAME;
+  const classifyRun = typeof options.classifyRun === "function" ? options.classifyRun : null;
   const candidates = runs
     .filter((run) => (runField(run, ["status"]) || "completed") === "completed")
     .filter((run) => workflowOf(run) === workflow)
@@ -214,16 +263,40 @@ export function mainCiHealth(runs, options = {}) {
     .sort((a, b) => createdMs(b) - createdMs(a));
 
   if (candidates.length === 0) {
-    return { red: false, status: "unknown", run: null };
+    return { red: false, status: "unknown", run: null, infraSkipped: 0 };
   }
 
-  const newest = candidates[0];
+  // Walk newest-first. A red run whose failure is a pure infra interruption is
+  // not a verdict on the merged tree, so skip it and fall through to the next
+  // conclusive run (the queue keeps landing PRs on top — main is healthy by
+  // construction). The skip count is surfaced so the suppression is never silent.
+  let chosenIndex = -1;
+  let infraSkipped = 0;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const isRed = RED_CONCLUSIONS.has(runField(candidate, ["conclusion"]));
+    if (isRed && classifyRun && classifyRun(candidate) === "infra") {
+      infraSkipped += 1;
+      continue;
+    }
+    chosenIndex = i;
+    break;
+  }
+
+  if (chosenIndex === -1) {
+    // Every conclusive run we can see is an infra-interrupted red. Inconclusive:
+    // do NOT declare a parity-floor breach, but surface how many were ignored.
+    return { red: false, status: "unknown", run: null, infraSkipped };
+  }
+
+  const newest = candidates[chosenIndex];
   const conclusion = runField(newest, ["conclusion"]);
-  const red = conclusion === "failure" || conclusion === "timed_out" || conclusion === "startup_failure";
+  const red = RED_CONCLUSIONS.has(conclusion);
   return {
     red,
     status: red ? "red" : "green",
     conclusion,
+    infraSkipped,
     run: {
       id: runField(newest, ["id", "databaseId"]),
       sha: runField(newest, ["head_sha", "headSha"]) || "",
@@ -232,10 +305,10 @@ export function mainCiHealth(runs, options = {}) {
       url: runField(newest, ["html_url", "url"]) || "",
       createdAt: runField(newest, ["created_at", "createdAt"]) || "",
     },
-    // Most recent green run before the failure, if any — helps bound the
+    // Most recent green run before the chosen failure, if any — helps bound the
     // suspect merge window.
     lastGreen: (() => {
-      const g = candidates.find((run) => runField(run, ["conclusion"]) === "success");
+      const g = candidates.slice(chosenIndex + 1).find((run) => runField(run, ["conclusion"]) === "success");
       if (!g) return null;
       return {
         sha: runField(g, ["head_sha", "headSha"]) || "",
@@ -296,15 +369,25 @@ function escapeInline(value) {
 
 export function formatReport(verdict, regressedTests = []) {
   const lines = ["## Main-Red Sentinel", ""];
+  const appendSkipNote = () => {
+    if (verdict.infraSkipped) {
+      lines.push("", `> Ignored ${verdict.infraSkipped} infra-interrupted red run(s) (interrupted/\`null\` work step, no failing step — issue #14688).`);
+    }
+  };
   if (verdict.status === "unknown") {
-    lines.push("No conclusive CI run found on `main` yet (push/merge_group). Nothing to report.");
+    lines.push(verdict.infraSkipped
+      ? "No conclusive *non-infra* CI run found on `main` (push/merge_group)."
+      : "No conclusive CI run found on `main` yet (push/merge_group). Nothing to report.");
+    appendSkipNote();
     return lines.join("\n");
   }
   if (!verdict.red) {
     lines.push(`✅ \`main\` is green — latest conclusive CI run \`${(verdict.run.sha || "").slice(0, 12)}\` (${verdict.conclusion}).`);
+    appendSkipNote();
     return lines.join("\n");
   }
   lines.push(`🔴 \`main\` is RED — run [${verdict.run.id}](${verdict.run.url}) (${verdict.run.event}) concluded \`${verdict.conclusion}\` at \`${(verdict.run.sha || "").slice(0, 12)}\`.`);
+  appendSkipNote();
   if (regressedTests.length > 0) {
     lines.push("");
     lines.push("Regressed tests:");
@@ -374,11 +457,44 @@ export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
   return { action: "noop" };
 }
 
-function bestEffortRegressedTests(repository, verdict) {
+// Build a memoized classifier that fetches a run's jobs once and labels its
+// failure infra/real/unknown (see classifyJobsFailure). Degrades to "unknown"
+// (never suppresses) when the repository is absent or the jobs API call fails,
+// so the worst case is exactly the pre-#14688 behavior. The fetched jobs
+// payload is cached and exposed via `.getJobs(id)` so the red-run regression
+// scrape can reuse it instead of re-fetching the same endpoint.
+function makeRunClassifier(repository, fetchJson = runGhJson) {
+  const cache = new Map();
+  const classify = (run) => {
+    const id = runField(run, ["id", "databaseId"]);
+    if (!repository || id == null) return "unknown";
+    if (cache.has(id)) return cache.get(id).classification;
+    let jobs = null;
+    let classification = "unknown";
+    try {
+      jobs = fetchJson([
+        "api",
+        "-H",
+        "Accept: application/vnd.github+json",
+        `repos/${repository}/actions/runs/${id}/jobs?per_page=100`,
+      ]);
+      classification = classifyJobsFailure(jobs);
+    } catch {
+      // jobs fetch/classify failed — leave classification "unknown" so the run
+      // is never suppressed (worst case is exactly pre-#14688 behavior).
+    }
+    cache.set(id, { classification, jobs });
+    return classification;
+  };
+  classify.getJobs = (id) => cache.get(id)?.jobs ?? null;
+  return classify;
+}
+
+function bestEffortRegressedTests(repository, verdict, cachedJobs = null) {
   if (!verdict.red || !verdict.run?.id) return [];
   // Find the failing conformance-aggregate job and scrape REGRESSED lines.
   try {
-    const jobs = runGhJson([
+    const jobs = cachedJobs ?? runGhJson([
       "api",
       "-H",
       "Accept: application/vnd.github+json",
@@ -401,10 +517,21 @@ function main() {
   const runs = options.fixture
     ? readFixture(options.fixture)
     : readMainRuns(options.repository, options.maxRuns);
-  const verdict = mainCiHealth(runs);
+  // Live runs (not a static fixture) get per-run infra-interruption
+  // classification so a Cloud Build / runner interruption with a `null` work
+  // step is not mistaken for a parity-floor breach (issue #14688).
+  const classifyRun = !options.fixture && options.repository
+    ? makeRunClassifier(options.repository)
+    : null;
+  const verdict = mainCiHealth(runs, classifyRun ? { classifyRun } : {});
 
+  // Reuse the jobs payload the classifier already fetched for the chosen red
+  // run instead of fetching the same endpoint again.
+  const cachedJobs = classifyRun && verdict.run?.id != null
+    ? classifyRun.getJobs(verdict.run.id)
+    : null;
   const regressed = (!options.fixture && verdict.red && options.repository)
-    ? bestEffortRegressedTests(options.repository, verdict)
+    ? bestEffortRegressedTests(options.repository, verdict, cachedJobs)
     : [];
 
   console.log(formatReport(verdict, regressed));

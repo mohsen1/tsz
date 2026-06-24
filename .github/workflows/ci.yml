@@ -1139,9 +1139,14 @@ jobs:
         with:
           fetch-depth: 1
       - name: Submit unit suite to Cloud Build pool
+        env:
+          # Bounded retry/backoff around *submission* interruptions only (a
+          # `null` work step that trips the main-red sentinel — issue #14688);
+          # a created build's verdict is never retried. 45m per-attempt timeout.
+          CLOUDBUILD_SUBMIT_TIMEOUT: 45m
         run: |
           set -euo pipefail
-          timeout 45m gcloud builds submit \
+          scripts/ci/cloudbuild-submit.sh \
             --project=tsz-ci \
             --region=us-central1 \
             --polling-interval=10 \
@@ -1163,9 +1168,14 @@ jobs:
         with:
           fetch-depth: 1
       - name: Submit checker integration suite to Cloud Build pool
+        env:
+          # Bounded retry/backoff around *submission* interruptions only (a
+          # `null` work step that trips the main-red sentinel — issue #14688);
+          # a created build's verdict is never retried. 25m per-attempt timeout.
+          CLOUDBUILD_SUBMIT_TIMEOUT: 25m
         run: |
           set -euo pipefail
-          timeout 25m gcloud builds submit \
+          scripts/ci/cloudbuild-submit.sh \
             --project=tsz-ci \
             --region=us-central1 \
             --polling-interval=10 \
