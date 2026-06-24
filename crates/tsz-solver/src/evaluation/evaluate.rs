@@ -528,7 +528,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Whether `type_id`'s memoized value is a limit-truncated artifact.
-    #[cfg(test)]
     pub(crate) fn is_tainted(&self, type_id: TypeId) -> bool {
         self.tainted.contains(&type_id)
     }

@@ -522,6 +522,42 @@ pub trait TypeApplicationEvalCache {
         _result: TypeId,
     ) {
     }
+
+    /// Look up a cached *conditional-branch* subtype verdict — whether
+    /// `check <: extends` for the purpose of selecting a conditional type's
+    /// branch (issues #8356 / #13097).
+    ///
+    /// This is a distinct relation from plain subtyping: the conditional
+    /// branch probe applies tsc's conditional-only fast paths (the global
+    /// `Function` intrinsic satisfying a callable target; primitives never
+    /// extending `Function`), so its verdict must never be served from — or
+    /// stored into — the ordinary subtype relation cache. Only *definitive*
+    /// verdicts (`Holds`/`Fails`) that consumed no unregistered `Lazy` body,
+    /// took no depth bail, and tripped no recursion/iteration limit are
+    /// persisted, so a stored verdict is a stable function of
+    /// `(check, extends, no_unchecked_indexed_access)` reusable across the many
+    /// fresh `TypeEvaluator` instances instantiation spins up. Default returns
+    /// `None` so non-cache backends opt out.
+    fn lookup_conditional_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Store a definitive conditional-branch subtype verdict. Default is a
+    /// no-op. See [`Self::lookup_conditional_branch_verdict`] for the stability
+    /// gates the caller must enforce before publishing.
+    fn insert_conditional_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _verdict: bool,
+    ) {
+    }
 }
 
 /// Cache for the canonical `widen_type` result keyed by `TypeId`.

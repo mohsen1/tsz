@@ -327,6 +327,31 @@ pub fn record_eval_dropped_aux_entries(count: u64) {
         .fetch_add(count, Ordering::Relaxed);
 }
 
+/// Record a cross-evaluator conditional-branch verdict cache hit (issues
+/// #8356 / #13097): a `check <: extends` branch probe served from the
+/// project-wide cache instead of a fresh structural walk.
+#[inline]
+pub fn record_eval_conditional_verdict_persist_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_conditional_verdict_persist_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a definitive conditional-branch verdict published to the
+/// project-wide cache (it passed every limit/registration-window gate).
+#[inline]
+pub fn record_eval_conditional_verdict_persist_insert() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_conditional_verdict_persist_inserts
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record which guard cut a `TypeEvaluator::evaluate` walk short (#14346).
 ///
 /// The firing-order signal the issue flags: which bound a runaway recursive

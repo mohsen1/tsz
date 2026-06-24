@@ -584,6 +584,11 @@ pub struct EvaluatorMemoCounters {
     /// Auxiliary memo entries (conditional-subtype / contains-infer)
     /// discarded at evaluator drop; never drained anywhere.
     pub dropped_aux_entries: u64,
+    /// Cross-evaluator conditional-branch verdict cache hits (issues #8356 /
+    /// #13097): a branch probe served from the project-wide cache.
+    pub conditional_verdict_persist_hits: u64,
+    /// Definitive conditional-branch verdicts published to that cache.
+    pub conditional_verdict_persist_inserts: u64,
     /// Which guard cut an `evaluate` walk short, bucketed by
     /// [`EvaluationTerminationGuard`] (#14346). The firing-order signal: which
     /// bound a runaway recursive walk hits first. Always
@@ -859,6 +864,12 @@ impl PerfCounters {
                 lost_memo_recomputes_other: load(&c.eval_lost_memo_recomputes_other),
                 dropped_memo_entries: load(&c.eval_dropped_memo_entries),
                 dropped_aux_entries: load(&c.eval_dropped_aux_entries),
+                conditional_verdict_persist_hits: load(
+                    &c.eval_conditional_verdict_persist_hits,
+                ),
+                conditional_verdict_persist_inserts: load(
+                    &c.eval_conditional_verdict_persist_inserts,
+                ),
                 termination_guard_fires: (0..EVALUATION_TERMINATION_GUARD_COUNT)
                     .map(|i| NamedCount {
                         name: EVALUATION_TERMINATION_GUARD_NAMES[i],

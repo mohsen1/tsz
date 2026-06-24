@@ -224,6 +224,12 @@ pub struct QueryCache<'a> {
     /// Substitution-independent evaluation cache (see the `closed_eval` module
     /// in `evaluate`). Keyed by `(TypeId, no_unchecked_indexed_access)`.
     closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    /// Persistent conditional-branch subtype verdicts (issues #8356 / #13097).
+    /// Keyed by `(check, extends, no_unchecked_indexed_access)`; stores only
+    /// definitive, limit-free verdicts so it survives the per-evaluator
+    /// `conditional_subtype_cache` that is dropped on every evaluator
+    /// construction. Shares this cache's `clear()`/file lifecycle envelope.
+    conditional_branch_verdict_cache: RefCell<FxHashMap<(TypeId, TypeId, bool), bool>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
@@ -304,6 +310,7 @@ impl<'a> QueryCache<'a> {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_cache: RefCell::new(FxHashMap::default()),
+            conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
@@ -335,6 +342,7 @@ impl<'a> QueryCache<'a> {
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
         self.closed_eval_cache.borrow_mut().clear();
+        self.conditional_branch_verdict_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
@@ -371,6 +379,10 @@ impl<'a> QueryCache<'a> {
         QueryCacheStatistics {
             eval_cache_entries: self.eval_cache.borrow().len(),
             closed_eval_cache_entries: self.closed_eval_cache.borrow().len(),
+            conditional_branch_verdict_cache_entries: self
+                .conditional_branch_verdict_cache
+                .borrow()
+                .len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
             application_eval_cache_hits: self.application_eval_cache_stats.hits(),
             application_eval_cache_misses: self.application_eval_cache_stats.misses(),
@@ -978,6 +990,30 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
             ),
             result,
         );
+    }
+
+    fn lookup_conditional_branch_verdict(
+        &self,
+        check: TypeId,
+        extends: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<bool> {
+        self.conditional_branch_verdict_cache
+            .borrow()
+            .get(&(check, extends, no_unchecked_indexed_access))
+            .copied()
+    }
+
+    fn insert_conditional_branch_verdict(
+        &self,
+        check: TypeId,
+        extends: TypeId,
+        no_unchecked_indexed_access: bool,
+        verdict: bool,
+    ) {
+        self.conditional_branch_verdict_cache
+            .borrow_mut()
+            .insert((check, extends, no_unchecked_indexed_access), verdict);
     }
 }
 

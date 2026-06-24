@@ -253,6 +253,14 @@ pub struct PerfCounters {
     /// Auxiliary memo entries (conditional-subtype + contains-infer) dropped
     /// with their evaluator; these tables are never drained anywhere.
     pub eval_dropped_aux_entries: AtomicU64,
+    /// Cross-evaluator conditional-branch verdict cache hits (issues #8356 /
+    /// #13097): a definitive `check <: extends` branch probe served from the
+    /// project-wide cache instead of re-running the structural walk in a fresh
+    /// evaluator.
+    pub eval_conditional_verdict_persist_hits: AtomicU64,
+    /// Definitive conditional-branch verdicts published to the project-wide
+    /// cache (passed every limit/registration-window gate).
+    pub eval_conditional_verdict_persist_inserts: AtomicU64,
     /// Which guard cut a `TypeEvaluator::evaluate` walk short, bucketed by
     /// [`EvaluationTerminationGuard`] (#14346). The firing-order signal the
     /// issue flags: which bound a runaway recursive walk hits first. Always
@@ -500,6 +508,8 @@ impl PerfCounters {
             eval_lost_memo_recomputes_other: AtomicU64::new(0),
             eval_dropped_memo_entries: AtomicU64::new(0),
             eval_dropped_aux_entries: AtomicU64::new(0),
+            eval_conditional_verdict_persist_hits: AtomicU64::new(0),
+            eval_conditional_verdict_persist_inserts: AtomicU64::new(0),
             eval_termination_guard_fires: [const { AtomicU64::new(0) };
                 EVALUATION_TERMINATION_GUARD_COUNT],
             interner_intern_calls: AtomicU64::new(0),
