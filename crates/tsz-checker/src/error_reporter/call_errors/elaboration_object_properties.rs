@@ -538,6 +538,16 @@ impl<'a> CheckerState<'a> {
                     let elaborated_body = (|| {
                         let func_node = self.ctx.arena.get(prop_value_idx)?;
                         let func = self.ctx.arena.get_function(func_node)?;
+                        // `tsc`'s `elaborateArrowFunction` bails (no body-return
+                        // drill) when any parameter carries an explicit type
+                        // annotation, reporting the function-type frame instead.
+                        // Without this gate, an annotated-parameter property arrow
+                        // whose body return also mismatches anchors the TS2322 at
+                        // the body expression and drops the parameter-contravariance
+                        // frame that `tsc` emits at the property.
+                        if self.function_value_has_explicit_param_annotation(prop_value_idx) {
+                            return None;
+                        }
                         let expected_ret = self.first_callable_return_type(target_prop_type)?;
                         if expected_ret == TypeId::VOID || expected_ret == TypeId::ANY {
                             return None;

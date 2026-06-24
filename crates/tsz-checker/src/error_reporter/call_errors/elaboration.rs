@@ -836,6 +836,44 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Mirror `tsc`'s `elaborateArrowFunction` gate: the elaborator only drills
+    /// into a function-expression body's return when **no** parameter carries an
+    /// explicit type annotation (`some(node.parameters, hasType)` makes
+    /// `elaborateArrowFunction` return `false`). When any parameter is annotated
+    /// — even with a type that matches the contextual parameter — the mismatch is
+    /// reported at the function-type level (the parameter-contravariance frame,
+    /// e.g. `Type '(x: string) => number' is not assignable to type
+    /// '(x: number) => string'`) instead of being anchored at the body return
+    /// expression. This keeps object-literal property and argument arrows in
+    /// parity with `tsc`'s diagnostic anchor and message.
+    ///
+    /// `func_value_idx` is the function-expression / arrow / method node.
+    ///
+    /// This is deliberately narrower than
+    /// `function_like_has_explicit_signature_annotations` (which also reports a
+    /// standalone explicit *return* type annotation): `tsc`'s
+    /// `elaborateArrowFunction` gate keys on parameters only, so an arrow with a
+    /// return annotation but no parameter annotation (`(x): string => …`) is
+    /// still elaborated into its body.
+    pub(crate) fn function_value_has_explicit_param_annotation(
+        &self,
+        func_value_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(func_value_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        func.parameters.nodes.iter().any(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|n| self.ctx.arena.get_parameter(n))
+                .is_some_and(|p| p.type_annotation.is_some())
+        })
+    }
+
     fn try_elaborate_function_arg_return_error(
         &mut self,
         arg_idx: NodeIndex,
@@ -997,15 +1035,7 @@ impl<'a> CheckerState<'a> {
                 // typed callbacks (no explicit param annotations). When a developer
                 // explicitly annotates parameter types, the error is reported at the
                 // argument level (TS2345) rather than drilling into the return expression.
-                let has_explicit_param_annotations =
-                    func.parameters.nodes.iter().any(|param_idx| {
-                        self.ctx
-                            .arena
-                            .get(*param_idx)
-                            .and_then(|n| self.ctx.arena.get_parameter(n))
-                            .is_some_and(|p| p.type_annotation.is_some())
-                    });
-                if has_explicit_param_annotations {
+                if self.function_value_has_explicit_param_annotation(arg_idx) {
                     return false;
                 }
                 let body_type = self.get_type_of_node(func.body);
