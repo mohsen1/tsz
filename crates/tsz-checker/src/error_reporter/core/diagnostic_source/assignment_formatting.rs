@@ -201,6 +201,24 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(source);
         }
+        // A source identifier flow-narrowed to a strict subset of its declared
+        // type — a discriminated-union parameter narrowed to one member, or a
+        // union narrowed to a sub-union — renders its narrowed *checked* type,
+        // not the declared alias/annotation name: `tsc` drops the `aliasSymbol`
+        // on `filterType`/`getNarrowedType` whenever the result is a proper
+        // subset, so it prints the narrowed structural type. Resolve it here,
+        // before the declared-annotation recovery and the literal-widening
+        // fallbacks below repaint the narrowed member with the declared union
+        // alias (`Shape`, `U`) or widen its literal discriminant. Mirrors the
+        // `unknown`/`any` top-type guard above.
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(declared_type) = self.declared_type_of_variable_identifier_source(expr_idx)
+            && self.source_flow_type_strictly_narrows_declared(source, declared_type)
+        {
+            return self.format_assignability_type_for_message(source, target);
+        }
         // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
         // or indexed-access (`T["x"]`), or an `Application` of a conditional/
         // indexed-bodied alias (`T95<U>`) — that still carries free type
