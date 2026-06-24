@@ -628,9 +628,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Deferral is restricted to the **provably resolution-independent** shape:
     /// a union of intrinsics and *bare* `Lazy(DefId)` references to
-    /// force-eligible simple lib interfaces (non-generic, unmerged, unaugmented,
-    /// unshadowed — [`Self::force_eligible_lib_def`]), with at least one such
-    /// lib reference to defer. A force-eligible lib interface resolves
+    /// force-eligible simple lib interfaces (single-declaration, non-generic,
+    /// unaugmented, unshadowed — [`Self::force_eligible_lib_def`]), with at
+    /// least one such lib reference to defer. A force-eligible lib interface resolves
     /// identically in every requester/arena context, so populating the type
     /// environment with its body on demand (at the consuming `resolve_lazy`
     /// miss) yields the same resolved type the eager pre-walk would have — the

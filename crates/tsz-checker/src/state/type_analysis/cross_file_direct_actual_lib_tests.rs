@@ -867,6 +867,56 @@ fn force_eligible_lib_type_reference_defers_to_lazy() {
             .is_none(),
         "a generic lib interface must not defer (the bare-Lazy path cannot supply type arguments)",
     );
+
+    let split_lib_files = load_lib_files(&["es5.d.ts", "es2018.regexp.d.ts"]);
+    let mut split_parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let split_root = split_parser.parse_source_file();
+    let mut split_binder = BinderState::new();
+    split_binder.bind_source_file_with_libs(split_parser.get_arena(), split_root, &split_lib_files);
+    let split_arena = Arc::new(split_parser.get_arena().clone());
+    let split_binder = Arc::new(split_binder);
+    let split_types = TypeInterner::new();
+    let split_ctx = CheckerContext::new(
+        split_arena.as_ref(),
+        split_binder.as_ref(),
+        &split_types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut split_state = CheckerState { ctx: split_ctx };
+    let split_lib_contexts: Vec<LibContext> = split_lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    split_state.ctx.set_lib_contexts(split_lib_contexts);
+    split_state
+        .ctx
+        .set_actual_lib_file_count(split_lib_files.len());
+
+    let regexp_match_sym_id = split_state
+        .ctx
+        .binder
+        .file_locals
+        .get("RegExpMatchArray")
+        .expect("RegExpMatchArray should resolve to a merged lib symbol");
+    let regexp_match_symbol = split_state
+        .ctx
+        .binder
+        .get_symbol(regexp_match_sym_id)
+        .expect("RegExpMatchArray symbol should be present");
+    assert!(
+        regexp_match_symbol.declarations.len() > 1,
+        "the regression witness must exercise a split lib interface",
+    );
+    assert!(
+        split_state
+            .try_defer_eligible_lib_type_reference(regexp_match_sym_id)
+            .is_none(),
+        "a split lib interface must keep the eager merged path so diagnostic provenance stays intact",
+    );
 }
 
 #[test]

@@ -18,7 +18,7 @@
 //! # Structural rule
 //!
 //! > When resolving a property access `recv.p` whose receiver type is a
-//! > `Lazy(DefId)` reference to a non-generic, unmerged, unaugmented,
+//! > `Lazy(DefId)` reference to a single-declaration, non-generic, unaugmented,
 //! > unshadowed lib interface, resolve only member `p` (including a
 //! > heritage-inherited declaration of `p`) on demand, instead of materializing
 //! > the receiver's entire structural object shape and transitive `extends`
@@ -30,9 +30,10 @@
 //! is intentionally conservative and mirrors the #8638 predicate
 //! (`try_lower_simple_actual_lib_type_reference`): the receiver must be a bare
 //! `Lazy(DefId)` for an actual/cloned-lib **interface** symbol that is
-//! non-generic, not compiler-managed, not shadowed by a file-local type, and
-//! not globally augmented. Any receiver that fails the predicate falls back to
-//! the existing full-materialization path, so behavior is unchanged there.
+//! single-declaration, non-generic, not compiler-managed, not shadowed by a
+//! file-local type, and not globally augmented. Any receiver that fails the
+//! predicate falls back to the existing full-materialization path, so behavior
+//! is unchanged there.
 //!
 //! The fast path is additionally gated by the [`lazy_lib_member_access_disabled`]
 //! kill-switch (`TSZ_DISABLE_LAZY_MEMBER_ACCESS`) so diagnostics can be compared
@@ -120,7 +121,7 @@ pub(crate) fn on_demand_forcing_disabled() -> bool {
 /// on demand (member access / relation) to the byte-identical body, because the
 /// eligibility predicate ([`CheckerState::force_eligible_lib_def`]) excludes
 /// every shape whose materialized members or diagnostic source could differ
-/// (generic, globally augmented, user-shadowed, compiler-managed).
+/// (merged, generic, globally augmented, user-shadowed, compiler-managed).
 ///
 /// Cached in a `OnceLock` so the environment is read at most once per process.
 pub(crate) fn decl_lazy_lib_disabled() -> bool {
@@ -199,8 +200,8 @@ impl CheckerState<'_> {
     }
 
     /// Whether `def_id` names a simple lib interface eligible for on-demand
-    /// single-shape forcing: a non-generic, unmerged, unaugmented, unshadowed
-    /// interface from the actual/cloned standard library.
+    /// single-shape forcing: a single-declaration, non-generic, unaugmented,
+    /// unshadowed interface from the actual/cloned standard library.
     ///
     /// This is the shared eligibility predicate for both the value-position
     /// single-member fast path
@@ -228,6 +229,23 @@ impl CheckerState<'_> {
             let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+                return None;
+            }
+            let interface_decl_count = symbol
+                .declarations
+                .iter()
+                .filter(|&&decl_idx| {
+                    let arena =
+                        self.ctx
+                            .binder
+                            .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+                    arena
+                        .get(decl_idx)
+                        .and_then(|node| arena.get_interface(node))
+                        .is_some()
+                })
+                .count();
+            if interface_decl_count != 1 {
                 return None;
             }
 
@@ -281,9 +299,9 @@ impl CheckerState<'_> {
     /// at the reference site, or `None` to keep the legacy materialized type.
     /// The returned `Lazy` resolves on demand to the byte-identical body
     /// (eligibility is restricted to interfaces whose materialized members and
-    /// diagnostic source are context-independent: non-generic, from the
-    /// actual/cloned lib, unaugmented, unshadowed, not compiler-managed — see
-    /// [`Self::force_eligible_lib_def`]). Gated by the
+    /// diagnostic source are context-independent: single-declaration,
+    /// non-generic, from the actual/cloned lib, unaugmented, unshadowed, not
+    /// compiler-managed — see [`Self::force_eligible_lib_def`]). Gated by the
     /// [`decl_lazy_lib_disabled`] kill-switch for byte-parity A/B comparison.
     pub(crate) fn try_defer_eligible_lib_type_reference(
         &self,

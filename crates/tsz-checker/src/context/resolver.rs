@@ -78,8 +78,9 @@ impl<'a> CheckerContext<'a> {
     /// Soundness contract (strictly additive over the #12144 conservative
     /// fallback):
     /// - Only fires for a def the relation-prep path already classified as a
-    ///   force-eligible lib interface (non-generic, from-actual-lib, unmerged,
-    ///   unaugmented, unshadowed) — see [`Self::cached_force_eligible_lib_def`].
+    ///   force-eligible lib interface (single-declaration, non-generic,
+    ///   from-actual-lib, unaugmented, unshadowed) — see
+    ///   [`Self::cached_force_eligible_lib_def`].
     /// - Only registers a body that lib resolution already produced and cached
     ///   by name (e.g. a shared heritage base flattened as a side effect of an
     ///   earlier interface's heritage merge). It never mints a new body here:
