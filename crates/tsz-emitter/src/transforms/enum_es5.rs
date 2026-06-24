@@ -901,7 +901,16 @@ impl<'a> EnumES5Transformer<'a> {
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.arena.get_parenthesized(node) {
-                    IRNode::Parenthesized(Box::new(self.transform_expression(paren.expression)))
+                    // tsc's `visitParenthesizedExpression` drops the now-redundant
+                    // parentheses that wrap an erased assertion/`satisfies` expression
+                    // (`(1 as number)` -> `1`, `("x" as any)` -> `"x"`), but keeps
+                    // parentheses around any other inner expression (so `(2 + 3) * 4`
+                    // and a non-null `("y")!` are preserved).
+                    if self.paren_wraps_assertion(paren.expression) {
+                        self.transform_expression(paren.expression)
+                    } else {
+                        IRNode::Parenthesized(Box::new(self.transform_expression(paren.expression)))
+                    }
                 } else {
                     IRNode::NumericLiteral("0".to_string().into())
                 }
@@ -1189,17 +1198,9 @@ impl<'a> EnumES5Transformer<'a> {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_constant_float_expression(paren.expression)
             }
-            k if k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                let assertion = self.arena.get_type_assertion(node)?;
-                self.evaluate_constant_float_expression(assertion.expression)
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                let unary = self.arena.get_unary_expr_ex(node)?;
-                self.evaluate_constant_float_expression(unary.expression)
-            }
+            // Type-only wrappers (`as`/`<T>`/`satisfies`/`!`) are intentionally not
+            // folded: tsc's evaluator does not traverse them (see
+            // `evaluate_constant_expression`).
             _ => None,
         }
     }
@@ -1599,17 +1600,9 @@ impl<'a> EnumES5Transformer<'a> {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_constant_expression(paren.expression)
             }
-            k if k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                let assertion = self.arena.get_type_assertion(node)?;
-                self.evaluate_constant_expression(assertion.expression)
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                let unary = self.arena.get_unary_expr_ex(node)?;
-                self.evaluate_constant_expression(unary.expression)
-            }
+            // Type-only wrappers (`as`/`<T>`/`satisfies`/`!`) are intentionally not
+            // folded: tsc's evaluator does not traverse them, so the member is treated
+            // as computed (reverse-mapped) and emits its type-erased initializer.
             _ => None,
         }
     }
@@ -1671,17 +1664,9 @@ impl<'a> EnumES5Transformer<'a> {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_string_expression(paren.expression)
             }
-            k if k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                let assertion = self.arena.get_type_assertion(node)?;
-                self.evaluate_string_expression(assertion.expression)
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                let unary = self.arena.get_unary_expr_ex(node)?;
-                self.evaluate_string_expression(unary.expression)
-            }
+            // Type-only wrappers (`as`/`<T>`/`satisfies`/`!`) are intentionally not
+            // folded: tsc's evaluator does not traverse them, so such a member has no
+            // constant value and emits the (type-erased) initializer expression.
             k if k == SyntaxKind::Identifier as u16 => {
                 let id = self.arena.get_identifier(node)?;
                 // Check current enum members first
@@ -1789,10 +1774,53 @@ impl<'a> EnumES5Transformer<'a> {
         None
     }
 
-    /// Check if an expression is syntactically string-valued per tsc's rules.
-    /// String-valued enum members do NOT get reverse mappings.
-    /// Handles: string literals, template literals, string concatenation (`"x" + expr`),
-    /// references to other string-valued enum members, and parenthesized wrappers.
+    /// Whether a parenthesized expression's contents are an `as`/`<T>`/`satisfies`
+    /// assertion (peeling any further nested parentheses). tsc removes the
+    /// parentheses around such an erased assertion but keeps them around any other
+    /// inner expression, including a non-null `!` assertion. Mirrors tsc's
+    /// `visitParenthesizedExpression` (`skipOuterExpressions(..., ~Assertions)`
+    /// followed by `isAssertionExpression(inner) || isSatisfiesExpression(inner)`).
+    fn paren_wraps_assertion(&self, idx: NodeIndex) -> bool {
+        let mut cur = idx;
+        // Bounded peel through nested parentheses; the arena is acyclic so this
+        // terminates, but cap iterations as a defensive guard.
+        for _ in 0..256 {
+            let Some(node) = self.arena.get(cur) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.arena.get_parenthesized(node) else {
+                        return false;
+                    };
+                    cur = paren.expression;
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Check if an expression is syntactically string-valued per tsc's rules
+    /// (the `isSyntacticallyString` flag tsc's evaluator threads through
+    /// `getEnumMemberValue`). String-valued enum members do NOT get reverse
+    /// mappings; everything else does.
+    ///
+    /// Handles: string literals, template literals, string concatenation
+    /// (`"x" + expr`, where *either* operand being string makes the whole
+    /// string), references to other string-valued enum members, and
+    /// parenthesized wrappers.
+    ///
+    /// Type-only wrappers — `as`/`<T>`/`satisfies`/`!` — are deliberately NOT
+    /// traversed: tsc's evaluator does not recurse through them (they fall to
+    /// its `default` arm, yielding `isSyntacticallyString = false`), so
+    /// `"x" as any` is a computed (reverse-mapped) member, not a string member.
     fn is_syntactically_string(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -1809,32 +1837,17 @@ impl<'a> EnumES5Transformer<'a> {
                     false
                 }
             }
-            k if k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                if let Some(assertion) = self.arena.get_type_assertion(node) {
-                    self.is_syntactically_string(assertion.expression)
-                } else {
-                    false
-                }
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
-                    self.is_syntactically_string(unary.expression)
-                } else {
-                    false
-                }
-            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                // String concatenation: "x" + expr is syntactically string
+                // String concatenation is syntactically string when *either* operand
+                // is, and the operator is `+` (tsc:
+                // `isSyntacticallyString = (left.isSyntacticallyString ||
+                // right.isSyntacticallyString) && operator === PlusToken`). This holds
+                // even when the value cannot be constant-folded, e.g. `"x" + (y as any)`.
                 if let Some(bin) = self.arena.get_binary_expr(node) {
                     let is_plus = bin.operator_token == SyntaxKind::PlusToken as u16;
-                    if is_plus {
-                        self.is_syntactically_string(bin.left)
-                    } else {
-                        false
-                    }
+                    is_plus
+                        && (self.is_syntactically_string(bin.left)
+                            || self.is_syntactically_string(bin.right))
                 } else {
                     false
                 }
