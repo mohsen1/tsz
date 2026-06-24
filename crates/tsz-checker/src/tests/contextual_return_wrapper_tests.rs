@@ -443,3 +443,65 @@ const b: Box<number> = new BoxImpl<string>("x");
         "Expected TS2322 — Box<string> is not assignable to Box<number>"
     );
 }
+
+/// A generic call whose return type *wraps* a type parameter (`(v: T[]) => T[]`)
+/// in an initializer position must receive the variable's declared type as a
+/// contextual type, so the array-literal argument's element literals are
+/// preserved by downward inference. Previously the contextual type was
+/// suppressed whenever a parameter overlapped a return type parameter — but that
+/// suppression should only apply when the contextual type does not specialize the
+/// wrapped return (`tsc` performs the downward inference here). Binder names are
+/// varied to prove the rule is structural, not name-keyed.
+#[test]
+fn wrapped_type_param_return_preserves_arg_literals_via_contextual_init() {
+    // `Elem[]` return, array-literal argument, declared union-of-literals element.
+    let diags = check_source_diagnostics(
+        r#"
+declare function collect<Elem>(items: Elem[]): Elem[];
+const picked: ("north" | "south")[] = collect(["north", "south"]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 — the declared element union should contextually \
+         type the array literal, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+
+    // `readonly Elem[]` wrapper and an object-property literal, different binders.
+    let diags = check_source_diagnostics(
+        r#"
+declare function gather<Member>(rows: Member[]): readonly Member[];
+const out: readonly { kind: "a" | "b" }[] = gather([{ kind: "a" }, { kind: "b" }]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 — the declared property literal union should \
+         contextually type the object-literal elements, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+/// Negative control for the wrapped-return contextual rule: when the declared
+/// contextual type genuinely mismatches the inferred result, the assignment must
+/// still report `TS2322`. The relaxed suppression only changes which contextual
+/// type flows in, never whether a real mismatch is reported.
+#[test]
+fn wrapped_type_param_return_still_reports_genuine_mismatch() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function collect<Elem>(items: Elem[]): Elem[];
+const picked: number[] = collect(["north", "south"]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 — string[] is not assignable to number[]"
+    );
+}
