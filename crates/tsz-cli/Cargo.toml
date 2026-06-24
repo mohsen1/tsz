@@ -120,6 +120,10 @@ name = "inferred_const_literal_union_dts_emit_tests"
 path = "tests/inferred_const_literal_union_dts_emit_tests.rs"
 
 [[test]]
+name = "inferred_function_value_apparent_member_return_dts_emit_tests"
+path = "tests/inferred_function_value_apparent_member_return_dts_emit_tests.rs"
+
+[[test]]
 name = "overload_call_node_type_cache_dts_emit_tests"
 path = "tests/overload_call_node_type_cache_dts_emit_tests.rs"
 

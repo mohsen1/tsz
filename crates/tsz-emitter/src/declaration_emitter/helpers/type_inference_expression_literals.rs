@@ -601,6 +601,9 @@ impl<'a> DeclarationEmitter<'a> {
                 scratch.function_body_preferred_return_type_text(func.body)
             {
                 return_type
+            } else if let Some(return_type) = self.function_expression_solver_return_type_text(func)
+            {
+                return_type
             } else {
                 "any".to_string()
             };
@@ -619,6 +622,37 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.write(&inferred_return);
         }
         Some(scratch.writer.take_output())
+    }
+
+    /// Last-resort return-type text for an arrow/function-expression initializer
+    /// whose body the source-faithful AST paths could not spell — a body
+    /// expression resolved through the solver (a primitive apparent-type member
+    /// `(x: string) => x.length`, an un-called method reference, a generic
+    /// instantiation). Without this the fallback was a bare `any`, which is then
+    /// *preferred* over the canonical solver type in
+    /// `declaration_emittable_type_text`, losing the precise return.
+    ///
+    /// Reads the *unwrapped* body return type the checker already computed
+    /// (`function_body_return_value_type_id`); returning the unwrapped type, not
+    /// the signature return, keeps the caller's async wrapper from double-wrapping
+    /// (`wrap_async_function_return_type_text` re-wraps it in `Promise<…>`). Only
+    /// emits a concrete (non-`any`/`error`) type, so a genuinely untyped body
+    /// still falls through to `any`.
+    fn function_expression_solver_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let return_type_id = self.function_body_return_value_type_id(func).filter(|&t| {
+            t != tsz_solver::types::TypeId::ANY && t != tsz_solver::types::TypeId::ERROR
+        })?;
+        let text = if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.print_type_id_with_outer_type_params(return_type_id, type_params)
+        } else {
+            self.print_type_id_for_inferred_declaration(return_type_id)
+        };
+        (!text.is_empty() && text != "any").then_some(text)
     }
 
     fn expression_body_parameter_return_type_text(
