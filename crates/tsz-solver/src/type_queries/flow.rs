@@ -725,7 +725,7 @@ pub fn type_could_have_top_level_singleton_types(db: &dyn TypeDatabase, type_id:
         return false;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()
             .any(|&member| type_could_have_top_level_singleton_types(db, member)),
