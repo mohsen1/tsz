@@ -1781,30 +1781,24 @@ impl<'a> EnumES5Transformer<'a> {
     /// `visitParenthesizedExpression` (`skipOuterExpressions(..., ~Assertions)`
     /// followed by `isAssertionExpression(inner) || isSatisfiesExpression(inner)`).
     fn paren_wraps_assertion(&self, idx: NodeIndex) -> bool {
-        let mut cur = idx;
-        // Bounded peel through nested parentheses; the arena is acyclic so this
-        // terminates, but cap iterations as a defensive guard.
-        for _ in 0..256 {
-            let Some(node) = self.arena.get(cur) else {
-                return false;
-            };
-            match node.kind {
-                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    let Some(paren) = self.arena.get_parenthesized(node) else {
-                        return false;
-                    };
-                    cur = paren.expression;
-                }
-                k if k == syntax_kind_ext::AS_EXPRESSION
-                    || k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-                {
-                    return true;
-                }
-                _ => return false,
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            // Peel nested parentheses (mirrors the recursive paren handling in the
+            // sibling `evaluate_*` helpers above).
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(node)
+                .is_some_and(|paren| self.paren_wraps_assertion(paren.expression)),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                true
             }
+            _ => false,
         }
-        false
     }
 
     /// Check if an expression is syntactically string-valued per tsc's rules
