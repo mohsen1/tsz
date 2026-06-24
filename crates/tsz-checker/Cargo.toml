@@ -704,6 +704,9 @@ path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 [[test]]
+name = "ts2540_readonly_typed_index_tests"
+path = "tests/ts2540_readonly_typed_index_tests.rs"
+[[test]]
 name = "mapped_readonly_tuple_tests"
 path = "tests/mapped_readonly_tuple_tests.rs"
 [[test]]

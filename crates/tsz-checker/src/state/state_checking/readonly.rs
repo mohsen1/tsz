@@ -1383,6 +1383,67 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Collect every readonly *named-property* key targeted by an element-access
+    /// write `obj[index]`.
+    ///
+    /// The index type is evaluated first so a `keyof T` (or any other deferred
+    /// key set) resolves to its literal-key union; tsc classifies the resolved
+    /// index and reports **one TS2540 per readonly key** it targets (e.g.
+    /// `o[k] = …` with `k: "a" | "b"` and both readonly emits two TS2540s).
+    /// Index-signature matches and readonly tuple/named props reached *through*
+    /// an index signature are excluded here — the caller reports those as
+    /// TS2542. A generic `keyof T` (T a bare type parameter) stays deferred and
+    /// yields no keys, matching tsc which does not flag such writes.
+    fn readonly_named_element_access_keys(
+        &mut self,
+        object_type: TypeId,
+        index_expr: NodeIndex,
+        index_type: TypeId,
+    ) -> Vec<String> {
+        // Candidate property names. A literal index *expression* (`o["a"]`,
+        // `o[0]`) yields its key directly. Only when the expression is not a
+        // literal (a variable/expression such as `o[k]`) do we resolve the
+        // index *type* — evaluating it turns a type-level index like `keyof T`
+        // into the same `"a" | "b"` literal union a written-out index would
+        // have. Gating the evaluation on the non-literal case keeps the common
+        // `o[i] = …` write off the type-evaluation path.
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(name) = self.get_literal_string_from_node(index_expr) {
+            candidates.push(name);
+        }
+        if let Some(index) = self.get_literal_index_from_node(index_expr) {
+            candidates.push(index.to_string());
+        }
+        if candidates.is_empty() {
+            let resolved_index = self.evaluate_type_for_assignability(index_type);
+            if let Some((string_keys, number_keys)) =
+                self.get_literal_key_union_from_type(resolved_index)
+            {
+                for key in string_keys {
+                    candidates.push(self.ctx.types.resolve_atom(key));
+                }
+                for key in number_keys {
+                    candidates.push(format!("{key}"));
+                }
+            }
+        }
+
+        // Keep only readonly *named* properties (not index-signature matches),
+        // de-duplicated in first-seen order so each key yields a single TS2540.
+        let mut names: Vec<String> = Vec::new();
+        for name in candidates {
+            if names.iter().any(|n| n == &name) {
+                continue;
+            }
+            if self.is_property_readonly(object_type, &name)
+                && !self.readonly_element_access_from_index_signature(object_type, &name)
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
     /// Classify a readonly element/index-access write for `object_type`,
     /// emitting TS2542 (readonly index signature) or TS2540 (readonly named
     /// property) and returning the matching diagnostic variant, or `None` when
@@ -1397,6 +1458,20 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         target_idx: NodeIndex,
     ) -> Option<ReadonlyAssignmentDiagnostic> {
+        // Readonly named-property writes (TS2540). A type-level index such as
+        // `keyof T` or a `"a" | "b"` union can target several readonly
+        // properties at once; tsc reports one TS2540 per readonly key and
+        // suppresses the TS2322 type-mismatch. Resolve and report them all
+        // before the single-name index-signature path below.
+        let named_keys =
+            self.readonly_named_element_access_keys(object_type, index_expr, index_type);
+        if !named_keys.is_empty() {
+            for name in &named_keys {
+                self.error_readonly_property_at(name, index_expr);
+            }
+            return Some(ReadonlyAssignmentDiagnostic::NamedProperty);
+        }
+
         if let Some(name) =
             self.get_readonly_element_access_name(object_type, index_expr, index_type)
         {
