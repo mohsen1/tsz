@@ -1,12 +1,26 @@
 //! Binary operator error reporting (TS2362, TS2363, TS2365, TS2469).
 
-use super::fingerprint_policy::DiagnosticRenderRequest;
-use crate::diagnostics::diagnostic_codes;
+use super::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+};
+use crate::diagnostics::{
+    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
+    format_message,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Which invocation-error detail (`tsc`'s `invocationErrorDetails`) a non-union
+/// callee/constructor source lacks: a call signature (`TS2349`) or a construct
+/// signature (`TS2351`).
+#[derive(Clone, Copy)]
+pub(crate) enum InvocationSignatureKind {
+    Call,
+    Construct,
+}
 
 impl<'a> CheckerState<'a> {
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
@@ -19,16 +33,81 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut formatter = self.ctx.create_type_formatter();
-        let type_str = formatter.format(type_id);
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
+            return;
+        };
 
-        self.emit_render_request(
-            idx,
-            DiagnosticRenderRequest::simple_msg(
+        let related = self
+            .invocation_signature_detail(
+                type_id,
+                InvocationSignatureKind::Construct,
+                anchor.start,
+                anchor.length,
+            )
+            .map(|detail| vec![detail])
+            .unwrap_or_default();
+
+        let message = diagnostic_messages::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE.to_string();
+
+        self.emit_render_request_at_anchor(
+            anchor,
+            DiagnosticRenderRequest::with_related(
+                DiagnosticAnchorKind::Exact,
                 diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
-                &[&type_str],
+                message,
+                related,
+                RelatedInformationPolicy::ELABORATION,
             ),
         );
+    }
+
+    /// Build `tsc`'s `invocationErrorDetails` chain link for a non-union
+    /// callee/constructor source: the `Type 'X' has no call signatures.`
+    /// (`TS2757`) / `Type 'X' has no construct signatures.` (`TS2761`) note
+    /// rendered one indent level beneath the `This expression is not
+    /// callable/constructable.` headline. The source is displayed as its
+    /// apparent type (`number` -> `Number`, `object` -> `{}`), matching
+    /// `typeToString(getApparentType(type))`.
+    ///
+    /// Returns `None` for `any`/error sources and for unions: `tsc` renders a
+    /// union callee through the distinct `Not all constituents of type 'U' are
+    /// ...` / `No constituent of type 'U' is ...` shapes, so callers keep the
+    /// existing union rendering untouched rather than mislabeling it here.
+    pub(crate) fn invocation_signature_detail(
+        &mut self,
+        type_id: TypeId,
+        kind: InvocationSignatureKind,
+        start: u32,
+        length: u32,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let apparent =
+            crate::query_boundaries::diagnostics::invocation_signature_detail_apparent_type(
+                self.ctx.types,
+                type_id,
+            )?;
+        let mut formatter = self.ctx.create_type_formatter();
+        let type_str = formatter.format(apparent);
+
+        let (code, template) = match kind {
+            InvocationSignatureKind::Call => (
+                diagnostic_codes::TYPE_HAS_NO_CALL_SIGNATURES,
+                diagnostic_messages::TYPE_HAS_NO_CALL_SIGNATURES,
+            ),
+            InvocationSignatureKind::Construct => (
+                diagnostic_codes::TYPE_HAS_NO_CONSTRUCT_SIGNATURES,
+                diagnostic_messages::TYPE_HAS_NO_CONSTRUCT_SIGNATURES,
+            ),
+        };
+
+        Some(DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            message_text: format_message(template, &[&type_str]),
+            depth: 0,
+        })
     }
 
     // =========================================================================

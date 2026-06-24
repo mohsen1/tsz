@@ -49,6 +49,30 @@ pub(crate) fn assignment_numeric_display_children(
     tsz_solver::type_queries::assignment_numeric_display_children(db, type_id)
 }
 
+/// Apparent type of a non-union callee/constructor source for `tsc`'s
+/// `invocationErrorDetails` note (`Type 'X' has no call/construct signatures.`),
+/// mirroring `typeToString(getApparentType(type))`: a number-/string-/boolean-/
+/// bigint-/symbol-like source (including a literal such as `1` or `"a"`) maps to
+/// its boxed wrapper interface (`Number`, `String`, ...), the `object`
+/// intrinsic maps to the empty object type `{}`, and every other type is
+/// returned unchanged. The literal is widened to its base first so a literal
+/// source resolves to the same wrapper `tsc` shows (`1` -> `Number`).
+///
+/// Returns `None` for `any`/error sources and for unions: `tsc` renders a union
+/// callee through the distinct `Not all constituents of type 'U' are ...` /
+/// `No constituent of type 'U' is ...` shapes, so the caller keeps the existing
+/// union rendering untouched rather than mislabeling it.
+pub(crate) fn invocation_signature_detail_apparent_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    if type_id == TypeId::ERROR || type_id == TypeId::ANY || is_union_type(db, type_id) {
+        return None;
+    }
+    let widened = super::common::widen_literal_type(db, type_id);
+    Some(index_receiver_apparent_type(db, widened))
+}
+
 /// Return the body of a non-generic alias shaped as `Foo[keyof Foo]`.
 pub(crate) fn indexed_access_alias_body(
     db: &dyn TypeDatabase,
