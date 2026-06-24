@@ -299,28 +299,7 @@ fn solver_raw_symbol_fallback_def_budget_does_not_grow() {
     const PATTERN: &str = ".raw_symbol_fallback_def(";
 
     let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    walk_rs_files(&solver_src, &mut files);
-
-    let mut sites = Vec::new();
-    for path in &files {
-        let rel = path
-            .strip_prefix(&solver_src)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let Ok(src) = fs::read_to_string(path) else {
-            continue;
-        };
-        for (line_num, line) in src.lines().enumerate() {
-            if line.trim_start().starts_with("//") {
-                continue;
-            }
-            if line.contains(PATTERN) {
-                sites.push(format!("  {}:{}", rel, line_num + 1));
-            }
-        }
-    }
+    let sites = pattern_call_sites(&solver_src, PATTERN, false);
 
     assert!(
         sites.len() <= BUDGET,
@@ -334,4 +313,127 @@ fn solver_raw_symbol_fallback_def_budget_does_not_grow() {
         BUDGET,
         sites.join("\n"),
     );
+}
+
+/// Collect `dir`/**.rs source locations (`  rel:line`) whose non-comment text
+/// contains `pattern`. When `skip_tests` is set, files under any `tests`
+/// directory (e.g. `src/tests/...`) are ignored so in-tree fixtures do not count
+/// against a budget. Shared by the `#14344` identity-bridge surface guards.
+fn pattern_call_sites(dir: &Path, pattern: &str, skip_tests: bool) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_rs_files(dir, &mut files);
+
+    let mut sites = Vec::new();
+    for path in &files {
+        if skip_tests
+            && path
+                .components()
+                .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
+        };
+        for (line_num, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(pattern) {
+                sites.push(format!("  {}:{}", rel, line_num + 1));
+            }
+        }
+    }
+    sites
+}
+
+/// Guard the solver-side raw `reference(SymbolRef)` minting surface (#14344).
+///
+/// `TypeInterner::reference(SymbolRef(n))` mints a *zombie* `Lazy(DefId(n))`
+/// whose numeric payload is really a `SymbolId`, not a store-registered `DefId`.
+/// That conflation of two disjoint identity spaces is the lead evidence in
+/// tsz-org/tsz#14344, and the source the companion
+/// `solver_raw_symbol_fallback_def_budget_does_not_grow` guard exists to recover
+/// from: every minting site is a future `raw_symbol_fallback_def` collision risk
+/// (the documented `#13862` `HTMLDivElement` -> `FileSystemEntry` corruption).
+///
+/// The checker already forbids new `.reference(...)` construction outright
+/// (budget 0). The solver still owns the two legacy minting points
+/// (`intern/type_factory.rs`, `caches/query_cache.rs`); this pins them so the
+/// surface can only SHRINK toward content-addressed `DefId`s. Ratchet `BUDGET`
+/// DOWN to 0 as the sites are retired; never raise it.
+#[test]
+fn solver_raw_symbol_reference_minting_budget_does_not_grow() {
+    const BUDGET: usize = 2;
+    const PATTERN: &str = ".reference(";
+
+    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let sites = pattern_call_sites(&solver_src, PATTERN, true);
+
+    assert!(
+        sites.len() <= BUDGET,
+        "Solver raw `reference(SymbolRef)` minting sites grew to {} (budget {}). \
+         Each mints a zombie `Lazy(DefId(symbol_id))` whose payload is a \
+         `SymbolId`, not a registered `DefId` — the cross-identity root tracked by \
+         tsz-org/tsz#14344 and the source of the `#13862` wrong-decl collision. \
+         Resolve a real, store-registered `DefId` and use `lazy(def_id)` instead. \
+         See docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md.\n\
+         Minting sites:\n{}",
+        sites.len(),
+        BUDGET,
+        sites.join("\n"),
+    );
+}
+
+/// Guard that the content-addressed `DefId` generator stays a pure function of
+/// declaration content (#14344).
+///
+/// `ContentAddressedDefIds` is the migration's target identity scheme: a `DefId`
+/// must be `hash(name, file, span)`, never a function of allocation order. The
+/// order-derived `next_id` counter may only *assign* an id for a previously
+/// unseen hash (after `finish()`), never feed the hash itself. This pins that
+/// boundary so a future edit cannot quietly fold an order/time/thread component
+/// back into the canonical key — which would reintroduce the exact
+/// allocation-order identity tsz-org/tsz#14344 removes.
+#[test]
+fn content_addressed_def_id_hashes_only_declaration_content() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/def/core/content_addressed.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+
+    let body = source
+        .split("fn get_or_create(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }").next())
+        .expect("content_addressed.rs must define ContentAddressedDefIds::get_or_create");
+
+    // The content hash is everything fed to the hasher before it is finalized.
+    let content_hash_region = body
+        .split("hasher.finish()")
+        .next()
+        .expect("get_or_create must finalize the content hasher");
+
+    for input in ["name.hash(", "file_id.hash(", "span_start.hash("] {
+        assert!(
+            content_hash_region.contains(input),
+            "ContentAddressedDefIds::get_or_create must hash `{input}` — the \
+             #14344 canonical id is a pure function of declaration content \
+             (name, file, span)."
+        );
+    }
+
+    for order_source in ["next_id", "fetch_add", "Instant", "thread::"] {
+        assert!(
+            !content_hash_region.contains(order_source),
+            "ContentAddressedDefIds::get_or_create must not mix the order-derived \
+             source `{order_source}` into the content hash (it may only assign the \
+             id after `hasher.finish()`) — that is the allocation-order identity \
+             tsz-org/tsz#14344 removes."
+        );
+    }
 }
