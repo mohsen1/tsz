@@ -481,6 +481,8 @@ mod json_tests {
                 "relation_app_pair_total",
                 "relation_app_pair_variance_fallthrough",
                 "relation_app_pair_variance_fallthrough_cross_base",
+                "relation_lazy_ref_accessor_resolved",
+                "relation_lazy_ref_heritage_reachable",
             ],
         );
         assert_eq!(json["wired"]["stable_identity"], true);

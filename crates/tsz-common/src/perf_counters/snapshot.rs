@@ -382,6 +382,11 @@ pub struct IdentityCounters {
     /// #14351 sub-numerator: fall-through pairs whose two `Application` bases
     /// differ (cross-base HKT).
     pub relation_app_pair_variance_fallthrough_cross_base: u64,
+    /// #14351 lazy-ref-relation accessor probe: heritage-reachable cross-base
+    /// pairs for which the instantiated-heritage accessor resolved a base.
+    pub relation_lazy_ref_accessor_resolved: u64,
+    /// #14351 denominator: heritage-reachable cross-base pairs (lever candidates).
+    pub relation_lazy_ref_heritage_reachable: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -750,6 +755,12 @@ impl PerfCounters {
                 ),
                 relation_app_pair_variance_fallthrough_cross_base: load(
                     &c.relation_app_pair_variance_fallthrough_cross_base,
+                ),
+                relation_lazy_ref_accessor_resolved: load(
+                    &c.relation_lazy_ref_accessor_resolved,
+                ),
+                relation_lazy_ref_heritage_reachable: load(
+                    &c.relation_lazy_ref_heritage_reachable,
                 ),
             },
             lib_bootstrap: LibBootstrapCounters {
