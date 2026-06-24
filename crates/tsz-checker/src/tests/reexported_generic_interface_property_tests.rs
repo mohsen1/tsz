@@ -112,14 +112,14 @@ fn member_access_value_consumer() {
 
 // --- renamed re-export through nested barrels ---
 //
-// Follow-up: a *renamed* re-export (`export type { Original as Renamed }`)
-// forwarded again through `export *` keys the application base to the renaming
-// hop rather than the declaration, so the receiver is not recognized as a
-// non-lib interface application and the type argument is still dropped. This is
-// the re-export-chain def-identity gap (resolution layer), distinct from the
-// receiver-materialization path fixed here. Pinned (ignored) so it is tracked.
+// A *renamed* re-export (`export type { Original as Renamed }`) forwarded again
+// through `export *` previously keyed the application base to the renaming hop
+// rather than the declaration, so the receiver was not recognized as a non-lib
+// interface application and the type argument was dropped. The re-export-chain
+// def-identity gap (resolution layer) was closed in #14621, which canonicalizes
+// a re-exported generic interface/class alias to its declaration def; the
+// receiver now resolves `field` to the supplied `number`. Re-enabled here.
 #[test]
-#[ignore = "renamed re-export forwarded through export * keys the base def to the renaming hop (#13212 / #10663 resolution-layer follow-up)"]
 fn member_access_through_renamed_nested_barrels() {
     assert_clean(
         &[
@@ -319,10 +319,17 @@ fn extends_cross_file_generic_interface_two_type_args() {
 }
 
 #[test]
-#[ignore = "deeper residual: the inherited member reaches through TWO chained \
-            cross-file generic interfaces (Crate extends Wrap<number>, \
-            Wrap<V> extends Box<V>); the second hop's type argument is not yet \
-            threaded through the chained heritage materialization (#13212)"]
+#[ignore = "harness artifact, not a compiler residual (corrects the prior \
+            'second-hop type-arg threading' attribution). Root cause is the \
+            #14344 raw-`SymbolId` collision, reproducible ONLY in the entry-only \
+            harness: `Crate` (local) and `Wrap` (cross-file) get the same raw id \
+            (base_offset 0 after lib-merge), so registering `Wrap` cross-file \
+            mis-attributes `Crate` to `Wrap`'s file and `get_type_of_symbol` \
+            returns the cross-arena ERROR sentinel, dropping the inherited \
+            member. The production CLI is clean (verified: 2-/3-level chains, \
+            structural-wrap, class, barrel). No bounded slice exists — a raw \
+            `SymbolId` is ambiguous; a read-site guard and a collision-safe \
+            index each regress other cross-file tests. Needs #14344 identity."]
 fn extends_cross_file_generic_interface_two_level_chain() {
     // The inherited member reaches through *two* cross-file generic interfaces:
     // `Crate extends Wrap<number>` (cross-file) and `Wrap<V> extends Box<V>`
