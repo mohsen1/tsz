@@ -442,10 +442,8 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .replace(Some((env_name.clone(), *using_async)));
         }
 
-        // Transform the innermost body - use the last name part for member exports.
-        // This is the dispatched (top-level) namespace body, so prior-block
-        // exported vars of this same namespace apply here.
-        let mut body = self.transform_namespace_body(innermost_body, &name_parts, true);
+        // Transform the innermost body - use the last name part for member exports
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
         self.active_namespace_using_env.replace(None);
         if let Some((env_name, _using_async, error_name, result_name)) = using_region {
             body = self.wrap_namespace_using_region(body, env_name, error_name, result_name);
@@ -973,19 +971,25 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
     }
 
-    /// Transform a namespace body into IR nodes.
+    /// Transform namespace body into IR nodes
+    fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
+        self.transform_namespace_body_with_prior(body_idx, name_parts, true)
+    }
+
+    /// Transform a namespace body into IR nodes, choosing whether the
+    /// cross-block `prior_exported_vars` set participates in reference
+    /// qualification.
     ///
-    /// `apply_prior` controls whether `self.prior_exported_vars` (the exported
-    /// vars carried across *blocks of the same dispatched namespace*) are merged
-    /// into this body's substitution set. It must be `true` only for the
-    /// dispatched (top-level) namespace body and `false` for every *nested
-    /// child* namespace body: a nested namespace `M` inside `N` has its own
-    /// exported-var set, and re-applying `N`'s exports here would qualify a
-    /// reference to `N`'s export by the inner name (`M.a`) instead of the
-    /// declaring name (`N.a`). References to an enclosing namespace's exports are
-    /// instead qualified by that enclosing namespace's own
-    /// `rewrite_exported_var_refs` pass, which descends into nested IIFEs (#14680).
-    fn transform_namespace_body(
+    /// `prior_exported_vars` records the exported variables of the *outermost*
+    /// namespace being dispatched (so that a later top-level block of the same
+    /// namespace qualifies `x` as `N.x`). It must **not** leak into a nested
+    /// child namespace's body: a reference there to an outer-namespace export
+    /// is qualified by the *enclosing* namespace's own
+    /// `rewrite_exported_var_refs` pass (which descends into nested IIFEs with
+    /// the correct enclosing name), never by the inner namespace name. Applying
+    /// it inside the child would mis-qualify `N.a` as `Inner.a` — a runtime
+    /// `undefined`. So nested recursion passes `apply_prior = false`.
+    fn transform_namespace_body_with_prior(
         &self,
         body_idx: NodeIndex,
         name_parts: &[String],
@@ -1775,11 +1779,11 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
-        // Transform body. This is a *nested child* namespace body, so the
-        // dispatched namespace's prior-block exported vars must NOT be applied
-        // here — references to an enclosing export are qualified by the
-        // enclosing namespace's own rewrite pass (#14680).
-        let mut body = self.transform_namespace_body(ns_data.body, &name_parts, false);
+        // Transform body. A nested namespace must not inherit the outer
+        // namespace's `prior_exported_vars`: references to the outer namespace's
+        // exports are qualified by the enclosing namespace's own rewrite pass
+        // (with the correct enclosing name), not by this inner namespace name.
+        let mut body = self.transform_namespace_body_with_prior(ns_data.body, &name_parts, false);
         self.rewrite_const_enum_accesses(&mut body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).

@@ -948,45 +948,6 @@ pub(super) fn collect_member_names_from_node(
     }
 }
 
-/// Collect the names a nested namespace/class IIFE body declares at its own top
-/// level (vars, functions, classes, enums, nested namespaces).
-///
-/// When an enclosing namespace's exported-var rewrite descends into such a body
-/// (`rewrite_exported_var_refs`), any of its enclosing-export names that the
-/// nested scope re-declares locally are shadowed and must stay unqualified — a
-/// nested `const a` / `function a` / `namespace a` shadows the enclosing
-/// `export const a` (#14680).
-pub(super) fn collect_nested_scope_declared_names(
-    body: &[IRNode],
-) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::new();
-    for node in body {
-        collect_nested_scope_declared_name(node, &mut names);
-    }
-    names
-}
-
-fn collect_nested_scope_declared_name(
-    node: &IRNode,
-    names: &mut std::collections::HashSet<String>,
-) {
-    match node {
-        IRNode::ES5ClassIIFE { name, .. }
-        | IRNode::FunctionDecl { name, .. }
-        | IRNode::VarDecl { name, .. }
-        | IRNode::EnumIIFE { name, .. }
-        | IRNode::NamespaceIIFE { name, .. } => {
-            names.insert(name.to_string());
-        }
-        IRNode::VarDeclList(items) | IRNode::Sequence(items) => {
-            for item in items {
-                collect_nested_scope_declared_name(item, names);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// Rename namespace references in body IR nodes.
 /// Updates `NamespaceExport.namespace` and nested `NamespaceIIFE.parent_name`
 /// from `old_name` to `new_name`.
@@ -1049,11 +1010,54 @@ pub(super) fn detect_and_apply_param_rename_with_extra(
     })
 }
 
+/// Collect the names a nested namespace (or class) IIFE body declares at its
+/// own top level. Such a binding shadows a same-named export of an *enclosing*
+/// namespace, so the enclosing namespace's `rewrite_exported_var_refs` pass must
+/// not qualify references resolved to the inner binding. Covers locals (`var`,
+/// `let`, `const`), functions, classes, enums, and nested namespaces.
+fn collect_shadowing_binding_names(body: &[IRNode]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for node in body {
+        collect_shadowing_binding_names_in_node(node, &mut names);
+    }
+    names
+}
+
+fn collect_shadowing_binding_names_in_node(
+    node: &IRNode,
+    names: &mut std::collections::HashSet<String>,
+) {
+    match node {
+        IRNode::VarDecl { name, .. }
+        | IRNode::FunctionDecl { name, .. }
+        | IRNode::ES5ClassIIFE { name, .. }
+        | IRNode::EnumIIFE { name, .. }
+        | IRNode::NamespaceIIFE { name, .. } => {
+            names.insert(name.to_string());
+        }
+        // Non-exported namespace members are emitted as `Sequence([VarDecl, ...])`
+        // (and merged declarations as `VarDeclList`); a binding-pattern local is
+        // an opaque `ASTRef`, so it cannot be conservatively named here.
+        IRNode::Sequence(items) | IRNode::VarDeclList(items) => {
+            for item in items {
+                collect_shadowing_binding_names_in_node(item, names);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn rewrite_exported_var_refs(
     node: &mut IRNode,
     ns_name: &str,
     names: &std::collections::HashSet<String>,
 ) {
+    // No exported names to qualify ⇒ the whole subtree is a no-op (the only
+    // mutating arm rewrites an `Identifier` found in `names`). Bail before any
+    // traversal or shadow-set allocation.
+    if names.is_empty() {
+        return;
+    }
     match node {
         IRNode::Identifier(name) if names.contains(&**name) => {
             let property = name.clone();
@@ -1134,20 +1138,18 @@ pub(super) fn rewrite_exported_var_refs(
             }
         }
         IRNode::NamespaceIIFE { body, .. } | IRNode::ES5ClassIIFE { body, .. } => {
-            // Descend into the nested scope, but drop any enclosing-export names
-            // the nested scope re-declares locally: a shadowing local binding
-            // keeps the reference unqualified (#14680). Reuse `names` directly
-            // when nothing is shadowed (the common case) to avoid a clone.
-            let shadowed = collect_nested_scope_declared_names(body);
-            let reduced;
-            let active = if shadowed.is_empty() {
-                names
+            // A name re-declared inside the nested scope shadows the enclosing
+            // namespace's export, so references to it must stay unqualified.
+            // (An emptied set is handled by the no-op guard on the recursive
+            // call, mirroring the parameter-subtraction in the function arm.)
+            let shadowed = collect_shadowing_binding_names(body);
+            let inner = if shadowed.is_empty() {
+                std::borrow::Cow::Borrowed(names)
             } else {
-                reduced = names.difference(&shadowed).cloned().collect();
-                &reduced
+                std::borrow::Cow::Owned(names.difference(&shadowed).cloned().collect())
             };
             for stmt in body {
-                rewrite_exported_var_refs(stmt, ns_name, active);
+                rewrite_exported_var_refs(stmt, ns_name, &inner);
             }
         }
         IRNode::VarDecl {

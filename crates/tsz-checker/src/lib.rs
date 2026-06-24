@@ -322,6 +322,9 @@ mod index_signature_symbol_keyspace_tests;
 #[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
 mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
+#[path = "tests/inferred_return_object_array_widening_tests.rs"]
+mod inferred_return_object_array_widening_tests;
+#[cfg(test)]
 #[path = "tests/instanceof_indexed_access_lhs_tests.rs"]
 mod instanceof_indexed_access_lhs_tests;
 #[cfg(test)]

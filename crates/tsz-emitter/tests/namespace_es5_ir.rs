@@ -816,3 +816,116 @@ fn test_namespace_inline_block_comment_preserved() {
         "Block comment should be preserved. Got: {output}"
     );
 }
+
+// =========================================================================
+// Nested-namespace reference qualification (outer export vs inner scope)
+// =========================================================================
+
+#[test]
+fn nested_namespace_qualifies_outer_export_by_declaring_namespace() {
+    // A reference inside a nested namespace to a variable exported by the
+    // *enclosing* namespace must be qualified by the enclosing namespace
+    // name, not the inner one (which would be a runtime `undefined`).
+    let output = transform_and_emit(
+        r#"namespace Root {
+    export const value = 1;
+    export namespace Inner {
+        export function read() { return value; }
+    }
+}"#,
+    );
+    assert!(
+        output.contains("return Root.value"),
+        "Outer export must be qualified by the declaring namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Inner.value"),
+        "Outer export must not be qualified by the inner namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn deeply_nested_namespace_qualifies_by_outermost_declaring_namespace() {
+    // Renamed binders (anti-hardcoding): the qualifier is the structurally
+    // declaring namespace regardless of identifier text.
+    let output = transform_and_emit(
+        r#"namespace Alpha {
+    export let total = 10;
+    export namespace Beta {
+        export namespace Gamma {
+            export function fetch() { return total; }
+        }
+    }
+}"#,
+    );
+    assert!(
+        output.contains("return Alpha.total"),
+        "Three-level-deep reference must resolve to the outermost declarer.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Beta.total") && !output.contains("Gamma.total"),
+        "Must not qualify by an intermediate or inner namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_local_shadow_keeps_reference_unqualified() {
+    // A local (non-exported) binding in the nested namespace shadows the
+    // enclosing export, so the reference must stay unqualified.
+    let output = transform_and_emit(
+        r#"namespace Wrap {
+    export const item = 1;
+    export namespace Box {
+        const item = 9;
+        export function pick() { return item; }
+    }
+}"#,
+    );
+    assert!(
+        output.contains("return item")
+            && !output.contains("return Wrap.item")
+            && !output.contains("return Box.item"),
+        "A nested local must shadow the enclosing export (no qualification).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_own_export_shadows_outer_export() {
+    // When the nested namespace itself exports the same name, references
+    // resolve to (and are qualified by) the inner namespace.
+    let output = transform_and_emit(
+        r#"namespace Top {
+    export const slot = 1;
+    export namespace Sub {
+        export const slot = 2;
+        export function use() { return slot; }
+    }
+}"#,
+    );
+    assert!(
+        output.contains("return Sub.slot"),
+        "An inner re-export shadows the outer export and is qualified by the inner name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return Top.slot"),
+        "Inner re-export must not be qualified by the outer namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_multiple_outer_exports_qualified() {
+    // Several enclosing exports referenced from a nested namespace.
+    let output = transform_and_emit(
+        r#"namespace Env {
+    export const a = 1;
+    export const b = 2;
+    export namespace Use {
+        export function sum() { return a + b; }
+    }
+}"#,
+    );
+    assert!(
+        output.contains("return Env.a + Env.b"),
+        "All enclosing exports must be qualified by the declaring namespace.\nOutput:\n{output}"
+    );
+}
