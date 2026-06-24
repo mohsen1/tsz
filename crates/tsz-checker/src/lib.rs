@@ -1276,6 +1276,9 @@ mod overload_anchor_at_argument_tests;
 #[path = "tests/overload_generic_wrapper_compat_tests.rs"]
 mod overload_generic_wrapper_compat_tests;
 #[cfg(test)]
+#[path = "tests/overload_literal_source_generalization_tests.rs"]
+mod overload_literal_source_generalization_tests;
+#[cfg(test)]
 #[path = "tests/overload_param_relation_routing_arch_tests.rs"]
 mod overload_param_relation_routing_arch_tests;
 #[cfg(test)]

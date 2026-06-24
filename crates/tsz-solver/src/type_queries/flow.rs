@@ -706,6 +706,34 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Mirror of tsc's `typeCouldHaveTopLevelSingletonTypes`: whether `type_id`
+/// could contain a unit (singleton) type at the top level — a literal, enum
+/// member, unique symbol, `null`/`undefined`, a template-literal type, or a
+/// union/intersection with any such member.
+///
+/// The `boolean` base intrinsic is explicitly excluded: although it is the
+/// upper bound of the two boolean literals, tsc treats it as a non-singleton
+/// primitive here (`if (type.flags & TypeFlags.Boolean) return false`).
+///
+/// Used by assignability-diagnostic source display to decide whether to
+/// generalize a fresh literal source to its base type (tsc's
+/// `reportRelationError`): the source literal is preserved when the target could
+/// hold a singleton (a literal/union-of-literals target makes the literal vs
+/// literal mismatch meaningful) and widened to its base otherwise.
+pub fn type_could_have_top_level_singleton_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::BOOLEAN {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| type_could_have_top_level_singleton_types(db, member)),
+        Some(TypeData::TemplateLiteral(_)) => true,
+        _ => is_unit_type(db, type_id),
+    }
+}
+
 /// Check if a union type contains a specific member type.
 pub fn union_contains(db: &dyn TypeDatabase, type_id: TypeId, target: TypeId) -> bool {
     if let Some(members) = get_union_members(db, type_id) {
@@ -998,6 +1026,66 @@ mod tests {
     use super::*;
     use crate::construction::TypeInterner;
     use crate::types::TupleElement;
+
+    #[test]
+    fn singleton_predicate_excludes_base_primitives() {
+        let interner = TypeInterner::new();
+        // Base primitives cannot hold a top-level singleton: source literals
+        // widen against them.
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::NUMBER
+        ));
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::STRING
+        ));
+        // `boolean` is two literals but is treated as a non-singleton primitive,
+        // mirroring tsc's explicit `TypeFlags.Boolean` carve-out.
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::BOOLEAN
+        ));
+    }
+
+    #[test]
+    fn singleton_predicate_includes_unit_types() {
+        let interner = TypeInterner::new();
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::BOOLEAN_TRUE
+        ));
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::NULL
+        ));
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::UNDEFINED
+        ));
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            interner.literal_number(1.0)
+        ));
+    }
+
+    #[test]
+    fn singleton_predicate_unions_use_any_member() {
+        let interner = TypeInterner::new();
+        // No singleton member -> false (source widens).
+        let primitive_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner,
+            primitive_union
+        ));
+        // Any singleton member -> true (source preserved), even alongside a
+        // non-singleton member.
+        let mixed_union = interner.union(vec![interner.literal_number(1.0), TypeId::STRING]);
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            mixed_union
+        ));
+    }
 
     #[test]
     fn tuple_to_tuple_comparable_same_elements() {

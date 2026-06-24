@@ -1034,10 +1034,35 @@ impl<'a> CheckerState<'a> {
         tracing::debug!("File name: {}", self.ctx.file_name);
 
         for failure in failures {
-            let pending: PendingDiagnostic = PendingDiagnostic {
+            let mut pending: PendingDiagnostic = PendingDiagnostic {
                 span: Some(span.clone()),
                 ..failure.clone()
             };
+            // Mirror tsc's `reportRelationError` source generalization for each
+            // overload's argument failure, matching the single-signature TS2345
+            // path: a fresh literal source (`true`, `1`) is widened to its base
+            // (`boolean`, `number`) unless the parameter target could hold a
+            // top-level singleton type. The pre-built solver diagnostic carries
+            // the raw literal source, so without this the overload elaboration
+            // diverges from tsc (and from the single-overload TS2345 display).
+            if pending.code
+                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                && let (
+                    Some(tsz_solver::DiagnosticArg::Type(source)),
+                    Some(tsz_solver::DiagnosticArg::Type(target)),
+                ) = (pending.args.first(), pending.args.get(1))
+            {
+                let (source, target) = (*source, *target);
+                let display_source =
+                    crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
+                        self.ctx.types,
+                        source,
+                        target,
+                    );
+                if display_source != source {
+                    pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
+                }
+            }
             let diag = formatter.render(&pending);
             if let Some(diag_span) = diag.span.as_ref() {
                 related.push(DiagnosticRelatedInformation {
