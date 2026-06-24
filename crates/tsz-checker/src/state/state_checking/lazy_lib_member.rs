@@ -109,6 +109,28 @@ pub(crate) fn on_demand_forcing_disabled() -> bool {
     })
 }
 
+/// Kill-switch for the type-position lazy lib-interface lowering (#13933): when
+/// a bare (no-type-argument) type reference resolves to a force-eligible
+/// non-generic lib interface, the resolver returns a `Lazy(DefId)` instead of
+/// eagerly materializing the interface's full transitive heritage closure.
+///
+/// Setting `TSZ_DISABLE_DECL_LAZY_LIB=1` restores the legacy eager
+/// materialization at the reference site, so diagnostics can be compared
+/// byte-for-byte with the deferral on vs off. The deferred reference resolves
+/// on demand (member access / relation) to the byte-identical body, because the
+/// eligibility predicate ([`CheckerState::force_eligible_lib_def`]) excludes
+/// every shape whose materialized members or diagnostic source could differ
+/// (generic, globally augmented, user-shadowed, compiler-managed).
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn decl_lazy_lib_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_DECL_LAZY_LIB").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`
@@ -208,7 +230,6 @@ impl CheckerState<'_> {
             if !symbol.has_any_flags(symbol_flags::INTERFACE) {
                 return None;
             }
-
             // Non-generic only: a generic interface body would need its receiver's
             // type arguments substituted into the member type, which the bare-Lazy
             // path cannot supply.
@@ -250,6 +271,57 @@ impl CheckerState<'_> {
             .borrow_mut()
             .insert(def_id, eligible);
         eligible
+    }
+
+    /// Deferred `Lazy(DefId)` lowering for a bare type reference whose target
+    /// symbol is a force-eligible non-generic lib interface (#13933).
+    ///
+    /// Returns `Some(lazy)` to replace the eagerly-materialized interface type
+    /// at the reference site, or `None` to keep the legacy materialized type.
+    /// The returned `Lazy` resolves on demand to the byte-identical body
+    /// (eligibility is restricted to interfaces whose materialized members and
+    /// diagnostic source are context-independent: non-generic, from the
+    /// actual/cloned lib, unaugmented, unshadowed, not compiler-managed — see
+    /// [`Self::force_eligible_lib_def`]). Split/merged lib interfaces are kept
+    /// eager here because type-reference deferral can otherwise bypass the
+    /// merged declaration path that owns diagnostic provenance. Gated by the
+    /// [`decl_lazy_lib_disabled`] kill-switch for byte-parity A/B comparison.
+    pub(crate) fn try_defer_eligible_lib_type_reference(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<TypeId> {
+        if decl_lazy_lib_disabled() {
+            return None;
+        }
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if !self.force_eligible_lib_def(def_id)
+            || !self.lib_interface_has_single_interface_declaration(sym_id)
+        {
+            return None;
+        }
+        Some(self.ctx.types.lazy(def_id))
+    }
+
+    fn lib_interface_has_single_interface_declaration(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol
+            .declarations
+            .iter()
+            .filter(|&&decl_idx| {
+                let arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+                arena
+                    .get(decl_idx)
+                    .and_then(|node| arena.get_interface(node))
+                    .is_some()
+            })
+            .take(2)
+            .count()
+            == 1
     }
 
     /// Whether a lib interface `name` has any global augmentation declarations
