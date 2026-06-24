@@ -1004,6 +1004,9 @@ path = "tests/recursive_conditional_mapped_infer_tests.rs"
 name = "deep_pick_inline_application_contextual_tests"
 path = "tests/deep_pick_inline_application_contextual_tests.rs"
 [[test]]
+name = "deep_partial_optional_leaf_elaboration_tests"
+path = "tests/deep_partial_optional_leaf_elaboration_tests.rs"
+[[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
 path = "tests/in_chain_narrows_unconstrained_type_param_tests.rs"
 [[test]]

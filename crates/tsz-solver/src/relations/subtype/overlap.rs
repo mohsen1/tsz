@@ -391,7 +391,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Plain objects with properties
     /// - Objects with index signatures
     /// - Intersections (which may contain objects)
-    fn is_object_like(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_object_like(&self, type_id: TypeId) -> bool {
         use crate::visitor::{intersection_list_id, object_shape_id, object_with_index_shape_id};
 
         object_shape_id(self.interner, type_id).is_some()
