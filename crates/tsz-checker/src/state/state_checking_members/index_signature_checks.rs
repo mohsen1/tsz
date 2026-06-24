@@ -856,11 +856,23 @@ impl<'a> CheckerState<'a> {
                 synthesized_instance_number_value_type
                     .or_else(|| index_info.number_index.as_ref().map(|idx| idx.value_type))
             };
-            let applicable_string_value = if is_static_member {
-                static_string_value_type
+            // The applicable string index as `(value_type, key_type)`. The
+            // `string_index` slot may carry a template-literal *pattern* key
+            // (`[k: `id_${number}`]`) — the solver stores such a pattern here
+            // rather than collapsing it to `string`. Static and
+            // computed-member-synthesized string indexes are always plain
+            // `string`; only an inherited/own `index_info.string_index` can be a
+            // pattern. Carry the key type so the property check gates on a match
+            // and labels the diagnostic with the pattern instead of `string`.
+            let applicable_string_index = if is_static_member {
+                static_string_value_type.map(|value| (value, TypeId::STRING))
+            } else if let Some(value) = synthesized_instance_string_value_type {
+                Some((value, TypeId::STRING))
             } else {
-                synthesized_instance_string_value_type
-                    .or_else(|| index_info.string_index.as_ref().map(|idx| idx.value_type))
+                index_info
+                    .string_index
+                    .as_ref()
+                    .map(|idx| (idx.value_type, idx.key_type))
             };
 
             // Check against number index signature first (for numeric properties)
@@ -886,8 +898,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Check against string index signature
-            if let Some(string_value_type) = applicable_string_value
+            // Check against string index signature. A template-literal pattern
+            // key constrains only property names that match the pattern.
+            if let Some((string_value_type, string_key_type)) = applicable_string_index
+                && self.property_name_matches_index_key(&prop_name, string_key_type)
                 && !self.property_type_assignable_to_index_type(prop_type, string_value_type)
             {
                 // Deduplicate TS2411 across merged interface bodies (same as above).
@@ -897,11 +911,17 @@ impl<'a> CheckerState<'a> {
 
                     let prop_type_str = self.format_ts2411_type(prop_type);
                     let index_type_str = self.format_ts2411_type(string_value_type);
+                    let index_kind_str = self.index_signature_key_display(string_key_type);
 
                     self.error_at_node_msg(
                         name_idx,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&diag_prop_name, &prop_type_str, "string", &index_type_str],
+                        &[
+                            &diag_prop_name,
+                            &prop_type_str,
+                            &index_kind_str,
+                            &index_type_str,
+                        ],
                     );
                 }
             }
@@ -1271,18 +1291,24 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip properties already covered by a base that owns the string index sig.
-            if let Some(ref string_idx) = index_info.string_index
+            // A template-literal pattern key constrains only matching names.
+            if let Some((string_key_type, string_value_type)) = index_info
+                .string_index
+                .as_ref()
+                .map(|s| (s.key_type, s.value_type))
                 && !string_index_covered.contains(&prop_name)
-                && !self.property_type_assignable_to_index_type(prop_type, string_idx.value_type)
+                && self.property_name_matches_index_key(&prop_name, string_key_type)
+                && !self.property_type_assignable_to_index_type(prop_type, string_value_type)
             {
                 let prop_type_str = self.format_ts2411_type(prop_type);
-                let index_type_str = self.format_ts2411_type(string_idx.value_type);
+                let index_type_str = self.format_ts2411_type(string_value_type);
+                let index_kind_str = self.index_signature_key_display(string_key_type);
                 let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, "string", &index_type_str],
+                    &[&prop_name, &prop_type_str, &index_kind_str, &index_type_str],
                 );
             }
         }

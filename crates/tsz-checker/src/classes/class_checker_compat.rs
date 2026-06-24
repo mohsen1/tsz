@@ -275,7 +275,11 @@ impl<'a> CheckerState<'a> {
         let derived_overload_callables = self
             .collect_overloaded_derived_method_callables(&derived_members, &derived_method_counts);
 
-        let mut derived_string_index_type: Option<(TypeId, NodeIndex)> = None;
+        // `(value_type, key_type, member_idx)` — the key type is carried so a
+        // template-literal *pattern* index (`[k: `id_${number}`]`, stored in the
+        // string slot) only constrains base properties that match the pattern,
+        // and is labeled by the pattern rather than `string`.
+        let mut derived_string_index_type: Option<(TypeId, TypeId, NodeIndex)> = None;
         let mut derived_number_index_type: Option<(TypeId, NodeIndex)> = None;
         for &decl_idx in &all_iface_decls {
             let Some(sym_id) = iface_sym_id else {
@@ -318,7 +322,7 @@ impl<'a> CheckerState<'a> {
                         if key_type == TypeId::NUMBER {
                             derived_number_index_type = Some((value_type, member_idx));
                         } else {
-                            derived_string_index_type = Some((value_type, member_idx));
+                            derived_string_index_type = Some((value_type, key_type, member_idx));
                         }
                     }
                 }
@@ -1482,12 +1486,13 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        if let Some((string_index_value, string_index_node)) =
+                        if let Some((string_index_value, string_index_key, string_index_node)) =
                             derived_string_index_type
                         {
                             self.check_type_alias_base_properties_against_derived_string_index(
                                 base_type,
                                 string_index_value,
+                                string_index_key,
                                 string_index_node,
                             );
                         }
@@ -1860,7 +1865,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let (Some((derived_val, _)), Some(base_val)) =
+                if let (Some((derived_val, _, _)), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
                     && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {

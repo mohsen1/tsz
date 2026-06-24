@@ -1768,6 +1768,9 @@ path = "tests/template_literal_record_key_tests.rs"
 name = "keyof_template_index_signature_tests"
 path = "tests/keyof_template_index_signature_tests.rs"
 [[test]]
+name = "ts2411_pattern_index_signature_tests"
+path = "tests/ts2411_pattern_index_signature_tests.rs"
+[[test]]
 name = "template_literal_generic_call_indexed_keyof_constraint_tests"
 path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"
 [[test]]
