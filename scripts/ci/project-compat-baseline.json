@@ -2,13 +2,15 @@
   "schema": "tsz-project-compat-baseline/v1",
   "description": "No-regression ratchet baseline for the project-compile canary. Each listed row currently compiles like tsc ('green'); once the canary is flipped to blocking, a merge that regresses any of these rows from green to non-green is blocked. Rows NOT listed (currently red/yellow/gray, or brand-new) are advisory and never block. Application rows that fail to clone/install are recorded as 'fixture invalid' (gray) and treated as inconclusive, not a regression. DATA ONLY at this stage: no gate reads this file yet; it is wired up when the canary becomes blocking. Regenerate by intersecting the green rows across recent successful main-CI project-compile-compatibility + project-compile-canary-logs artifacts (exclude any row that is green in only some runs).",
   "source": {
-    "ci_run_ids": ["27887229928", "27886360536"],
-    "source_commit": "01bebe97d9bdf2a49c4e18419e94bcf3d6084392",
-    "artifact_generated_at": "2026-06-20T23:45:40.444Z",
+    "ci_run_ids": ["28080595776", "28077434524"],
+    "source_commit": "26b038f94303ff6ea12a369a897bdb7484b41cbe",
+    "artifact_generated_at": "2026-06-24T06:47:58Z",
     "method": "intersection of green rows across the two most recent successful main CI runs (zero divergence between them)"
   },
   "rows": {
     "comlink-project": "green",
+    "hotscript-project": "green",
+    "infisical-project": "green",
     "nextjs-fresh-app": "green",
     "rxjs-project": "green",
     "ts-essentials-project": "green",
