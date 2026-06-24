@@ -973,12 +973,34 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform namespace body into IR nodes
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
+        self.transform_namespace_body_with_prior(body_idx, name_parts, true)
+    }
+
+    /// Transform a namespace body into IR nodes, choosing whether the
+    /// cross-block `prior_exported_vars` set participates in reference
+    /// qualification.
+    ///
+    /// `prior_exported_vars` records the exported variables of the *outermost*
+    /// namespace being dispatched (so that a later top-level block of the same
+    /// namespace qualifies `x` as `N.x`). It must **not** leak into a nested
+    /// child namespace's body: a reference there to an outer-namespace export
+    /// is qualified by the *enclosing* namespace's own
+    /// `rewrite_exported_var_refs` pass (which descends into nested IIFEs with
+    /// the correct enclosing name), never by the inner namespace name. Applying
+    /// it inside the child would mis-qualify `N.a` as `Inner.a` — a runtime
+    /// `undefined`. So nested recursion passes `apply_prior = false`.
+    fn transform_namespace_body_with_prior(
+        &self,
+        body_idx: NodeIndex,
+        name_parts: &[String],
+        apply_prior: bool,
+    ) -> Vec<IRNode> {
         let mut result = Vec::new();
         let mut runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
         // Merge in exported vars from prior blocks of the same namespace.
         // This enables cross-block substitution: `x` → `M.x` when `export var x`
         // was declared in a prior block.
-        if !self.prior_exported_vars.is_empty() {
+        if apply_prior && !self.prior_exported_vars.is_empty() {
             runtime_exported_vars.extend(self.prior_exported_vars.iter().cloned());
             // Remove locally-declared non-exported names — they shadow prior exports
             let local_names = collect_local_var_names(self.arena, body_idx);
@@ -1757,8 +1779,11 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
-        // Transform body
-        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
+        // Transform body. A nested namespace must not inherit the outer
+        // namespace's `prior_exported_vars`: references to the outer namespace's
+        // exports are qualified by the enclosing namespace's own rewrite pass
+        // (with the correct enclosing name), not by this inner namespace name.
+        let mut body = self.transform_namespace_body_with_prior(ns_data.body, &name_parts, false);
         self.rewrite_const_enum_accesses(&mut body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
