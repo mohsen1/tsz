@@ -1860,3 +1860,7 @@ fn mark_invalid_namespace_static(node: &mut IRNode) {
 #[cfg(test)]
 #[path = "../../tests/namespace_es5_ir.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/namespace_es5_nested_enclosing_var_qualification_tests.rs"]
+mod nested_enclosing_var_qualification_tests;
