@@ -1247,12 +1247,51 @@ impl<'a> CheckerState<'a> {
     /// scan on every revisit (issue #14349). Callers that need cap/suppression
     /// gating must still consult `suggestion_scan_eligible` first; this method
     /// only owns the candidate scan and its cache.
+    /// Whether `idx` lives inside a built-in `lib.*.d.ts` declaration file.
+    /// Walks to the enclosing source file. Diagnostics for such reference sites
+    /// are never user-facing, so spelling suggestions for them are pure waste.
+    fn node_is_in_builtin_lib_file(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        self.ctx
+            .arena
+            .get(current)
+            .and_then(|node| self.ctx.arena.get_source_file(node))
+            .is_some_and(|source| {
+                let file_name = std::path::Path::new(&source.file_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(source.file_name.as_str());
+                source.is_declaration_file
+                    && file_name.starts_with("lib.")
+                    && file_name.ends_with(".d.ts")
+            })
+    }
+
     pub(crate) fn scan_similar_identifiers_for_meaning(
         &self,
         name: &str,
         idx: NodeIndex,
         meaning: u32,
     ) -> Vec<String> {
+        // A name-resolution failure on a reference that lives inside a built-in
+        // `lib.*.d.ts` declaration file never surfaces a user-facing diagnostic,
+        // so the spelling suggestion it would compute is never shown. Computing
+        // it is pure waste — and a hot one: e.g. the `Temporal`/`Intl` namespace
+        // member types (`ZonedDateTimeConstructor`, …) in `lib.esnext.temporal`
+        // each drive a full ~2000-candidate symbol-universe scan during lib
+        // materialization for any project that loads `esnext`, even when the
+        // project compiles clean (ts-toolbelt: ~16% of compile, #14349). Skip the
+        // scan for lib-internal reference sites; user typos are reported against
+        // the user's own file, so they are unaffected.
+        if self.node_is_in_builtin_lib_file(idx) {
+            return Vec::new();
+        }
         // Memoize per (reference site, meaning): the same unresolved reference is
         // re-resolved many times under demand-driven evaluation, and each
         // revisit would otherwise repeat the full-symbol-universe scan below.
