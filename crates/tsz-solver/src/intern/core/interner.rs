@@ -1606,6 +1606,65 @@ impl TypeInterner {
         total
     }
 
+    /// #14351 measurement (diagnostic-only): scan all interned types and report,
+    /// per type-parameter name `Atom`, how many DISTINCT `TypeData::TypeParameter`
+    /// `TypeId`s share that name, and which `TypeParamInfo` field varies among
+    /// them. A name with many distinct ids means the same logical `<A>` does NOT
+    /// content-dedup — pinning the divergent component (`constraint`/`default`/
+    /// `origin`/`is_const`). Returns a human-readable report of the worst offenders.
+    pub fn type_param_divergence_report(&self, top_n: usize) -> String {
+        use rustc_hash::{FxHashMap, FxHashSet};
+        // name Atom -> Vec of info for each distinct interned TypeParameter
+        let mut by_name: FxHashMap<Atom, Vec<crate::types::TypeParamInfo>> = FxHashMap::default();
+        let n = self.len();
+        for raw in (TypeId::FIRST_USER as usize)..n {
+            let id = TypeId(raw as u32);
+            if let Some(crate::types::TypeData::TypeParameter(info)) = self.lookup(id) {
+                by_name.entry(info.name).or_default().push(info);
+            }
+        }
+        let mut rows: Vec<(Atom, Vec<crate::types::TypeParamInfo>)> =
+            by_name.into_iter().filter(|(_, v)| v.len() > 1).collect();
+        rows.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
+        let total_names = rows.len();
+        let total_excess: usize = rows.iter().map(|(_, v)| v.len() - 1).sum();
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "TypeParameter divergence: {total_names} names with >1 distinct id, total excess ids {total_excess}"
+        );
+        for (name, infos) in rows.into_iter().take(top_n) {
+            let name_s = self.resolve_atom(name);
+            let dc = infos
+                .iter()
+                .map(|i| i.constraint.map(|t| t.0))
+                .collect::<FxHashSet<_>>()
+                .len();
+            let dd = infos
+                .iter()
+                .map(|i| i.default.map(|t| t.0))
+                .collect::<FxHashSet<_>>()
+                .len();
+            let dorigin = infos
+                .iter()
+                .map(|i| format!("{:?}", i.origin))
+                .collect::<FxHashSet<_>>()
+                .len();
+            let dconst = infos
+                .iter()
+                .map(|i| i.is_const)
+                .collect::<FxHashSet<_>>()
+                .len();
+            let _ = writeln!(
+                out,
+                "  '{name_s}': {} distinct ids | varies: constraint={dc} default={dd} origin={dorigin} is_const={dconst}",
+                infos.len()
+            );
+        }
+        out
+    }
+
     /// Check if the interner is empty (only has intrinsics)
     pub fn is_empty(&self) -> bool {
         self.len() <= TypeId::FIRST_USER as usize

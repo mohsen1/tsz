@@ -1313,6 +1313,16 @@ impl DefinitionStore {
             .map(|r| *r)
     }
 
+    /// #14351 measurement-only: number of distinct decl-site canonical type-param
+    /// entries `(file, name_node, info)`. Comparing this to the count of distinct
+    /// interned `TypeParameter` ids decides whether the divergent ids are
+    /// fresh-mints that BYPASS the decl-site map (map-len << distinct-ids =>
+    /// tractable re-mint convergence) or genuinely-distinct decl-sites
+    /// (map-len ~= distinct-ids => XL relation-level).
+    pub fn type_param_decl_node_count(&self) -> usize {
+        self.type_param_for_decl_node.len()
+    }
+
     /// Register the canonical `TypeId` for a type-parameter declaration
     /// identified by `(file, name_node, info)`.
     ///
