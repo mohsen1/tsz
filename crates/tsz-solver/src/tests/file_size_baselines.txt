@@ -13,6 +13,20 @@
 #
 # Manual edits are also fine, but the env-var path keeps the comments below
 # in sync with the actual values.
+#
+# DECOMPOSITION SIGNAL (#14350 / #14345 / #14346), not cosmetic debt:
+# The over-ceiling solver files below are concentrated in the recursion-fighting
+# engines — `evaluate`, `eval_conditional`, `instantiate`, `subtype_core`,
+# `generic_call_resolve`, `relations_compat`, `type_queries_flow`. They are
+# monolithic because the type model has no clean decomposition for recursive /
+# cross-arena generic materialization: each recursion/heritage fix adds lines to
+# whichever engine the witness lands in (the green/* whack-a-mole pattern). They
+# are expected to DECOMPOSE — not by cosmetic splitting, but as a downstream
+# effect of the canonical-identity (#14344) + materialize-once+SCC (#14345) +
+# termination-ownership (#14346) work: once a recursive SCC has a canonical key
+# and is materialized once, the per-witness special-casing those engines accreted
+# collapses. Treat a rise here as a signal to ask "is this another witness of the
+# identity/materialize root?" before adding a per-file ceiling bump. See #14350.
 
 solver_max_loc      3474
 solver_oversized    20
