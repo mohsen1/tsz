@@ -487,6 +487,10 @@ impl<'a> Printer<'a> {
         }
 
         if body_is_single_line && async_shadowed_var_names.is_empty() {
+            // Capture the splice point right after `function* () {` so the body's
+            // hoisted temps (`var _a, _b;` from optional-chaining / nullish /
+            // `for await...of` downleveling) land inline, matching tsc.
+            let var_insert_pos = self.writer.len();
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
@@ -505,6 +509,7 @@ impl<'a> Printer<'a> {
                 }
             }
             self.function_scope_depth -= 1;
+            self.splice_single_line_async_generator_hoists(var_insert_pos);
             self.ctx.emit_await_as_yield = saved_yield;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;

@@ -1090,6 +1090,42 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    pub(crate) fn var_decl_redeclares_parameter_for_reference(
+        &self,
+        assignment_node: NodeIndex,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(assignment_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        let Some(target_symbol_id) = self.binder.resolve_identifier(self.arena, target) else {
+            return false;
+        };
+        let Some(symbol) = self.binder.get_symbol(target_symbol_id) else {
+            return false;
+        };
+
+        let mut saw_prior_parameter = false;
+        for &decl_idx in &symbol.declarations {
+            if decl_idx == assignment_node {
+                return saw_prior_parameter;
+            }
+            if self
+                .arena
+                .get(decl_idx)
+                .is_some_and(|decl| decl.kind == syntax_kind_ext::PARAMETER)
+            {
+                saw_prior_parameter = true;
+            }
+        }
+
+        false
+    }
+
     /// Check if a symbol is an unannotated mutable local whose reads should be
     /// typed from control-flow assignments instead of absorbing as explicit `any`.
     pub(crate) fn is_control_flow_typed_any_symbol(&self, sym_id: SymbolId) -> bool {

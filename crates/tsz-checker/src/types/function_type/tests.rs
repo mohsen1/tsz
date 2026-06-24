@@ -363,3 +363,87 @@ fn async_generic_return_call_does_not_get_promise_union_context() {
         "async generic return call should not be over-constrained by PromiseLike contextual unions: {diags:?}"
     );
 }
+
+/// A block-bodied function/arrow value assigned to a function-typed variable
+/// whose body's return type does not match anchors `TS2322` at the variable
+/// **binding name** with the function-level message — `tsc`'s
+/// `elaborateArrowFunction` never drills into a block body, so the error is
+/// reported at the original declaration error node (whose span is its name),
+/// not at the function expression. Binder names are varied to keep the gate
+/// structural (anti-hardcoding contract).
+#[test]
+fn block_body_function_initializer_return_mismatch_anchors_at_binding_name() {
+    let cases = [
+        (
+            "const handler: () => number = () => { return \"x\"; };",
+            "handler",
+        ),
+        (
+            "const makeCount: () => number = function () { return \"x\"; };",
+            "makeCount",
+        ),
+        (
+            "const run: () => number = () => { if (1) return \"x\"; return 1; };",
+            "run",
+        ),
+        // Parenthesized initializer is looked through to the same binding.
+        ("const cb: () => number = (() => { return \"x\"; });", "cb"),
+        // Object-literal block return still reports the single function-level
+        // mismatch at the binding (no per-property drill).
+        (
+            "const build: () => { a: number } = () => { return { a: \"x\" }; };",
+            "build",
+        ),
+    ];
+    for (source, name) in cases {
+        let diagnostics = diagnostics_with_spans(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .unwrap_or_else(|| panic!("expected TS2322 for `{source}`, got: {diagnostics:?}"));
+        let name_offset = source
+            .find(name)
+            .expect("binding name must appear in source") as u32;
+        assert_eq!(
+            diag.start, name_offset,
+            "TS2322 for a block-bodied function initializer must anchor at the \
+             binding name `{name}` for `{source}`: {diag:?}"
+        );
+        assert!(
+            diag.message_text.contains("is not assignable to type"),
+            "expected the function-level assignability message for `{source}`: {diag:?}"
+        );
+    }
+}
+
+/// The same rule applies when the block-bodied function value is the expression
+/// of a `return` statement: the function-level `TS2322` anchors at the enclosing
+/// `return` statement, not at the inner function expression.
+#[test]
+fn block_body_returned_function_return_mismatch_anchors_at_return_statement() {
+    let source = "function outer(): () => number { return () => { return \"x\"; }; }";
+    let diagnostics = diagnostics_with_spans(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322");
+    let return_offset = source.find("return () =>").expect("outer return statement") as u32;
+    assert_eq!(
+        diag.start, return_offset,
+        "TS2322 for a returned block-bodied function must anchor at the enclosing \
+         `return` statement: {diag:?}"
+    );
+}
+
+/// Negative control: a block-bodied function initializer whose body return type
+/// matches the declared function type must not emit `TS2322`.
+#[test]
+fn block_body_function_initializer_matching_return_no_ts2322() {
+    let diagnostics = diagnostics_with_spans("const ok: () => number = () => { return 1; };");
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "a matching block-body return must not emit TS2322: {diagnostics:?}"
+    );
+}
