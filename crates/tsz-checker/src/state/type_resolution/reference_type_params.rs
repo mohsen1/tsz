@@ -2,10 +2,84 @@
 
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::node::NodeArena;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 
 impl CheckerState<'_> {
+    pub(super) fn same_file_type_alias_parts_for_name(
+        &self,
+        name: &str,
+    ) -> Option<(Option<NodeList>, NodeIndex, Option<SymbolId>)> {
+        self.ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| {
+                let type_alias = self.ctx.arena.get_type_alias(node)?;
+                let alias_name = self.ctx.arena.get_identifier_text(type_alias.name)?;
+                (alias_name == name).then(|| {
+                    (
+                        type_alias.type_parameters.clone(),
+                        type_alias.type_node,
+                        self.ctx.binder.node_symbols.get(&(idx as u32)).copied(),
+                    )
+                })
+            })
+    }
+
+    pub(super) fn type_node_is_outside_symbol_declarations(
+        &self,
+        node_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return true;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        !symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|decl| node.pos >= decl.pos && node.end <= decl.end)
+        })
+    }
+
+    pub(super) fn def_body_involves_depth_poisoned_def(&self, def_id: tsz_solver::DefId) -> bool {
+        if !self.ctx.definition_store.has_any_depth_poisoned() {
+            return false;
+        }
+
+        self.ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .is_some_and(|body| self.ctx.type_involves_depth_poisoned_def(body))
+    }
+
+    pub(super) fn def_body_can_own_ambient_depth(&self, def_id: tsz_solver::DefId) -> bool {
+        let Some(body) = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .or_else(|| self.ctx.definition_store.get_body(def_id))
+        else {
+            return false;
+        };
+
+        let db = self.ctx.types.as_type_database();
+        crate::query_boundaries::common::contains_conditional_type(db, body)
+            || crate::query_boundaries::common::contains_keyof_type(db, body)
+            || crate::query_boundaries::common::contains_index_access_type(db, body)
+            || crate::query_boundaries::common::is_mapped_type(db, body)
+    }
+
     pub(crate) fn declaration_file_type_shadow_for_lib_name(
         &self,
         name: &str,
@@ -386,18 +460,24 @@ impl CheckerState<'_> {
         // *type aliases* need their body eagerly registered under the canonical
         // `DefId` as well (a distinct path); leave them on the existing
         // resolution so this change does not alter the alias path.
-        let decl_is_interface_or_class = self
+        //
+        // Key the `DefId` to the declaration's *own* declared name, not the
+        // local `leaf_name`: a renamed re-export
+        // (`export type { Original as Renamed } from`) resolves the chain to a
+        // declaration whose name differs from the name used at the import site.
+        // `def_id_for_declaration_in_file` requires the declaration's
+        // `escaped_name` to match, so passing `leaf_name` ("Renamed") returns
+        // `None` for the renamed case and the application is left opaque with
+        // its type argument unsubstituted (false TS2322). The declaration name
+        // also keys the body that resolves on demand, so the two agree.
+        let decl_name = self
             .ctx
             .get_binder_for_file(decl_file_idx)
             .and_then(|binder| binder.get_symbol(decl_sym))
-            .is_some_and(|symbol| {
-                symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS)
-            });
-        if !decl_is_interface_or_class {
-            return None;
-        }
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS))
+            .map(|symbol| symbol.escaped_name.clone())?;
         self.ctx
-            .def_id_for_declaration_in_file(decl_sym, decl_file_idx, leaf_name)
+            .def_id_for_declaration_in_file(decl_sym, decl_file_idx, &decl_name)
     }
 
     pub(crate) fn reference_import_alias_export_target(
