@@ -1187,6 +1187,31 @@ impl<'a> CheckerState<'a> {
                         );
                         instantiate_type(self.ctx.types, base_type, &substitution)
                     };
+
+                    // #14351 lazy-reference relation capture (inert data — read
+                    // only by the flag-gated variance branch, so an unread map
+                    // keeps flag-OFF byte-identical to main). Record the
+                    // instantiated heritage edge `(derived, parent) -> base_type`
+                    // so the relation layer can relate `Apply1<A>` to
+                    // `Functor1<B>` by per-argument variance on the instantiated
+                    // base (`Functor1<F>` here, with the derived interface's args
+                    // already substituted above) without materializing members.
+                    // Only meaningful for generic heritage edges (the eager
+                    // member walk is the cost there); skip when no arguments flow.
+                    if !type_args.is_empty()
+                        && let Some(current_sym) = current_sym
+                    {
+                        let derived_def = self.ctx.get_or_create_def_id(current_sym);
+                        let parent_def = self.ctx.get_or_create_def_id(base_sym_id);
+                        if derived_def != parent_def {
+                            self.ctx.definition_store.add_heritage_instantiation(
+                                derived_def,
+                                parent_def,
+                                base_type,
+                            );
+                        }
+                    }
+
                     let is_builtin_array_heritage =
                         matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
                     let requires_self = !is_builtin_array_heritage
