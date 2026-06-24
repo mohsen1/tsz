@@ -373,6 +373,15 @@ pub struct IdentityCounters {
     pub symbol_def_index_lookup_hits: u64,
     /// #14344 denominator: `symbol_def_index` composite-key lookups that missed.
     pub symbol_def_index_lookup_misses: u64,
+    /// #14351 relation-hot-path denominator: `Application`<->`Application` pairs
+    /// reaching the pre-evaluation variance fast path.
+    pub relation_app_pair_total: u64,
+    /// #14351 numerator: variance-undecidable pairs that fell through to eager
+    /// `evaluate_type` member expansion.
+    pub relation_app_pair_variance_fallthrough: u64,
+    /// #14351 sub-numerator: fall-through pairs whose two `Application` bases
+    /// differ (cross-base HKT).
+    pub relation_app_pair_variance_fallthrough_cross_base: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -735,6 +744,13 @@ impl PerfCounters {
                 ),
                 symbol_def_index_lookup_hits: load(&c.symbol_def_index_lookup_hits),
                 symbol_def_index_lookup_misses: load(&c.symbol_def_index_lookup_misses),
+                relation_app_pair_total: load(&c.relation_app_pair_total),
+                relation_app_pair_variance_fallthrough: load(
+                    &c.relation_app_pair_variance_fallthrough,
+                ),
+                relation_app_pair_variance_fallthrough_cross_base: load(
+                    &c.relation_app_pair_variance_fallthrough_cross_base,
+                ),
             },
             lib_bootstrap: LibBootstrapCounters {
                 snapshot_set_load_attempts: load(&c.lib_snapshot_set_load_attempts),
