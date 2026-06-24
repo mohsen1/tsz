@@ -50,6 +50,9 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-pattern-project"
   "radash-project"
   "valtio-project"
+  "ts-belt-project"
+  "ts-extras-project"
+  "superjson-project"
   "trpc-project"
   "tanstack-query-project"
   "tanstack-router-project"
@@ -341,6 +344,15 @@ tsz_project_fixture_sources() {
       ;;
     valtio-project)
       printf 'valtio|%s|%s\n' "$VALTIO_REPO" "$VALTIO_REF"
+      ;;
+    ts-belt-project)
+      printf 'ts-belt|%s|%s\n' "$TS_BELT_REPO" "$TS_BELT_REF"
+      ;;
+    ts-extras-project)
+      printf 'ts-extras|%s|%s\n' "$TS_EXTRAS_REPO" "$TS_EXTRAS_REF"
+      ;;
+    superjson-project)
+      printf 'superjson|%s|%s\n' "$SUPERJSON_REPO" "$SUPERJSON_REF"
       ;;
     trpc-project)
       printf 'trpc|%s|%s\n' "$TRPC_REPO" "$TRPC_REF"
@@ -881,6 +893,26 @@ tsz_write_valtio_config() {
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
 '
+}
+
+tsz_write_ts_belt_config() {
+  # ts-belt is zero-dependency; its source compiles under the shared baseline.
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_ts_extras_config() {
+  # ts-extras imports `type-fest`, which is unresolved under the shared
+  # `types: []` baseline (the clone installs nothing). The resulting TS2307 set
+  # is identical under tsc and tsz, so the tsc-oracle delta cancels it — the
+  # type-fest-typed paths are any-stubbed. The row is fully tsc-parity (tsz-only
+  # delta = 0) but a thin parity row rather than a deep witness.
+  tsz_write_basic_external_project_config "$1" "source"
+}
+
+tsz_write_superjson_config() {
+  # superjson depends on `copy-anything` (unresolved under `types: []`, cancels
+  # in the tsc-oracle delta like other external imports).
+  tsz_write_basic_external_project_config "$1" "src"
 }
 
 tsz_write_trpc_config() {
