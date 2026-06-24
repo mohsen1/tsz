@@ -1113,14 +1113,18 @@ impl<'a> CheckerState<'a> {
             return_types.retain(|c| c.type_id != TypeId::ERROR);
         }
 
-        // Union the UNWIDENED contributions, then widen ONLY when the union
-        // collapses to a single literal (tsc's `getWidenedType(getUnionType(...))`).
-        // `factory.union` dedups and flattens a single surviving member to a
-        // scalar, so a multi-member literal union (`"a" | "b"`, `1 | 2`,
-        // `"a" | undefined`) is NOT a literal type and is returned unwidened,
-        // while a single fresh literal (`return "x"`, or `return "a"; return "a"`
-        // deduped to one) is widened via its originating expression's AST-aware
-        // widener — preserving per-property `const` subtrees (#14530).
+        // Union the contributions and apply the remaining primitive-collapse
+        // widen (tsc's `getWidenedType(getUnionType(...))`). Fresh object/array
+        // contributions were already structure-widened during collection (so
+        // `{ a: 1 } | { a: 2 }` arrives as `{ a: number }`); the only widen left
+        // here is the bare primitive literal that was deferred to preserve a
+        // multi-branch literal union. `factory.union` dedups and flattens a
+        // single surviving member to a scalar, so a multi-member literal union
+        // (`"a" | "b"`, `1 | 2`, `"a" | undefined`) is NOT a literal type and is
+        // returned unwidened, while a single fresh literal (`return "x"`, or
+        // `return "a"; return "a"` deduped to one) is widened via its originating
+        // expression's AST-aware widener — preserving per-property `const`
+        // subtrees (#14530).
         let widen_expr = return_types.iter().find_map(|c| c.widen_expr);
         let union = factory.union(return_types.iter().map(|c| c.type_id).collect());
         if let Some(expr_idx) = widen_expr
@@ -1337,19 +1341,52 @@ impl<'a> CheckerState<'a> {
                             return_type,
                             return_context,
                         );
-                        // Collect the contribution UNWIDENED, recording whether it
-                        // would have been widened. The union of two distinct fresh
-                        // literals must stay a literal union (`"a" | "b"`); only a
-                        // union that collapses to a single literal is widened, in
-                        // `infer_return_type_from_body_inner` (tsc parity, #14530).
+                        // Apply tsc's `getWidenedType(getUnionType(returns))` per
+                        // contribution, splitting on freshness kind:
+                        //
+                        // - A bare **primitive** literal (`return 1`, `return "a"`)
+                        //   is collected UNWIDENED, recording the originating
+                        //   expression. tsc's `getUnionType` de-freshes primitive
+                        //   literal members, so a multi-branch literal union
+                        //   (`"a" | "b"`, `1 | 2`) must survive unwidened; only a
+                        //   union that collapses to a single literal is widened, in
+                        //   `infer_return_type_from_body_inner` (#14530).
+                        // - A fresh **object/array** literal (`return { a: 1 }`,
+                        //   `return [1, 2]`) is widened EAGERLY here. tsc widens
+                        //   fresh object/array literal *structure* regardless of
+                        //   union membership (`{ a: 1 } | { a: 2 }` → `{ a: number }`),
+                        //   because `getUnionType` does not de-fresh those leaves —
+                        //   `getWidenedType` still reaches them. The widen is
+                        //   freshness/`as const`-respecting, so per-property const
+                        //   subtrees (`{ k: "x" as const, n: 1 }` → `{ k: "x"; n: number }`)
+                        //   are preserved exactly as the single-collapse path does.
+                        //   (Conditional-expression returns keep `widenable == false`
+                        //   via the carve-out in `return_contribution_is_widenable`,
+                        //   so a discriminant-preserving `return c ? a : b` is left
+                        //   to its existing path and not eagerly collapsed here.)
                         let widenable = self.return_contribution_is_widenable(
                             return_data.expression,
                             return_type,
                             return_context,
                         );
+                        let (contribution_type, widen_expr) = if widenable
+                            && !crate::query_boundaries::common::is_literal_type(
+                                self.ctx.types,
+                                return_type,
+                            ) {
+                            (
+                                crate::query_boundaries::widening::widen_const_initializer(
+                                    self.ctx.types,
+                                    return_type,
+                                ),
+                                None,
+                            )
+                        } else {
+                            (return_type, widenable.then_some(return_data.expression))
+                        };
                         return_types.push(ReturnContribution {
-                            type_id: return_type,
-                            widen_expr: widenable.then_some(return_data.expression),
+                            type_id: contribution_type,
+                            widen_expr,
                         });
                     }
                 }
