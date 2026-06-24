@@ -1738,6 +1738,43 @@ impl CheckerState<'_> {
                             })
                         }));
                 self.record_alias_body_provenance(result, body_is_computed, alias_is_non_generic);
+                // A non-generic alias whose tuple body was built by flattening a
+                // fixed-tuple spread (`type T = [...[a, b], c]`) carries no
+                // `aliasSymbol` in tsc, so diagnostics render `[a, b, c]`, not
+                // `T`. This is keyed per def — the flattened tuple shares its
+                // interned `TypeId` with a directly-written `type T = [a, b, c]`
+                // (which keeps its name), so it cannot ride the body-keyed
+                // "computed"/"directly named" provenance above.
+                let body_has_top_level_spread = alias_is_non_generic
+                    && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.declarations.iter().any(|&decl_idx| {
+                            super::source_alias_attribution::tuple_alias_declaration_body_has_top_level_spread(
+                                self.ctx.arena,
+                                decl_idx,
+                            )
+                        })
+                    });
+                // A spread element flattens into a fresh tuple only when it
+                // spreads a fixed tuple (`...[a, b]` or `...Inner` where `Inner`
+                // is a fixed tuple) — the *evaluated* alias type is then a
+                // non-variadic tuple. A rest array (`...number[]`) stays variadic
+                // and keeps its alias name. The named-alias spread isn't resolved
+                // until evaluation, so check the evaluated shape here.
+                if body_has_top_level_spread
+                    && !generic_query::contains_free_type_parameters(self.ctx.types, result)
+                {
+                    let evaluated = self.evaluate_type_with_env(result);
+                    let is_non_variadic_tuple = crate::query_boundaries::common::tuple_elements(
+                        self.ctx.types.as_type_database(),
+                        evaluated,
+                    )
+                    .is_some_and(|elements| !elements.iter().any(|element| element.rest));
+                    if is_non_variadic_tuple {
+                        self.ctx
+                            .definition_store
+                            .mark_tuple_spread_flattened_alias(def_id);
+                    }
+                }
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these

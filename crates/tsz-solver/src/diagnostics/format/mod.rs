@@ -1527,6 +1527,13 @@ impl<'a> TypeFormatter<'a> {
             } else if def.kind == DefKind::TypeAlias {
                 self.skip_type_alias_def_ids.contains(&def_id)
                         || def.body.is_some_and(|b| def_store.is_computed_body(b))
+                        // A non-generic alias whose tuple body was built by
+                        // flattening a fixed-tuple spread (`type T = [...[a, b], c]`)
+                        // carries no `aliasSymbol` in tsc, so render the structural
+                        // tuple (`[a, b, c]`), not `T`. Keyed per def: the flattened
+                        // tuple interns to the same shape as a directly-written
+                        // `type T = [a, b, c]`, which keeps its name.
+                        || def_store.is_tuple_spread_flattened_alias(def_id)
                         || (!def.type_params.is_empty()
                             && def.body.is_some_and(|b| {
                                 matches!(

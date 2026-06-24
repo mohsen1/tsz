@@ -1569,6 +1569,23 @@ impl DefinitionStore {
         self.state_flags.is_computed_body(body)
     }
 
+    /// Mark a non-generic type alias whose declared tuple body was produced by
+    /// flattening a fixed-tuple spread (`type T = [...[a, b], c]`). `tsc` does
+    /// not stamp the resulting spread tuple with an `aliasSymbol`, so its
+    /// diagnostics render the structural form (`[a, b, c]`) rather than `T`.
+    /// Keyed per def — the flattened tuple shares its interned `TypeId` with a
+    /// directly-written `type T = [a, b, c]`, which `tsc` displays by name.
+    pub fn mark_tuple_spread_flattened_alias(&self, def_id: DefId) {
+        self.state_flags.mark_tuple_spread_flattened_alias(def_id);
+        self.bump_generation();
+    }
+
+    /// Whether `def_id` is a non-generic alias whose tuple body was
+    /// spread-flattened (see [`Self::mark_tuple_spread_flattened_alias`]).
+    pub fn is_tuple_spread_flattened_alias(&self, def_id: DefId) -> bool {
+        self.state_flags.is_tuple_spread_flattened_alias(def_id)
+    }
+
     /// Find all `DefId`s registered under the given name.
     pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
         self.name_to_defs.get(&name).map(|r| r.clone())

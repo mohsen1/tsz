@@ -46,6 +46,15 @@ pub(crate) struct DefStateFlags {
 
     /// Defs detected as participating in a circular type alias cycle.
     circular_def_ids: DefDashSet<DefId>,
+
+    /// Non-generic type-alias `DefId`s whose declared body is a tuple built by
+    /// flattening a fixed-tuple spread (`type T = [...[a, b], c]`). `tsc`
+    /// attaches no `aliasSymbol` to the freshly-spread tuple, so diagnostics
+    /// render the structural form (`[a, b, c]`) rather than the alias name.
+    /// Keyed per def (not per body `TypeId`) because the flattened tuple
+    /// interns to the same shape as a directly-written `type T = [a, b, c]`,
+    /// which `tsc` *does* display by name.
+    tuple_spread_flattened_alias_defs: DefDashSet<DefId>,
 }
 
 impl DefStateFlags {
@@ -118,6 +127,19 @@ impl DefStateFlags {
             && !self.directly_named_alias_bodies.contains(&body)
     }
 
+    /// Flag a non-generic type alias whose tuple body was spread-flattened, so
+    /// diagnostics render the structural tuple instead of the alias name.
+    pub(crate) fn mark_tuple_spread_flattened_alias(&self, id: DefId) {
+        self.tuple_spread_flattened_alias_defs.insert(id);
+    }
+
+    /// Whether `id` was flagged via [`Self::mark_tuple_spread_flattened_alias`].
+    #[inline]
+    pub(crate) fn is_tuple_spread_flattened_alias(&self, id: DefId) -> bool {
+        !self.tuple_spread_flattened_alias_defs.is_empty()
+            && self.tuple_spread_flattened_alias_defs.contains(&id)
+    }
+
     /// Reset the alias-body flag sets. The poison / publish / circular sets are
     /// intentionally retained, matching the historical [`DefinitionStore::clear`].
     ///
@@ -125,5 +147,6 @@ impl DefStateFlags {
     pub(crate) fn clear_alias_bodies(&self) {
         self.computed_alias_bodies.clear();
         self.directly_named_alias_bodies.clear();
+        self.tuple_spread_flattened_alias_defs.clear();
     }
 }

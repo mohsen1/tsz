@@ -1204,6 +1204,9 @@ mod new_expression_source_display_tests;
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
+#[path = "tests/non_generic_spread_tuple_alias_display_tests.rs"]
+mod non_generic_spread_tuple_alias_display_tests;
+#[cfg(test)]
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]

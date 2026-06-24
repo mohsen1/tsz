@@ -44,6 +44,15 @@ pub fn type_alias_displayed_as_underlying(
             return None;
         }
         let body = def.body?;
+        // A non-generic alias whose tuple body was built by flattening a
+        // fixed-tuple spread (`type T = [...[a, b], c]`) carries no
+        // `aliasSymbol` in tsc — the spread produces a fresh tuple — so render
+        // the structural tuple (`[a, b, c]`) rather than the alias name. The
+        // flag is keyed per def because the flattened tuple interns to the same
+        // shape as a directly-written `type T = [a, b, c]`, which keeps its name.
+        if def_store.is_tuple_spread_flattened_alias(current_def) {
+            return Some(body);
+        }
         if crate::visitor::is_intrinsic_or_literal_type(interner, body) {
             return Some(body);
         }
