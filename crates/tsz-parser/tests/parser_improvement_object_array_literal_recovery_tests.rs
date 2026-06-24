@@ -693,3 +693,46 @@ fn object_method_with_body_reports_no_missing_brace() {
         "a well-formed object method must not produce TS1005, got {diagnostics:?}"
     );
 }
+
+/// An object-literal method whose body block `{` is written with `=>` is
+/// recovered by tsc as `'{' expected.` (TS1005) at the `=>`. tsc *additionally*
+/// reports `Unexpected keyword or identifier.` (TS1434) on the token after the
+/// `=>` only for the mistyped-return-annotation shape `m(a) => T {` (the user
+/// meant `m(a): T {}`) — an identifier/keyword immediately followed by a `{`
+/// block. For a concise arrow body (`=> x`, `=> a + 1`, `=> f()`, `=> x.y`) tsc
+/// emits no TS1434 and lets the tail re-parse as a statement. tsz previously
+/// reported TS1434 on *every* identifier body; the recovery now gates it on the
+/// following `{` to match tsc. Identifier names are varied across cases so the
+/// rule cannot be keyed on any particular name (anti-hardcoding).
+#[test]
+fn object_method_arrow_body_reports_ts1434_only_for_mistyped_return_annotation() {
+    // (source, expects_ts1434)
+    let cases = [
+        ("const o = { m(a) => x };", false),
+        ("const o = { handler() => result };", false),
+        ("const p = { run(n) => n + 1 };", false),
+        ("const q = { build(x) => x.y };", false),
+        ("const r = { make(arg) => factory() };", false),
+        ("const o = { m(a) => T {} };", true),
+        ("const o = { build(x) => Result {} };", true),
+    ];
+    for (source, expects_ts1434) in cases {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        let has_ts1434 = diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER);
+        assert_eq!(
+            has_ts1434, expects_ts1434,
+            "TS1434 presence mismatch for {source:?}, got {diagnostics:?}"
+        );
+        // The missing method body always still reports TS1005 `'{' expected.`.
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                    && diag.message == "'{' expected."),
+            "the missing method body must still report TS1005 `'{{' expected.` for {source:?}, got {diagnostics:?}"
+        );
+    }
+}

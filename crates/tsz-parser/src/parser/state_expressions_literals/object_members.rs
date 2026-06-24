@@ -912,12 +912,27 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-            // tsc prefers "'{' expected." on `=>` in object methods written like:
-            // `m(n) => T {}` (should be `m(n): T {}`), then TS1434 on the stray type token.
+            // An object-literal method written with `=>` where its body block `{`
+            // is expected. tsc reports `'{' expected.` at the `=>`, then recovers.
+            // It *additionally* reports TS1434 ("Unexpected keyword or
+            // identifier.") on the token after the `=>` only for the
+            // mistyped-return-annotation shape `m(a) => T {` (the user meant
+            // `m(a): T {}`): that is, when the token after `=>` is a lone
+            // identifier/keyword *immediately followed by a `{` block*. When `=>`
+            // instead introduces a concise arrow body — `m(a) => x`, `=> a + 1`,
+            // `=> f()`, `=> x.y` — tsc emits no TS1434 and lets the trailing
+            // tokens recover as a statement (TS1128). tsz previously reported
+            // TS1434 on *every* identifier body, over-diagnosing the concise-body
+            // case; gate it on the following `{` to match tsc's recovery exactly.
             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             self.next_token(); // consume =>
-            if self.is_identifier_or_keyword() {
+            if self.is_identifier_or_keyword()
+                && self.speculate(|parser| {
+                    parser.next_token();
+                    parser.is_token(SyntaxKind::OpenBraceToken)
+                })
+            {
                 self.parse_error_at_current_token(
                     diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
