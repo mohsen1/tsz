@@ -125,11 +125,17 @@ impl CheckerState<'_> {
 
         let properties = props;
         let is_const_enum = symbol.has_any_flags(symbol_flags::CONST_ENUM);
-        let flags = if is_const_enum {
-            tsz_solver::ObjectFlags::CONST_ENUM
-        } else {
-            tsz_solver::ObjectFlags::empty()
-        };
+        // Mark the shape as an enum namespace object (mirroring the merged
+        // enum/namespace path in `namespace_checker`). The flag is what lets
+        // `keyof` drop the implicit reverse-mapping `[index: number]: string`
+        // signature on a numeric/mixed enum: tsc's `keyof typeof E` is the union
+        // of the member names only (`"A" | "B" | ...`), never `number`, even
+        // though `E[someNumber]` reverse-mapping element access still resolves to
+        // `string`. Without the flag the numeric index leaked into `keyof`.
+        let mut flags = tsz_solver::ObjectFlags::ENUM_NAMESPACE;
+        if is_const_enum {
+            flags |= tsz_solver::ObjectFlags::CONST_ENUM;
+        }
         if matches!(
             self.enum_kind(sym_id),
             Some(EnumKind::Numeric) | Some(EnumKind::Mixed)
