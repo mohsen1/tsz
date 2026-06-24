@@ -1024,8 +1024,80 @@ impl<'a> CheckerState<'a> {
                     // which returns the base class's own type parameters matching the
                     // `TypeId`s embedded in the (uninstantiated) instance type; use those
                     // so the substitution below applies the heritage arguments correctly.
-                    let base_type_params = base_class_params
+                    let base_is_class_base = base_class_params.is_some();
+                    let mut base_type_params = base_class_params
                         .unwrap_or_else(|| self.get_type_params_for_symbol(base_sym_id));
+
+                    // A generic base reached through a cross-file import / re-export
+                    // alias keeps `base_sym_id` on the *alias* symbol, whose own
+                    // declaration is the import specifier and so carries no
+                    // type-parameter list. `get_type_of_symbol` above still follows the
+                    // alias to the base's expanded body (whose members embed the base's
+                    // free type parameter), but `get_type_params_for_symbol` on the
+                    // alias returns nothing — so with heritage arguments supplied there
+                    // is no parameter to bind them to, the `instantiate_type`
+                    // substitution below is a silent no-op, and every inherited member
+                    // stays bound to the base's free `T` (false TS2322 on `c.value` for
+                    // `interface Crate extends Container<number>` imported from another
+                    // module — #13767 / #13212 cross-file heritage residual).
+                    //
+                    // Recover the base declaration's type-parameter list by reading it
+                    // directly from the declaring module's arena, resolved through the
+                    // full re-export chain (`reference_import_alias_export_target` ->
+                    // `resolve_reexport_chain_to_declaration`, which handles multi-hop
+                    // barrels and renames). Re-exported `SymbolId`s collide numerically
+                    // across binders (#14344), so identity-based re-resolution and arity
+                    // comparisons are unreliable here; the by-name substitution only
+                    // needs the parameter *names*, and those are interned to the same
+                    // `Atom`s already embedded as free type parameters in `base_type`.
+                    // Gated on the broken signature only — heritage arguments supplied,
+                    // no params resolved, and not the class path — so same-file and lib
+                    // generic bases (already param-matched) and genuinely non-generic
+                    // bases (recovered params stay empty) are left unchanged.
+                    if !base_is_class_base && base_type_params.is_empty() && !type_args.is_empty() {
+                        let chain_target = self
+                            .ctx
+                            .binder
+                            .get_symbol(base_sym_id)
+                            .filter(|alias_symbol| {
+                                self.reference_symbol_is_import_alias(alias_symbol)
+                            })
+                            .and_then(|alias_symbol| {
+                                self.reference_import_alias_export_target(
+                                    alias_symbol,
+                                    &base_symbol_name,
+                                )
+                            });
+                        if let Some((decl_sym, Some(owner_file_idx))) = chain_target
+                            && let Some((decl_flags, decl_decls, decl_name)) = self
+                                .ctx
+                                .get_binder_for_file(owner_file_idx)
+                                .and_then(|binder| binder.get_symbol(decl_sym))
+                                .map(|decl_symbol| {
+                                    (
+                                        decl_symbol.flags,
+                                        decl_symbol.declarations.clone(),
+                                        decl_symbol.escaped_name.clone(),
+                                    )
+                                })
+                        {
+                            let owner_arena = self.ctx.get_arena_for_file(owner_file_idx as u32);
+                            for decl_idx in decl_decls {
+                                if let Some(params) = self
+                                    .extract_simple_type_params_from_decl_in_arena(
+                                        owner_arena,
+                                        decl_flags,
+                                        decl_idx,
+                                        &decl_name,
+                                    )
+                                    && !params.is_empty()
+                                {
+                                    base_type_params = params;
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
                     if type_args.len() < base_type_params.len() {
                         for (param_index, param) in

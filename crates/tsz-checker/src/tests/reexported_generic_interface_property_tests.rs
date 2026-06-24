@@ -212,15 +212,21 @@ fn wrong_type_argument_still_errors() {
     );
 }
 
-// --- documented follow-up: a member *inherited* from a re-exported generic
-// base (`interface Local extends ReExported<number>`) still drops the type
-// argument. That is the cross-file generic-interface *heritage* materialization
-// path (#13767 / #13803 family), distinct from the receiver-application path
-// fixed here. Pinned (ignored) so the remaining gap is tracked, not lost. ---
+// --- a member *inherited* via `extends` from a cross-file generic interface
+// must substitute the heritage type argument. The heritage base is named through
+// a cross-file import / re-export alias, whose own declaration (the import
+// specifier) carries no type-parameter list; the base body still embeds the
+// base's free type parameter, so with no params to bind the supplied arguments
+// the heritage `instantiate_type` was a silent no-op and the inherited member
+// stayed bound to the base's free `T` (false TS2322 on `c.value`). The merge now
+// recovers the base's expanded body and matching params atomically so the
+// substitution applies (#13767 / #13212 cross-file heritage residual).
+//
+// Binder names are varied across cases so no identifier is load-bearing.
 
 #[test]
-#[ignore = "inherited-via-heritage member of a re-exported generic base needs cross-file heritage materialization (#13767 / #13212)"]
 fn extends_reexported_generic_interface_inherited_member() {
+    // Type-only barrel re-export of the generic base.
     assert_clean(
         &[
             (
@@ -237,5 +243,137 @@ fn extends_reexported_generic_interface_inherited_member() {
             ),
         ],
         "./hmain.ts",
+    );
+}
+
+#[test]
+fn extends_direct_cross_file_generic_interface_inherited_member() {
+    // Direct cross-file import (no barrel hop), differently-named binders.
+    assert_clean(
+        &[
+            ("./holder.ts", "export interface Holder<P> { slot: P; }\n"),
+            (
+                "./consumer.ts",
+                "import type { Holder } from './holder';\ninterface Bag extends Holder<number> { label: string; }\ndeclare const b: Bag;\nconst n: number = b.slot;\n",
+            ),
+        ],
+        "./consumer.ts",
+    );
+}
+
+#[test]
+fn extends_value_reexport_generic_interface_inherited_member() {
+    // Value (`export { X } from`) barrel rather than type-only.
+    assert_clean(
+        &[
+            ("./store.ts", "export interface Store<E> { entry: E; }\n"),
+            ("./gateway.ts", "export { Store } from './store';\n"),
+            (
+                "./app.ts",
+                "import { Store } from './gateway';\ninterface Shelf extends Store<string> { id: number; }\ndeclare const s: Shelf;\nconst v: string = s.entry;\n",
+            ),
+        ],
+        "./app.ts",
+    );
+}
+
+#[test]
+fn extends_renamed_reexport_generic_interface_inherited_member() {
+    // Renamed re-export: the import-site name differs from the declaration name.
+    assert_clean(
+        &[
+            (
+                "./origin.ts",
+                "export interface Original<Q> { field: Q; }\n",
+            ),
+            (
+                "./mid.ts",
+                "export type { Original as Renamed } from './origin';\n",
+            ),
+            (
+                "./client.ts",
+                "import type { Renamed } from './mid';\ninterface Crate extends Renamed<number> { extra: string; }\ndeclare const c: Crate;\nconst n: number = c.field;\n",
+            ),
+        ],
+        "./client.ts",
+    );
+}
+
+#[test]
+fn extends_cross_file_generic_interface_two_type_args() {
+    // Two type parameters, both substituted through the heritage clause.
+    assert_clean(
+        &[
+            (
+                "./pair.ts",
+                "export interface Pair<A, B> { left: A; right: B; }\n",
+            ),
+            ("./barrel.ts", "export type { Pair } from './pair';\n"),
+            (
+                "./use.ts",
+                "import type { Pair } from './barrel';\ninterface Combo extends Pair<number, string> { tag: boolean; }\ndeclare const c: Combo;\nconst l: number = c.left;\nconst r: string = c.right;\n",
+            ),
+        ],
+        "./use.ts",
+    );
+}
+
+#[test]
+#[ignore = "deeper residual: the inherited member reaches through TWO chained \
+            cross-file generic interfaces (Crate extends Wrap<number>, \
+            Wrap<V> extends Box<V>); the second hop's type argument is not yet \
+            threaded through the chained heritage materialization (#13212)"]
+fn extends_cross_file_generic_interface_two_level_chain() {
+    // The inherited member reaches through *two* cross-file generic interfaces:
+    // `Crate extends Wrap<number>` (cross-file) and `Wrap<V> extends Box<V>`
+    // (also cross-file). The deepest member `item` must still resolve to number.
+    assert_clean(
+        &[
+            ("./box.ts", "export interface Box<U> { item: U; }\n"),
+            (
+                "./wrap.ts",
+                "import type { Box } from './box';\nexport interface Wrap<V> extends Box<V> { tag: string; }\n",
+            ),
+            (
+                "./top.ts",
+                "import type { Wrap } from './wrap';\ninterface Crate extends Wrap<number> { extra: boolean; }\ndeclare const c: Crate;\nconst n: number = c.item;\n",
+            ),
+        ],
+        "./top.ts",
+    );
+}
+
+#[test]
+fn extends_same_file_generic_interface_inherited_member_control() {
+    // Control: an all-local generic base was already correct; it must stay clean.
+    assert_clean(
+        &[(
+            "./local.ts",
+            "interface Container<T> { value: T; }\ninterface Crate extends Container<number> { extra: string; }\ndeclare const c: Crate;\nconst n: number = c.value;\n",
+        )],
+        "./local.ts",
+    );
+}
+
+#[test]
+fn extends_cross_file_generic_interface_wrong_arg_still_errors() {
+    // Negative control: a genuine type-argument mismatch on the inherited member
+    // must still report TS2322 (the substitution is applied, not skipped).
+    let diags = check(
+        &[
+            ("./carrier.ts", "export interface Carrier<T> { load: T; }\n"),
+            ("./hub.ts", "export type { Carrier } from './carrier';\n"),
+            (
+                "./bad.ts",
+                "import type { Carrier } from './hub';\ninterface Crate extends Carrier<string> { extra: number; }\ndeclare const c: Crate;\nconst n: number = c.load;\n",
+            ),
+        ],
+        "./bad.ts",
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for string-vs-number mismatch on inherited member, got: {diags:?}"
     );
 }
