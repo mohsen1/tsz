@@ -1244,6 +1244,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         None
     }
 
+    fn get_heritage_instantiation(&self, derived: DefId, target: DefId) -> Option<TypeId> {
+        self.definition_store
+            .get_heritage_instantiation(derived, target)
+    }
+
     /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
     ///
     /// This determines whether an enum allows bidirectional number assignability (Rule #7).

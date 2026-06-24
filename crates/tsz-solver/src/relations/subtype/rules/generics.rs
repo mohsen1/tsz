@@ -32,6 +32,19 @@ fn args_contain_type_parameters(
         .any(|arg| crate::visitor::contains_type_parameters(interner, *arg))
 }
 
+/// #14351 lazy-reference relation kill switch. Default-OFF (opt-in via
+/// `TSZ_LAZY_REF_RELATION=1`) so flag-off is byte-identical to `main` — the
+/// cross-base heritage branch at the variance fast path takes the unchanged
+/// `return None` (structural-expansion) path when this is false. A dedicated
+/// env flag, NOT `perf_counters::enabled_fast`, because that gates pre-existing
+/// behavior; this must be a pure feature toggle so flag-off-vs-on is a clean
+/// single-variable delta.
+fn lazy_ref_relation_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_LAZY_REF_RELATION").is_ok_and(|v| v == "1"))
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
     ///
@@ -75,6 +88,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// A generic target reached through an interface edge returns `false` here so
     /// the caller falls through to the structural check, which honors variance.
+    /// #14351: pure nominal-heritage REACHABILITY — does `s_def` derive from
+    /// `t_def` via the `InheritanceGraph` (transitive `extends`/`implements`)?
+    /// Unlike [`Self::nominal_heritage_subtype`] this does NOT apply the
+    /// `both_classes || target_non_generic` authoritativeness gate: reachability
+    /// alone does not settle a *generic* relation (the per-argument variance
+    /// still has to run), but it is the candidate predicate for the
+    /// lazy-reference relation, which relates the instantiated bases by variance.
+    pub(crate) fn nominal_heritage_reachable(&self, s_def: DefId, t_def: DefId) -> bool {
+        let Some(graph) = self.inheritance_graph else {
+            return false;
+        };
+        let (Some(s_sym), Some(t_sym)) = (
+            self.resolver.def_to_symbol_id(s_def),
+            self.resolver.def_to_symbol_id(t_def),
+        ) else {
+            return false;
+        };
+        graph.is_derived_from(s_sym, t_sym)
+    }
+
     pub(crate) fn nominal_heritage_subtype(&self, s_def: DefId, t_def: DefId) -> bool {
         let Some(graph) = self.inheritance_graph else {
             return false;
@@ -798,6 +831,56 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.try_pass_through_alias_any_unification(&s_app, &t_app, s_def, t_def)
                 {
                     return Some(result);
+                }
+                // #14351 lazy-reference relation. For cross-base pairs whose
+                // source nominally derives from the target's def
+                // (`Apply1<A>` <: `Functor1<B>`), relate them by per-argument
+                // variance on the source's INSTANTIATED target-base
+                // (`Functor1<A>`, captured at lowering) instead of eagerly
+                // expanding both to structural objects and walking members. The
+                // instantiated base shares the target's base, so the EXISTING
+                // same-base variance fast path (`try_variance_fast_path`) does
+                // the per-arg variance read of `A` vs `B` — verdict-preserving
+                // (it reads the actual bound-var identity, never a canonicalized
+                // representative, so it cannot reproduce the alpha/brand
+                // representative-substitution corruption of the refuted levers).
+                //
+                // ACCEPTANCE-ONLY: only a conclusive `True` short-circuits; any
+                // other outcome (`False`/`Unknown`/no instantiated base) falls
+                // through to the unchanged structural `return None` below, so the
+                // branch can only REMOVE the eager member walk on pairs the
+                // variance check accepts — it can never flip a `False` to `True`
+                // or vice versa. Flag-OFF is byte-identical to `main`.
+                let reachable = self.nominal_heritage_reachable(s_def, t_def);
+                let heritage_base = if reachable && lazy_ref_relation_enabled() {
+                    self.resolver.get_heritage_instantiation(s_def, t_def)
+                } else {
+                    None
+                };
+                let mut accessor_resolved = false;
+                if let Some(base) = heritage_base
+                    && let Some(base_app_id) = application_id(self.interner, base)
+                {
+                    accessor_resolved = true;
+                    if matches!(
+                        self.try_variance_fast_path(base_app_id, t_app_id),
+                        Some(SubtypeResult::True)
+                    ) {
+                        return Some(SubtypeResult::True);
+                    }
+                }
+                // Measure-only accessor probe (only when counters enabled): the
+                // resolved/reachable ratio on fp-ts proves the capture populates
+                // the map for real heritage edges. Independent of the flag so the
+                // denominator is observable even with the relation OFF.
+                if tsz_common::perf_counters::enabled_fast() {
+                    let resolved = accessor_resolved
+                        || (reachable
+                            && self
+                                .resolver
+                                .get_heritage_instantiation(s_def, t_def)
+                                .is_some());
+                    tsz_common::perf_counters::record_relation_lazy_ref_probe(reachable, resolved);
                 }
                 return None;
             }
