@@ -25,6 +25,7 @@ use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use span_diagnostic_queries::strip_module_specifier_extension;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -447,6 +448,77 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn declared_type_annotation_node_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<(&tsz_parser::NodeArena, NodeIndex)> {
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return None;
+        }
+
+        let owner_binder = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .and_then(|arena| self.ctx.get_binder_for_arena(arena))
+            })
+            .unwrap_or(self.ctx.binder);
+        let fallback_arena = if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            owner_binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref)
+                .unwrap_or(self.ctx.arena)
+        };
+
+        let decl_arena = owner_binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|arenas| arenas.first().map(|arena| arena.as_ref()))
+            .filter(|arena| arena.get(decl_idx).is_some())
+            .unwrap_or(fallback_arena);
+        let decl = decl_arena.get(decl_idx)?;
+
+        if let Some(param) = decl_arena.get_parameter(decl)
+            && param.type_annotation.is_some()
+        {
+            return Some((decl_arena, param.type_annotation));
+        }
+
+        if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
+            && var_decl.type_annotation.is_some()
+        {
+            return Some((decl_arena, var_decl.type_annotation));
+        }
+
+        None
+    }
+
+    fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {
+        let Some((decl_arena, annotation_idx)) =
+            self.declared_type_annotation_node_for_symbol(sym_id)
+        else {
+            return false;
+        };
+        decl_arena.get(annotation_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::TYPE_REFERENCE
+                    | syntax_kind_ext::UNION_TYPE
+                    | syntax_kind_ext::PARENTHESIZED_TYPE
+            )
+        })
+    }
+
     /// The declared (pre-narrowing) type of a source *variable* identifier
     /// expression, or `None` when `expr_idx` is not a usable variable
     /// identifier. Merged `INTERFACE`+`VALUE` symbols resolve to the interface
@@ -470,6 +542,9 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
             && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
+            return None;
+        }
+        if !self.declared_annotation_can_name_union_source(sym_id) {
             return None;
         }
         let declared_type = self.get_type_of_symbol(sym_id);
