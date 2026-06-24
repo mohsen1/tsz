@@ -4,8 +4,8 @@
 //! This is a child module of `query_cache`, so it keeps access to the cache's
 //! private fields.
 
-use super::*;
-use crate::caches::db::TypeApplicationEvalCache;
+use super::{DefId, EvaluationCacheKey, QueryCache, TypeId, application_eval_index};
+use crate::caches::db::{TypeApplicationEvalCache, TypeCompilerOptions};
 
 impl TypeApplicationEvalCache for QueryCache<'_> {
     // #14345: delegate the project-wide instantiation cache to the interner
