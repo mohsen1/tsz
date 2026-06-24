@@ -452,13 +452,13 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: SymbolId,
     ) -> Option<(&tsz_parser::NodeArena, NodeIndex)> {
-        let symbol = self.get_cross_file_symbol(sym_id)?;
-        let decl_idx = symbol.value_declaration;
-        if decl_idx.is_none() {
+        let symbol_record = self.get_cross_file_symbol(sym_id)?;
+        let declaration_idx = symbol_record.value_declaration;
+        if declaration_idx.is_none() {
             return None;
         }
 
-        let owner_binder = self
+        let declaration_binder = self
             .ctx
             .resolve_symbol_file_index(sym_id)
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
@@ -470,46 +470,46 @@ impl<'a> CheckerState<'a> {
                     .and_then(|arena| self.ctx.get_binder_for_arena(arena))
             })
             .unwrap_or(self.ctx.binder);
-        let fallback_arena = if symbol.decl_file_idx != u32::MAX {
-            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        let symbol_arena = if symbol_record.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol_record.decl_file_idx)
         } else {
-            owner_binder
+            declaration_binder
                 .symbol_arenas
                 .get(&sym_id)
                 .map(std::convert::AsRef::as_ref)
                 .unwrap_or(self.ctx.arena)
         };
 
-        let decl_arena = owner_binder
+        let annotation_arena = declaration_binder
             .declaration_arenas
-            .get(&(sym_id, decl_idx))
+            .get(&(sym_id, declaration_idx))
             .and_then(|arenas| arenas.first().map(|arena| arena.as_ref()))
-            .filter(|arena| arena.get(decl_idx).is_some())
-            .unwrap_or(fallback_arena);
-        let decl = decl_arena.get(decl_idx)?;
+            .filter(|arena| arena.get(declaration_idx).is_some())
+            .unwrap_or(symbol_arena);
+        let declaration = annotation_arena.get(declaration_idx)?;
 
-        if let Some(param) = decl_arena.get_parameter(decl)
+        if let Some(param) = annotation_arena.get_parameter(declaration)
             && param.type_annotation.is_some()
         {
-            return Some((decl_arena, param.type_annotation));
+            return Some((annotation_arena, param.type_annotation));
         }
 
-        if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
+        if let Some(var_decl) = annotation_arena.get_variable_declaration(declaration)
             && var_decl.type_annotation.is_some()
         {
-            return Some((decl_arena, var_decl.type_annotation));
+            return Some((annotation_arena, var_decl.type_annotation));
         }
 
         None
     }
 
     fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {
-        let Some((decl_arena, annotation_idx)) =
+        let Some((annotation_arena, annotation_idx)) =
             self.declared_type_annotation_node_for_symbol(sym_id)
         else {
             return false;
         };
-        decl_arena.get(annotation_idx).is_some_and(|node| {
+        annotation_arena.get(annotation_idx).is_some_and(|node| {
             matches!(
                 node.kind,
                 syntax_kind_ext::TYPE_REFERENCE
@@ -585,7 +585,7 @@ impl<'a> CheckerState<'a> {
         // structural expansion is asymmetrically related under the decision-only
         // relation) must keep its established display path and is not a member
         // of this flow-narrowing-drops-the-alias family.
-        if crate::query_boundaries::common::union_members(self.ctx.types, declared_type).is_none() {
+        if diagnostic_query::union_members(self.ctx.types, declared_type).is_none() {
             return false;
         }
         let is_assignability_narrower = self
