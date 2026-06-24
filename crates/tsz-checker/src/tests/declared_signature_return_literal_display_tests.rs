@@ -1,0 +1,209 @@
+//! Tests that a **declared** (non-fresh) signature source preserves its literal
+//! return and parameter types verbatim in TS2322 assignability diagnostics,
+//! while a **fresh** function expression's inferred return literal still widens.
+//!
+//! Structural rule: `tsc`'s `getWidenedType` widens only *fresh* literals, so a
+//! literal written in a declared signature position — `{ m(): 1 }`,
+//! `(x: 2) => void`, `() => 1` — is rendered verbatim, whereas a fresh function
+//! expression's inferred return (`(x) => 1`) is widened to its base
+//! (`(x) => number`). tsz lost per-literal freshness for inferred arrow returns,
+//! so the discriminator is the *source provenance*: only the declared-identifier
+//! source path preserves the signature literal; fresh function-expression
+//! sources keep widening.
+//!
+//! Before the fix, the assignability display normalizer widened *every*
+//! function/method/constructor return literal, so a declared `{ m(): 1 }` source
+//! rendered as `{ m(): number; }`. The traversal that recognizes a non-fresh
+//! source's canonical literal members also did not descend into signature
+//! parameter/return positions, so a declared `{ m(x: 1): void }` param widened
+//! too.
+
+use crate::test_utils::check_source_diagnostics;
+
+fn ts2322_messages(source: &str) -> Vec<String> {
+    check_source_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text)
+        .collect()
+}
+
+fn assert_source_displays(source: &str, expected_source_type: &str) {
+    let messages = ts2322_messages(source);
+    assert!(
+        messages.iter().any(|m| m.contains(expected_source_type)),
+        "expected source display `{expected_source_type}`, got: {messages:?}"
+    );
+}
+
+#[test]
+fn declared_method_return_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: { m(): 1 };
+const s: string = v;
+"#,
+        "{ m(): 1; }",
+    );
+}
+
+#[test]
+fn declared_method_string_return_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: { m(): "x" };
+const s: string = v;
+"#,
+        "{ m(): \"x\"; }",
+    );
+}
+
+#[test]
+fn declared_method_parameter_literal_is_preserved() {
+    // The non-fresh-literal-member traversal must descend into signature
+    // parameter positions, not just return positions.
+    assert_source_displays(
+        r#"
+declare const v: { m(x: 1): void };
+const s: string = v;
+"#,
+        "{ m(x: 1): void; }",
+    );
+}
+
+#[test]
+fn declared_method_param_and_return_literals_are_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: { m(x: 1): 2 };
+const s: string = v;
+"#,
+        "{ m(x: 1): 2; }",
+    );
+}
+
+#[test]
+fn nested_declared_method_return_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: { o: { m(): 2 } };
+const s: string = v;
+"#,
+        "{ o: { m(): 2; }; }",
+    );
+}
+
+#[test]
+fn declared_top_level_function_return_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: () => 1;
+const s: string = v;
+"#,
+        "() => 1",
+    );
+}
+
+#[test]
+fn declared_method_literal_preserved_when_source_is_in_target_role_position() {
+    // The mismatching source here is `x` (`{ m(): 2 }`); it must keep `2`.
+    assert_source_displays(
+        r#"
+declare const x: { m(): 2 };
+const v: { m(): 1 } = x;
+"#,
+        "{ m(): 2; }",
+    );
+}
+
+#[test]
+fn renamed_binders_preserve_declared_method_return_literal() {
+    // Anti-hardcoding: the rule is structural, not keyed on identifier names.
+    assert_source_displays(
+        r#"
+declare const widget: { compute(): 7 };
+const out: string = widget;
+"#,
+        "{ compute(): 7; }",
+    );
+}
+
+#[test]
+fn fresh_arrow_expression_return_literal_still_widens() {
+    // A fresh function expression's inferred return literal is widened to its
+    // base, matching tsc (`(x) => 1` → `(x: number) => number`).
+    let messages = ts2322_messages(
+        r#"
+interface T { (x: number): string }
+declare let t: T;
+t = (x: number) => 1;
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("(x: number) => number")),
+        "fresh arrow return should widen to `number`, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("(x: number) => 1")),
+        "fresh arrow return must not be preserved as a literal, got: {messages:?}"
+    );
+}
+
+#[test]
+fn fresh_function_expression_return_literal_still_widens() {
+    let messages = ts2322_messages(
+        r#"
+interface T { (x: number): string }
+declare let t: T;
+t = function (x: number) { return 1; };
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("(x: number) => number")),
+        "fresh function-expression return should widen, got: {messages:?}"
+    );
+}
+
+#[test]
+fn fresh_object_literal_method_return_still_widens() {
+    // A fresh object literal's inferred method return is widened at inference,
+    // so it must keep displaying the widened base.
+    let messages = ts2322_messages(
+        r#"
+const v = { m() { return 1; } };
+const s: string = v;
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("{ m(): number; }")),
+        "fresh object-literal method return should widen, got: {messages:?}"
+    );
+}
+
+#[test]
+fn declared_plain_literal_property_still_preserved_control() {
+    // Pre-existing behavior: a declared non-method literal property is kept.
+    assert_source_displays(
+        r#"
+declare const v: { a: 1 };
+const s: string = v;
+"#,
+        "{ a: 1; }",
+    );
+}
+
+#[test]
+fn declared_unit_literal_source_still_widens_control() {
+    // A declared *scalar* unit-literal source widens to its base against a
+    // non-literal target (unchanged by this fix; literals have no signature).
+    let messages = ts2322_messages(
+        r#"
+declare const v: 1;
+const s: string = v;
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("Type 'number'")),
+        "declared unit literal should widen to base, got: {messages:?}"
+    );
+}

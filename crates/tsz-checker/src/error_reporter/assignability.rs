@@ -1330,11 +1330,15 @@ impl<'a> CheckerState<'a> {
                 || self.source_carries_canonical_literal_member_inner(child, visiting, depth + 1)
         };
 
-        if let Some(shape) = crate::query_boundaries::diagnostics::object_shape_for_type(db, ty) {
-            return shape
+        // A hybrid object that also carries call/construct signatures
+        // (`{ x: number; (): 1 }`) falls through to the signature descent below.
+        if let Some(shape) = crate::query_boundaries::diagnostics::object_shape_for_type(db, ty)
+            && shape
                 .properties
                 .iter()
-                .any(|p| recurse(p.type_id, visiting));
+                .any(|p| recurse(p.type_id, visiting))
+        {
+            return true;
         }
         if let Some(elem) = crate::query_boundaries::diagnostics::array_element_type(db, ty) {
             return recurse(elem, visiting);
@@ -1353,7 +1357,9 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = crate::query_boundaries::diagnostics::intersection_members(db, ty) {
             return members.iter().any(|&m| recurse(m, visiting));
         }
-        false
+        super::assignability_type_helpers::signature_carries_canonical_literal_member(
+            db, ty, visiting, recurse,
+        )
     }
 
     pub(super) fn rewrite_target_display_for_non_literal_assignability(

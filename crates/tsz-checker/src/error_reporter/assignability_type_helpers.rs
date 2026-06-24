@@ -11,6 +11,47 @@ pub(super) fn is_function_like_for_literal_member_widening(
         || crate::query_boundaries::common::callable_shape_for_type(db, type_id).is_some()
 }
 
+/// Whether any function/method/constructor **signature** reachable from `ty`
+/// carries a canonical literal member in a return or parameter position
+/// (`{ m(): 1 }`, `{ f: () => 1 }`, `(x: 2) => void`). `tsc`'s `getWidenedType`
+/// widens only *fresh* literals, so a declared signature literal is rendered
+/// verbatim; the source-literal-member traversal must descend into signatures
+/// to recognise it. `recurse` performs the literal-or-deeper check on a child
+/// type, threading the cycle-guard `visiting` set.
+pub(super) fn signature_carries_canonical_literal_member<F>(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    ty: TypeId,
+    visiting: &mut rustc_hash::FxHashSet<TypeId>,
+    mut recurse: F,
+) -> bool
+where
+    F: FnMut(TypeId, &mut rustc_hash::FxHashSet<TypeId>) -> bool,
+{
+    if let Some(func) = crate::query_boundaries::diagnostics::function_shape_for_type(db, ty)
+        && (recurse(func.return_type, visiting)
+            || func.params.iter().any(|p| recurse(p.type_id, visiting)))
+    {
+        return true;
+    }
+    if let Some(callable) = crate::query_boundaries::diagnostics::callable_shape_for_type(db, ty) {
+        // A hybrid object that also carries call/construct signatures
+        // (`{ x: number; (): 1 }`) keeps its signature literals too.
+        return callable
+            .call_signatures
+            .iter()
+            .chain(callable.construct_signatures.iter())
+            .any(|sig| {
+                recurse(sig.return_type, visiting)
+                    || sig.params.iter().any(|p| recurse(p.type_id, visiting))
+            })
+            || callable
+                .properties
+                .iter()
+                .any(|p| recurse(p.type_id, visiting));
+    }
+    false
+}
+
 /// Returns true if the formatted type name matches a built-in wrapper type
 /// (Boolean, Number, String, Object). These types inherit properties from Object
 /// and missing-property diagnostics should be suppressed in favor of TS2322.
