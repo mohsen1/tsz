@@ -1012,6 +1012,9 @@ mod intersection_callable_constraint_ts2344_tests;
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
+#[path = "tests/intersection_source_literal_member_display_tests.rs"]
+mod intersection_source_literal_member_display_tests;
+#[cfg(test)]
 #[path = "tests/intersection_target_elaboration_tests.rs"]
 mod intersection_target_elaboration_tests;
 #[cfg(test)]
