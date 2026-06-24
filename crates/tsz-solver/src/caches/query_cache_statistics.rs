@@ -20,6 +20,8 @@ pub struct QueryCacheStatistics {
     pub eval_cache_entries: usize,
     /// Number of memoized substitution-independent evaluation results.
     pub closed_eval_cache_entries: usize,
+    /// Number of memoized conditional-branch subtype verdicts (#8356 / #13097).
+    pub conditional_branch_verdict_cache_entries: usize,
     /// Number of memoized application evaluation results.
     pub application_eval_cache_entries: usize,
     /// Number of times the application eval cache returned a hit.
@@ -75,6 +77,8 @@ impl QueryCacheStatistics {
     pub const fn merge(&mut self, other: &QueryCacheStatistics) {
         self.eval_cache_entries += other.eval_cache_entries;
         self.closed_eval_cache_entries += other.closed_eval_cache_entries;
+        self.conditional_branch_verdict_cache_entries +=
+            other.conditional_branch_verdict_cache_entries;
         self.application_eval_cache_entries += other.application_eval_cache_entries;
         self.application_eval_cache_hits += other.application_eval_cache_hits;
         self.application_eval_cache_misses += other.application_eval_cache_misses;
@@ -116,6 +120,9 @@ impl QueryCacheStatistics {
 
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
         let closed_eval = self.closed_eval_cache_entries * (BUCKET_OVERHEAD + 13);
+        // (TypeId, TypeId, bool) key + bool value ≈ 10 bytes.
+        let conditional_verdict =
+            self.conditional_branch_verdict_cache_entries * (BUCKET_OVERHEAD + 10);
         let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
         let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
         let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);
@@ -129,6 +136,7 @@ impl QueryCacheStatistics {
         let subtype_reduction = self.subtype_reduction_cache_entries * (BUCKET_OVERHEAD + 73);
 
         eval + closed_eval
+            + conditional_verdict
             + app_eval
             + elem
             + spread
@@ -151,6 +159,11 @@ impl std::fmt::Display for QueryCacheStatistics {
             f,
             "  closed_eval_cache:      {}",
             self.closed_eval_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  cond_branch_verdict:    {}",
+            self.conditional_branch_verdict_cache_entries
         )?;
         writeln!(
             f,

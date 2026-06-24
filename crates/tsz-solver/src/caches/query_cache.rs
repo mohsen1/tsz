@@ -6,9 +6,9 @@
 
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
-    QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeContainsByIdCache,
-    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
-    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance,
+    TypeExtractParamsCache, TypePredicateCache, TypePruneUnionCache, TypeSubstitutionConstruction,
+    TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -224,6 +224,12 @@ pub struct QueryCache<'a> {
     /// Substitution-independent evaluation cache (see the `closed_eval` module
     /// in `evaluate`). Keyed by `(TypeId, no_unchecked_indexed_access)`.
     closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    /// Persistent conditional-branch subtype verdicts (issues #8356 / #13097).
+    /// Keyed by `(check, extends, no_unchecked_indexed_access)`; stores only
+    /// definitive, limit-free verdicts so it survives the per-evaluator
+    /// `conditional_subtype_cache` that is dropped on every evaluator
+    /// construction. Shares this cache's `clear()`/file lifecycle envelope.
+    conditional_branch_verdict_cache: RefCell<FxHashMap<(TypeId, TypeId, bool), bool>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
@@ -304,6 +310,7 @@ impl<'a> QueryCache<'a> {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_cache: RefCell::new(FxHashMap::default()),
+            conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_dependency_index: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
@@ -335,6 +342,7 @@ impl<'a> QueryCache<'a> {
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
         self.closed_eval_cache.borrow_mut().clear();
+        self.conditional_branch_verdict_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
@@ -371,6 +379,10 @@ impl<'a> QueryCache<'a> {
         QueryCacheStatistics {
             eval_cache_entries: self.eval_cache.borrow().len(),
             closed_eval_cache_entries: self.closed_eval_cache.borrow().len(),
+            conditional_branch_verdict_cache_entries: self
+                .conditional_branch_verdict_cache
+                .borrow()
+                .len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
             application_eval_cache_hits: self.application_eval_cache_stats.hits(),
             application_eval_cache_misses: self.application_eval_cache_stats.misses(),
@@ -854,130 +866,6 @@ impl TypeCompilerOptions for QueryCache<'_> {
 
     fn exact_optional_property_types(&self) -> bool {
         self.exact_optional_property_types.get()
-    }
-}
-
-impl TypeApplicationEvalCache for QueryCache<'_> {
-    // #14345: delegate the project-wide instantiation cache to the interner
-    // so query_db=Some passes share the same table the query_db=None callers read.
-    fn lookup_proto_instantiation_cache(
-        &self,
-        key: &crate::caches::instantiation_cache::InstantiationCacheKey,
-    ) -> Option<TypeId> {
-        self.interner.proto_instantiation_memo(key)
-    }
-
-    fn insert_proto_instantiation_cache(
-        &self,
-        key: crate::caches::instantiation_cache::InstantiationCacheKey,
-        result: TypeId,
-    ) {
-        self.interner.set_proto_instantiation_memo(key, result);
-    }
-
-    fn lookup_application_eval_cache(
-        &self,
-        def_id: DefId,
-        args: &[TypeId],
-        no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        self.check_application_eval_cache((
-            def_id,
-            smallvec::SmallVec::from_slice(args),
-            no_unchecked_indexed_access,
-            self.exact_optional_property_types(),
-        ))
-    }
-
-    fn insert_application_eval_cache(
-        &self,
-        def_id: DefId,
-        args: &[TypeId],
-        no_unchecked_indexed_access: bool,
-        result: TypeId,
-    ) {
-        QueryCache::insert_application_eval_cache(
-            self,
-            (
-                def_id,
-                smallvec::SmallVec::from_slice(args),
-                no_unchecked_indexed_access,
-                self.exact_optional_property_types(),
-            ),
-            result,
-        );
-    }
-
-    fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
-        application_eval_index::invalidate_for_def(
-            &self.application_eval_dependency_index,
-            &self.application_eval_cache,
-            def_id,
-        );
-        if let Some(shared) = self.shared
-            && shared.shares_instantiation_family()
-        {
-            shared.invalidate_application_eval_cache_for_def(def_id);
-        }
-    }
-
-    /// Nested eval-memo read for plain evaluators (issue #13097).
-    /// Same layered lookup the top-level boundary uses.
-    fn lookup_eval_memo(
-        &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        self.lookup_eval_cache_layers(EvaluationCacheKey::new(
-            type_id,
-            no_unchecked_indexed_access,
-            self.exact_optional_property_types(),
-        ))
-    }
-
-    /// Write-through eval-memo store for plain evaluators (issue #13097).
-    /// First write wins, matching the top-level boundary drain.
-    fn insert_eval_memo(&self, type_id: TypeId, no_unchecked_indexed_access: bool, result: TypeId) {
-        let key = EvaluationCacheKey::new(
-            type_id,
-            no_unchecked_indexed_access,
-            self.exact_optional_property_types(),
-        );
-        self.eval_cache.borrow_mut().entry(key).or_insert(result);
-        if let Some(shared) = self.shared {
-            shared.eval_cache.entry(key).or_insert(result);
-        }
-    }
-
-    fn lookup_closed_eval_cache(
-        &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        self.closed_eval_cache
-            .borrow()
-            .get(&EvaluationCacheKey::new(
-                type_id,
-                no_unchecked_indexed_access,
-                self.exact_optional_property_types(),
-            ))
-            .copied()
-    }
-
-    fn insert_closed_eval_cache(
-        &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
-        result: TypeId,
-    ) {
-        self.closed_eval_cache.borrow_mut().insert(
-            EvaluationCacheKey::new(
-                type_id,
-                no_unchecked_indexed_access,
-                self.exact_optional_property_types(),
-            ),
-            result,
-        );
     }
 }
 
@@ -1977,6 +1865,9 @@ mod tests;
 
 #[path = "query_cache_collect_properties_memo.rs"]
 mod collect_properties_memo;
+
+#[path = "query_cache_application_eval.rs"]
+mod application_eval;
 
 #[path = "query_cache_size.rs"]
 mod size;

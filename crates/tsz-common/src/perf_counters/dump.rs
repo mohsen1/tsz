@@ -947,6 +947,8 @@ impl PerfCounters {
             && counters.lost_memo_recomputes_other == 0
             && counters.dropped_memo_entries == 0
             && counters.dropped_aux_entries == 0
+            && counters.conditional_verdict_persist_hits == 0
+            && counters.conditional_verdict_persist_inserts == 0
             && termination_total == 0
         {
             return String::new();
@@ -964,7 +966,9 @@ impl PerfCounters {
              authoritative recomputes  {:>12}\n  \
              other recomputes          {:>12}\n  \
              dropped memo entries      {:>12}\n  \
-             dropped aux entries       {:>12}\n",
+             dropped aux entries       {:>12}\n  \
+             cond verdict persist hits {:>12}\n  \
+             cond verdict persist ins  {:>12}\n",
             counters.constructions,
             counters.local_memo_hits,
             counters.compute_nodes,
@@ -977,6 +981,8 @@ impl PerfCounters {
             counters.lost_memo_recomputes_other,
             counters.dropped_memo_entries,
             counters.dropped_aux_entries,
+            counters.conditional_verdict_persist_hits,
+            counters.conditional_verdict_persist_inserts,
         );
         // #14346: which guard cut a walk short, and how often. The
         // firing-order signal — a nonzero bucket fingerprints which bound a

@@ -47,6 +47,16 @@ pub(super) fn classify_branch_relation(relate: impl FnOnce() -> bool) -> BranchR
     }
 }
 
+/// Debug kill-switch for the cross-evaluator conditional-branch verdict cache
+/// (issues #8356 / #13097). Set `TSZ_DISABLE_CONDITIONAL_BRANCH_CACHE=1` to
+/// bypass both reads and writes; used only to bisect regressions, defaults to
+/// enabled. Mirrors `closed_eval`'s `TSZ_DISABLE_CLOSED_EVAL_CACHE` switch.
+pub(super) fn conditional_branch_verdict_cache_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_CONDITIONAL_BRANCH_CACHE").is_err())
+}
+
 /// Resolved and pre-computed operands for one conditional evaluation step.
 pub(super) struct ConditionalOperands {
     pub(super) check_type: TypeId,
@@ -537,6 +547,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
+        // Persistent cross-evaluator verdict (issues #8356 / #13097): the
+        // per-evaluator `conditional_subtype_cache` above is dropped on every
+        // one of the many `TypeEvaluator` instances instantiation spins up, so
+        // the same `(check, extends)` branch probe re-runs the full structural
+        // walk per evaluator. A definitive verdict published earlier (subject to
+        // the limit/registration-window gates at the write site below) is a
+        // stable answer, so serve it here and prime the local cache. Reading a
+        // stored definitive verdict is always at least as correct as a fresh
+        // probe — it can only replace this call's conservative depth-bail with
+        // the true answer, never the reverse.
+        if conditional_branch_verdict_cache_enabled()
+            && let Some(verdict) = self.interner().lookup_conditional_branch_verdict(
+                check_type,
+                extends_type,
+                self.no_unchecked_indexed_access(),
+            )
+        {
+            tsz_common::perf_counters::record_eval_conditional_verdict_persist_hit();
+            self.cache_conditional_subtype(check_type, extends_type, verdict);
+            return if verdict {
+                BranchRelation::Holds
+            } else {
+                BranchRelation::Fails
+            };
+        }
+
         // Depth guard: evaluating conditional types can trigger subtype checks
         // that evaluate MORE conditional types, creating an
         // Evaluator -> SubtypeChecker -> Evaluator -> ... chain where each
@@ -547,6 +583,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // every exit including a caught panic-unwind, keeping the relation
         // schedule-independent across batch-worker reuse (#13368).
         let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
+        // A verdict produced by the depth bail or by a structural walk that
+        // itself tripped a recursion/iteration limit is a *budget-bounded*
+        // conservative answer, not a stable function of the type pair: it must
+        // never be published to the cross-evaluator cache (it would permanently
+        // shadow the full answer a deeper-budget run derives). Tracked here and
+        // consulted at the write site.
+        let mut verdict_is_budget_bounded = false;
         // Classify against the unresolved-`Lazy` sentinel: a `false` produced
         // only because the structural walk descended into an unregistered
         // `Lazy` body is reported as `Undetermined` rather than a definitive
@@ -558,6 +601,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // (takes the false/else branch of the conditional).
                 // This matches tsc's behavior of returning the deferred
                 // conditional when instantiation depth is exceeded.
+                verdict_is_budget_bounded = true;
                 false
             } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
                 // Fast-path: primitive types (string, number, boolean, bigint,
@@ -588,7 +632,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 false
             } else {
                 let mut strict_checker = self.conditional_subtype_checker();
-                strict_checker.is_subtype_of(check_type, extends_type)
+                let verdict = strict_checker.is_subtype_of(check_type, extends_type);
+                // A walk that exhausted its own depth/iteration budget returned
+                // a conservative verdict; mark it un-publishable.
+                if strict_checker.depth_exceeded() || strict_checker.iteration_exceeded() {
+                    verdict_is_budget_bounded = true;
+                }
+                verdict
             }
         });
         // Restore the depth before the cache write to preserve the original
@@ -600,11 +650,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // resolved pass decides the conditional (issue #14238). Definitive
         // verdicts are cached as before.
         if relation != BranchRelation::Undetermined {
-            self.cache_conditional_subtype(
-                check_type,
-                extends_type,
-                relation == BranchRelation::Holds,
-            );
+            let verdict = relation == BranchRelation::Holds;
+            self.cache_conditional_subtype(check_type, extends_type, verdict);
+
+            // Publish to the cross-evaluator verdict cache only when the answer
+            // is a stable function of `(check, extends, no_unchecked)`:
+            //  - definitive (not `Undetermined`, already guaranteed here) — a
+            //    `false` that consumed an unregistered `Lazy` body never reaches
+            //    this arm, so no registration-window artifact is published;
+            //  - not budget-bounded — neither the depth bail nor a limit-tripped
+            //    structural walk produced it;
+            //  - the enclosing evaluation window saw no recursion limit and no
+            //    unresolved application body (`recursion_limit_hit` /
+            //    `unresolved_def_seen`), and neither operand is tainted — the
+            //    same whole-run gates `closed_eval` uses before persisting.
+            if conditional_branch_verdict_cache_enabled()
+                && !verdict_is_budget_bounded
+                && !self.recursion_limit_hit()
+                && !self.unresolved_def_seen()
+                && !self.is_tainted(check_type)
+                && !self.is_tainted(extends_type)
+            {
+                self.interner().insert_conditional_branch_verdict(
+                    check_type,
+                    extends_type,
+                    self.no_unchecked_indexed_access(),
+                    verdict,
+                );
+                tsz_common::perf_counters::record_eval_conditional_verdict_persist_insert();
+            }
         }
         relation
     }

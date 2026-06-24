@@ -40,6 +40,15 @@ impl QueryCache<'_> {
                     + std::mem::size_of::<TypeId>());
         }
 
+        // conditional_branch_verdict_cache: (TypeId, TypeId, bool) -> bool
+        {
+            let map = self.conditional_branch_verdict_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<(TypeId, TypeId, bool)>()
+                    + std::mem::size_of::<bool>());
+        }
+
         // application_eval_cache: (DefId, SmallVec<[TypeId; 4]>, bool) -> TypeId
         {
             let map = self.application_eval_cache.borrow();
