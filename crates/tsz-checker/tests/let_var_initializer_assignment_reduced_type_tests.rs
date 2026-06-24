@@ -17,20 +17,26 @@
 //! object/class-typed `let`/`var` kept the un-narrowed union and produced false
 //! `TS2322` (assignability) and `TS2339` (property access on a union member)
 //! diagnostics. Primitive-union initializers already narrowed through the
-//! literal-type branch, masking the gap. The fix drops the `const`-only guard so
-//! object/array literals and non-literal initializers (`new C()`, another
-//! reference, …) narrow identically to `const`.
+//! literal-type branch, masking the gap. The fix narrows never-reassigned
+//! standalone `let`/`var` declarations like `const`, while preserving tsc's
+//! older function-scoped `var` redeclaration behavior for symbols merged with
+//! earlier parameters.
 //!
 //! Binder names are varied per case so coverage is structural, not keyed to a
 //! particular identifier.
 
-use tsz_checker::test_utils::check_source_strict_codes;
+use tsz_checker::test_utils::{check_source_codes, check_source_strict_codes};
 
 const TS2322: u32 = 2322; // Type X is not assignable to type Y
 const TS2339: u32 = 2339; // Property does not exist on type
+const TS2403: u32 = 2403; // Subsequent variable declarations must have the same type
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_strict_codes(source)
+}
+
+fn default_codes(source: &str) -> Vec<u32> {
+    check_source_codes(source)
 }
 
 // ---------------------------------------------------------------------------
@@ -213,5 +219,57 @@ function fn<r>(makeSome: () => r): void {
     assert!(
         !diags.contains(&TS2322),
         "loop-reassigned generic Optional must not produce a spurious TS2322, got {diags:?}"
+    );
+}
+
+#[test]
+fn parameter_merged_var_initializer_does_not_narrow_parameter_symbol() {
+    // `var` declarations merge with function parameters in the same function
+    // scope. The merged symbol's checking surface remains the earlier parameter
+    // declaration, so the `var` annotation/initializer must not assignment-reduce
+    // the parameter to `Beta`. This is the structural form of conformance
+    // `functionArgShadowing.ts`.
+    let diags = default_codes(
+        r#"
+class Alpha { foo() {} }
+class Beta { bar() {} }
+function use(param: Alpha) {
+  var param: Beta = new Beta();
+  param.bar();
+}
+"#,
+    );
+    assert!(
+        diags.contains(&TS2403),
+        "merged parameter/var must report the redeclaration mismatch, got {diags:?}"
+    );
+    assert!(
+        diags.contains(&TS2339),
+        "the merged parameter surface must remain Alpha, so param.bar is TS2339; got {diags:?}"
+    );
+}
+
+#[test]
+fn constructor_parameter_property_merged_var_keeps_parameter_type() {
+    // Vary the binder name and include the parameter-property shape from the
+    // TypeScript fixture. The `var` declaration conflicts with the constructor
+    // parameter's value symbol; reads still use the parameter's number surface.
+    let diags = default_codes(
+        r#"
+class Holder {
+  constructor(public value: number) {
+    var value: string;
+    var n: number = value;
+  }
+}
+"#,
+    );
+    assert!(
+        diags.contains(&TS2403),
+        "parameter-property var redeclaration must report TS2403, got {diags:?}"
+    );
+    assert!(
+        !diags.contains(&TS2322),
+        "value keeps the constructor parameter's number type, so assigning to number is clean; got {diags:?}"
     );
 }

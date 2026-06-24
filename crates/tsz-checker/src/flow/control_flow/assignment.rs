@@ -548,6 +548,9 @@ impl<'a> FlowAnalyzer<'a> {
             // repro). A never-reassigned local can never sit on a loop
             // back-edge, so narrowing it is always safe.
             if self.is_var_decl_with_type_annotation(assignment_node) {
+                if self.var_decl_redeclares_parameter_for_reference(assignment_node, target) {
+                    return None;
+                }
                 let initializer_narrows_declared_type = self
                     .is_const_variable_declaration(assignment_node)
                     || self
