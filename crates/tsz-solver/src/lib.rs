@@ -216,6 +216,28 @@ pub mod observability {
     pub fn eval_materialization_probe_report() -> String {
         crate::evaluation::eval_materialization_probe::dump_report()
     }
+
+    /// #14351 measurement-only stash: the driver sets the type-parameter
+    /// divergence report (computed from the live `TypeInterner` at end-of-check)
+    /// here so the CLI extendedDiagnostics path can append it without threading
+    /// the interner through the report struct. Gated by the driver on
+    /// `TSZ_TYPEPARAM_DIVERGENCE_PROBE`; empty otherwise.
+    static TYPEPARAM_DIVERGENCE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+    /// Store the divergence report (called by the driver where the interner is live).
+    pub fn set_type_param_divergence_report(report: String) {
+        if let Ok(mut slot) = TYPEPARAM_DIVERGENCE.lock() {
+            *slot = report;
+        }
+    }
+
+    /// Read the stashed divergence report (called by the CLI report builder).
+    pub fn type_param_divergence_report() -> String {
+        TYPEPARAM_DIVERGENCE
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Tier 4: Type construction — building new types.

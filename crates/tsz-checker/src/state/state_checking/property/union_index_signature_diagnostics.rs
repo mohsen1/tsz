@@ -184,6 +184,35 @@ impl<'a> CheckerState<'a> {
                 );
                 continue;
             }
+            // tsc's `elaborateElementwise` descends into an elaboratable property
+            // value matched here only through an index signature and anchors the
+            // deepest leaf mismatch, exactly as it does for named-property targets
+            // — it does not report the property-level aggregate. So
+            // `{ [k: string]: { n: number } } = { foo: { n: "x" } }` reports
+            // `string`->`number` at the inner `n`, not a redundant
+            // `{ n: string }`->`{ n: number }` at `foo` the way
+            // `_without_source_elaboration` would (and a fresh function value
+            // anchors at its return expression). This routes through the same
+            // `try_elaborate_assignment_source_error` gateway the named-property
+            // path uses, with the identical elaboratable-source kinds; a
+            // non-elaboratable value (a reference, a call result, ...) keeps the
+            // property-level aggregate below, which is what tsc reports for it.
+            if let Some(value_idx) = self.object_literal_property_initializer(report_idx) {
+                let value_idx = self.ctx.arena.skip_parenthesized(value_idx);
+                if self.ctx.arena.get(value_idx).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                    )
+                }) && self.try_elaborate_assignment_source_error(value_idx, target_value_type)
+                {
+                    continue;
+                }
+            }
+
             let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                 source_prop.type_id,
                 target_value_type,

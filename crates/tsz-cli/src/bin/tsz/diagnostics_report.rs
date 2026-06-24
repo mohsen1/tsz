@@ -247,6 +247,11 @@ fn build_diagnostics_report(
     report
         .perf_counter_dump
         .push_str(&tsz_solver::observability::eval_materialization_probe_report());
+    // #14351 measurement-only: type-parameter divergence report (empty unless
+    // TSZ_TYPEPARAM_DIVERGENCE_PROBE=1 was set, which the driver honors).
+    report
+        .perf_counter_dump
+        .push_str(&tsz_solver::observability::type_param_divergence_report());
 
     report
 }

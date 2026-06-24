@@ -59,6 +59,28 @@ pub fn record_relation_app_pair(fell_through: bool, cross_base: bool) {
     }
 }
 
+/// #14351 lazy-reference-relation accessor correctness probe (measure-only, no
+/// verdict change). Record one cross-base relation pair that is nominal-heritage
+/// reachable (`reachable`), partitioned by whether the instantiated-heritage
+/// accessor resolved a base for it (`resolved`). The resolved/reachable ratio on
+/// fp-ts proves the lowering capture populates the map for the real heritage
+/// edges BEFORE any verdict-affecting relation flip uses it.
+#[inline]
+pub fn record_relation_lazy_ref_probe(reachable: bool, resolved: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    if reachable {
+        c.relation_lazy_ref_heritage_reachable
+            .fetch_add(1, Ordering::Relaxed);
+        if resolved {
+            c.relation_lazy_ref_accessor_resolved
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Record a budget-conditional `LimitTrue` relation cache hit (a limit-hit
 /// relation verdict was reused instead of re-burning the relation chain).
 #[inline]
