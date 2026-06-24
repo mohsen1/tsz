@@ -1,0 +1,38 @@
+# Cloud Build config that builds and pushes the prebuilt benchmark base image
+# from scripts/infra/bench-base/Dockerfile.
+#
+# Invoked by .github/workflows/bench-image.yml via `gcloud builds submit`. The
+# workflow passes the destination image path and the commit SHA as
+# substitutions so every build is SHA-tagged for provenance. The `latest` tag is
+# updated alongside the SHA tag so the bench prepare/shard configs can track the
+# most recent build via vars.BENCH_IMAGE_REF (see
+# scripts/infra/bench-base/README.md).
+#
+# Substitutions (all required, supplied by the workflow):
+#   _IMAGE  fully-qualified image repository, e.g.
+#           us-central1-docker.pkg.dev/<project>/<repo>/tsz-bench-base
+#   _SHA    git commit SHA the image is built from (provenance tag)
+
+steps:
+  - id: build-bench-base-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - '${_IMAGE}:${_SHA}'
+      - --tag
+      - '${_IMAGE}:latest'
+      - --file
+      - scripts/infra/bench-base/Dockerfile
+      - scripts/infra/bench-base
+
+images:
+  - '${_IMAGE}:${_SHA}'
+  - '${_IMAGE}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# The base install (apt packages, Node tarball, pnpm, llvm-tools-preview on top
+# of rust:1.95) is moderately heavy; allow generous headroom.
+timeout: 2400s

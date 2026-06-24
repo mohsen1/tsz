@@ -1,0 +1,86 @@
+# Build and push the prebuilt benchmark base image for the bench prepare/shard
+# Cloud Builds.
+#
+# This workflow is intentionally SEPARATE from ci.yml / bench.yml and is NOT a
+# required check. It cannot affect PR CI status. Building and pushing an image is
+# safe (it only produces SHA-tagged + :latest image tags in a registry); nothing
+# is switched over to the image until a maintainer points the bench configs at
+# it via the vars.BENCH_IMAGE_REF repo variable (see
+# scripts/infra/bench-base/README.md). Until then the bench configs default to
+# the stock `rust:1.95` image and the inline bootstrap, so this workflow is a
+# no-op on bench behavior.
+#
+# Configuration: this workflow no-ops with a clear message unless the repo
+# variables below are configured by a maintainer:
+#   vars.BENCH_IMAGE_GCP_PROJECT   (required to build)
+#   vars.BENCH_IMAGE_REPO          (required to build; image repo path)
+#   vars.BENCH_IMAGE_GCP_REGION    (optional; defaults to us-central1)
+name: bench-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Provenance note: why are you rebuilding the bench base image?"
+        type: string
+        default: "manual rebuild"
+  push:
+    paths:
+      - 'scripts/infra/bench-base/Dockerfile'
+      - 'scripts/cloudbuild/cloudbuild-bench-image.yaml'
+      - '.github/workflows/bench-image.yml'
+  schedule:
+    # Weekly rebuild to pick up base-image / OS security updates.
+    - cron: '0 7 * * 2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build-bench-image
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+
+      - id: config
+        name: Resolve GCP configuration
+        env:
+          GCP_PROJECT: ${{ vars.BENCH_IMAGE_GCP_PROJECT }}
+          IMAGE_REPO: ${{ vars.BENCH_IMAGE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GCP_PROJECT}" || -z "${IMAGE_REPO}" ]]; then
+            echo "::notice title=bench-image not configured::Set repo variables BENCH_IMAGE_GCP_PROJECT and BENCH_IMAGE_REPO (and optionally BENCH_IMAGE_GCP_REGION) to enable bench base image builds, then set BENCH_IMAGE_REF to switch the bench configs over. See scripts/infra/bench-base/README.md. No-op for now."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench-image build is configured (project=${GCP_PROJECT})."
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: build
+        if: steps.config.outputs.configured == 'true'
+        name: Build and push bench base image (SHA-tagged for provenance)
+        env:
+          GCP_PROJECT: ${{ vars.BENCH_IMAGE_GCP_PROJECT }}
+          GCP_REGION: ${{ vars.BENCH_IMAGE_GCP_REGION || 'us-central1' }}
+          IMAGE_REPO: ${{ vars.BENCH_IMAGE_REPO }}
+        run: |
+          set -euo pipefail
+          sha="${GITHUB_SHA}"
+          image_sha_tag="${IMAGE_REPO}:${sha}"
+          echo "Building bench base image ${image_sha_tag} (region=${GCP_REGION})"
+          gcloud builds submit \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --config=scripts/cloudbuild/cloudbuild-bench-image.yaml \
+            --substitutions=_IMAGE="${IMAGE_REPO}",_SHA="${sha}" \
+            .
+          echo "Built and pushed ${image_sha_tag} (and :latest). Set vars.BENCH_IMAGE_REF to ${IMAGE_REPO}:latest (or a pinned SHA tag) to switch the bench configs over."
