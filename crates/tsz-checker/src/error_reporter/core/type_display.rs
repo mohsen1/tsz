@@ -11,7 +11,72 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+thread_local! {
+    /// When set, `normalize_assignability_display_type` preserves the *literal*
+    /// return type of a function/method/constructor signature instead of
+    /// widening it for display (`{ m(): 1 }` stays `{ m(): 1 }`, not
+    /// `{ m(): number }`).
+    ///
+    /// `tsc`'s `getWidenedType` widens only *fresh* literals, so a literal in a
+    /// **declared** signature position is rendered verbatim, while a **fresh**
+    /// function expression's inferred return literal is widened (`(x) => 1`
+    /// displays as `(x) => number`). tsz loses per-literal freshness for inferred
+    /// arrow returns, so the discriminator is the *source provenance*: only the
+    /// declared-identifier source path activates this scope. Off by default, so
+    /// fresh function-expression sources keep widening.
+    static PRESERVE_SIGNATURE_RETURN_LITERALS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+fn preserve_signature_return_literals_active() -> bool {
+    PRESERVE_SIGNATURE_RETURN_LITERALS.with(std::cell::Cell::get)
+}
+
+/// RAII guard that makes assignability display normalization preserve declared
+/// signature return literals for the duration of its lifetime, restoring the
+/// previous state on drop (including on unwind), mirroring the depth/budget
+/// guards in `normalize_assignability_display_type`.
+pub(in crate::error_reporter) struct PreserveSignatureReturnLiteralsScope(bool);
+
+impl PreserveSignatureReturnLiteralsScope {
+    pub(in crate::error_reporter) fn enter() -> Self {
+        Self(PRESERVE_SIGNATURE_RETURN_LITERALS.with(|cell| cell.replace(true)))
+    }
+}
+
+impl Drop for PreserveSignatureReturnLiteralsScope {
+    fn drop(&mut self) {
+        PRESERVE_SIGNATURE_RETURN_LITERALS.with(|cell| cell.set(self.0));
+    }
+}
+
 impl<'a> CheckerState<'a> {
+    /// Apply display widening to an already-normalized signature return type.
+    ///
+    /// A deferred conditional return is left as-is; a fresh function
+    /// expression's inferred return literal widens to its base (`(x) => 1` →
+    /// `(x) => number`); a declared (non-fresh) signature return literal is kept
+    /// verbatim (`{ m(): 1 }`) when [`PreserveSignatureReturnLiteralsScope`] is
+    /// active. A fresh object-literal return widens in both cases.
+    fn display_widen_signature_return(
+        &self,
+        original_return: TypeId,
+        normalized_return: TypeId,
+    ) -> TypeId {
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, original_return) {
+            return normalized_return;
+        }
+        // A declared (non-fresh) signature return literal is kept verbatim; a
+        // fresh function expression's inferred return literal widens to its base.
+        // A fresh object-literal return widens in both cases.
+        let return_type = if preserve_signature_return_literals_active() {
+            normalized_return
+        } else {
+            crate::query_boundaries::common::widen_type(self.ctx.types, normalized_return)
+        };
+        self.widen_fresh_object_literal_properties_for_display(return_type)
+    }
+
     pub(in crate::error_reporter) fn sanitize_type_annotation_text_for_diagnostic(
         &self,
         text: String,
@@ -844,18 +909,8 @@ impl<'a> CheckerState<'a> {
                         visiting.remove(&ty);
                         return evaluated;
                     }
-                    let return_type = if crate::query_boundaries::common::is_conditional_type(
-                        self.ctx.types,
-                        shape.return_type,
-                    ) {
-                        return_type
-                    } else {
-                        let widened = crate::query_boundaries::common::widen_type(
-                            self.ctx.types,
-                            return_type,
-                        );
-                        self.widen_fresh_object_literal_properties_for_display(widened)
-                    };
+                    let return_type =
+                        self.display_widen_signature_return(shape.return_type, return_type);
                     if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                         && return_type == shape.return_type
                     {
@@ -1140,16 +1195,8 @@ impl<'a> CheckerState<'a> {
                     visiting.remove(&ty);
                     return evaluated;
                 }
-                let return_type = if crate::query_boundaries::common::is_conditional_type(
-                    self.ctx.types,
-                    shape.return_type,
-                ) {
-                    return_type
-                } else {
-                    let widened =
-                        crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
-                    self.widen_fresh_object_literal_properties_for_display(widened)
-                };
+                let return_type =
+                    self.display_widen_signature_return(shape.return_type, return_type);
                 if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                     && return_type == shape.return_type
                 {

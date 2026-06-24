@@ -193,6 +193,9 @@ mod control_flow_type_guard_tests;
 #[path = "tests/cross_module_class_self_member_tests.rs"]
 mod cross_module_class_self_member_tests;
 #[cfg(test)]
+#[path = "tests/declared_signature_return_literal_display_tests.rs"]
+mod declared_signature_return_literal_display_tests;
+#[cfg(test)]
 #[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
 mod decorator_return_relation_routing_arch_tests;
 #[cfg(test)]

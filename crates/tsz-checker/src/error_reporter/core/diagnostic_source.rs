@@ -1522,6 +1522,13 @@ impl<'a> CheckerState<'a> {
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
             return None;
         }
+        // The source is a *declared* identifier reference, not a fresh function
+        // expression, so its signature return literals (`{ m(): 1 }`, `() => 1`)
+        // are rendered verbatim — `tsc` widens only fresh literals. Fresh
+        // function-expression sources never reach this path and keep widening.
+        let _preserve_signature_returns =
+            crate::error_reporter::core::type_display::PreserveSignatureReturnLiteralsScope::enter(
+            );
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
