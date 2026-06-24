@@ -21,16 +21,18 @@ fn source_not_assignable_message(diags: &[crate::diagnostics::Diagnostic]) -> St
     diags
         .iter()
         .find(|d| d.code == 2322 || d.code == 2741)
-        .map(|d| d.message_text.clone())
-        .unwrap_or_else(|| {
-            panic!(
-                "expected a TS2322/TS2741 assignability diagnostic; got: {:?}",
-                diags
-                    .iter()
-                    .map(|d| (d.code, &d.message_text))
-                    .collect::<Vec<_>>()
-            )
-        })
+        .map_or_else(
+            || {
+                panic!(
+                    "expected a TS2322/TS2741 assignability diagnostic; got: {:?}",
+                    diags
+                        .iter()
+                        .map(|d| (d.code, &d.message_text))
+                        .collect::<Vec<_>>()
+                )
+            },
+            |d| d.message_text.clone(),
+        )
 }
 
 #[test]

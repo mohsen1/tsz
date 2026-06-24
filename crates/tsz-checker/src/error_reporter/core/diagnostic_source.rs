@@ -476,8 +476,7 @@ impl<'a> CheckerState<'a> {
             declaration_binder
                 .symbol_arenas
                 .get(&sym_id)
-                .map(std::convert::AsRef::as_ref)
-                .unwrap_or(self.ctx.arena)
+                .map_or(self.ctx.arena, std::convert::AsRef::as_ref)
         };
 
         let annotation_arena = declaration_binder
