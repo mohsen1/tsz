@@ -108,6 +108,55 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Anchor for a function-level return-type mismatch surfaced while
+    /// elaborating a block-bodied function value, when that value is the
+    /// initializer of a variable declaration or the expression of a `return`
+    /// statement.
+    ///
+    /// `tsc`'s `elaborateArrowFunction` never drills into a block body, so the
+    /// resulting function-level `TS2322` is reported at the *binding target* of
+    /// the function value, not at the function expression. For an assignment
+    /// RHS that target is the LHS (handled by [`Self::is_rhs_of_assignment`] /
+    /// [`Self::find_assignment_lhs_for_rhs`]); this helper covers the two other
+    /// binding contexts:
+    /// - `const f: () => number = () => { return "x"; }` anchors at the
+    ///   variable declaration (whose error span is the binding name), and
+    /// - `function g(): () => number { return () => { return "x"; }; }` anchors
+    ///   at the enclosing `return` statement.
+    ///
+    /// Returns `None` for every other context (call argument, object-literal
+    /// property, …), where the function-expression anchor is already correct.
+    pub(crate) fn function_value_binding_anchor(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = func_idx;
+        for _ in 0..6 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            match parent_node.kind {
+                // Look through parentheses around the function value
+                // (`const f: T = (() => { ... })`).
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    current = parent;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+                    // Only when the function value is this declaration's
+                    // initializer (the parenthesized chain above guarantees
+                    // `current` is the initializer or a paren wrapper of it).
+                    return (var_decl.initializer == current).then_some(parent);
+                }
+                syntax_kind_ext::RETURN_STATEMENT => {
+                    let ret = self.ctx.arena.get_return_statement(parent_node)?;
+                    return (ret.expression == current).then_some(parent);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     fn js_prototype_owner_expression_from_assignment_left(
         &self,
         left_idx: NodeIndex,

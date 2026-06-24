@@ -1198,23 +1198,48 @@ impl<'a> CheckerState<'a> {
                     // (e.g., show `() => string` instead of `() => "foo"`)
                     let widened_func_type =
                         crate::query_boundaries::common::widen_type_deep(self.ctx.types, func_type);
-                    // For functions that are the RHS of an assignment (e.g., `A.prototype.foo = function() {}`),
-                    // use the assignment LHS as the anchor to match tsc behavior.
-                    // Otherwise, use the function position as the anchor.
-                    let diag_anchor = if self.is_rhs_of_assignment(func_idx) {
-                        let lhs = self.find_assignment_lhs_for_rhs(func_idx);
-                        lhs.unwrap_or(func_idx)
+                    // `tsc`'s `elaborateArrowFunction` never drills into a block
+                    // body, so this function-level mismatch is anchored at the
+                    // function value's *binding target*, not the function node:
+                    // the assignment LHS (`A.prototype.foo = function() {}`), the
+                    // variable declaration's name (`const f: () => number = () =>
+                    // { return "x"; }`), or the enclosing `return` statement.
+                    // Fall back to the function position only when the value is
+                    // in a context where that anchor already matches `tsc` (call
+                    // argument, object-literal property, …).
+                    //
+                    // For the variable-initializer / return-statement binding
+                    // targets, the report must also stay at the binding without
+                    // drilling into the source shape: `tsc` reports the single
+                    // function-level mismatch even when the returned value is an
+                    // object literal (`() => { return { a: "x" }; }`), which the
+                    // default source-elaboration path would otherwise drill into.
+                    if let Some(binding_anchor) = self.function_value_binding_anchor(func_idx) {
+                        !self
+                            .check_assignable_or_report_at_exact_anchor_without_source_elaboration_with_display_types(
+                                return_type,
+                                expected_return_type,
+                                widened_func_type,
+                                param_type,
+                                ret.expression,
+                                binding_anchor,
+                            )
                     } else {
-                        func_idx
-                    };
-                    !self.check_assignable_or_report_at_with_display_types(
-                        return_type,
-                        expected_return_type,
-                        widened_func_type,
-                        param_type,
-                        ret.expression,
-                        diag_anchor, // Use appropriate anchor based on context
-                    )
+                        let diag_anchor = if self.is_rhs_of_assignment(func_idx) {
+                            self.find_assignment_lhs_for_rhs(func_idx)
+                                .unwrap_or(func_idx)
+                        } else {
+                            func_idx
+                        };
+                        !self.check_assignable_or_report_at_with_display_types(
+                            return_type,
+                            expected_return_type,
+                            widened_func_type,
+                            param_type,
+                            ret.expression,
+                            diag_anchor, // Use appropriate anchor based on context
+                        )
+                    }
                 } else {
                     !self.check_assignable_or_report_at_without_source_elaboration(
                         return_type,
