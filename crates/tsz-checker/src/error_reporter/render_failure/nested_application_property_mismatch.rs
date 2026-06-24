@@ -920,7 +920,9 @@ impl<'a> CheckerState<'a> {
     /// `MissingProperty`/`MissingProperties` summaries, `ParameterTypeMismatch`
     /// — whose own first line is the signature relation — and plain leaf
     /// relations) already carry the member line themselves.
-    const fn union_member_nested_needs_header(reason: &tsz_solver::SubtypeFailureReason) -> bool {
+    pub(super) const fn union_member_nested_needs_header(
+        reason: &tsz_solver::SubtypeFailureReason,
+    ) -> bool {
         matches!(
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
