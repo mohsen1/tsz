@@ -483,6 +483,94 @@ fn test_enum_initializer_erases_type_only_wrappers() {
 }
 
 #[test]
+fn test_string_member_behind_type_wrapper_gets_reverse_mapping() {
+    // tsc's enum evaluator does not traverse `as`/`<T>`/`satisfies`/`!`, so a string
+    // value behind such a wrapper has no constant value and is a *computed* member
+    // that DOES get a reverse mapping — unlike a bare string literal. The emitted
+    // value is the type-erased operand.
+    let output = transform_enum(
+        "enum E { Bare = \"x\", AsAny = \"a\" as any, AsConst = \"b\" as const, \
+         TypeAssert = <any>\"d\", Sat = \"e\" satisfies string, NonNull = \"f\"! }",
+    );
+    assert!(
+        output.contains("E[\"Bare\"] = \"x\"") && !output.contains("E[E[\"Bare\"]"),
+        "bare string literal keeps no reverse mapping, got: {output}"
+    );
+    for (member, value) in [
+        ("AsAny", "\"a\""),
+        ("AsConst", "\"b\""),
+        ("TypeAssert", "\"d\""),
+        ("Sat", "\"e\""),
+        ("NonNull", "\"f\""),
+    ] {
+        let expected = format!("E[E[\"{member}\"] = {value}] = \"{member}\"");
+        assert!(
+            output.contains(&expected),
+            "wrapped string member {member} should get a reverse mapping ({expected}), got: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_parenthesized_assertion_drops_redundant_parens() {
+    // tsc removes the parentheses around an erased assertion/`satisfies`
+    // (`("g" as any)` -> `"g"`) but keeps them around other inner expressions.
+    let output = transform_enum(
+        "enum E { ParenAs = (\"g\" as any), NestedParen = ((\"h\" as const)), \
+         ParenNum = (5 as const) }",
+    );
+    assert!(
+        output.contains("E[E[\"ParenAs\"] = \"g\"] = \"ParenAs\""),
+        "paren around `as` is dropped, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"NestedParen\"] = \"h\"] = \"NestedParen\""),
+        "nested parens around `as const` are dropped, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"ParenNum\"] = 5] = \"ParenNum\""),
+        "paren around numeric `as const` is dropped, got: {output}"
+    );
+    assert!(
+        !output.contains("(\"g\")") && !output.contains("(5)"),
+        "redundant parens must not survive, got: {output}"
+    );
+}
+
+#[test]
+fn test_concat_with_wrapped_operand_is_string_member() {
+    // `+` is syntactically string when *either* operand is, even when the value
+    // cannot be folded (a wrapped operand). Such a member is a string member (no
+    // reverse mapping) and emits its type-erased expression unfolded.
+    let lhs = transform_enum("enum E { C = \"p\" + (\"q\" as any) }");
+    assert!(
+        lhs.contains("E[\"C\"] = \"p\" + \"q\"") && !lhs.contains("E[E[\"C\"]"),
+        "string-left concat with wrapped right has no reverse mapping, got: {lhs}"
+    );
+    let rhs = transform_enum("enum E { C = (1 as any) + \"q\" }");
+    assert!(
+        !rhs.contains("E[E[\"C\"]"),
+        "concat whose right operand is string has no reverse mapping, got: {rhs}"
+    );
+}
+
+#[test]
+fn test_reference_to_wrapped_member_is_not_constant_folded() {
+    // A reference to a member whose value is behind a wrapper is itself non-constant:
+    // tsc emits the qualified reference (`E.A`) and a reverse mapping, instead of
+    // folding to the wrapped member's underlying value.
+    let output = transform_enum("enum E { A = 1 as any, B = A }");
+    assert!(
+        output.contains("E[E[\"A\"] = 1] = \"A\""),
+        "wrapped numeric member keeps its erased value + reverse mapping, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = E.A] = \"B\""),
+        "reference to wrapped member B should emit `E.A`, not a folded literal, got: {output}"
+    );
+}
+
+#[test]
 fn test_no_folding_for_non_constant_expressions() {
     // External function call cannot be folded
     let output = transform_enum("enum E { A = foo() }");
