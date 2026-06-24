@@ -25,6 +25,7 @@ use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use span_diagnostic_queries::strip_module_specifier_extension;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -445,6 +446,155 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn declared_type_annotation_node_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<(&tsz_parser::NodeArena, NodeIndex)> {
+        let symbol_record = self.get_cross_file_symbol(sym_id)?;
+        let declaration_idx = symbol_record.value_declaration;
+        if declaration_idx.is_none() {
+            return None;
+        }
+
+        let declaration_binder = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .and_then(|arena| self.ctx.get_binder_for_arena(arena))
+            })
+            .unwrap_or(self.ctx.binder);
+        let symbol_arena = if symbol_record.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol_record.decl_file_idx)
+        } else {
+            declaration_binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map_or(self.ctx.arena, std::convert::AsRef::as_ref)
+        };
+
+        let annotation_arena = declaration_binder
+            .declaration_arenas
+            .get(&(sym_id, declaration_idx))
+            .and_then(|arenas| arenas.first().map(|arena| arena.as_ref()))
+            .filter(|arena| arena.get(declaration_idx).is_some())
+            .unwrap_or(symbol_arena);
+        let declaration = annotation_arena.get(declaration_idx)?;
+
+        if let Some(param) = annotation_arena.get_parameter(declaration)
+            && param.type_annotation.is_some()
+        {
+            return Some((annotation_arena, param.type_annotation));
+        }
+
+        if let Some(var_decl) = annotation_arena.get_variable_declaration(declaration)
+            && var_decl.type_annotation.is_some()
+        {
+            return Some((annotation_arena, var_decl.type_annotation));
+        }
+
+        None
+    }
+
+    fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {
+        let Some((annotation_arena, annotation_idx)) =
+            self.declared_type_annotation_node_for_symbol(sym_id)
+        else {
+            return false;
+        };
+        annotation_arena.get(annotation_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::TYPE_REFERENCE
+                    | syntax_kind_ext::UNION_TYPE
+                    | syntax_kind_ext::PARENTHESIZED_TYPE
+            )
+        })
+    }
+
+    /// The declared (pre-narrowing) type of a source *variable* identifier
+    /// expression, or `None` when `expr_idx` is not a usable variable
+    /// identifier. Merged `INTERFACE`+`VALUE` symbols resolve to the interface
+    /// side via `get_type_of_symbol`, so they are excluded; `Error`/`unknown`
+    /// declared types carry no useful alias to compare against. Shared by the
+    /// source-display paths that compare the flow-narrowed checked type against
+    /// the declared type.
+    pub(in crate::error_reporter) fn declared_type_of_variable_identifier_source(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
+            return None;
+        }
+        if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+        {
+            return None;
+        }
+        if !self.declared_annotation_can_name_union_source(sym_id) {
+            return None;
+        }
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        Some(declared_type)
+    }
+
+    /// True when a source identifier's flow-narrowed checked type
+    /// `expr_display_type` is a strict narrowing of its `declared_type` —
+    /// either a strict subtype (assignable one way only) or a strict union
+    /// member subset (flow eliminated some declared union members). `tsc` drops
+    /// the declared `aliasSymbol` on `filterType`/`getNarrowedType` whenever the
+    /// result is a proper subset, so the narrowed structural type is displayed
+    /// rather than the declared alias/annotation name. Shared by the source
+    /// display path (`format_assignment_source_type_for_diagnostic`) and the
+    /// TS2322/TS2741 alias repaint (`declared_generic_alias_assignment_pair_display`)
+    /// so both agree on the narrowing-drops-the-alias rule. It mirrors the
+    /// narrowing detection inlined in `declared_identifier_source_display`.
+    ///
+    /// `declared_type == TypeId::ANY` is intentionally not detected here: `any`
+    /// is bidirectionally related to every type, so the subtype check never
+    /// fires; the `any`/`unknown` top-type narrowing is handled separately by
+    /// the `source_identifier_narrowed_from_unknown_or_any` and
+    /// `assignment_source_narrowed_from_declared_top_type` guards.
+    pub(in crate::error_reporter) fn source_flow_type_strictly_narrows_declared(
+        &mut self,
+        expr_display_type: TypeId,
+        declared_type: TypeId,
+    ) -> bool {
+        if expr_display_type == declared_type {
+            return false;
+        }
+        // Restricted to a *declared union*: `tsc` drops the `aliasSymbol` on
+        // `filterType`, which narrows unions by eliminating members. A non-union
+        // declared alias (e.g. a static-schema array alias `Input[]` whose
+        // structural expansion is asymmetrically related under the decision-only
+        // relation) must keep its established display path and is not a member
+        // of this flow-narrowing-drops-the-alias family.
+        if diagnostic_query::union_members(self.ctx.types, declared_type).is_none() {
+            return false;
+        }
+        let is_assignability_narrower = self
+            .diagnostic_source_narrowing_relation_outcome(expr_display_type, declared_type)
+            .related
+            && !self
+                .diagnostic_source_narrowing_relation_outcome(declared_type, expr_display_type)
+                .related;
+        is_assignability_narrower
+            || self.is_strict_union_member_subset(expr_display_type, declared_type)
     }
 
     pub(in crate::error_reporter) fn should_prefer_declared_source_annotation_display(

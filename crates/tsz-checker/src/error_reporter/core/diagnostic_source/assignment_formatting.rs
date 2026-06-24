@@ -188,18 +188,26 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> String {
         // A source identifier declared `unknown`/`any` but flow-narrowed to a
-        // concrete type (e.g. by a `x is T` guard) must render its narrowed
-        // type, not its stale `unknown`/`any` annotation. The annotation-recovery
-        // heuristics below exist to recover lost alias/parameter *names*; for a
-        // narrowed `unknown`/`any` operand they would widen the display back to
-        // the declared supertype, diverging from `tsc` (which prints the narrowed
-        // type). Render the narrowed `source` structurally instead.
+        // concrete type must render the narrowed source, not the stale top-type
+        // annotation.
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
             && self.source_identifier_narrowed_from_unknown_or_any(expr_idx, source)
         {
             return self.format_type_for_assignability_message(source);
+        }
+        // A source identifier flow-narrowed to a strict subset of its declared
+        // union renders the narrowed checked type. `tsc` drops the `aliasSymbol`
+        // for proper-subset flow results, so avoid repainting with the stale
+        // declared alias/annotation below.
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(declared_type) = self.declared_type_of_variable_identifier_source(expr_idx)
+            && self.source_flow_type_strictly_narrows_declared(source, declared_type)
+        {
+            return self.format_assignability_type_for_message(source, target);
         }
         // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
         // or indexed-access (`T["x"]`), or an `Application` of a conditional/

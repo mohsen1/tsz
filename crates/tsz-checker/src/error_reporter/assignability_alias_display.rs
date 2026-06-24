@@ -157,6 +157,21 @@ impl<'a> CheckerState<'a> {
         if self.assignment_source_narrowed_from_declared_top_type(anchor_idx, source) {
             return None;
         }
+        // A source identifier flow-narrowed to a strict subset of its declared
+        // type (the canonical case being a declared union alias narrowed to a
+        // sub-union) keeps its narrowed structural display: `tsc` drops the
+        // `aliasSymbol` on `filterType` for a proper subset, so the declared
+        // union-alias repaint below would restore a stale broader type. Mirrors
+        // the top-type guard above and the source-display narrowing guard in
+        // `format_assignment_source_type_for_diagnostic`.
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(declared_type) = self.declared_type_of_variable_identifier_source(expr_idx)
+            && self.source_flow_type_strictly_narrows_declared(source, declared_type)
+        {
+            return None;
+        }
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
