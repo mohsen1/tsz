@@ -1255,6 +1255,9 @@ mod object_literal_relation_architecture_tests;
 #[path = "tests/object_literal_this_member_order_tests.rs"]
 mod object_literal_this_member_order_tests;
 #[cfg(test)]
+#[path = "tests/object_property_arrow_param_annotation_elaboration_tests.rs"]
+mod object_property_arrow_param_annotation_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
 #[cfg(test)]
