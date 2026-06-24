@@ -352,6 +352,17 @@ pub trait TypeResolver {
         None
     }
 
+    /// #14351 lazy-reference relation: the instantiated base `TypeId` for a
+    /// DIRECT `extends` edge `derived extends target`, as written in `derived`'s
+    /// scope (e.g. `Functor1<F>` for `interface Apply1<F> extends Functor1<F>`).
+    /// `None` if `target` is not a direct parent of `derived` (the first slice
+    /// is single-hop). Unlike `get_base_type` this is keyed by the
+    /// `(derived, target)` def pair (selects the specific parent, not
+    /// `parents.first()`) and carries the heritage edge's type arguments.
+    fn get_heritage_instantiation(&self, _derived: DefId, _target: DefId) -> Option<TypeId> {
+        None
+    }
+
     /// Get the variance mask for type parameters of a generic type (Task #41).
     ///
     /// Used by `check_application_to_application_subtype` to optimize generic
@@ -542,6 +553,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         (**self).get_base_type(type_id, interner)
+    }
+
+    fn get_heritage_instantiation(&self, derived: DefId, target: DefId) -> Option<TypeId> {
+        (**self).get_heritage_instantiation(derived, target)
     }
 
     fn get_type_param_variance(
