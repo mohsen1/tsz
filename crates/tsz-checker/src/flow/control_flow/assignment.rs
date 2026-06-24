@@ -532,26 +532,49 @@ impl<'a> FlowAnalyzer<'a> {
                     literal_type,
                 );
             }
-            // For variable declarations with type annotations, preserve the declared
-            // type (return None) in two cases:
+            // For a variable declaration with a type annotation, narrow the
+            // declared type by the initializer exactly as tsc's
+            // `getAssignmentReducedType` does. (Primitive-literal initializers
+            // are already handled by the `literal_type_from_node` branch above;
+            // this block covers object/array literals and non-literal
+            // initializers such as `new C()` or another reference.)
             //
-            // 1. Non-const (let/var) declarations: the declared type is the authoritative
-            //    flow type. E.g., `let x: string | number = "hello"` has flow type
-            //    `string | number`, not `"hello"`. Critical for loop fixed-point analysis.
-            //
-            // 2. Object/array literal initializers (even const): the structural type
-            //    loses optional properties and interface/readonly modifiers.
-            //    E.g., `const xs: readonly number[] = [1, 2]` must keep `readonly number[]`.
+            // A `const` is always narrowed. A `let`/`var` is narrowed only when
+            // the variable is *never reassigned* — i.e. it is an effectively
+            // constant reference, mirroring tsc's `isConstantReference`
+            // (`isParameterOrMutableLocalVariable(symbol) &&
+            // !isSymbolAssigned(symbol)`). A reassigned mutable local keeps its
+            // declared type so the flow graph's assignment / loop fixed-point
+            // machinery owns its evolution: narrowing the initializer of a
+            // loop-reassigned variable would evaluate the loop body's first
+            // fixed-point pass against the narrowed entry type and surface
+            // spurious diagnostics (the #8513 `Optional<r>` repro). Narrowing a
+            // never-reassigned local is unconditionally safe because it can
+            // never appear on a loop back-edge.
             if self.is_var_decl_with_type_annotation(assignment_node) {
-                let is_const = self.is_const_variable_declaration(assignment_node);
+                let initializer_narrows_declared_type = self
+                    .is_const_variable_declaration(assignment_node)
+                    || self
+                        .binder
+                        .resolve_identifier(self.arena, target)
+                        .is_some_and(|symbol_id| {
+                            self.get_last_assignment_pos(symbol_id, target) == 0
+                        });
+                if !initializer_narrows_declared_type {
+                    return None;
+                }
                 let is_structural_literal = self.arena.get(rhs).is_some_and(|rhs_node| {
                     rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 });
-                if !is_const {
-                    return None;
-                }
                 if is_structural_literal {
+                    // An object/array literal's structural type loses optional
+                    // properties and interface/readonly modifiers (e.g.
+                    // `const xs: readonly number[] = [1, 2]` must keep
+                    // `readonly number[]`), so reduce the declared union to its
+                    // compatible *declared* members via `narrow_assignment`
+                    // rather than flowing the raw literal type.
+                    //
                     // tsc's getAssignmentReducedType narrows regardless of
                     // whether the assignment is valid (no assignability guard).
                     // Skipping the guard is safe: narrow_assignment returns the
@@ -571,6 +594,11 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                     return None;
                 }
+                // Non-literal initializers (`new C()`, another reference, a call
+                // result, …) fall through to the shared rhs-typing path below,
+                // which returns the initializer's type so the downstream
+                // killing-definition `narrow_assignment` reduces the declared
+                // union — identical to the `const` path.
             }
             // `undefined` identifier (not a keyword) as initializer: if the variable
             // has a type annotation that doesn't include undefined, use the declared type.

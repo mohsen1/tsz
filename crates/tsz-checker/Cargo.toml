@@ -2193,3 +2193,6 @@ path = "tests/readonly_array_alias_argument_display_tests.rs"
 [[test]]
 name = "try_finally_pre_try_narrowing_tests"
 path = "tests/try_finally_pre_try_narrowing_tests.rs"
+[[test]]
+name = "let_var_initializer_assignment_reduced_type_tests"
+path = "tests/let_var_initializer_assignment_reduced_type_tests.rs"
