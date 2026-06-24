@@ -110,7 +110,14 @@ impl PerfCounters {
              raw SymbolRef lazy fallback{:>12}\n  \
              wrong-decl collisions      {:>12}\n  \
              symbol_def_index hits      {:>12}\n  \
-             symbol_def_index misses    {:>12}\n",
+             symbol_def_index misses    {:>12}\n\
+             Relation hot path (#14351):\n  \
+             app<->app pairs total      {:>12}\n  \
+             variance fallthrough       {:>12}\n  \
+             ... cross-base (HKT)       {:>12}\n\
+             Lazy-ref relation (#14351):\n  \
+             heritage-reachable pairs   {:>12}\n  \
+             accessor resolved base     {:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -198,6 +205,11 @@ impl PerfCounters {
             snap.identity.identity_collision_wrong_decl_suppressed,
             snap.identity.symbol_def_index_lookup_hits,
             snap.identity.symbol_def_index_lookup_misses,
+            snap.identity.relation_app_pair_total,
+            snap.identity.relation_app_pair_variance_fallthrough,
+            snap.identity.relation_app_pair_variance_fallthrough_cross_base,
+            snap.identity.relation_lazy_ref_heritage_reachable,
+            snap.identity.relation_lazy_ref_accessor_resolved,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_shared_instantiation_cache(&snap)
             + &Self::dump_relation_limit_cache(&snap)

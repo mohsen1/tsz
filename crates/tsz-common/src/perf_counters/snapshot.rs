@@ -373,6 +373,20 @@ pub struct IdentityCounters {
     pub symbol_def_index_lookup_hits: u64,
     /// #14344 denominator: `symbol_def_index` composite-key lookups that missed.
     pub symbol_def_index_lookup_misses: u64,
+    /// #14351 relation-hot-path denominator: `Application`<->`Application` pairs
+    /// reaching the pre-evaluation variance fast path.
+    pub relation_app_pair_total: u64,
+    /// #14351 numerator: variance-undecidable pairs that fell through to eager
+    /// `evaluate_type` member expansion.
+    pub relation_app_pair_variance_fallthrough: u64,
+    /// #14351 sub-numerator: fall-through pairs whose two `Application` bases
+    /// differ (cross-base HKT).
+    pub relation_app_pair_variance_fallthrough_cross_base: u64,
+    /// #14351 lazy-ref-relation accessor probe: heritage-reachable cross-base
+    /// pairs for which the instantiated-heritage accessor resolved a base.
+    pub relation_lazy_ref_accessor_resolved: u64,
+    /// #14351 denominator: heritage-reachable cross-base pairs (lever candidates).
+    pub relation_lazy_ref_heritage_reachable: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -735,6 +749,19 @@ impl PerfCounters {
                 ),
                 symbol_def_index_lookup_hits: load(&c.symbol_def_index_lookup_hits),
                 symbol_def_index_lookup_misses: load(&c.symbol_def_index_lookup_misses),
+                relation_app_pair_total: load(&c.relation_app_pair_total),
+                relation_app_pair_variance_fallthrough: load(
+                    &c.relation_app_pair_variance_fallthrough,
+                ),
+                relation_app_pair_variance_fallthrough_cross_base: load(
+                    &c.relation_app_pair_variance_fallthrough_cross_base,
+                ),
+                relation_lazy_ref_accessor_resolved: load(
+                    &c.relation_lazy_ref_accessor_resolved,
+                ),
+                relation_lazy_ref_heritage_reachable: load(
+                    &c.relation_lazy_ref_heritage_reachable,
+                ),
             },
             lib_bootstrap: LibBootstrapCounters {
                 snapshot_set_load_attempts: load(&c.lib_snapshot_set_load_attempts),

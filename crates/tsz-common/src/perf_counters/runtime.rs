@@ -81,6 +81,32 @@ pub struct PerfCounters {
     pub symbol_def_index_lookup_hits: AtomicU64,
     /// Companion miss counter for [`Self::symbol_def_index_lookup_hits`].
     pub symbol_def_index_lookup_misses: AtomicU64,
+    /// #14351 relation-hot-path gating measurement. Denominator: total
+    /// `check_subtype` `Application`<->`Application` pairs that reached the
+    /// pre-evaluation variance fast path (`cache.rs` ~931).
+    pub relation_app_pair_total: AtomicU64,
+    /// #14351 numerator: of [`Self::relation_app_pair_total`], the pairs whose
+    /// `variance_result` was `None` (the variance fast path could not decide) so
+    /// the relation FELL THROUGH to the eager `evaluate_type` member expansion
+    /// (`cache.rs` ~1161). High share => eager-eval is the variance-undecidable
+    /// cost the lazy-reference-relation lever targets.
+    pub relation_app_pair_variance_fallthrough: AtomicU64,
+    /// #14351 sub-numerator of [`Self::relation_app_pair_variance_fallthrough`]:
+    /// the fall-through pairs whose two `Application` BASES differ (the cross-base
+    /// HKT pattern, e.g. `Kind<F,A>` vs `HKT<F,B>`). A high cross-base share is
+    /// the empirical signal that relating lazy references by per-arg variance
+    /// across heritage (without member expansion) is the fix.
+    pub relation_app_pair_variance_fallthrough_cross_base: AtomicU64,
+    /// #14351 lazy-reference-relation accessor correctness probe (measure-only,
+    /// no verdict change). Cross-base relation pairs that are nominal-heritage
+    /// reachable (`is_derived_from`) AND for which the instantiated-heritage
+    /// accessor RESOLVED a base (`get_heritage_instantiation` returned Some) —
+    /// the subset the lazy-reference relation branch would handle. A healthy
+    /// ratio vs [`Self::relation_lazy_ref_heritage_reachable`] proves the
+    /// capture populates the map for the real fp-ts heritage edges.
+    pub relation_lazy_ref_accessor_resolved: AtomicU64,
+    /// #14351 denominator: cross-base pairs that are nominal-heritage reachable.
+    pub relation_lazy_ref_heritage_reachable: AtomicU64,
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -429,6 +455,11 @@ impl PerfCounters {
             identity_collision_wrong_decl_suppressed: AtomicU64::new(0),
             symbol_def_index_lookup_hits: AtomicU64::new(0),
             symbol_def_index_lookup_misses: AtomicU64::new(0),
+            relation_app_pair_total: AtomicU64::new(0),
+            relation_app_pair_variance_fallthrough: AtomicU64::new(0),
+            relation_app_pair_variance_fallthrough_cross_base: AtomicU64::new(0),
+            relation_lazy_ref_accessor_resolved: AtomicU64::new(0),
+            relation_lazy_ref_heritage_reachable: AtomicU64::new(0),
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };

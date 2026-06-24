@@ -2102,6 +2102,22 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         );
     }
 
+    // #14351 measurement-only: stash the type-parameter divergence report from
+    // the live shared interner so the extendedDiagnostics path can render it.
+    // Gated on a dedicated probe env var (off by default; does not affect
+    // verdicts or normal perf runs).
+    if std::env::var("TSZ_TYPEPARAM_DIVERGENCE_PROBE").is_ok_and(|v| v == "1") {
+        let decl_sites = program_context
+            .shared_definition_store
+            .as_ref()
+            .map_or(0, |store| store.type_param_decl_node_count());
+        let mut report = format!(
+            "TypeParameter decl-site canonical-map entries: {decl_sites} (compare to distinct-id count: map<<ids => fresh-mint bypass = tractable; map~=ids => genuinely-distinct decls = XL)\n"
+        );
+        report.push_str(&program.type_interner.type_param_divergence_report(20));
+        tsz_solver::observability::set_type_param_divergence_report(report);
+    }
+
     CollectDiagnosticsResult {
         diagnostics,
         request_cache_counters,

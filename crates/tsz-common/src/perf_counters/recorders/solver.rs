@@ -34,6 +34,53 @@ pub fn record_symbol_def_index_lookup(hit: bool) {
     }
 }
 
+/// #14351 relation-hot-path gating measurement. Record one `check_subtype`
+/// `Application`<->`Application` pair that reached the pre-evaluation variance
+/// fast path, partitioned by whether the variance fast path could NOT decide
+/// (`fell_through` => the relation eagerly `evaluate_type`-expands both members,
+/// `cache.rs` ~1161) and, among those, whether the two `Application` BASES
+/// differ (`cross_base` => the cross-base HKT pattern `Kind<F,A>` vs
+/// `HKT<F,B>`). Measurement only: the relation verdict is unchanged whether or
+/// not this fires. `cross_base` is only meaningful when `fell_through`.
+#[inline]
+pub fn record_relation_app_pair(fell_through: bool, cross_base: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.relation_app_pair_total.fetch_add(1, Ordering::Relaxed);
+    if fell_through {
+        c.relation_app_pair_variance_fallthrough
+            .fetch_add(1, Ordering::Relaxed);
+        if cross_base {
+            c.relation_app_pair_variance_fallthrough_cross_base
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// #14351 lazy-reference-relation accessor correctness probe (measure-only, no
+/// verdict change). Record one cross-base relation pair that is nominal-heritage
+/// reachable (`reachable`), partitioned by whether the instantiated-heritage
+/// accessor resolved a base for it (`resolved`). The resolved/reachable ratio on
+/// fp-ts proves the lowering capture populates the map for the real heritage
+/// edges BEFORE any verdict-affecting relation flip uses it.
+#[inline]
+pub fn record_relation_lazy_ref_probe(reachable: bool, resolved: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    if reachable {
+        c.relation_lazy_ref_heritage_reachable
+            .fetch_add(1, Ordering::Relaxed);
+        if resolved {
+            c.relation_lazy_ref_accessor_resolved
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Record a budget-conditional `LimitTrue` relation cache hit (a limit-hit
 /// relation verdict was reused instead of re-burning the relation chain).
 #[inline]

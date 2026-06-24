@@ -1005,6 +1005,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 None
             };
 
+            // #14351 gating measurement (zero behavior change, TSZ_PERF_COUNTERS
+            // only). For genuine `Application`<->`Application` pairs, record
+            // whether the variance fast path could NOT decide (`fell_through` =>
+            // the relation eagerly `evaluate_type`-expands both members at
+            // ~1161) and, among those, whether the bases differ (cross-base HKT,
+            // reusing the resolver-aware `both_same_base_app`). The cross-base
+            // fall-through share tells us if the lazy-reference-relation lever
+            // (relate refs by per-arg variance across heritage, defer eager
+            // evaluation) is the fix before any hot-path change.
+            if s_app_id.is_some() && t_app_id.is_some() {
+                tsz_common::perf_counters::record_relation_app_pair(
+                    variance_result.is_none(),
+                    !both_same_base_app,
+                );
+            }
+
             if let Some(result) = variance_result {
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);

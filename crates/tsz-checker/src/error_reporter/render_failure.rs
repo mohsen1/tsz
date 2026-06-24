@@ -387,15 +387,18 @@ impl<'a> CheckerState<'a> {
         // Parameters are contravariant, so the leaf compares the (innermost)
         // target parameter against the source parameter.
         if Self::contravariant_param_leaf_needs_header(leaf_reason) {
-            // A structural object property-type mismatch leads with an explicit
-            // `Type 'S' is not assignable to type 'T'.` object header before the
-            // `Types of property 'p' …` drill — exactly like a top-level object
-            // relation — so emit that header here and render the structured
-            // reason one level deeper.
+            // A header-led structural mismatch (object property-type, tuple
+            // element/arity, or index-signature) leads with its specialized
+            // line at depth >= 1, so emit the explicit `Type 'S' is not
+            // assignable to type 'T'.` header over the parameter pair first and
+            // render the structured reason one level deeper — exactly like the
+            // union-source renderer drills its member. The drill takes the
+            // parameter (parent) types so a tuple/index reason renders against
+            // the whole parameter, not its element/value type.
             self.push_callback_signature_relation_line(diag, leaf_src, leaf_tgt, next_depth);
             if let Some(leaf) = leaf_reason {
-                let (s, t) = Self::nested_failure_display_types(leaf, leaf_src, leaf_tgt);
-                let leaf_diag = self.render_failure_reason(leaf, s, t, idx, next_depth + 1);
+                let leaf_diag =
+                    self.render_failure_reason(leaf, leaf_src, leaf_tgt, idx, next_depth + 1);
                 Self::push_nested_chain(diag, leaf_diag, next_depth + 1);
             }
         } else {
@@ -420,6 +423,21 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::SubtypeFailureReason;
         match leaf_reason {
             None => true,
+            // The leaf relation `target_param <: source_param` is an ordinary
+            // assignability failure, so its reason can take any of the shapes a
+            // union member's failure can — the contravariant frame plays the
+            // same role as the `Type 'M' is not assignable to type 'T'.` union
+            // line. Accept the same member-failure set the union-source renderer
+            // composes exactly (plus the union reasons themselves, which arise
+            // when a parameter is a union): self-heading leaves
+            // (scalar/literal/error, missing-property summaries, array-element,
+            // readonly-to-mutable, and nested union failures) render their own
+            // member line, and the header-led structural reasons
+            // (tuple/property/index) get an explicit `Type 'S' is not assignable
+            // to type 'T'.` header from `contravariant_param_leaf_needs_header`.
+            // `ReturnTypeMismatch`/`ParameterTypeMismatch` never bottom out here
+            // (the descent loop above keeps walking while both params are
+            // callable), so they are intentionally absent.
             Some(reason) => matches!(
                 reason,
                 SubtypeFailureReason::TypeMismatch { .. }
@@ -429,21 +447,35 @@ impl<'a> CheckerState<'a> {
                     | SubtypeFailureReason::MissingProperty { .. }
                     | SubtypeFailureReason::MissingProperties { .. }
                     | SubtypeFailureReason::PropertyTypeMismatch { .. }
+                    | SubtypeFailureReason::ArrayElementMismatch { .. }
+                    | SubtypeFailureReason::ReadonlyToMutableAssignment { .. }
+                    | SubtypeFailureReason::UnionSourceMismatch { .. }
+                    | SubtypeFailureReason::NoUnionMemberMatches { .. }
+                    | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                    | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                    | SubtypeFailureReason::TupleElementMismatch { .. }
+                    | SubtypeFailureReason::TupleArityMismatch(_)
+                    | SubtypeFailureReason::IndexSignatureMismatch { .. }
             ),
         }
     }
 
-    /// Whether the terminating leaf reason needs an explicit object
+    /// Whether the terminating leaf reason needs an explicit
     /// `Type 'S' is not assignable to type 'T'.` header emitted before its drill.
-    /// Only the object `PropertyTypeMismatch` leaf does; scalar and
-    /// missing-property leaves self-head.
+    /// The header-led structural reasons (object property-type, tuple
+    /// element/arity, and index-signature mismatches) lead with a specialized
+    /// line (`Types of property 'p' …`, `Type at position N …`, `'string' index
+    /// signatures are incompatible.`) at depth >= 1, so the header is supplied
+    /// here; scalar, missing-property, array-element, and union leaves self-head.
+    /// This is the same split the union-source member renderer applies, so the
+    /// contravariant parameter chain reproduces the identical nested layout.
     const fn contravariant_param_leaf_needs_header(
         leaf_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> bool {
-        matches!(
-            leaf_reason,
-            Some(tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. })
-        )
+        match leaf_reason {
+            Some(reason) => Self::union_member_nested_needs_header(reason),
+            None => false,
+        }
     }
 
     fn no_union_member_matches_switch_source_display(

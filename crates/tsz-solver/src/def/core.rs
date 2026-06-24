@@ -306,6 +306,21 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
+    /// #14351 lazy-reference relation: instantiated heritage edges.
+    ///
+    /// Maps a derived `DefId` to the list of `(parent DefId, instantiated base
+    /// TypeId)` for each direct `extends` clause, where the base `TypeId` is the
+    /// parent reference *as written in the derived type's own scope* (e.g.
+    /// `Functor1<F>` from `interface Apply1<F> extends Functor1<F>`, lowered with
+    /// `Apply1`'s type parameter `F`). Both the `InheritanceGraph` (SymbolId
+    /// edges) and `DefinitionInfo::extends`/`implements` (`DefId` only) are
+    /// type-argument-erased, so this is the only place the heritage edge's
+    /// argument expression survives for the variance fast path to relate
+    /// `Apply1<A>` to `Functor1<B>` without materializing members. Populated at
+    /// lowering (`class_inheritance.rs`); read only by the flag-gated
+    /// lazy-reference relation branch, so an empty/unread map is behavior-neutral.
+    heritage_instantiations: DefDashMap<DefId, Vec<(DefId, TypeId)>>,
+
     /// Shared `(file, type-parameter name node, TypeParamInfo)` -> `TypeId`
     /// canonical identity map for type-parameter declarations that have no
     /// `DefId` registration (class, method, and interface type parameters
@@ -498,6 +513,7 @@ impl DefinitionStore {
             generation: AtomicU64::new(1),
             alias_forwards: DefDashMap::default(),
             type_to_def: DefDashMap::default(),
+            heritage_instantiations: DefDashMap::default(),
             type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
@@ -760,6 +776,29 @@ impl DefinitionStore {
             entry.implements = implements;
             self.bump_generation();
         }
+    }
+
+    /// #14351: record one instantiated heritage edge for the lazy-reference
+    /// relation. `derived` extends `parent`, and `base_type` is the parent
+    /// reference as written in `derived`'s own scope (e.g. `Functor1<F>` from
+    /// `interface Apply1<F> extends Functor1<F>`). First writer per
+    /// `(derived, parent)` wins; later equal writes are idempotent. This is
+    /// inert data — only the flag-gated lazy-reference relation branch reads it.
+    pub fn add_heritage_instantiation(&self, derived: DefId, parent: DefId, base_type: TypeId) {
+        let mut entry = self.heritage_instantiations.entry(derived).or_default();
+        if entry.iter().any(|&(p, _)| p == parent) {
+            return;
+        }
+        entry.push((parent, base_type));
+    }
+
+    /// #14351: the instantiated base `TypeId` for a DIRECT `extends` edge
+    /// `derived extends target`, or `None` if `target` is not a direct parent
+    /// of `derived` (the first slice handles single-hop heritage only).
+    pub fn get_heritage_instantiation(&self, derived: DefId, target: DefId) -> Option<TypeId> {
+        self.heritage_instantiations
+            .get(&derived)
+            .and_then(|edges| edges.iter().find(|&&(p, _)| p == target).map(|&(_, t)| t))
     }
 
     /// Update the body `TypeId` for a definition (for lazy evaluation).
@@ -1272,6 +1311,16 @@ impl DefinitionStore {
         self.type_param_for_decl_node
             .get(&(file, name_node, *info))
             .map(|r| *r)
+    }
+
+    /// #14351 measurement-only: number of distinct decl-site canonical type-param
+    /// entries `(file, name_node, info)`. Comparing this to the count of distinct
+    /// interned `TypeParameter` ids decides whether the divergent ids are
+    /// fresh-mints that BYPASS the decl-site map (map-len << distinct-ids =>
+    /// tractable re-mint convergence) or genuinely-distinct decl-sites
+    /// (map-len ~= distinct-ids => XL relation-level).
+    pub fn type_param_decl_node_count(&self) -> usize {
+        self.type_param_for_decl_node.len()
     }
 
     /// Register the canonical `TypeId` for a type-parameter declaration
