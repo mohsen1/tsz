@@ -171,6 +171,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Does a property named `prop_name` fall under a `string`-slot index
+    /// signature whose key type is `key_type`?
+    ///
+    /// A plain `string` (or `any`) key matches every string-named property. A
+    /// template-literal *pattern* key (`[k: `id_${number}`]`) is stored in the
+    /// same `string_index` slot, but only constrains property names assignable
+    /// to the pattern — mirroring tsc, where a property participates in an index
+    /// signature's `TS2411` check only when its name type is assignable to the
+    /// index's key type. Without this gate a pattern index wrongly constrains
+    /// every string-named property (a `TS2411` false positive on `size` for
+    /// `interface D { [k: `id_${number}`]: string; size: number }`).
+    pub(crate) fn property_name_matches_index_key(
+        &mut self,
+        prop_name: &str,
+        key_type: TypeId,
+    ) -> bool {
+        if key_type == TypeId::STRING || key_type == TypeId::ANY {
+            return true;
+        }
+        let name_literal = self.ctx.types.literal_string(prop_name);
+        self.index_signature_relation_outcome(name_literal, key_type)
+            .related
+    }
+
+    /// Display text for the *kind* of a `string`-slot index signature key in a
+    /// `TS2411` message: `string` for a plain string key, otherwise the key
+    /// type's own rendering (e.g. the template-literal pattern `` `id_${number}` ``,
+    /// which tsc shows in place of `string`).
+    pub(crate) fn index_signature_key_display(&mut self, key_type: TypeId) -> String {
+        if key_type == TypeId::STRING {
+            "string".to_string()
+        } else {
+            self.format_type(key_type)
+        }
+    }
+
     pub(crate) fn template_pattern_key_is_subset(&self, source: TypeId, target: TypeId) -> bool {
         let Some((source_prefix, source_suffix)) = self.template_pattern_bounds(source) else {
             return false;
