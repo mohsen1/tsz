@@ -89,6 +89,11 @@ DRIZZLE_ORM_DIR="$EXTERNAL_BENCH_DIR/drizzle-orm"
 TS_REST_DIR="$EXTERNAL_BENCH_DIR/ts-rest"
 OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
 TS_PATTERN_DIR="$EXTERNAL_BENCH_DIR/ts-pattern"
+RADASH_DIR="$EXTERNAL_BENCH_DIR/radash"
+VALTIO_DIR="$EXTERNAL_BENCH_DIR/valtio"
+TS_BELT_DIR="$EXTERNAL_BENCH_DIR/ts-belt"
+TS_EXTRAS_DIR="$EXTERNAL_BENCH_DIR/ts-extras"
+SUPERJSON_DIR="$EXTERNAL_BENCH_DIR/superjson"
 TRPC_DIR="$EXTERNAL_BENCH_DIR/trpc"
 TANSTACK_QUERY_DIR="$EXTERNAL_BENCH_DIR/tanstack-query"
 TANSTACK_ROUTER_DIR="$EXTERNAL_BENCH_DIR/tanstack-router"
@@ -430,6 +435,31 @@ ensure_ofetch_fixture() {
 ensure_ts_pattern_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
     tsz_ensure_git_fixture "ts-pattern" "$TS_PATTERN_REPO" "$TS_PATTERN_REF" "$TS_PATTERN_DIR" 1
+}
+
+ensure_radash_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "radash" "$RADASH_REPO" "$RADASH_REF" "$RADASH_DIR" 1
+}
+
+ensure_valtio_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "valtio" "$VALTIO_REPO" "$VALTIO_REF" "$VALTIO_DIR" 1
+}
+
+ensure_ts_belt_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-belt" "$TS_BELT_REPO" "$TS_BELT_REF" "$TS_BELT_DIR" 1
+}
+
+ensure_ts_extras_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-extras" "$TS_EXTRAS_REPO" "$TS_EXTRAS_REF" "$TS_EXTRAS_DIR" 1
+}
+
+ensure_superjson_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "superjson" "$SUPERJSON_REPO" "$SUPERJSON_REF" "$SUPERJSON_DIR" 1
 }
 
 ensure_trpc_fixture() {
@@ -961,6 +991,81 @@ run_ts_pattern_project_benchmarks() {
     local src_dir="$TS_PATTERN_DIR/src"
     tsz_write_ts_pattern_config "$tsconfig"
     run_project_benchmark "ts-pattern-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_radash_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "radash-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - radash"
+    ensure_radash_fixture
+    local tsconfig="$RADASH_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$RADASH_DIR/src"
+    tsz_write_radash_config "$tsconfig"
+    run_project_benchmark "radash-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_valtio_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "valtio-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - valtio"
+    ensure_valtio_fixture
+    local tsconfig="$VALTIO_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$VALTIO_DIR/src"
+    tsz_write_valtio_config "$tsconfig"
+    run_project_benchmark "valtio-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_belt_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-belt-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-belt"
+    ensure_ts_belt_fixture
+    local tsconfig="$TS_BELT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_BELT_DIR/src"
+    tsz_write_ts_belt_config "$tsconfig"
+    run_project_benchmark "ts-belt-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_extras_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-extras-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-extras"
+    ensure_ts_extras_fixture
+    local tsconfig="$TS_EXTRAS_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_EXTRAS_DIR/source"
+    tsz_write_ts_extras_config "$tsconfig"
+    run_project_benchmark "ts-extras-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_superjson_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "superjson-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - superjson"
+    ensure_superjson_fixture
+    local tsconfig="$SUPERJSON_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$SUPERJSON_DIR/src"
+    tsz_write_superjson_config "$tsconfig"
+    run_project_benchmark "superjson-project" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -1571,6 +1676,11 @@ main() {
     run_isolated "ts-rest-project"        run_ts_rest_project_benchmarks
     run_isolated "ofetch-project"         run_ofetch_project_benchmarks
     run_isolated "ts-pattern-project"     run_ts_pattern_project_benchmarks
+    run_isolated "radash-project"                    run_radash_project_benchmarks
+    run_isolated "valtio-project"                    run_valtio_project_benchmarks
+    run_isolated "ts-belt-project"                   run_ts_belt_project_benchmarks
+    run_isolated "ts-extras-project"                 run_ts_extras_project_benchmarks
+    run_isolated "superjson-project"                 run_superjson_project_benchmarks
     run_isolated "trpc-project"                      run_trpc_project_benchmarks
     run_isolated "tanstack-query-project"            run_tanstack_query_project_benchmarks
     run_isolated "tanstack-router-project"           run_tanstack_router_project_benchmarks

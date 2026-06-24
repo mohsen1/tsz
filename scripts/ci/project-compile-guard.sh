@@ -1008,6 +1008,31 @@ run_project_row() {
       tsz_write_ts_pattern_config "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-pattern/src"
       ;;
+    radash-project)
+      ensure_git_fixture "radash" "$RADASH_REPO" "$RADASH_REF" "$FIXTURE_ROOT/radash"
+      tsz_write_radash_config "$FIXTURE_ROOT/radash/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/radash/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/radash/src"
+      ;;
+    valtio-project)
+      ensure_git_fixture "valtio" "$VALTIO_REPO" "$VALTIO_REF" "$FIXTURE_ROOT/valtio"
+      tsz_write_valtio_config "$FIXTURE_ROOT/valtio/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/valtio/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/valtio/src"
+      ;;
+    ts-belt-project)
+      ensure_git_fixture "ts-belt" "$TS_BELT_REPO" "$TS_BELT_REF" "$FIXTURE_ROOT/ts-belt"
+      tsz_write_ts_belt_config "$FIXTURE_ROOT/ts-belt/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ts-belt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-belt/src"
+      ;;
+    ts-extras-project)
+      ensure_git_fixture "ts-extras" "$TS_EXTRAS_REPO" "$TS_EXTRAS_REF" "$FIXTURE_ROOT/ts-extras"
+      tsz_write_ts_extras_config "$FIXTURE_ROOT/ts-extras/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ts-extras/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-extras/source"
+      ;;
+    superjson-project)
+      ensure_git_fixture "superjson" "$SUPERJSON_REPO" "$SUPERJSON_REF" "$FIXTURE_ROOT/superjson"
+      tsz_write_superjson_config "$FIXTURE_ROOT/superjson/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/superjson/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/superjson/src"
+      ;;
     trpc-project)
       ensure_git_fixture "trpc" "$TRPC_REPO" "$TRPC_REF" "$FIXTURE_ROOT/trpc"
       tsz_write_trpc_config "$FIXTURE_ROOT/trpc/tsconfig.tsz-guard.json"
