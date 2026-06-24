@@ -1171,16 +1171,29 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(loc) = self.get_source_location(report_idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-            let diag = builder.not_callable(type_id, loc.start, loc.length());
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+            let (start, length) = (loc.start, loc.length());
+            let mut checker_diag = {
+                let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                    self.ctx.file_name.as_str(),
+                )
+                .with_def_store(&self.ctx.definition_store);
+                builder
+                    .not_callable(type_id, start, length)
+                    .to_checker_diagnostic(&self.ctx.file_name)
+            };
+            // tsc appends `Type 'X' has no call signatures.` beneath the
+            // `This expression is not callable.` headline (`invocationErrorDetails`).
+            if let Some(detail) = self.invocation_signature_detail(
+                type_id,
+                crate::error_reporter::operator_errors::InvocationSignatureKind::Call,
+                start,
+                length,
+            ) {
+                checker_diag.related_information.push(detail);
+            }
+            self.ctx.diagnostics.push(checker_diag);
         }
     }
 

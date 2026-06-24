@@ -1018,6 +1018,9 @@ mod intersection_source_literal_member_display_tests;
 #[path = "tests/intersection_target_elaboration_tests.rs"]
 mod intersection_target_elaboration_tests;
 #[cfg(test)]
+#[path = "tests/invocation_signature_detail_tests.rs"]
+mod invocation_signature_detail_tests;
+#[cfg(test)]
 #[path = "tests/issue_9762_literal_init_callback_inference.rs"]
 mod issue_9762_literal_init_callback_inference;
 #[cfg(test)]
