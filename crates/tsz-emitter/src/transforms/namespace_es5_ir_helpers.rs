@@ -948,6 +948,45 @@ pub(super) fn collect_member_names_from_node(
     }
 }
 
+/// Collect the names a nested namespace/class IIFE body declares at its own top
+/// level (vars, functions, classes, enums, nested namespaces).
+///
+/// When an enclosing namespace's exported-var rewrite descends into such a body
+/// (`rewrite_exported_var_refs`), any of its enclosing-export names that the
+/// nested scope re-declares locally are shadowed and must stay unqualified — a
+/// nested `const a` / `function a` / `namespace a` shadows the enclosing
+/// `export const a` (#14680).
+pub(super) fn collect_nested_scope_declared_names(
+    body: &[IRNode],
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for node in body {
+        collect_nested_scope_declared_name(node, &mut names);
+    }
+    names
+}
+
+fn collect_nested_scope_declared_name(
+    node: &IRNode,
+    names: &mut std::collections::HashSet<String>,
+) {
+    match node {
+        IRNode::ES5ClassIIFE { name, .. }
+        | IRNode::FunctionDecl { name, .. }
+        | IRNode::VarDecl { name, .. }
+        | IRNode::EnumIIFE { name, .. }
+        | IRNode::NamespaceIIFE { name, .. } => {
+            names.insert(name.to_string());
+        }
+        IRNode::VarDeclList(items) | IRNode::Sequence(items) => {
+            for item in items {
+                collect_nested_scope_declared_name(item, names);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Rename namespace references in body IR nodes.
 /// Updates `NamespaceExport.namespace` and nested `NamespaceIIFE.parent_name`
 /// from `old_name` to `new_name`.
@@ -1095,8 +1134,20 @@ pub(super) fn rewrite_exported_var_refs(
             }
         }
         IRNode::NamespaceIIFE { body, .. } | IRNode::ES5ClassIIFE { body, .. } => {
+            // Descend into the nested scope, but drop any enclosing-export names
+            // the nested scope re-declares locally: a shadowing local binding
+            // keeps the reference unqualified (#14680). Reuse `names` directly
+            // when nothing is shadowed (the common case) to avoid a clone.
+            let shadowed = collect_nested_scope_declared_names(body);
+            let reduced;
+            let active = if shadowed.is_empty() {
+                names
+            } else {
+                reduced = names.difference(&shadowed).cloned().collect();
+                &reduced
+            };
             for stmt in body {
-                rewrite_exported_var_refs(stmt, ns_name, names);
+                rewrite_exported_var_refs(stmt, ns_name, active);
             }
         }
         IRNode::VarDecl {

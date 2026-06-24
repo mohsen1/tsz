@@ -442,8 +442,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .replace(Some((env_name.clone(), *using_async)));
         }
 
-        // Transform the innermost body - use the last name part for member exports
-        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
+        // Transform the innermost body - use the last name part for member exports.
+        // This is the dispatched (top-level) namespace body, so prior-block
+        // exported vars of this same namespace apply here.
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts, true);
         self.active_namespace_using_env.replace(None);
         if let Some((env_name, _using_async, error_name, result_name)) = using_region {
             body = self.wrap_namespace_using_region(body, env_name, error_name, result_name);
@@ -971,14 +973,30 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
     }
 
-    /// Transform namespace body into IR nodes
-    fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
+    /// Transform a namespace body into IR nodes.
+    ///
+    /// `apply_prior` controls whether `self.prior_exported_vars` (the exported
+    /// vars carried across *blocks of the same dispatched namespace*) are merged
+    /// into this body's substitution set. It must be `true` only for the
+    /// dispatched (top-level) namespace body and `false` for every *nested
+    /// child* namespace body: a nested namespace `M` inside `N` has its own
+    /// exported-var set, and re-applying `N`'s exports here would qualify a
+    /// reference to `N`'s export by the inner name (`M.a`) instead of the
+    /// declaring name (`N.a`). References to an enclosing namespace's exports are
+    /// instead qualified by that enclosing namespace's own
+    /// `rewrite_exported_var_refs` pass, which descends into nested IIFEs (#14680).
+    fn transform_namespace_body(
+        &self,
+        body_idx: NodeIndex,
+        name_parts: &[String],
+        apply_prior: bool,
+    ) -> Vec<IRNode> {
         let mut result = Vec::new();
         let mut runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
         // Merge in exported vars from prior blocks of the same namespace.
         // This enables cross-block substitution: `x` → `M.x` when `export var x`
         // was declared in a prior block.
-        if !self.prior_exported_vars.is_empty() {
+        if apply_prior && !self.prior_exported_vars.is_empty() {
             runtime_exported_vars.extend(self.prior_exported_vars.iter().cloned());
             // Remove locally-declared non-exported names — they shadow prior exports
             let local_names = collect_local_var_names(self.arena, body_idx);
@@ -1757,8 +1775,11 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
-        // Transform body
-        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
+        // Transform body. This is a *nested child* namespace body, so the
+        // dispatched namespace's prior-block exported vars must NOT be applied
+        // here — references to an enclosing export are qualified by the
+        // enclosing namespace's own rewrite pass (#14680).
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts, false);
         self.rewrite_const_enum_accesses(&mut body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
@@ -1835,3 +1856,7 @@ fn mark_invalid_namespace_static(node: &mut IRNode) {
 #[cfg(test)]
 #[path = "../../tests/namespace_es5_ir.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/namespace_es5_nested_enclosing_var_qualification_tests.rs"]
+mod nested_enclosing_var_qualification_tests;
