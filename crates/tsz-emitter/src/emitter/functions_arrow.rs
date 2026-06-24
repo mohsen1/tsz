@@ -1305,6 +1305,9 @@ impl<'a> Printer<'a> {
             let has_forwarded_object_rest_param_prologue =
                 !forwarded_object_rest_param_prologue.is_empty();
             self.write(") {");
+            // Splice point right after `function* (<params>) {` for the body's
+            // hoisted temps when emitted inline on a single line.
+            let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
@@ -1315,10 +1318,7 @@ impl<'a> Printer<'a> {
                 self.ctx.arguments_capture_name = Some(capture_name);
             }
             if is_block {
-                if body_is_single_line
-                    && !has_forwarded_object_rest_param_prologue
-                    && !body_has_for_await
-                {
+                if body_is_single_line && !has_forwarded_object_rest_param_prologue {
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -1327,6 +1327,7 @@ impl<'a> Printer<'a> {
                             self.emit(stmt);
                         }
                     }
+                    self.splice_single_line_async_generator_hoists(var_insert_pos);
                 } else {
                     self.write_line();
                     self.increase_indent();
@@ -1352,6 +1353,7 @@ impl<'a> Printer<'a> {
                 self.write(" return ");
                 self.emit_expression(func.body);
                 self.write(";");
+                self.splice_single_line_async_generator_hoists(var_insert_pos);
             }
             self.ctx.emit_await_as_yield = saved_yield;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
@@ -1382,6 +1384,9 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
+            // Splice point right after `function* () {` for the body's hoisted
+            // temps when emitted inline on a single line.
+            let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
@@ -1391,7 +1396,7 @@ impl<'a> Printer<'a> {
             self.ctx.arguments_capture_name = Some(arguments_capture_name);
 
             if is_block {
-                if body_is_single_line && !has_object_rest_param_prologue && !body_has_for_await {
+                if body_is_single_line && !has_object_rest_param_prologue {
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -1400,6 +1405,7 @@ impl<'a> Printer<'a> {
                             self.emit(stmt);
                         }
                     }
+                    self.splice_single_line_async_generator_hoists(var_insert_pos);
                     self.write(" })");
                 } else {
                     self.write_line();
@@ -1427,7 +1433,9 @@ impl<'a> Printer<'a> {
             } else {
                 self.write(" return ");
                 self.emit_expression(func.body);
-                self.write("; })");
+                self.write(";");
+                self.splice_single_line_async_generator_hoists(var_insert_pos);
+                self.write(" })");
             }
 
             self.ctx.emit_await_as_yield = saved_yield;
@@ -1441,7 +1449,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if body_is_single_line && !has_object_rest_param_prologue && !body_has_for_await {
+        if body_is_single_line && !has_object_rest_param_prologue {
             // Single-line body: emit inline like TSC
             // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
             self.write(" => ");
@@ -1449,6 +1457,9 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
+            // Splice point right after `function* () {` for the body's hoisted
+            // temps (optional-chaining / nullish / `for await...of` downleveling).
+            let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
@@ -1466,6 +1477,7 @@ impl<'a> Printer<'a> {
                     self.emit(stmt);
                 }
             }
+            self.splice_single_line_async_generator_hoists(var_insert_pos);
             self.ctx.emit_await_as_yield = saved_yield;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
@@ -1481,6 +1493,7 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
+            let var_insert_pos = self.writer.len();
             let saved_yield = self.ctx.emit_await_as_yield;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
@@ -1502,6 +1515,7 @@ impl<'a> Printer<'a> {
                 self.write(" return ");
                 self.emit_expression(func.body);
                 self.write(";");
+                self.splice_single_line_async_generator_hoists(var_insert_pos);
             }
             self.ctx.emit_await_as_yield = saved_yield;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
@@ -1734,6 +1748,9 @@ impl<'a> Printer<'a> {
         self.write("], void 0, function* (");
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(") {");
+        // Splice point right after `function* (<params>) {` for the body's
+        // hoisted temps when emitted inline on a single line.
+        let var_insert_pos = self.writer.len();
 
         let body_node = self.arena.get(func.body);
         let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
@@ -1754,7 +1771,7 @@ impl<'a> Printer<'a> {
             self.ctx.arguments_capture_name = Some(capture_name);
         }
         if is_block {
-            if body_is_single_line && !body_has_for_await {
+            if body_is_single_line {
                 if let Some(body_node) = self.arena.get(func.body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
@@ -1763,6 +1780,7 @@ impl<'a> Printer<'a> {
                         self.emit(stmt);
                     }
                 }
+                self.splice_single_line_async_generator_hoists(var_insert_pos);
             } else {
                 self.write_line();
                 self.increase_indent();
@@ -1778,6 +1796,7 @@ impl<'a> Printer<'a> {
             self.write(" return ");
             self.emit_expression(func.body);
             self.write(";");
+            self.splice_single_line_async_generator_hoists(var_insert_pos);
         }
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;

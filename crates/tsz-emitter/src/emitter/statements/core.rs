@@ -756,6 +756,32 @@ impl<'a> Printer<'a> {
     /// `hoisted_assignment_temps`, which dropped the `var` declaration for
     /// nullish-assignment (`??=`) read-cache temps and produced non-runnable
     /// strict-mode output (`ReferenceError: _a is not defined`).
+    /// Splice the body's hoisted temp declarations (`var _a, _b;`) into a
+    /// single-line async-lowered generator body, right after `function* () {`.
+    ///
+    /// `tsc` keeps a single-line source body single-line when it is lowered to
+    /// `__awaiter(..., function* () { ... })`, and inserts the temps produced by
+    /// the body's own downleveling (optional-chaining / nullish-coalescing
+    /// assignment / `for await...of` etc.) inline:
+    /// `function* () { var _a, _b; <body> }`. The temps are only known after the
+    /// body is emitted, so the caller captures `var_insert_pos` right after
+    /// `function* () {` and the declarations are spliced in afterward. No-op when
+    /// the body hoisted nothing (the common case).
+    pub(in crate::emitter) fn splice_single_line_async_generator_hoists(
+        &mut self,
+        var_insert_pos: usize,
+    ) {
+        let prologue = self.take_single_line_hoisted_temp_prologue();
+        if !prologue.is_empty() {
+            // `take_single_line_hoisted_temp_prologue` returns `var ...; ` with a
+            // trailing space and no leading space. The first body statement is
+            // emitted with a leading space, so prepend one and drop the trailing
+            // one to land exactly as `function* () { var ...; <stmt>`.
+            self.writer
+                .insert_at(var_insert_pos, &format!(" {}", prologue.trim_end()));
+        }
+    }
+
     pub(in crate::emitter) fn take_single_line_hoisted_temp_prologue(&mut self) -> String {
         let mut prologue = String::new();
 
