@@ -535,6 +535,190 @@ target = source;
     );
 }
 
+/// A contravariant parameter whose leaf relation fails through a **union
+/// source** (the target parameter is a wider union than the source parameter)
+/// must drill the failing union member beneath the `Types of parameters` frame,
+/// not stop at the bare signature line. This is the witnessed regression: the
+/// contravariant-leaf renderer previously accepted only scalar/missing-property
+/// /object-property leaves and dropped the whole chain for a union leaf.
+#[test]
+fn union_source_parameter_leaf_elaborates_member_chain() {
+    let text = elaboration(
+        r#"
+let target: (x: string | number) => void;
+let source: (x: string) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(x: string) => void' is not assignable to type '(x: string | number) => void'.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type 'string | number' is not assignable to type 'string'.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the union-source member chain under the parameter frame. Got: {text:?}"
+    );
+}
+
+/// The mirror case: the contravariant leaf relation fails because the source
+/// parameter is a **union target** that the (narrower) target parameter cannot
+/// satisfy. tsc self-heads the union line with no further member drill, exactly
+/// as it does for the same relation at the top level.
+#[test]
+fn union_target_parameter_leaf_elaborates_union_line() {
+    let text = elaboration(
+        r#"
+let target: (x: string) => void;
+let source: (x: "a" | "b") => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(x: \"a\" | \"b\") => void' is not assignable to type '(x: string) => void'.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type 'string' is not assignable to type '\"a\" | \"b\"'.",
+        "Expected the union-target parameter line. Got: {text:?}"
+    );
+}
+
+/// A contravariant parameter whose leaf is an **array element** mismatch
+/// self-heads with the `se[] … te[]` line and drills the element relation.
+#[test]
+fn array_element_parameter_leaf_elaborates_element_chain() {
+    let text = elaboration(
+        r#"
+let target: (x: number[]) => void;
+let source: (x: string[]) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(x: string[]) => void' is not assignable to type '(x: number[]) => void'.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type 'number[]' is not assignable to type 'string[]'.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the array-element chain under the parameter frame. Got: {text:?}"
+    );
+}
+
+/// A contravariant parameter whose leaf is a **tuple element** mismatch is
+/// header-led: the parameter-pair header precedes the `Type at position N …`
+/// positional line and the element relation.
+#[test]
+fn tuple_element_parameter_leaf_elaborates_positional_chain() {
+    let text = elaboration(
+        r#"
+let target: (x: [number, number]) => void;
+let source: (x: [string, string]) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(x: [string, string]) => void' is not assignable to type '(x: [number, number]) => void'.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type '[number, number]' is not assignable to type '[string, string]'.\n\
+         Type at position 0 in source is not compatible with type at position 0 in target.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the tuple positional chain under the parameter frame. Got: {text:?}"
+    );
+}
+
+/// A contravariant parameter whose leaf is an **index-signature** mismatch is
+/// header-led: the parameter-pair header precedes the `'string' index
+/// signatures are incompatible.` line and the value relation.
+#[test]
+fn index_signature_parameter_leaf_elaborates_index_chain() {
+    let text = elaboration(
+        r#"
+let target: (x: { [k: string]: number }) => void;
+let source: (x: { [k: string]: string }) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(x: { [k: string]: string; }) => void' is not assignable to type '(x: { [k: string]: number; }) => void'.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type '{ [k: string]: number; }' is not assignable to type '{ [k: string]: string; }'.\n\
+         'string' index signatures are incompatible.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the index-signature chain under the parameter frame. Got: {text:?}"
+    );
+}
+
+/// The union-leaf rule is structural (renamed binders) and surface-independent:
+/// the same descending chain appears under the call-argument (TS2345) surface,
+/// and renamed parameters prove it is not keyed on the `x` spelling.
+#[test]
+fn union_source_parameter_leaf_is_structural_renamed_and_call_argument() {
+    let renamed = elaboration(
+        r#"
+let dst: (payload: string | number) => void;
+let src: (payload: string) => void;
+dst = src;
+"#,
+        2322,
+    );
+    assert!(
+        renamed.contains("Types of parameters 'payload' and 'payload' are incompatible.")
+            && renamed.contains("Type 'string | number' is not assignable to type 'string'.")
+            && renamed.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the renamed union-source chain. Got: {renamed:?}"
+    );
+
+    let call_argument = elaboration(
+        r#"
+declare function take(cb: (value: string | number) => void): void;
+take((value: string) => {});
+"#,
+        2345,
+    );
+    assert!(
+        call_argument.contains("Types of parameters 'value' and 'value' are incompatible.")
+            && call_argument.contains("Type 'string | number' is not assignable to type 'string'.")
+            && call_argument.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the union-source chain under TS2345. Got: {call_argument:?}"
+    );
+}
+
+/// The architectural invariant for the union leaf too: the call-argument
+/// (TS2345) and direct-assignment (TS2322) surfaces render the identical
+/// related-information chain (both route through the shared
+/// `render_failure_reason`); only the headline code differs.
+#[test]
+fn union_source_call_argument_and_assignment_render_identical_chain() {
+    let argument_chain = elaboration(
+        r#"
+declare function take(cb: (value: string | number) => void): void;
+take((value: string) => {});
+"#,
+        2345,
+    );
+    let assignment_chain = elaboration(
+        r#"
+let target: (value: string | number) => void;
+let source: (value: string) => void;
+target = source;
+"#,
+        2322,
+    );
+    let related = |text: &str| text.split('\n').skip(1).collect::<Vec<_>>().join("\n");
+    assert_eq!(
+        related(&argument_chain),
+        related(&assignment_chain),
+        "TS2345 and TS2322 must elaborate the same union-source parameter chain. \
+         argument={argument_chain:?} assignment={assignment_chain:?}"
+    );
+}
+
 #[test]
 fn class_method_with_fewer_params_implements_interface_with_more_params() {
     // TypeScript allows a class method to implement an interface method with
