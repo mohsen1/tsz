@@ -82,7 +82,7 @@ jobs:
           else
             echo "active_suite_found=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -401,7 +401,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Require goal and provenance fields in the PR body
         env:
           GH_TOKEN: ${{ github.token }}
@@ -449,7 +449,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Validate project row coverage across surfaces
@@ -462,7 +462,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Check bench shell syntax
@@ -476,7 +476,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Check perf tools
@@ -511,7 +511,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Check arch Python tools
@@ -546,7 +546,7 @@ jobs:
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Run lint suite
@@ -559,7 +559,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Install cargo-shear
@@ -592,7 +592,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Install cargo-deny
@@ -631,7 +631,7 @@ jobs:
       # are blocked until this artifact uploads.
       TSZ_CI_DISABLE_SCCACHE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Build dist-fast binaries
@@ -656,7 +656,7 @@ jobs:
     env:
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -679,7 +679,7 @@ jobs:
       npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -747,7 +747,7 @@ jobs:
       _TSZ_CI_CANARY_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CANARY_SHARD_COUNT: 3
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -815,7 +815,7 @@ jobs:
       # cannot produce a silently-green required check over a partial set.
       TSZ_CANARY_SHARDS_EXPECTED: "3"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Wait for canary shard artifacts to be indexed
@@ -929,7 +929,7 @@ jobs:
       TSZ_BENCH_OUTPUT_JSON: ${{ github.workspace }}/premerge-microbench.json
       TSZ_BENCH_CASE_FILTER: deeppartial_optional_chain_15,union_members_100,mapped_type_keys_150
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -1004,7 +1004,7 @@ jobs:
       TSZ_DETERMINISM_TIMEOUT: "45"
       TSZ_PROJECT_COMPILE_FIXTURE_ROOT: ${{ github.workspace }}/.target/project-compile-guard
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -1070,7 +1070,7 @@ jobs:
       # critical path. The wasm target save was ~33s on run 25057027232.
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Run wasm suite (nodejs + web targets)
@@ -1095,7 +1095,7 @@ jobs:
       GITHUB_SHA: ${{ github.sha }}
       TSZ_CI_SKIP_DIST_RESTORE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Prep node harnesses
@@ -1135,7 +1135,7 @@ jobs:
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Submit unit suite to Cloud Build pool
@@ -1159,7 +1159,7 @@ jobs:
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Submit checker integration suite to Cloud Build pool
@@ -1198,7 +1198,7 @@ jobs:
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Download dist-fast binaries
@@ -1243,7 +1243,7 @@ jobs:
       TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Wait for conformance shard artifacts to be indexed
@@ -1323,7 +1323,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Validate accepted-regression ledger integrity
@@ -1371,7 +1371,7 @@ jobs:
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_CI_CACHE_RESTORE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Restore GCS caches
@@ -1425,7 +1425,7 @@ jobs:
       _TSZ_CI_EMIT_SHARD_COUNT: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Wait for emit shard artifacts to be indexed
@@ -1519,7 +1519,7 @@ jobs:
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_CI_CACHE_RESTORE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Restore GCS caches
@@ -1563,7 +1563,7 @@ jobs:
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_CACHE_SAVE: "0"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
       - name: Aggregate fourslash results
