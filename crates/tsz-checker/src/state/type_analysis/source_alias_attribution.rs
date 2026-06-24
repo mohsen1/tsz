@@ -167,6 +167,60 @@ pub(crate) fn alias_declaration_body_is_computed(
     }
 }
 
+/// True when a non-generic type alias declaration body is a (optionally
+/// parenthesized) tuple type literal with a top-level spread element
+/// (`type T = [...X, c]`).
+///
+/// This is the cheap syntactic half of the spread-flattened-tuple alias-display
+/// rule: a fixed-tuple spread (`...[a, b]`, or `...Inner` where `Inner` is a
+/// fixed tuple) flattens into a fresh tuple that `tsc` stamps with no
+/// `aliasSymbol`, so its diagnostics render the structural tuple (`[a, b, c]`)
+/// rather than `T`. The caller pairs this with a check that the *evaluated*
+/// alias type is a non-variadic tuple — a rest array such as `[...number[], c]`
+/// stays variadic and keeps its alias name, matching `tsc`. Keying is per def
+/// (the flattened tuple interns to the same shape as a directly-written
+/// `type T = [a, b, c]`, which `tsc` displays by name).
+pub(crate) fn tuple_alias_declaration_body_has_top_level_spread(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+) -> bool {
+    let Some(decl_node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let Some(type_alias) = arena.get_type_alias(decl_node) else {
+        return false;
+    };
+    // Unwrap parenthesized wrappers to reach the tuple type literal.
+    let node_idx = crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type(
+        arena,
+        type_alias.type_node,
+    );
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    if node.kind != syntax_kind_ext::TUPLE_TYPE {
+        return false;
+    }
+    let Some(tuple) = arena.get_tuple_type(node) else {
+        return false;
+    };
+    tuple.elements.nodes.iter().any(|&elem_idx| {
+        if elem_idx.is_none() {
+            return false;
+        }
+        let Some(elem) = arena.get(elem_idx) else {
+            return false;
+        };
+        if elem.kind == syntax_kind_ext::REST_TYPE {
+            return true;
+        }
+        elem.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && arena
+                .get_named_tuple_member(elem)
+                .is_some_and(|member| member.dot_dot_dot_token)
+    })
+}
+
 fn result_is_primitive_literal_union(db: &dyn TypeDatabase, ty: TypeId) -> bool {
     crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
         members.iter().all(|&m| {

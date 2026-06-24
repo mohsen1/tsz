@@ -109,6 +109,18 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        // Skip a non-generic alias whose tuple body was built by flattening a
+        // fixed-tuple spread (`type T = [...[a, b], c]`); tsc stamps no
+        // `aliasSymbol` on the spread result, so it renders `[a, b, c]`, not
+        // `T`. Keyed per def because the flattened tuple shares its interned
+        // `TypeId` with a directly-written `type T = [a, b, c]`.
+        if self
+            .ctx
+            .definition_store
+            .is_tuple_spread_flattened_alias(def_id)
+        {
+            return None;
+        }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
     }

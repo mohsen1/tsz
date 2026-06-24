@@ -13,6 +13,7 @@ mod computed_helpers_namespace_display;
 mod computed_helpers_private;
 mod computed_loops;
 mod core;
+mod core_alias_display;
 mod core_alias_evaluation;
 mod core_type_query;
 mod core_typeof_value;

@@ -1660,13 +1660,7 @@ impl CheckerState<'_> {
                 .borrow()
                 .get(&sym_id)
                 .copied()
-                .filter(|_| {
-                    self.ctx
-                        .binder
-                        .symbols
-                        .get(sym_id)
-                        .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
-                });
+                .filter(|_| self.symbol_is_type_alias(sym_id));
             if let Some(def_id) = alias_def_id {
                 self.ctx
                     .definition_store
@@ -1738,6 +1732,12 @@ impl CheckerState<'_> {
                             })
                         }));
                 self.record_alias_body_provenance(result, body_is_computed, alias_is_non_generic);
+                self.mark_tuple_spread_flattened_alias_def(
+                    sym_id,
+                    def_id,
+                    result,
+                    alias_is_non_generic,
+                );
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these
