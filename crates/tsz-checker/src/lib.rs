@@ -985,6 +985,9 @@ mod in_operator_relation_routing_arch_tests;
 #[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
 mod index_signature_check_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_nested_object_literal_elaboration_tests.rs"]
+mod index_signature_nested_object_literal_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/index_signature_property_relation_routing_arch_tests.rs"]
 mod index_signature_property_relation_routing_arch_tests;
 #[cfg(test)]
