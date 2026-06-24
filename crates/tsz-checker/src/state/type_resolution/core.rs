@@ -5,7 +5,6 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -78,80 +77,6 @@ impl CheckerState<'_> {
                 .and_then(|sig| self.ctx.arena.get(sig.name))
                 .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
         })
-    }
-
-    fn same_file_type_alias_parts_for_name(
-        &self,
-        name: &str,
-    ) -> Option<(Option<NodeList>, NodeIndex, Option<tsz_binder::SymbolId>)> {
-        self.ctx
-            .arena
-            .nodes
-            .iter()
-            .enumerate()
-            .find_map(|(idx, node)| {
-                let type_alias = self.ctx.arena.get_type_alias(node)?;
-                let alias_name = self.ctx.arena.get_identifier_text(type_alias.name)?;
-                (alias_name == name).then(|| {
-                    (
-                        type_alias.type_parameters.clone(),
-                        type_alias.type_node,
-                        self.ctx.binder.node_symbols.get(&(idx as u32)).copied(),
-                    )
-                })
-            })
-    }
-
-    fn type_node_is_outside_symbol_declarations(
-        &self,
-        node_idx: NodeIndex,
-        sym_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return true;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return true;
-        };
-
-        !symbol.declarations.iter().any(|&decl_idx| {
-            self.ctx
-                .arena
-                .get(decl_idx)
-                .is_some_and(|decl| node.pos >= decl.pos && node.end <= decl.end)
-        })
-    }
-
-    fn def_body_involves_depth_poisoned_def(&self, def_id: tsz_solver::DefId) -> bool {
-        if !self.ctx.definition_store.has_any_depth_poisoned() {
-            return false;
-        }
-
-        self.ctx
-            .type_env
-            .try_borrow()
-            .ok()
-            .and_then(|env| env.get_def(def_id))
-            .is_some_and(|body| self.ctx.type_involves_depth_poisoned_def(body))
-    }
-
-    fn def_body_can_own_ambient_depth(&self, def_id: tsz_solver::DefId) -> bool {
-        let Some(body) = self
-            .ctx
-            .type_env
-            .try_borrow()
-            .ok()
-            .and_then(|env| env.get_def(def_id))
-            .or_else(|| self.ctx.definition_store.get_body(def_id))
-        else {
-            return false;
-        };
-
-        let db = self.ctx.types.as_type_database();
-        crate::query_boundaries::common::contains_conditional_type(db, body)
-            || crate::query_boundaries::common::contains_keyof_type(db, body)
-            || crate::query_boundaries::common::contains_index_access_type(db, body)
-            || crate::query_boundaries::common::is_mapped_type(db, body)
     }
 
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").

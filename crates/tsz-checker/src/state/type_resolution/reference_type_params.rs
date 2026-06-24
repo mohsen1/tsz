@@ -2,10 +2,84 @@
 
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::node::NodeArena;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 
 impl CheckerState<'_> {
+    pub(super) fn same_file_type_alias_parts_for_name(
+        &self,
+        name: &str,
+    ) -> Option<(Option<NodeList>, NodeIndex, Option<SymbolId>)> {
+        self.ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| {
+                let type_alias = self.ctx.arena.get_type_alias(node)?;
+                let alias_name = self.ctx.arena.get_identifier_text(type_alias.name)?;
+                (alias_name == name).then(|| {
+                    (
+                        type_alias.type_parameters.clone(),
+                        type_alias.type_node,
+                        self.ctx.binder.node_symbols.get(&(idx as u32)).copied(),
+                    )
+                })
+            })
+    }
+
+    pub(super) fn type_node_is_outside_symbol_declarations(
+        &self,
+        node_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return true;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        !symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|decl| node.pos >= decl.pos && node.end <= decl.end)
+        })
+    }
+
+    pub(super) fn def_body_involves_depth_poisoned_def(&self, def_id: tsz_solver::DefId) -> bool {
+        if !self.ctx.definition_store.has_any_depth_poisoned() {
+            return false;
+        }
+
+        self.ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .is_some_and(|body| self.ctx.type_involves_depth_poisoned_def(body))
+    }
+
+    pub(super) fn def_body_can_own_ambient_depth(&self, def_id: tsz_solver::DefId) -> bool {
+        let Some(body) = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .or_else(|| self.ctx.definition_store.get_body(def_id))
+        else {
+            return false;
+        };
+
+        let db = self.ctx.types.as_type_database();
+        crate::query_boundaries::common::contains_conditional_type(db, body)
+            || crate::query_boundaries::common::contains_keyof_type(db, body)
+            || crate::query_boundaries::common::contains_index_access_type(db, body)
+            || crate::query_boundaries::common::is_mapped_type(db, body)
+    }
+
     pub(crate) fn declaration_file_type_shadow_for_lib_name(
         &self,
         name: &str,
