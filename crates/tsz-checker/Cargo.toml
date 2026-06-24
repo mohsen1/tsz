@@ -1133,6 +1133,9 @@ path = "tests/concrete_indexed_access_display_tests.rs"
 name = "enum_indexed_access_tests"
 path = "tests/enum_indexed_access_tests.rs"
 [[test]]
+name = "enum_keyof_excludes_number_tests"
+path = "tests/enum_keyof_excludes_number_tests.rs"
+[[test]]
 name = "enum_member_cache_tests"
 path = "tests/enum_member_cache_tests.rs"
 [[test]]
