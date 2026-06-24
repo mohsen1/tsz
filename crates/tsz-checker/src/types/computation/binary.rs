@@ -671,26 +671,53 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2791: bigint exponentiation requires target >= ES2016.
-                // Only fire when both types are specifically bigint-like,
-                // not when either is `any`/`unknown` (TSC skips the bigint branch for those).
+                //
+                // tsc emits this only when the arithmetic *result* type is
+                // `bigint`. `checkBinaryLikeExpression` resolves the result by
+                // trying the number branch before the bigint branch, where `any`,
+                // `unknown`, `error`, and `never` are wildcards that satisfy both
+                // branches (the number branch wins for them). So a wildcard pair
+                // (`error ** error`, `never ** never`, `any ** any`) resolves to
+                // `number` and must NOT fire, while a wildcard paired with a
+                // genuine `bigint` (`any ** bigint`, `unknown ** bigint`) resolves
+                // to `bigint` and must fire. Mirror that branch precedence rather
+                // than firing whenever both operands are merely bigint-related.
                 if (self.ctx.compiler_options.target as u32)
                     < (tsz_common::common::ScriptTarget::ES2016 as u32)
-                    && left_type != TypeId::ANY
-                    && right_type != TypeId::ANY
-                    && left_type != TypeId::UNKNOWN
-                    && right_type != TypeId::UNKNOWN
-                    && self
-                        .diagnostic_subtype_outcome(left_type, TypeId::BIGINT)
-                        .related
-                    && self
-                        .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
-                        .related
                 {
-                    self.error_at_node_msg(
-                        node_idx,
-                        crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
-                        &[],
-                    );
+                    let left_wild = left_type == TypeId::ANY
+                        || left_type == TypeId::UNKNOWN
+                        || left_type == TypeId::ERROR
+                        || left_type == TypeId::NEVER;
+                    let right_wild = right_type == TypeId::ANY
+                        || right_type == TypeId::UNKNOWN
+                        || right_type == TypeId::ERROR
+                        || right_type == TypeId::NEVER;
+                    let left_bigint = left_wild
+                        || self
+                            .diagnostic_subtype_outcome(left_type, TypeId::BIGINT)
+                            .related;
+                    let right_bigint = right_wild
+                        || self
+                            .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
+                            .related;
+                    let left_number = left_wild
+                        || self
+                            .diagnostic_subtype_outcome(left_type, TypeId::NUMBER)
+                            .related;
+                    let right_number = right_wild
+                        || self
+                            .diagnostic_subtype_outcome(right_type, TypeId::NUMBER)
+                            .related;
+                    let number_branch = left_number && right_number;
+                    let bigint_branch = left_bigint && right_bigint;
+                    if bigint_branch && !number_branch {
+                        self.error_at_node_msg(
+                            node_idx,
+                            crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                            &[],
+                        );
+                    }
                 }
             }
 
