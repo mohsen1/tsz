@@ -48,6 +48,8 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-rest-project"
   "ofetch-project"
   "ts-pattern-project"
+  "radash-project"
+  "valtio-project"
   "trpc-project"
   "tanstack-query-project"
   "tanstack-router-project"
@@ -333,6 +335,12 @@ tsz_project_fixture_sources() {
       ;;
     ts-pattern-project)
       printf 'ts-pattern|%s|%s\n' "$TS_PATTERN_REPO" "$TS_PATTERN_REF"
+      ;;
+    radash-project)
+      printf 'radash|%s|%s\n' "$RADASH_REPO" "$RADASH_REF"
+      ;;
+    valtio-project)
+      printf 'valtio|%s|%s\n' "$VALTIO_REPO" "$VALTIO_REF"
       ;;
     trpc-project)
       printf 'trpc|%s|%s\n' "$TRPC_REPO" "$TRPC_REF"
@@ -853,6 +861,26 @@ tsz_write_ofetch_config() {
 
 tsz_write_ts_pattern_config() {
   tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_radash_config() {
+  # radash's `src/index.ts` re-exports siblings with explicit `.ts` extensions,
+  # which its real tsconfig permits via allowImportingTsExtensions (paired with
+  # noEmit). Without it tsc/tsz emit TS5097 on every such import; carry the
+  # option the upstream project actually sets so the guard matches tsc.
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
+}
+
+tsz_write_valtio_config() {
+  # valtio's `src/index.ts` re-exports `./vanilla.ts` / `./react.ts` with
+  # explicit `.ts` extensions, permitted upstream via allowImportingTsExtensions
+  # (paired with noEmit). Without it tsc/tsz emit TS5097 and cascade; carry the
+  # option so the guard matches tsc.
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 
 tsz_write_trpc_config() {
