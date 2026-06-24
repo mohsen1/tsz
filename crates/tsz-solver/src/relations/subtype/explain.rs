@@ -963,12 +963,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         if self.check_subtype(source_member, sole_member).is_true() {
                             continue;
                         }
-                        if let Some(
-                            reason @ (SubtypeFailureReason::MissingProperty { .. }
-                            | SubtypeFailureReason::MissingProperties { .. }),
-                        ) = self.explain_failure_guarded(source_member, sole_member)
+                        if let Some(reason) =
+                            self.explain_failure_guarded(source_member, sole_member)
                         {
-                            return Some(reason);
+                            let promote = match &reason {
+                                // Object/array source missing a required property:
+                                // surface the missing-property reason directly
+                                // (TS2741 / TS2739 / TS2345).
+                                SubtypeFailureReason::MissingProperty { .. }
+                                | SubtypeFailureReason::MissingProperties { .. } => true,
+                                // Scalar source (a primitive / string-literal property
+                                // value): tsc elaborates `S` against the sole real member
+                                // `T` directly instead of a `NoUnionMemberMatches` over
+                                // `[T, undefined]`. The bare reason both (a) renders the
+                                // evaluated leaf (`number`) where `T` is a still-deferred
+                                // application (e.g. the `DP<number>` value of a recursive
+                                // `DeepPartial`-style mapped type), and (b) drops the
+                                // spurious `| undefined` and "Did you mean" suggestion tsc
+                                // never shows for a sole-real-member nullable target. Object
+                                // sources are excluded so their per-property elaboration is
+                                // unaffected.
+                                SubtypeFailureReason::TypeMismatch { .. }
+                                | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                                | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
+                                    !self.is_object_like(source_member)
+                                }
+                                _ => false,
+                            };
+                            if promote {
+                                return Some(reason);
+                            }
                         }
                     }
                 }
