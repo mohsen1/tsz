@@ -704,6 +704,9 @@ path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 [[test]]
+name = "ts2540_readonly_typed_index_tests"
+path = "tests/ts2540_readonly_typed_index_tests.rs"
+[[test]]
 name = "mapped_readonly_tuple_tests"
 path = "tests/mapped_readonly_tuple_tests.rs"
 [[test]]
@@ -1132,6 +1135,9 @@ path = "tests/concrete_indexed_access_display_tests.rs"
 [[test]]
 name = "enum_indexed_access_tests"
 path = "tests/enum_indexed_access_tests.rs"
+[[test]]
+name = "enum_keyof_excludes_number_tests"
+path = "tests/enum_keyof_excludes_number_tests.rs"
 [[test]]
 name = "enum_member_cache_tests"
 path = "tests/enum_member_cache_tests.rs"
@@ -1761,6 +1767,9 @@ path = "tests/template_literal_record_key_tests.rs"
 [[test]]
 name = "keyof_template_index_signature_tests"
 path = "tests/keyof_template_index_signature_tests.rs"
+[[test]]
+name = "ts2411_pattern_index_signature_tests"
+path = "tests/ts2411_pattern_index_signature_tests.rs"
 [[test]]
 name = "template_literal_generic_call_indexed_keyof_constraint_tests"
 path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"

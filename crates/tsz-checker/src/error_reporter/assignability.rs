@@ -1345,6 +1345,14 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = crate::query_boundaries::diagnostics::union_members(db, ty) {
             return members.iter().any(|&m| recurse(m, visiting));
         }
+        // Intersections carry their members' canonical literal properties just
+        // like unions do — a declared `number & { tag: "x" }` source keeps its
+        // `"x"` member in tsc diagnostics. Without this arm the object member is
+        // not reached, so the source falls through to the non-literal-target
+        // widening below and renders `number & { tag: string }`.
+        if let Some(members) = crate::query_boundaries::diagnostics::intersection_members(db, ty) {
+            return members.iter().any(|&m| recurse(m, visiting));
+        }
         false
     }
 

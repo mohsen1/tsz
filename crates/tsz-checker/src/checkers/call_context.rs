@@ -552,8 +552,27 @@ impl<'a> CheckerState<'a> {
             common::type_param_info(self.ctx.types, param.type_id)
                 .is_some_and(|info| return_type_params.contains(&info.name))
         });
+        // A parameter that *wraps* a return type parameter (e.g. `v: T[]` for a
+        // `(...) => T[]` signature) also benefits from the contextual return type:
+        // the contextual array/wrapper specializes `T`, which then flows back to
+        // contextually type the argument so its element literals are preserved.
+        // `tsc` performs this downward inference; the `specializes && !stable`
+        // guard below keeps it confined to wrappers the contextual type actually
+        // specializes (arrays, awaited, readonly), so a non-specializing return
+        // such as `{ [P in keyof T]: ... }` still falls through to suppression.
+        let has_wrapped_return_param_argument = !has_bare_return_param_argument && {
+            let mut found = false;
+            for param in &shape.params {
+                let names = self.collect_type_param_names_for_context_overlap(param.type_id);
+                if names.iter().any(|name| return_type_params.contains(name)) {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
         if !return_is_bare_type_param
-            && has_bare_return_param_argument
+            && (has_bare_return_param_argument || has_wrapped_return_param_argument)
             && let Some(contextual_type) = contextual_type
         {
             let specializes = self.contextual_return_type_specializes_wrapped_params(

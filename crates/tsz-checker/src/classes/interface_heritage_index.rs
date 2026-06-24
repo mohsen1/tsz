@@ -8,6 +8,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         base_type: TypeId,
         string_index_value: TypeId,
+        string_index_key: TypeId,
         string_index_node: NodeIndex,
     ) {
         let resolved_base = self.resolve_type_query_type(base_type);
@@ -43,6 +44,12 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 continue;
             }
+            // A template-literal pattern index constrains only base property
+            // names that match the pattern (e.g. `[k: `id_${number}`]` does not
+            // constrain `foo`), mirroring tsc's index-applicability rule.
+            if !self.property_name_matches_index_key(&prop_name, string_index_key) {
+                continue;
+            }
             let prop_result = self.resolve_property_access_with_env(base_for_props, &prop_name);
             let crate::query_boundaries::common::PropertyAccessResult::Success {
                 type_id: prop_type,
@@ -63,10 +70,11 @@ impl<'a> CheckerState<'a> {
             }
             let prop_type_str = self.format_type(prop_type);
             let index_type_str = self.format_type(string_index_value);
+            let index_kind_str = self.index_signature_key_display(string_index_key);
             self.error_at_node_msg(
                 string_index_node,
                 diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                &[&prop_name, &prop_type_str, "string", &index_type_str],
+                &[&prop_name, &prop_type_str, &index_kind_str, &index_type_str],
             );
         }
     }

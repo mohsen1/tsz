@@ -54,8 +54,49 @@ pub(super) const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool
         || matches!(code, 2458 | 2754)
 }
 
+/// Drops the fatal config notices a grammar error outranks: deprecation
+/// (TS5101/TS5107) and removed-option (TS5102). tsc reports only the grammar
+/// error in that case, so neither notice survives.
 pub(super) fn remove_deprecation_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
+    diagnostics.retain(|d| {
+        !is_deprecation_diagnostic_code(d.code) && !is_removed_option_diagnostic_code(d.code)
+    });
+}
+
+/// Applies tsc's precedence between a fatal config-level notice and the
+/// file-level diagnostics.
+///
+/// tsc surfaces a config deprecation (TS5101/TS5107) or a removed-option notice
+/// (TS5102) only when the program is otherwise free of grammar errors. When a
+/// grammar error is present it takes precedence and the config notice is
+/// dropped; tsc's `getOptionsDiagnostics`/`getGlobalDiagnostics` never reach the
+/// reporter once `getSyntacticDiagnostics` produces an error. Absent a grammar
+/// error the notice is fatal and file-level semantic diagnostics are suppressed,
+/// with only the global TS2318 ("Cannot find global type") and TS2792 ("Did you
+/// mean to set moduleResolution?") diagnostics preserved.
+///
+/// This unifies the deprecation (TS5101/TS5107) and removed-option (TS5102)
+/// handling: a removed-but-parsed option passed on the CLI follows the same
+/// "config notice is fatal for semantic diagnostics" rule that tsc applies, so a
+/// real type error in the source must not leak alongside the removal notice.
+pub(super) fn apply_fatal_config_notice_priority(
+    diagnostics: &mut Vec<Diagnostic>,
+    config_diagnostics: &mut Vec<Diagnostic>,
+) {
+    let has_grammar_errors = diagnostics
+        .iter()
+        .any(|d| is_grammar_error_for_deprecation_priority(d.code));
+
+    if has_grammar_errors {
+        // Grammar errors take precedence — drop both the deprecation and the
+        // removed-option notices (tsc reports only the grammar error).
+        remove_deprecation_diagnostics(config_diagnostics);
+    } else {
+        // The config notice is fatal — suppress file-level diagnostics,
+        // preserving only the global TS2318/TS2792 diagnostics tsc still emits.
+        diagnostics
+            .retain(|d| (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792);
+    }
 }
 
 pub(super) fn collect_parse_only_no_check_diagnostics(
@@ -250,6 +291,14 @@ pub(super) fn compile_inner(
     let has_deprecation_diagnostics = config_diagnostics
         .iter()
         .any(|d| is_deprecation_diagnostic_code(d.code));
+    // A removed-option notice (TS5102) sourced from the CLI reaches the full
+    // pipeline (config-sourced removals already returned early above). tsc treats
+    // it as fatal for semantic diagnostics exactly like a deprecation notice, so
+    // it must drive the same file-level suppression below.
+    let has_removed_option_diagnostic = config_diagnostics
+        .iter()
+        .any(|d| is_removed_option_diagnostic_code(d.code));
+    let has_fatal_config_notice = has_deprecation_diagnostics || has_removed_option_diagnostic;
 
     let mut resolved = match resolve_compiler_options(
         config
@@ -735,18 +784,8 @@ pub(super) fn compile_inner(
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
         }
 
-        if has_deprecation_diagnostics {
-            let has_grammar_errors = diagnostics
-                .iter()
-                .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-
-            if has_grammar_errors {
-                remove_deprecation_diagnostics(&mut config_diagnostics);
-            } else {
-                diagnostics.retain(|d| {
-                    (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
-                });
-            }
+        if has_fatal_config_notice {
+            apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
         }
 
         diagnostics.extend(config_diagnostics);
@@ -830,18 +869,8 @@ pub(super) fn compile_inner(
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
         }
 
-        if has_deprecation_diagnostics {
-            let has_grammar_errors = diagnostics
-                .iter()
-                .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-
-            if has_grammar_errors {
-                remove_deprecation_diagnostics(&mut config_diagnostics);
-            } else {
-                diagnostics.retain(|d| {
-                    (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
-                });
-            }
+        if has_fatal_config_notice {
+            apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
         }
 
         diagnostics.extend(config_diagnostics);
@@ -1008,26 +1037,11 @@ pub(super) fn compile_inner(
         diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
 
-    // Handle TS5107/TS5101 deprecation diagnostics.
-    // tsc can return TS5107/TS5101 together with file diagnostics; in practice,
-    // grammar errors should suppress these deprecation diagnostics.
-    if has_deprecation_diagnostics {
-        let has_grammar_errors = diagnostics
-            .iter()
-            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-
-        if has_grammar_errors {
-            // Grammar errors take precedence - suppress TS5107/TS5101
-            remove_deprecation_diagnostics(&mut config_diagnostics);
-        } else {
-            // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
-            // Preserve only global-level TS2318 ("Cannot find global type") and
-            // TS2792 ("Did you mean to set moduleResolution?"). tsc suppresses
-            // TS2882 (side-effect import) when TS5107 is present.
-            diagnostics.retain(|d| {
-                (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
-            });
-        }
+    // A fatal config notice (deprecation TS5101/TS5107 or removed-option TS5102)
+    // takes priority over file-level semantic diagnostics, unless a grammar error
+    // outranks it. See `apply_fatal_config_notice_priority`.
+    if has_fatal_config_notice {
+        apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
     }
 
     // JS-only-syntactic short-circuit for semantic diagnostics.

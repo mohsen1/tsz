@@ -387,7 +387,7 @@ impl<'a> CheckerState<'a> {
                     let prop_list: Vec<String> = ordered_names
                         .iter()
                         .take(display_count)
-                        .map(|name| self.missing_property_list_name_for_display(*name))
+                        .map(|name| self.missing_property_list_name_for_display(*name, target))
                         .collect();
                     let props_joined = prop_list.join(", ");
                     let message = if is_truncated {
