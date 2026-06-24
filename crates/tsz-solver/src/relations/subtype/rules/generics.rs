@@ -851,36 +851,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // branch can only REMOVE the eager member walk on pairs the
                 // variance check accepts — it can never flip a `False` to `True`
                 // or vice versa. Flag-OFF is byte-identical to `main`.
-                let reachable = self.nominal_heritage_reachable(s_def, t_def);
-                let heritage_base = if reachable && lazy_ref_relation_enabled() {
-                    self.resolver.get_heritage_instantiation(s_def, t_def)
-                } else {
-                    None
-                };
-                let mut accessor_resolved = false;
-                if let Some(base) = heritage_base
-                    && let Some(base_app_id) = application_id(self.interner, base)
-                {
-                    accessor_resolved = true;
-                    if matches!(
-                        self.try_variance_fast_path(base_app_id, t_app_id),
-                        Some(SubtypeResult::True)
-                    ) {
+                //
+                // The reachability probe (`nominal_heritage_reachable`, an
+                // `InheritanceGraph` transitive-derivation walk) is computed ONLY
+                // when it can be observed: behind the relation flag (which gates
+                // the verdict short-circuit) OR the perf-counter probe (the
+                // measure-only denominator). The default production config — both
+                // off — takes the unchanged structural `return None` with NO extra
+                // graph traversal on this hot cross-base seam, so flag-off is now
+                // cost-identical to `main`, not merely verdict-identical.
+                let lazy_ref_on = lazy_ref_relation_enabled();
+                let probe_on = tsz_common::perf_counters::enabled_fast();
+                if lazy_ref_on || probe_on {
+                    let reachable = self.nominal_heritage_reachable(s_def, t_def);
+                    // Resolve the instantiated heritage base once when reachable;
+                    // both the (flag-gated) verdict short-circuit and the
+                    // (counter-gated) measure-only probe read this single result,
+                    // so the accessor map is never queried twice for one pair.
+                    let heritage_base = if reachable {
+                        self.resolver.get_heritage_instantiation(s_def, t_def)
+                    } else {
+                        None
+                    };
+                    // Flag-gated, acceptance-only verdict short-circuit: relate the
+                    // source's INSTANTIATED target-base by per-argument variance via
+                    // the existing same-base fast path. Only a conclusive `True`
+                    // short-circuits; any other outcome falls through to the
+                    // structural `return None` below, so it can never flip a verdict
+                    // (and `application_id`/variance only run under the flag).
+                    if lazy_ref_on
+                        && let Some(base) = heritage_base
+                        && let Some(base_app_id) = application_id(self.interner, base)
+                        && matches!(
+                            self.try_variance_fast_path(base_app_id, t_app_id),
+                            Some(SubtypeResult::True)
+                        )
+                    {
                         return Some(SubtypeResult::True);
                     }
-                }
-                // Measure-only accessor probe (only when counters enabled): the
-                // resolved/reachable ratio on fp-ts proves the capture populates
-                // the map for real heritage edges. Independent of the flag so the
-                // denominator is observable even with the relation OFF.
-                if tsz_common::perf_counters::enabled_fast() {
-                    let resolved = accessor_resolved
-                        || (reachable
-                            && self
-                                .resolver
-                                .get_heritage_instantiation(s_def, t_def)
-                                .is_some());
-                    tsz_common::perf_counters::record_relation_lazy_ref_probe(reachable, resolved);
+                    // Measure-only accessor probe (only when counters enabled): the
+                    // resolved/reachable ratio on fp-ts proves the capture populates
+                    // the map for real heritage edges. Independent of the flag so
+                    // the denominator is observable even with the relation OFF.
+                    if probe_on {
+                        tsz_common::perf_counters::record_relation_lazy_ref_probe(
+                            reachable,
+                            heritage_base.is_some(),
+                        );
+                    }
                 }
                 return None;
             }
