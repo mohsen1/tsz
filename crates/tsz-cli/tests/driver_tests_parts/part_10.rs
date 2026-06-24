@@ -1771,3 +1771,74 @@ q["asd"].b;
     );
 }
 
+
+// A removed-but-parsed option passed on the CLI (e.g. `--keyofStringsOnly`)
+// emits the removed-option notice TS5102. tsc treats that notice as fatal for
+// semantic diagnostics — `getOptionsDiagnostics` short-circuits the reporter
+// before `getSemanticDiagnostics` surfaces — so a real type error in the source
+// must NOT leak alongside the removal notice. Mirrors tsc 6.0.3:
+//   tsz --noEmit --keyofStringsOnly main.ts  =>  only TS5102
+#[test]
+fn cli_removed_option_suppresses_semantic_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    // `main.ts` has a genuine TS2322 that tsc suppresses behind the TS5102 notice.
+    write_file(&base.join("main.ts"), "const n: number = \"s\";\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--keyofStringsOnly",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&5102),
+        "expected the removed-option notice TS5102, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2322),
+        "removed-option notice TS5102 must suppress the semantic TS2322, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+// A grammar error outranks the removed-option notice: tsc reports only the
+// syntactic error and drops TS5102 (its `getSyntacticDiagnostics` precede the
+// options diagnostics). Mirrors tsc 6.0.3:
+//   tsz --noEmit --keyofStringsOnly bad.ts  =>  only the grammar error, no TS5102
+#[test]
+fn cli_removed_option_grammar_error_takes_precedence() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("bad.ts"), "const x = ;\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--keyofStringsOnly",
+        "bad.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1109),
+        "expected the grammar error TS1109, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&5102),
+        "grammar error must outrank and drop the removed-option notice TS5102, got: {:#?}",
+        result.diagnostics
+    );
+}

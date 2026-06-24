@@ -2,9 +2,8 @@
 
 use super::{
     CliArgs, CompilationResult, Diagnostic, FileInfo, FxHashSet, PhaseTimings,
-    ResolvedCompilerOptions, SourceEntry, collect_parse_only_no_check_diagnostics,
-    collect_source_reference_lib_diagnostics, is_grammar_error_for_deprecation_priority,
-    remove_deprecation_diagnostics,
+    ResolvedCompilerOptions, SourceEntry, apply_fatal_config_notice_priority,
+    collect_parse_only_no_check_diagnostics, collect_source_reference_lib_diagnostics,
 };
 use std::path::PathBuf;
 #[cfg(test)]
@@ -125,16 +124,7 @@ pub(super) fn maybe_compile_no_emit_deprecation(
         diagnostics.retain(|d| !input.binary_file_names_to_suppress.contains(&d.file));
     }
 
-    let has_grammar_errors = diagnostics
-        .iter()
-        .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-
-    if has_grammar_errors {
-        remove_deprecation_diagnostics(&mut config_diagnostics);
-    } else {
-        diagnostics
-            .retain(|d| (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792);
-    }
+    apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
 
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(input.binary_file_diagnostics.iter().cloned());
