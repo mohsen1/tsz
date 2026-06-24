@@ -75,6 +75,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// A generic target reached through an interface edge returns `false` here so
     /// the caller falls through to the structural check, which honors variance.
+    /// #14351: pure nominal-heritage REACHABILITY — does `s_def` derive from
+    /// `t_def` via the `InheritanceGraph` (transitive `extends`/`implements`)?
+    /// Unlike [`Self::nominal_heritage_subtype`] this does NOT apply the
+    /// `both_classes || target_non_generic` authoritativeness gate: reachability
+    /// alone does not settle a *generic* relation (the per-argument variance
+    /// still has to run), but it is the candidate predicate for the
+    /// lazy-reference relation, which relates the instantiated bases by variance.
+    pub(crate) fn nominal_heritage_reachable(&self, s_def: DefId, t_def: DefId) -> bool {
+        let Some(graph) = self.inheritance_graph else {
+            return false;
+        };
+        let (Some(s_sym), Some(t_sym)) = (
+            self.resolver.def_to_symbol_id(s_def),
+            self.resolver.def_to_symbol_id(t_def),
+        ) else {
+            return false;
+        };
+        graph.is_derived_from(s_sym, t_sym)
+    }
+
     pub(crate) fn nominal_heritage_subtype(&self, s_def: DefId, t_def: DefId) -> bool {
         let Some(graph) = self.inheritance_graph else {
             return false;
@@ -798,6 +818,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.try_pass_through_alias_any_unification(&s_app, &t_app, s_def, t_def)
                 {
                     return Some(result);
+                }
+                // #14351 lazy-reference-relation accessor probe (measure-only,
+                // NO verdict change — falls through to the unchanged `return
+                // None` below). For cross-base pairs whose source nominally
+                // derives from the target's def (`Apply1<A>` vs `Functor1<B>`),
+                // record whether the instantiated-heritage accessor resolves the
+                // source's instantiated target-base. The resolved/reachable ratio
+                // on fp-ts proves the lowering capture populates the map for real
+                // heritage edges before any verdict-affecting flip uses it.
+                if tsz_common::perf_counters::enabled_fast() {
+                    let reachable = self.nominal_heritage_reachable(s_def, t_def);
+                    let resolved = reachable
+                        && self
+                            .resolver
+                            .get_heritage_instantiation(s_def, t_def)
+                            .is_some();
+                    tsz_common::perf_counters::record_relation_lazy_ref_probe(reachable, resolved);
                 }
                 return None;
             }
