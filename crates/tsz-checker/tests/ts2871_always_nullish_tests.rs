@@ -83,16 +83,14 @@ fn nested_always_nullish_chain_emits_one_ts2871_per_operator() {
     assert_eq!(
         two.iter().filter(|&&c| c == 2871).count(),
         2,
-        "two `??` over always-nullish operands must emit TS2871 twice; got: {:?}",
-        two.to_vec(),
+        "two `??` over always-nullish operands must emit TS2871 twice; got: {two:?}",
     );
 
     let three = check_source_codes("const z = undefined ?? undefined ?? undefined ?? 1;\n");
     assert_eq!(
         three.iter().filter(|&&c| c == 2871).count(),
         3,
-        "three `??` over always-nullish operands must emit TS2871 three times; got: {:?}",
-        three.to_vec(),
+        "three `??` over always-nullish operands must emit TS2871 three times; got: {three:?}",
     );
 }
 
@@ -108,14 +106,12 @@ fn mixed_nullish_chain_keeps_both_ts2871_and_ts2869() {
     assert_eq!(
         diags.iter().filter(|&&c| c == 2871).count(),
         1,
-        "inner always-nullish `null` must emit one TS2871; got: {:?}",
-        diags.to_vec(),
+        "inner always-nullish `null` must emit one TS2871; got: {diags:?}",
     );
     assert_eq!(
         diags.iter().filter(|&&c| c == 2869).count(),
         1,
-        "outer never-nullish `null ?? 1` must emit one TS2869; got: {:?}",
-        diags.to_vec(),
+        "outer never-nullish `null ?? 1` must emit one TS2869; got: {diags:?}",
     );
 }
 
