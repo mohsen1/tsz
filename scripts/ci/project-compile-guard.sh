@@ -1018,6 +1018,16 @@ run_project_row() {
       tsz_write_valtio_config "$FIXTURE_ROOT/valtio/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/valtio/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/valtio/src"
       ;;
+    scule-project)
+      ensure_git_fixture "scule" "$SCULE_REPO" "$SCULE_REF" "$FIXTURE_ROOT/scule"
+      tsz_write_scule_config "$FIXTURE_ROOT/scule/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/scule/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/scule/src"
+      ;;
+    mitt-project)
+      ensure_git_fixture "mitt" "$MITT_REPO" "$MITT_REF" "$FIXTURE_ROOT/mitt"
+      tsz_write_mitt_config "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mitt/src"
+      ;;
     ts-belt-project)
       ensure_git_fixture "ts-belt" "$TS_BELT_REPO" "$TS_BELT_REF" "$FIXTURE_ROOT/ts-belt"
       tsz_write_ts_belt_config "$FIXTURE_ROOT/ts-belt/tsconfig.tsz-guard.json"

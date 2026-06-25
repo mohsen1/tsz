@@ -50,6 +50,8 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-pattern-project"
   "radash-project"
   "valtio-project"
+  "scule-project"
+  "mitt-project"
   "ts-belt-project"
   "ts-extras-project"
   "superjson-project"
@@ -344,6 +346,12 @@ tsz_project_fixture_sources() {
       ;;
     valtio-project)
       printf 'valtio|%s|%s\n' "$VALTIO_REPO" "$VALTIO_REF"
+      ;;
+    scule-project)
+      printf 'scule|%s|%s\n' "$SCULE_REPO" "$SCULE_REF"
+      ;;
+    mitt-project)
+      printf 'mitt|%s|%s\n' "$MITT_REPO" "$MITT_REF"
       ;;
     ts-belt-project)
       printf 'ts-belt|%s|%s\n' "$TS_BELT_REPO" "$TS_BELT_REF"
@@ -893,6 +901,20 @@ tsz_write_valtio_config() {
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
 '
+}
+
+tsz_write_scule_config() {
+  # scule is zero-dependency; its `src/index.ts`/`src/types.ts` re-export
+  # siblings with extensionless specifiers, so the shared baseline compiles it
+  # without allowImportingTsExtensions. Clean green row (tsz/tsc both 0 errors).
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_mitt_config() {
+  # mitt is zero-dependency; a single `src/index.ts` event-emitter module. Its
+  # test sources live under `test/` (outside the `src/**` include), so the
+  # shared baseline checks only the library source. Clean green row.
+  tsz_write_basic_external_project_config "$1" "src"
 }
 
 tsz_write_ts_belt_config() {
