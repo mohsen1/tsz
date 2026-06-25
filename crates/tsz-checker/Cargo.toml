@@ -63,6 +63,9 @@ path = "tests/object_literal_unique_symbol_member_tests.rs"
 name = "unique_symbol_grammar_tests"
 path = "tests/unique_symbol_grammar_tests.rs"
 [[test]]
+name = "type_operator_missing_operand_recovery_tests"
+path = "tests/type_operator_missing_operand_recovery_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
