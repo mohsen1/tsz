@@ -61,10 +61,7 @@ impl<'a> CheckerState<'a> {
         // name collection below. A genuine redeclaration *inside* the catch body
         // (`catch (x) { let x }`) is reported separately as TS2492 by
         // `check_catch_clause_variable_redeclaration`. (#14734)
-        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-            && parent_node.kind == syntax_kind_ext::CATCH_CLAUSE
-        {
+        if self.is_catch_clause_variable_declaration(decl_idx) {
             return;
         }
 
