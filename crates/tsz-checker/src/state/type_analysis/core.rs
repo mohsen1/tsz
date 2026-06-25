@@ -868,19 +868,25 @@ impl CheckerState<'_> {
         name_node: tsz_parser::parser::NodeIndex,
         mut info: tsz_solver::TypeParamInfo,
     ) -> (tsz_solver::TypeId, tsz_solver::TypeParamInfo) {
-        let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
-
-        // #14345 construction stamp: stamp the checker's def-type-param mint
-        // (site #2) with the IDENTICAL `DeclScoped(file, name_node)` the
-        // carrier's lowering body refs carry — `info` arrives `User` from
-        // `push_type_parameters`, but the `(file_atom, name_node)` are exactly
-        // the carrier's decl key. Stamping BEFORE the cache/decl-node lookups
-        // makes every key (L1 cache, decl-node map) reflect the stamp, so the
-        // stored list and the lowered body refs converge on the SAME
-        // `DeclScoped` `TypeId`. Flag-OFF = `User` (byte-parity).
+        // #14345 construction stamp (flag-ON only): stamp the def-type-param
+        // mint with the IDENTICAL `DeclScoped(file, name_node)` the carrier's
+        // lowering body refs carry, BEFORE the cache/decl-node lookups so every
+        // key reflects the stamp and the stored list + lowered refs converge on
+        // the SAME `DeclScoped` `TypeId`.
+        //
+        // Flag-OFF the stamp AND the early `intern_string(file_name)` are both
+        // skipped: the flag-OFF body must be BYTE-IDENTICAL to the pre-#14345
+        // sequence, INCLUDING the position at which the file name is interned
+        // (after the L1 cache lookup + `registered_def`, below). Interning it
+        // early shifts the program's atom-allocation order — observable in
+        // order-sensitive structures even though the `TypeId`s are equivalent
+        // (the conformance leak). So flag-OFF reuses the original position.
+        let mut file_atom = None;
         if decl_identity_activation() {
+            let atom = self.ctx.types.intern_string(&self.ctx.file_name);
+            file_atom = Some(atom);
             info.origin = tsz_solver::TypeParamOrigin::DeclScoped {
-                file: file_atom,
+                file: atom,
                 node: name_node.0,
             };
         }
@@ -897,6 +903,12 @@ impl CheckerState<'_> {
             .node_symbols
             .get(&name_node.0)
             .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0));
+
+        // Flag-OFF: intern the file name HERE (its original pre-#14345
+        // position) so the atom-allocation order is byte-identical to main.
+        // Flag-ON: already interned above for the stamp; reuse it.
+        let file_atom =
+            file_atom.unwrap_or_else(|| self.ctx.types.intern_string(&self.ctx.file_name));
 
         let cached =
             self.ctx
