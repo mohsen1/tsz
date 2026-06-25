@@ -24,21 +24,6 @@ mod generics_application_helpers;
 #[cfg(test)]
 pub(crate) use generics_application_helpers::ONE_SIDED_APP_EXPANSION_MAX_DEPTH;
 
-/// #14345 Stage-4 equiv-through-Application threading (flag
-/// `TSZ_EQUIV_THROUGH_APP=1`, byte-parity-inert OFF). When two applications with
-/// different bases (`RR<string, A>` vs `R<string, A>`) are relate-expanded to
-/// their structural bodies, the inner type-parameter args are re-minted by the
-/// independent instantiation passes, so the top-level alpha-rename equivalence
-/// established by the signature relation no longer covers them. When enabled,
-/// register the positional arg equivalences (the already-paired top-level args)
-/// for the duration of the expanded-body relation so the nested consult can see
-/// them. Scoped: truncated immediately after the body relation completes.
-fn equiv_through_app_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TSZ_EQUIV_THROUGH_APP").is_ok_and(|v| v == "1"))
-}
-
 fn args_contain_type_parameters(
     interner: &dyn crate::construction::TypeDatabase,
     args: &[TypeId],
@@ -720,25 +705,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - Generic types without variance annotations
         // - Type aliases with complex transformations
         // =======================================================================
-        // #14345 Stage-4: thread the top-level alpha-rename equivalence into the
-        // expanded-body relation by registering the positional arg pairs. Both
-        // arg lists are TypeParameter args at the same position iff the two
-        // applications carry the function-sig type params (the `A` in
-        // `RR<string, A>` / `R<string, A>`). Only register a pair when BOTH args
-        // are TypeParameters (sound: never unifies a concrete arg) and when the
-        // equiv frame already contains the outer pair (the relation is inside an
-        // active alpha-rename), so this never introduces a new surface match.
-        let equiv_thread_start = self.type_param_equivalences.len();
-        if equiv_through_app_enabled() && s_app.args.len() == t_app.args.len() {
-            for (sa, ta) in s_app.args.iter().zip(t_app.args.iter()) {
-                if sa != ta
-                    && matches!(self.interner.lookup(*sa), Some(TypeData::TypeParameter(_)))
-                    && matches!(self.interner.lookup(*ta), Some(TypeData::TypeParameter(_)))
-                {
-                    self.type_param_equivalences.push((*sa, *ta));
-                }
-            }
-        }
         let s_expanded = self.try_expand_application_type(source_type, s_app_id);
         let t_expanded = self.try_expand_application_type(target_type, t_app_id);
         let result = match (s_expanded, t_expanded) {
@@ -797,10 +763,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         };
-
-        // #14345 Stage-4: drop the threaded arg equivalences (scoped to the
-        // expanded-body relation above).
-        self.type_param_equivalences.truncate(equiv_thread_start);
 
         // Clean up cycle detection guard
         if let Some(def_pair) = app_def_pair {

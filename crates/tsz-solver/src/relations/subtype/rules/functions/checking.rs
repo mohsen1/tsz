@@ -133,6 +133,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut target_instantiated = target.clone();
         // Track type param equivalences scope for cleanup at end of function.
         let equiv_start = self.type_param_equivalences.len();
+        // #14345 equiv-through-eval: id-keyed endpoint redirect, installed once
+        // the alpha-rename pairs are registered below and dropped (restoring the
+        // prior map) on every exit path of this frame. See the install site.
+        let mut equiv_redirect_guard: Option<
+            crate::instantiation::instantiate::EquivRedirectGuard,
+        > = None;
+        // Touch the binding so its sole purpose (the `Drop` at scope end) is not
+        // misread as dead; the real use is the destructor on every return path.
+        let _ = &equiv_redirect_guard;
 
         // Capture and reset the callback-param-check flag at function entry so
         // it cannot be prematurely consumed by intermediate sub-checks (return
@@ -339,6 +348,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         self.type_param_equivalences
                             .push((source_tp_type, target_tp_type));
+                    }
+                }
+
+                // #14345 equiv-through-eval: install an id-keyed thread-local
+                // redirect of the just-registered alpha-rename endpoints
+                // (`A_tgt -> A_src`, `A_src -> A_src`) for the remainder of this
+                // signature comparison. The body instantiation below
+                // (`instantiate_function_shape`) and the structural param/return
+                // comparison it feeds drive fresh instantiator/evaluator passes
+                // that do NOT carry `type_param_equivalences`; without the
+                // redirect a body-ref of the TARGET endpoint is re-minted to its
+                // own (or a fresh third) id, so the nested bare-param consult
+                // misses the registered pair (97/106 fp-ts crossdecl misses have
+                // the name absent from the active frame). The redirect makes the
+                // instantiator mint every re-encountered endpoint onto the single
+                // canonical source id, so both bodies share one id for the paired
+                // param. ID-KEYED ONLY (never name/surface — the +16 over-relate
+                // trap); RAII-scoped to this frame so every early-return path
+                // restores the prior map. Inert when the keystone flag is OFF.
+                {
+                    let just_registered: Vec<(TypeId, TypeId)> =
+                        self.type_param_equivalences[equiv_start..].to_vec();
+                    // Held only for its `Drop` (restores the redirect map on every
+                    // exit path); the assignment reads as "unused" to the lint.
+                    #[allow(unused_assignments)]
+                    {
+                        equiv_redirect_guard = Some(
+                            crate::instantiation::instantiate::EquivRedirectGuard::install(
+                                &just_registered,
+                            ),
+                        );
                     }
                 }
 

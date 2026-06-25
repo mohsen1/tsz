@@ -50,7 +50,11 @@ pub mod stage2_probe {
     //  7 miss_samename_both_declscoped_samedecl,
     //  8 miss_samename_has_user_origin,
     //  9 miss_diffname]
-    pub static BINS: [AtomicU64; 12] = [
+    pub static BINS: [AtomicU64; 16] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
         AtomicU64::new(0),
         AtomicU64::new(0),
         AtomicU64::new(0),
@@ -121,6 +125,10 @@ pub mod stage2_probe {
             "miss_diffname",
             "miss_name_in_active_frame",
             "miss_name_NOT_in_frame",
+            "miss_an_id_KNOWN_to_redirect",
+            "miss_both_ids_UNKNOWN_to_redirect",
+            "unknown_id_SURFACE_matches_endpoint",
+            "unknown_id_FULLY_escaped_no_surface",
         ];
         let mut s = String::new();
         for (i, l) in labels.iter().enumerate() {
@@ -145,6 +153,131 @@ pub mod stage2_probe {
         }
     }
 }
+
+// ===========================================================================
+// #14345 equiv-through-eval (flag `TSZ_TYPEPARAM_DECL_IDENTITY=1`,
+// byte-parity-inert OFF). The relation establishes an alpha-rename equivalence
+// `(A_src, A_tgt)` between the type params of two generic signatures being
+// related, then expands their Application bodies (`R<string, A_src>` vs
+// `RR<string, A_tgt>`) to compare them structurally. The expansion drives a
+// fresh `TypeEvaluator`/instantiator that has NO knowledge of the active equiv
+// frame, so a body-ref of the TARGET endpoint `A_tgt` (DeclScoped) found with
+// no substitution entry is re-minted to its own id (or a fresh third id) — the
+// two expanded bodies then carry distinct ids for the paired param and the
+// nested bare-param consult (`cache.rs`) misses the registered pair (97/106 of
+// the fp-ts crossdecl misses have the name absent from the active frame, the
+// re-mint having escaped it). To carry the equivalence THROUGH the body
+// expansion, the relation installs a thread-local id-keyed redirect of the
+// registered endpoints; the instantiator consults it in the `TypeParameter`
+// arm so a registered TARGET endpoint mints onto the registered SOURCE id
+// instead of being re-minted. Both expanded bodies then share ONE id for the
+// paired param and the structural compare succeeds.
+//
+// SOUNDNESS: the redirect is ID-keyed ONLY (the entries are the exact interned
+// `type_param(*tp)` ids the relation registered). It NEVER matches by name or
+// surface — a name/surface match at a reduction site re-introduces the +16
+// over-relate (two genuinely distinct same-name decls). The map is scoped: the
+// relation installs it just before driving the body expansion and removes it
+// immediately after.
+mod equiv_through_eval {
+    use super::TypeId;
+    use rustc_hash::FxHashMap;
+    use std::cell::RefCell;
+    use std::sync::OnceLock;
+
+    pub fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        // Reuse the keystone flag so OFF is byte-parity-inert.
+        *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+    }
+
+    thread_local! {
+        // Maps a registered endpoint id -> its canonical (source) id. Both the
+        // target endpoint (target -> source) and the source endpoint
+        // (source -> source, identity) are inserted so a body-ref of either
+        // mints onto the single canonical id.
+        static REDIRECT: RefCell<FxHashMap<TypeId, TypeId>> = RefCell::new(FxHashMap::default());
+    }
+
+    /// RAII guard that installs the id-keyed endpoint redirects on construction
+    /// and removes them on drop. Used by the function-signature relation, which
+    /// has many early-return paths between registering the alpha-rename
+    /// equivalence and finishing the body comparison; a guard tied to the stack
+    /// frame restores the prior map on every exit path without a closure.
+    pub struct RedirectGuard {
+        saved: Vec<(TypeId, Option<TypeId>)>,
+    }
+
+    impl RedirectGuard {
+        /// Install redirects for `pairs`. Returns an inert guard when the flag
+        /// is OFF or there are no pairs.
+        pub fn install(pairs: &[(TypeId, TypeId)]) -> Self {
+            if !enabled() || pairs.is_empty() {
+                return RedirectGuard { saved: Vec::new() };
+            }
+            let saved = REDIRECT.with(|m| {
+                let mut m = m.borrow_mut();
+                let mut saved = Vec::with_capacity(pairs.len() * 2);
+                for &(src, tgt) in pairs {
+                    if src == tgt {
+                        continue;
+                    }
+                    saved.push((tgt, m.insert(tgt, src)));
+                    saved.push((src, m.insert(src, src)));
+                }
+                saved
+            });
+            RedirectGuard { saved }
+        }
+    }
+
+    impl Drop for RedirectGuard {
+        fn drop(&mut self) {
+            if self.saved.is_empty() {
+                return;
+            }
+            REDIRECT.with(|m| {
+                let mut m = m.borrow_mut();
+                for &(key, prev) in self.saved.iter().rev() {
+                    match prev {
+                        Some(v) => {
+                            m.insert(key, v);
+                        }
+                        None => {
+                            m.remove(&key);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /// Id-keyed lookup. Returns the canonical id a registered endpoint should
+    /// mint onto, or `None` when `id` is not a registered endpoint.
+    #[inline]
+    pub fn redirect(id: TypeId) -> Option<TypeId> {
+        if !enabled() {
+            return None;
+        }
+        REDIRECT.with(|m| m.borrow().get(&id).copied())
+    }
+
+    /// Whether any redirect is currently installed (cheap guard for the hot
+    /// instantiate path).
+    #[inline]
+    pub fn active() -> bool {
+        if !enabled() {
+            return false;
+        }
+        REDIRECT.with(|m| !m.borrow().is_empty())
+    }
+}
+
+pub(crate) use equiv_through_eval::{
+    RedirectGuard as EquivRedirectGuard, active as equiv_redirect_active,
+    redirect as equiv_redirect,
+};
+
 const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
 /// Instantiator for applying type substitutions.
@@ -816,6 +949,25 @@ impl<'a> TypeInstantiator<'a> {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
+                // #14345 equiv-through-eval: id-keyed redirect of a registered
+                // alpha-rename endpoint onto its canonical (source) id. This
+                // runs BEFORE the name-keyed substitution/shadow/fallback paths
+                // so a body-ref of the TARGET endpoint mints onto the SOURCE id
+                // instead of being re-minted to its own (or a fresh third) id.
+                // Only fires when the relation installed the scoped redirect map
+                // and `type_id` is exactly a registered endpoint id (never a
+                // name/surface match — id-keyed soundness, see module docs). It
+                // is skipped when the param's NAME is locally bound/shadowed/
+                // substituted so a genuine substitution is never overridden.
+                if equiv_redirect_active()
+                    && self.lookup_local_type_param(info.name).is_none()
+                    && !self.is_shadowed(info.name)
+                    && self.substitution.get(info.name).is_none()
+                {
+                    if let Some(canonical) = equiv_redirect(type_id) {
+                        return canonical;
+                    }
+                }
                 if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
                     if stage2_probe::enabled() {
                         match self.probe_decl_drift(info, local_type_param) {

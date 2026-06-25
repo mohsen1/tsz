@@ -290,6 +290,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     } else {
                                         bump(11); // miss_name_NOT_in_frame (unreachable here)
                                     }
+                                    // #14345 equiv-through-eval diagnosis: at the
+                                    // miss, would the redirect map have known
+                                    // EITHER consult id? If yes the redirect was
+                                    // installed but the consult still reached a
+                                    // pre-redirect id (mint happened before/
+                                    // outside the guard). If no, the consult ids
+                                    // are fresh third ids the redirect never saw.
+                                    use crate::instantiation::instantiate::equiv_redirect;
+                                    let src_known = equiv_redirect(source).is_some();
+                                    let tgt_known = equiv_redirect(target).is_some();
+                                    if src_known || tgt_known {
+                                        bump(12); // miss but an id was a known endpoint
+                                    } else {
+                                        bump(13); // miss with both ids unknown to redirect
+                                        // Would a SURFACE (name+origin) match to a
+                                        // registered endpoint catch them? If yes,
+                                        // surface is the only lever — the +16 trap.
+                                        let surface_catch = self
+                                            .type_param_equivalences
+                                            .iter()
+                                            .any(|&(eq_a, eq_b)| {
+                                                let sm = |id: TypeId, info: &crate::types::TypeParamInfo| {
+                                                    matches!(self.interner.lookup(id),
+                                                        Some(TypeData::TypeParameter(e))
+                                                            if e.name == info.name && e.origin == info.origin)
+                                                };
+                                                (sm(eq_a, &si) || sm(eq_b, &si))
+                                                    || (sm(eq_a, &ti) || sm(eq_b, &ti))
+                                            });
+                                        if surface_catch {
+                                            bump(14); // unknown-id but surface-matches an endpoint
+                                        } else {
+                                            bump(15); // unknown-id AND no surface match (fully escaped)
+                                        }
+                                    }
                                     // record the actual (file,node) tuples + name +
                                     // same-file flag for offline analysis.
                                     let name = self.interner.resolve_atom_ref(si.name).to_string();
