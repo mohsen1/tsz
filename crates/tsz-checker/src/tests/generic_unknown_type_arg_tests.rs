@@ -61,6 +61,59 @@ type RQ = Qq<unknown[], unknown>;
 }
 
 #[test]
+fn unknown_type_arg_satisfies_non_reducible_unknown_top_type_constraint() {
+    // `{} | null | undefined` (TypeScript's `NonReducibleUnknown` idiom) is
+    // structurally equal to `unknown`, so the top-type `unknown` argument
+    // satisfies it (`unknown ⊑ {} | null | undefined`), matching tsc. Covers the
+    // canonical form, a reordered union, and renamed binders (not name-driven).
+    let diagnostics = check_source_diagnostics(
+        r#"
+type NonReducibleUnknown = {} | null | undefined;
+type Box<T extends NonReducibleUnknown> = { value: T };
+type A = Box<unknown>;
+
+type Reordered<Q extends null | {} | undefined> = { v: Q };
+type B = Reordered<unknown>;
+"#,
+    );
+
+    let matches = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2344)
+        .collect::<Vec<_>>();
+    assert!(
+        matches.is_empty(),
+        "expected no TS2344 when the constraint is a top type ({{}} | null | undefined), got: {matches:?}"
+    );
+}
+
+#[test]
+fn unknown_type_arg_still_fails_near_top_constraints_missing_null_or_undefined() {
+    // `{}` and `{} | null` are NOT top types (they exclude `null`/`undefined` or
+    // `undefined`), so `unknown` is not assignable to them and TS2344 must still
+    // fire — the top-type acceptance is precise, not a blanket unknown pass.
+    let diagnostics = check_source_diagnostics(
+        r#"
+type Obj<T extends {}> = { v: T };
+type Bad1 = Obj<unknown>;
+
+type ObjN<U extends {} | null> = { v: U };
+type Bad2 = ObjN<unknown>;
+"#,
+    );
+
+    let matches = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2344)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        2,
+        "expected TS2344 for both non-top constraints ({{}} and {{}} | null), got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn unknown_type_arg_still_fails_indexed_access_constraint_reducing_to_proper_type() {
     // `A[number]` with `A = string[]` reduces to `string`; the top-type
     // `unknown` argument is not assignable to `string`, so TS2344 must still
