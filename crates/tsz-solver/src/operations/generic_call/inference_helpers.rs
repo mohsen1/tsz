@@ -499,10 +499,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if !source_fn.type_params.is_empty() {
                 let target_param_types: Vec<_> =
                     target_fn.params.iter().map(|p| p.type_id).collect();
-                source_fn = self.instantiate_function_shape_from_argument_types(
-                    &source_fn,
-                    &target_param_types,
-                );
+                // Skip pinning the generic source against a target parameter that
+                // still carries an outer inference placeholder (the higher-order
+                // shared-middle shape `X_src[]`). Instantiating the source param
+                // against such a wrapper re-runs a nested inference that drops the
+                // foreign placeholder to `unknown`, seeding a poisoned
+                // `(unknown[])[]` candidate that competes with the placeholder-
+                // preserving one produced by the main generic-source constraint
+                // walk. With a placeholder-bearing target the structural-return
+                // constraint adds no information the generic-source branch has not
+                // already collected, so leave the source generic and fall through.
+                let target_pins_source = !target_param_types.iter().any(|&pt| {
+                    crate::type_queries::contains_infer_types_db(
+                        self.interner.as_type_database(),
+                        pt,
+                    )
+                });
+                if target_pins_source {
+                    source_fn = self.instantiate_function_shape_from_argument_types(
+                        &source_fn,
+                        &target_param_types,
+                    );
+                }
             }
             constrained_structurally = true;
             if !self.constrain_return_context_params_with_rest(
@@ -1853,28 +1871,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && target_params_need_hofi
             && target_fn.type_params.is_empty()
         {
-            // Every contextual placeholder of this argument (its parameters and
-            // its return) must be a bare outer inference placeholder for the
-            // pure higher-order shape to hold; `collect` into an `Option` so a
-            // single non-placeholder position short-circuits to `None`.
-            let placeholder_atoms: Option<Vec<_>> = target_param_types
-                .iter()
-                .chain(std::iter::once(&target_fn.return_type))
-                .map(|&pt| self.outer_inference_placeholder_atom(pt))
-                .collect();
-            // Fail closed: only re-generalize when the placeholders belong to the
-            // call currently being resolved (guards against nested/stale state).
-            // Shared placeholders are allowed here: in pure higher-order wrappers
-            // like `pipe`, the shared middle type is exactly how tsc carries a
-            // source placeholder from one generic function argument's return into
-            // the next generic function argument's parameter before the final
-            // result is re-generalized.
-            let safe_to_regeneralize = placeholder_atoms.as_ref().is_some_and(|atoms| {
-                !atoms.is_empty()
-                    && atoms
-                        .iter()
-                        .all(|atom| self.current_call_inference_placeholders.contains(atom))
-            });
+            // Every contextual position of this argument (its parameters and its
+            // return) must be *built entirely from* outer inference placeholders
+            // for the pure higher-order shape to hold. A bare placeholder
+            // (`__infer_1`) is the round-1 case; a placeholder wrapped in
+            // structure (`__infer_src_3#X[]` after the shared middle type was
+            // fixed in round 1) is the round-2 case. Both must route through the
+            // generic-source branch so the source param chains into the result;
+            // instantiating the naked source param against the structure instead
+            // re-runs a nested inference that drops the foreign outer placeholder
+            // to `unknown`, severing the higher-order return-flow link (the
+            // `pipe(list, wrap)` middle `B = X[]` collapsing to `(unknown[])[]`).
+            //
+            // Each position must be placeholder-only (built solely from outer
+            // inference placeholders carried by inert `Array`/tuple wrappers); a
+            // single position carrying concrete pinning evidence short-circuits
+            // to `false`. The placeholders accepted are:
+            //
+            // * a call-local outer placeholder (`__infer_N`) belonging to THIS
+            //   resolution — the fail-closed check against
+            //   `current_call_inference_placeholders` guards against nested/stale
+            //   state (the original bare-placeholder behavior); and
+            // * a higher-order *source* placeholder (`__infer_src_*`) — minted
+            //   fresh by the generic-source constraint branch within this
+            //   resolution to carry one generic argument's free type parameter
+            //   into the next argument's target (the `pipe` shared middle type
+            //   `B = X[]` becoming the second argument's `X_src[]` target after
+            //   round 1 fixes it). Instantiating against it instead of routing
+            //   back through the constraint walker drops `X_src` to `unknown`.
+            let safe_to_regeneralize = {
+                let mut at_least_one = false;
+                let qualifies = target_param_types
+                    .iter()
+                    .chain(std::iter::once(&target_fn.return_type))
+                    .all(|&pt| {
+                        self.position_is_regeneralizable_higher_order_target(pt, &mut at_least_one)
+                    });
+                qualifies && at_least_one
+            };
             if safe_to_regeneralize {
                 return source_ty;
             }
@@ -1963,15 +1997,68 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
-    /// Returns the placeholder name atom when `ty` is a bare inference
-    /// placeholder (`__infer_*`) introduced by an enclosing generic call.
-    /// Used to detect pure higher-order inference targets where a generic
-    /// function argument's free type parameters must be propagated rather than
-    /// instantiated against the placeholder.
-    fn outer_inference_placeholder_atom(&self, ty: TypeId) -> Option<tsz_common::Atom> {
+    /// Whether a higher-order target position is built *entirely* from outer
+    /// inference placeholders the current resolution may re-generalize through,
+    /// carried only by inert structural wrappers (`Array`/tuple).
+    ///
+    /// A position qualifies (`true`) when it is a bare accepted placeholder
+    /// (`__infer_1`) or a wrapper around qualifying children
+    /// (`__infer_src_3#X[]`, `[__infer_1, __infer_2]`). The wrapper case arises
+    /// in round 2 of a higher-order call: once the shared middle type is fixed
+    /// (`B = X[]`), the next generic argument's target parameter becomes
+    /// `X_src[]` rather than a bare placeholder. Both forms must route through
+    /// the generic-source constraint branch so the surviving placeholder chains
+    /// into the result; a nested instantiation against the wrapper drops the
+    /// foreign placeholder to `unknown`.
+    ///
+    /// Returns `false` the moment a non-placeholder concrete leaf (object,
+    /// primitive, application, function, …) or an unaccepted placeholder is
+    /// reached: a concrete position carries independent inference evidence that
+    /// must pin the source parameter by instantiation, so it must not take the
+    /// re-generalization path. This keeps the bare-placeholder behavior a strict
+    /// subset and the overall check fail-closed. `at_least_one` is set whenever
+    /// an accepted placeholder leaf is seen so the caller can reject an
+    /// all-empty match.
+    fn position_is_regeneralizable_higher_order_target(
+        &self,
+        ty: TypeId,
+        at_least_one: &mut bool,
+    ) -> bool {
         match self.interner.lookup(ty) {
-            Some(TypeData::TypeParameter(info)) if info.is_infer_placeholder() => Some(info.name),
-            _ => None,
+            Some(TypeData::TypeParameter(info)) => {
+                // A higher-order source placeholder is always accepted: it is
+                // minted within this resolution to carry a generic argument's
+                // free param into a later argument's target. A call-local outer
+                // placeholder is accepted only when it belongs to THIS call
+                // (fail-closed against nested/stale state).
+                let accepted = info.origin.is_infer_source()
+                    || (info.origin.is_current_infer_placeholder()
+                        && self
+                            .current_call_inference_placeholders
+                            .contains(&info.name));
+                if accepted {
+                    *at_least_one = true;
+                }
+                accepted
+            }
+            Some(TypeData::Array(element)) => {
+                self.position_is_regeneralizable_higher_order_target(element, at_least_one)
+            }
+            Some(TypeData::Tuple(list_id)) => {
+                let elements = self.interner.tuple_list(list_id);
+                // A tuple qualifies only when it has elements and every element
+                // is itself qualifying (no rest spreads, which carry their own
+                // array structure with potentially concrete content).
+                !elements.is_empty()
+                    && elements.iter().all(|element| {
+                        !element.rest
+                            && self.position_is_regeneralizable_higher_order_target(
+                                element.type_id,
+                                at_least_one,
+                            )
+                    })
+            }
+            _ => false,
         }
     }
 
