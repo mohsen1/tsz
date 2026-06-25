@@ -1583,6 +1583,9 @@ mod cross_file_conditional_alias_private_extends_tests;
 #[path = "cross_file_keyof_utility_alias_tests.rs"]
 mod cross_file_keyof_utility_alias_tests;
 #[cfg(test)]
+#[path = "cross_file_lib_utility_indexed_access_tests.rs"]
+mod cross_file_lib_utility_indexed_access_tests;
+#[cfg(test)]
 #[path = "explain_files_reason_tests.rs"]
 mod explain_files_reason_tests;
 #[cfg(test)]

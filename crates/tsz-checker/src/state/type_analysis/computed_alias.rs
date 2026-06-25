@@ -751,6 +751,54 @@ impl CheckerState<'_> {
         (!prefixes.is_empty()).then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
     }
 
+    /// Resolve and register the *body* of a standard-library generic type
+    /// alias referenced inside a cross-arena / declaration-file alias body.
+    ///
+    /// The eager declaration-file lowering records only the referenced alias's
+    /// `DefId`; it never materializes the lib utility's body the way the in-file
+    /// (`.ts`) reference path does through
+    /// [`Self::ensure_def_ready_for_lowering`]. For a lib *conditional* utility
+    /// (`Parameters`, `ReturnType`, `ConstructorParameters`, …) the bodyless
+    /// def then resolves to the `unknown` placeholder, so an indexed access into
+    /// the utility result (`type R = Parameters<F>[0]`) stays deferred and a
+    /// value of that type wrongly reports "has no call signatures" (false
+    /// `TS2349`, #14729). Priming the body here — while computing the
+    /// *referencing* alias, never the utility itself, so it cannot re-enter the
+    /// utility's own in-progress resolution — makes the cross-arena route
+    /// register the identical lib body the in-file route does.
+    ///
+    /// Restricted to actual/cloned-lib type aliases (a user/local type that
+    /// shadows a lib name keeps the normal path) and skipped once a usable body
+    /// is already registered, so the resolution runs at most once per def.
+    fn prime_actual_lib_type_alias_body(&mut self, name: &str) {
+        if self.ctx.lib_contexts.is_empty() || self.ctx.file_local_type_shadow_for_lib_name(name) {
+            return;
+        }
+        let Some(def_id) = self.resolve_actual_lib_name_to_def_id_for_lowering(name) else {
+            return;
+        };
+        // Only type aliases carry a conditional/utility body that the bare-DefId
+        // lowering leaves unresolved; interfaces and classes materialize eagerly
+        // or take the lib-interface paths. The `DefId`-keyed kind is an O(1)
+        // store read — no cross-file symbol resolution (and its binder scan).
+        if self.ctx.definition_store.get_kind(def_id) != Some(tsz_solver::def::DefKind::TypeAlias) {
+            return;
+        }
+        // Already has a real (non-placeholder) body? Nothing to do — a usable
+        // body means a prior resolution already published the utility.
+        let existing = self.ctx.definition_store.get_body(def_id);
+        let has_usable_body = existing.is_some_and(|body| {
+            body != TypeId::UNKNOWN
+                && body != TypeId::ERROR
+                && crate::query_boundaries::common::lazy_def_id(self.ctx.types, body)
+                    != Some(def_id)
+        });
+        if has_usable_body {
+            return;
+        }
+        let _ = self.resolve_lib_type_by_name(name);
+    }
+
     /// Walk the type alias body in a cross-arena and prime lib type params
     /// for any `TYPE_REFERENCE` nodes that lack explicit type arguments.
     /// This ensures that generic lib types with all-default type params
@@ -792,6 +840,7 @@ impl CheckerState<'_> {
 
         for name in names_to_prime {
             self.prime_lib_type_params(&name);
+            self.prime_actual_lib_type_alias_body(&name);
             let lib_binders = self.get_lib_binders();
             let decl_binder = self
                 .ctx
