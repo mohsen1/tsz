@@ -936,6 +936,32 @@ impl<'a> CheckerState<'a> {
         } else {
             Vec::new()
         };
+        // When an argument is a callback whose return type is FIXED by an
+        // explicit return annotation or `as`/type assertion that pins a return
+        // type parameter, the contextual return must not clamp that parameter
+        // back down (e.g. `xs.map((x): string | undefined => x)` into `string[]`
+        // must keep `U = string | undefined`, not be coerced to `string`). tsc
+        // ranks the callback's authoritative return above the contextual return,
+        // so suppress the contextual return in the final solve AND skip the
+        // assignability-recovery retry below; the result then relates to the
+        // outer target normally and a genuine mismatch surfaces as TS2322
+        // (#14823).
+        //
+        // Both sites are required (unlike the sibling
+        // `suppress_generic_return_context_for_direct_arg_overlap`, which only
+        // gates inference seeding): the `should_retry_generic_call` path below
+        // re-resolves with the raw contextual type whenever the result fails to
+        // relate to it, which would re-seed the contextual return and re-clamp
+        // the parameter — re-hiding the very TS2322 this suppression exposes.
+        let suppress_pinned_callback_context = is_generic_call
+            && contextual_type.is_some()
+            && original_callee_shape.as_ref().is_some_and(|shape| {
+                self.suppress_generic_return_context_for_pinned_callback_return(
+                    shape,
+                    args,
+                    contextual_type,
+                )
+            });
         let call_resolution_contextual_type = if is_generic_call {
             // Generic calls in contextual positions need the outer request at the
             // solver boundary, even when they have arguments. The checker-side
@@ -944,7 +970,11 @@ impl<'a> CheckerState<'a> {
             // `consumeClass(createClass(x => ...))` still require return-context
             // seeding in the final generic solve step to instantiate parameter and
             // callback types from the contextual result.
-            contextual_type
+            if suppress_pinned_callback_context {
+                None
+            } else {
+                contextual_type
+            }
         } else {
             contextual_type
         };
@@ -1096,6 +1126,7 @@ impl<'a> CheckerState<'a> {
             )
         });
         let should_retry_generic_call = if is_generic_call
+            && !suppress_pinned_callback_context
             && (!had_return_context_substitution || has_contextual_signature_instantiation_arg)
             && has_contextual_refresh_arg
         {
