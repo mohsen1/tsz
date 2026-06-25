@@ -87,6 +87,79 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Materialize a property-access receiver that is a generic *type-alias*
+    /// application forwarding its arguments into a cross-file generic interface
+    /// (`type L<T> = Box<T>` where `Box` is reached through a barrel re-export,
+    /// then `b: L<number>`).
+    ///
+    /// The shared evaluator substitutes the alias's own parameters correctly
+    /// (`L<number>` → its body `Box<number>`), but evaluating that inner
+    /// cross-arena interface application then drops the interface's parameter
+    /// substitution (the inherited member surfaces as the unsubstituted declared
+    /// `T`, a false `TS2322`). A *direct* interface receiver avoids this because
+    /// `evaluate_application_type_for_property_access` materializes it through
+    /// `resolve_application_base_body`; the alias wrapper never reaches that path
+    /// because its base is a `TypeAlias`, not an `Interface`.
+    ///
+    /// This expands the alias one level — substituting the concrete arguments
+    /// into the alias body — and, when the result is a cross-file generic
+    /// interface/class application, routes it through the same interface
+    /// materialization the direct receiver uses. Returns `None` for every other
+    /// shape so the caller keeps the shared evaluator. Gated on *concrete*
+    /// arguments so a still-generic receiver (whose free parameters are
+    /// legitimately preserved) is untouched. Refs #13212 / #10663.
+    pub(crate) fn materialize_alias_wrapped_interface_receiver(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        use tsz_solver::def::DefKind;
+        let db = self.ctx.types.as_type_database();
+        let (alias_base, alias_args) = query::application_info(self.ctx.types, type_id)?;
+        if alias_args.is_empty()
+            || alias_args
+                .iter()
+                .any(|&arg| crate::query_boundaries::common::contains_type_parameters(db, arg))
+        {
+            return None;
+        }
+        let alias_def_id = query::lazy_def_id(self.ctx.types, alias_base)?;
+        let alias_info = self.ctx.definition_store.get(alias_def_id)?;
+        if alias_info.kind != DefKind::TypeAlias {
+            return None;
+        }
+        let alias_params = self.ctx.get_def_type_params(alias_def_id)?;
+        if alias_params.is_empty() || alias_params.len() != alias_args.len() {
+            return None;
+        }
+        let alias_body = self.ctx.definition_store.get_body(alias_def_id)?;
+        // A self-`Lazy(def)` placeholder body carries no structural shape to
+        // expand; bail so the shared evaluator keeps ownership.
+        if query::lazy_def_id(self.ctx.types, alias_body) == Some(alias_def_id) {
+            return None;
+        }
+        let substitution =
+            query::TypeSubstitution::from_args(self.ctx.types, &alias_params, &alias_args);
+        let underlying = query::instantiate_type(self.ctx.types, alias_body, &substitution);
+
+        // The expanded body must itself be a *cross-file* generic interface/class
+        // application — exactly the shape the shared evaluator mis-substitutes and
+        // the interface materialization handles. Same-file or lib bases already
+        // resolve correctly through the shared path.
+        let (underlying_base, _) = query::application_info(self.ctx.types, underlying)?;
+        let underlying_def_id = query::lazy_def_id(self.ctx.types, underlying_base)?;
+        let underlying_info = self.ctx.definition_store.get(underlying_def_id)?;
+        if underlying_info
+            .file_id
+            .is_none_or(|file_id| file_id == self.ctx.current_file_idx as u32)
+            || underlying_info.is_declare
+            || !matches!(underlying_info.kind, DefKind::Interface | DefKind::Class)
+        {
+            return None;
+        }
+        let materialized = self.evaluate_application_type_for_property_access(underlying);
+        (materialized != underlying).then_some(materialized)
+    }
+
     /// Instantiate a generic interface/class body with its type parameters bound
     /// to an application's arguments, then env-evaluate the result.
     ///

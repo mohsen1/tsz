@@ -1047,6 +1047,7 @@ impl<'a> Printer<'a> {
 
             if let Some(binary) = self.arena.get_binary_expr(node)
                 && binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                && self.nullish_assignment_consumes_value_temp(binary.left)
             {
                 count += 1;
             }

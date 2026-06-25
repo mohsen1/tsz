@@ -7,7 +7,7 @@ use crate::types::*;
 #[test]
 fn test_identical_types_overlap() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Identical types overlap (unless never)
     assert!(checker.are_types_overlapping(TypeId::STRING, TypeId::STRING));
@@ -18,7 +18,7 @@ fn test_identical_types_overlap() {
 #[test]
 fn test_any_unknown_overlap_with_everything_except_never() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // any and unknown overlap with everything except never
     assert!(checker.are_types_overlapping(TypeId::ANY, TypeId::STRING));
@@ -32,7 +32,7 @@ fn test_any_unknown_overlap_with_everything_except_never() {
 #[test]
 fn test_different_primitives_do_not_overlap() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Different primitives never overlap
     assert!(!checker.are_types_overlapping(TypeId::STRING, TypeId::NUMBER));
@@ -48,7 +48,7 @@ fn test_literal_and_primitive_overlap() {
     let string_literal = interner.literal_string("hello");
     let number_literal = interner.literal_number(42.0);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Literal overlaps with its primitive type
     assert!(checker.are_types_overlapping(string_literal, TypeId::STRING));
@@ -64,7 +64,7 @@ fn test_different_literals_of_same_primitive_do_not_overlap() {
     let one = interner.literal_number(1.0);
     let two = interner.literal_number(2.0);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Different string literals don't overlap
     assert!(!checker.are_types_overlapping(hello, world));
@@ -80,7 +80,7 @@ fn test_same_literals_overlap() {
     let hello1 = interner.literal_string("hello");
     let hello2 = interner.literal_string("hello");
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Same literals overlap
     assert!(checker.are_types_overlapping(hello1, hello2));
@@ -102,7 +102,7 @@ fn test_object_property_type_mismatch() {
         TypeId::NUMBER,
     )]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Objects with mismatched property types don't overlap
     assert!(!checker.are_types_overlapping(obj1, obj2));
@@ -124,7 +124,7 @@ fn test_objects_with_different_properties_overlap() {
         TypeId::NUMBER,
     )]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // Objects with different properties DO overlap (can have { a: number, b: number })
     assert!(checker.are_types_overlapping(obj1, obj2));
@@ -133,7 +133,7 @@ fn test_objects_with_different_properties_overlap() {
 #[test]
 fn test_void_and_undefined_overlap() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // void and undefined always overlap
     assert!(checker.are_types_overlapping(TypeId::VOID, TypeId::UNDEFINED));
@@ -145,7 +145,7 @@ fn test_null_undefined_with_strict_null_checks() {
     let interner = TypeInterner::new();
 
     // With strict null checks ON
-    let checker_strict = SubtypeChecker::new(&interner).with_strict_null_checks(true);
+    let mut checker_strict = SubtypeChecker::new(&interner).with_strict_null_checks(true);
 
     // IMPORTANT: Even with strict null checks, TypeScript allows null/undefined
     // comparisons without TS2367. This is because null/undefined comparisons are
@@ -167,7 +167,7 @@ fn test_null_undefined_without_strict_null_checks() {
     let interner = TypeInterner::new();
 
     // With strict null checks OFF
-    let checker_non_strict = SubtypeChecker::new(&interner).with_strict_null_checks(false);
+    let mut checker_non_strict = SubtypeChecker::new(&interner).with_strict_null_checks(false);
 
     // null/undefined overlap with everything in non-strict mode
     assert!(checker_non_strict.are_types_overlapping(TypeId::NULL, TypeId::STRING));
@@ -178,7 +178,7 @@ fn test_null_undefined_without_strict_null_checks() {
 #[test]
 fn test_object_keyword_vs_primitives() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     // object keyword (non-primitive) doesn't overlap with primitives
     assert!(!checker.are_types_overlapping(TypeId::OBJECT, TypeId::STRING));
@@ -240,7 +240,7 @@ fn test_intersection_with_disjoint_property_no_overlap() {
         TypeId::NUMBER,
     )]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
     // {a:string, b:number} vs {a:number} — "a" has conflicting types, no overlap
     assert!(!checker.are_types_overlapping(intersection, obj_c));
 }
@@ -266,7 +266,7 @@ fn test_intersection_with_compatible_properties_overlap() {
         TypeId::STRING,
     )]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
     assert!(checker.are_types_overlapping(intersection, obj_c));
 }
 
@@ -291,7 +291,7 @@ fn test_intersection_of_disjoint_objects_with_unrelated_object() {
         TypeId::BOOLEAN,
     )]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
     assert!(checker.are_types_overlapping(intersection, obj_z));
 }
 
@@ -321,7 +321,7 @@ fn test_two_intersections_overlap_check() {
     )]);
     let inter2 = interner.intersection(vec![obj_a2, obj_c]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
     assert!(checker.are_types_overlapping(inter1, inter2));
 }
 
@@ -354,6 +354,6 @@ fn test_two_intersections_no_overlap_discriminant() {
     )]);
     let inter2 = interner.intersection(vec![obj2, obj_y]);
 
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
     assert!(!checker.are_types_overlapping(inter1, inter2));
 }

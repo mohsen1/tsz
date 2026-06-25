@@ -1159,44 +1159,46 @@ impl<'a> CheckerState<'a> {
             // This avoids per-member `get_type_of_symbol` overhead in
             // hot paths such as large enum property-access switches.
             //
-            // Collect (member_def_id, member_enum_type) pairs so we can mirror
-            // them into type_environment after releasing the type_env borrow.
-            let mut member_def_entries: Vec<(tsz_solver::DefId, TypeId)> = Vec::new();
-            {
-                let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
-                for &(member_type, ref member_name, _member_idx) in &member_entries {
-                    if let Some(name) = member_name
-                        && let Some(member_sym_id) = self
-                            .ctx
-                            .binder
-                            .get_symbol(sym_id)
-                            .and_then(|enum_symbol| enum_symbol.exports.as_ref())
-                            .and_then(|exports| exports.get(name))
-                    {
-                        let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                        let member_enum_type = factory.enum_type(member_def_id, member_type);
-                        self.ctx
-                            .symbol_types
-                            .insert(member_sym_id, member_enum_type);
-                        if let Some(env) = maybe_env.as_mut() {
-                            env.insert(tsz_solver::SymbolRef(member_sym_id.0), member_enum_type);
-                            if member_def_id != tsz_solver::DefId::INVALID {
-                                env.insert_def(member_def_id, member_enum_type);
-                                // Register parent-child relationship for enum member widening
-                                env.register_enum_parent(member_def_id, def_id);
-                                member_def_entries.push((member_def_id, member_enum_type));
-                            }
-                        }
-                    }
+            // Collect (member_sym_id, member_def_id, member_enum_type) tuples and
+            // apply the env writes after this loop. The dual-env registration
+            // wrappers take `&self.ctx` and manage their own race-safe borrows,
+            // so we must not hold a `type_env` borrow across the wrapper calls.
+            let mut member_env_entries: Vec<(tsz_solver::SymbolRef, tsz_solver::DefId, TypeId)> =
+                Vec::new();
+            for &(member_type, ref member_name, _member_idx) in &member_entries {
+                if let Some(name) = member_name
+                    && let Some(member_sym_id) = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .and_then(|enum_symbol| enum_symbol.exports.as_ref())
+                        .and_then(|exports| exports.get(name))
+                {
+                    let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                    let member_enum_type = factory.enum_type(member_def_id, member_type);
+                    self.ctx
+                        .symbol_types
+                        .insert(member_sym_id, member_enum_type);
+                    member_env_entries.push((
+                        tsz_solver::SymbolRef(member_sym_id.0),
+                        member_def_id,
+                        member_enum_type,
+                    ));
                 }
             }
-            // Mirror enum member DefId entries into type_environment for consistency
-            if !member_def_entries.is_empty()
-                && let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
-            {
-                for &(member_def_id, member_enum_type) in &member_def_entries {
-                    env.insert_def(member_def_id, member_enum_type);
-                    env.register_enum_parent(member_def_id, def_id);
+            // Apply the per-member env writes through the dual-env deferral
+            // discipline (mirrors to both `type_env` and `type_environment`,
+            // replaying instead of dropping on a borrow conflict). The order
+            // preserves the prior per-member sequence: symbol type, then def
+            // body, then enum-parent.
+            for &(member_ref, member_def_id, member_enum_type) in &member_env_entries {
+                self.ctx
+                    .register_symbol_type_in_envs(member_ref, member_enum_type);
+                if member_def_id != tsz_solver::DefId::INVALID {
+                    self.ctx
+                        .register_def_in_envs(member_def_id, member_enum_type);
+                    // Register parent-child relationship for enum member widening.
+                    self.ctx.register_enum_parent_in_envs(member_def_id, def_id);
                 }
             }
 
@@ -1230,13 +1232,11 @@ impl<'a> CheckerState<'a> {
             let ns_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
             self.ctx.enum_namespace_types.insert(sym_id, ns_type);
             // Register in both TypeEnvironment instances so the solver's evaluator
-            // and the flow analyzer can both access enum namespace types.
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.register_enum_namespace_type(def_id, ns_type);
-            }
-            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                env.register_enum_namespace_type(def_id, ns_type);
-            }
+            // and the flow analyzer can both access enum namespace types. Routed
+            // through the dual-env deferral discipline so a borrow conflict
+            // replays the write instead of dropping it.
+            self.ctx
+                .register_enum_namespace_type_in_envs(def_id, ns_type);
             // Register DefId <-> SymbolId mapping for enum type resolution
             self.ctx
                 .register_resolved_type(sym_id, enum_type, Vec::new());

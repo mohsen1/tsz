@@ -285,11 +285,7 @@ impl CheckerState<'_> {
             return;
         }
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
-        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-            env.insert_typeof_value_type(symbol_ref, value_type);
-        }
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            env.insert_typeof_value_type(symbol_ref, value_type);
-        }
+        self.ctx
+            .register_typeof_value_type_in_envs(symbol_ref, value_type);
     }
 }

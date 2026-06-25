@@ -30,7 +30,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - `are_types_overlapping({ a: string }, { a: number })` -> false (property type mismatch)
     /// - `are_types_overlapping({ a: 1 }, { b: 2 })` -> true (can have { a: 1, b: 2 })
     /// - `are_types_overlapping(string, "hello")` -> true (literal is subtype of primitive)
-    pub fn are_types_overlapping(&self, a: TypeId, b: TypeId) -> bool {
+    ///
+    /// Takes `&mut self` because the single-template-operand case reuses the
+    /// relation's backtracking template-literal matcher
+    /// (`check_literal_matches_template_literal`), which evaluates type holes.
+    pub fn are_types_overlapping(&mut self, a: TypeId, b: TypeId) -> bool {
         // Fast path: identical types overlap (unless never)
         if a == b {
             return a != TypeId::NEVER;
@@ -181,19 +185,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(a_resolved) {
-            return self
-                .interner
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.are_types_overlapping(member, b_resolved));
+            // Re-fetch the interned (immutable) list per index so the slice borrow
+            // is released before the `&mut self` recursion, avoiding a per-union
+            // allocation.
+            let len = self.interner.type_list(list_id).len();
+            for i in 0..len {
+                let member = self.interner.type_list(list_id)[i];
+                if self.are_types_overlapping(member, b_resolved) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(b_resolved) {
-            return self
-                .interner
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.are_types_overlapping(a_resolved, member));
+            let len = self.interner.type_list(list_id).len();
+            for i in 0..len {
+                let member = self.interner.type_list(list_id)[i];
+                if self.are_types_overlapping(a_resolved, member) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Exactly one operand is a template literal type (the both-template case is
+        // handled above). A template literal type's value set is a subset of
+        // `string`, so it overlaps another operand only when a string value can
+        // belong to both (see `template_pattern_overlaps_type`). Unions were already
+        // distributed by the arms above; this is placed before the enum arms so a
+        // string enum is matched value-by-value against the pattern rather than
+        // treated as overlapping via its `string` underlying.
+        match (
+            template_literal_id(self.interner, a_resolved),
+            template_literal_id(self.interner, b_resolved),
+        ) {
+            (Some(t), None) => {
+                return self.template_pattern_overlaps_type(a_resolved, t, b_resolved);
+            }
+            (None, Some(t)) => {
+                return self.template_pattern_overlaps_type(b_resolved, t, a_resolved);
+            }
+            _ => {}
         }
 
         if let Some(crate::types::TypeData::Enum(_, underlying)) = self.interner.lookup(a_resolved)
@@ -385,6 +418,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check whether a template literal type overlaps a non-template, non-union
+    /// operand for TS2367 purposes.
+    ///
+    /// A template literal type only ever holds string values matching its pattern,
+    /// so it overlaps `other` exactly when a value can belong to both:
+    /// - a string literal that matches the pattern, using the relation's exact
+    ///   backtracking matcher (`` `x${string}` `` overlaps `"xyz"` but not `"a"`,
+    ///   `` `${number}` `` overlaps `"123"` but not `"abc"`);
+    /// - any type the template is a subtype of (`string`, `unknown`, the open
+    ///   object type `{}` to which every non-nullish value — strings included — is
+    ///   assignable), or any type that is a subtype of the template (a narrower
+    ///   template or a branded string);
+    /// - an enum, value-aware: it overlaps iff one of the enum's member literals
+    ///   matches the pattern (numeric members never match a string pattern), so a
+    ///   nominal string enum whose members fall outside the pattern is disjoint.
+    ///
+    /// Every other operand — non-string primitives (`number`, `boolean`, `bigint`,
+    /// `symbol`), the `object` keyword, arrays/tuples/functions, structured object
+    /// types, and non-string literals — holds no matching string value and so is
+    /// disjoint.
+    fn template_pattern_overlaps_type(
+        &mut self,
+        template_type: TypeId,
+        template: TemplateLiteralId,
+        other: TypeId,
+    ) -> bool {
+        // Precise literal match first (covers `"xyz"` vs `` `x${string}` `` etc.).
+        if let Some(LiteralValue::String(atom)) = literal_value(self.interner, other) {
+            return self
+                .check_literal_matches_template_literal(atom, template)
+                .is_true();
+        }
+        // Structural overlap: the template is a subtype of `other` (e.g. `string`,
+        // `{}`) or `other` is a subtype of the template (e.g. a branded string).
+        if self.is_subtype_of(template_type, other) || self.is_subtype_of(other, template_type) {
+            return true;
+        }
+        // Enum: overlap iff a member literal value matches the pattern. Recurse on
+        // the member union so each member is matched (or rejected) individually.
+        if let Some(crate::types::TypeData::Enum(_, member_type)) = self.interner.lookup(other) {
+            return self.are_types_overlapping(template_type, member_type);
+        }
+        false
+    }
+
     /// Check if two types are "object-like" (should use `PropertyCollector` for overlap detection).
     ///
     /// Object-like types include:
@@ -408,7 +486,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Discriminant detection (common property with disjoint literal types)
     ///
     /// Returns false if types have zero overlap, true otherwise.
-    fn do_refined_object_overlap_check(&self, a: TypeId, b: TypeId) -> bool {
+    fn do_refined_object_overlap_check(&mut self, a: TypeId, b: TypeId) -> bool {
         use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
         // Collect properties and index signatures from both types
