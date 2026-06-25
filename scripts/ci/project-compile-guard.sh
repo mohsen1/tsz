@@ -1028,6 +1028,31 @@ run_project_row() {
       tsz_write_mitt_config "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mitt/src"
       ;;
+    tslib-project)
+      ensure_git_fixture "tslib" "$TSLIB_REPO" "$TSLIB_REF" "$FIXTURE_ROOT/tslib"
+      tsz_write_tslib_config "$FIXTURE_ROOT/tslib/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/tslib/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tslib/modules"
+      ;;
+    eventemitter3-project)
+      ensure_git_fixture "eventemitter3" "$EVENTEMITTER3_REPO" "$EVENTEMITTER3_REF" "$FIXTURE_ROOT/eventemitter3"
+      tsz_write_eventemitter3_config "$FIXTURE_ROOT/eventemitter3/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/eventemitter3/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/eventemitter3"
+      ;;
+    yocto-queue-project)
+      ensure_git_fixture "yocto-queue" "$YOCTO_QUEUE_REPO" "$YOCTO_QUEUE_REF" "$FIXTURE_ROOT/yocto-queue"
+      tsz_write_yocto_queue_config "$FIXTURE_ROOT/yocto-queue/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/yocto-queue/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/yocto-queue"
+      ;;
+    p-limit-project)
+      ensure_git_fixture "p-limit" "$P_LIMIT_REPO" "$P_LIMIT_REF" "$FIXTURE_ROOT/p-limit"
+      tsz_write_p_limit_config "$FIXTURE_ROOT/p-limit/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/p-limit/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/p-limit"
+      ;;
+    tiny-invariant-project)
+      ensure_git_fixture "tiny-invariant" "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF" "$FIXTURE_ROOT/tiny-invariant"
+      tsz_write_tiny_invariant_config "$FIXTURE_ROOT/tiny-invariant/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/tiny-invariant/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tiny-invariant/src"
+      ;;
     ts-belt-project)
       ensure_git_fixture "ts-belt" "$TS_BELT_REPO" "$TS_BELT_REF" "$FIXTURE_ROOT/ts-belt"
       tsz_write_ts_belt_config "$FIXTURE_ROOT/ts-belt/tsconfig.tsz-guard.json"

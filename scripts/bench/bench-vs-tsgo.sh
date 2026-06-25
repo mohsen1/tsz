@@ -93,6 +93,11 @@ RADASH_DIR="$EXTERNAL_BENCH_DIR/radash"
 VALTIO_DIR="$EXTERNAL_BENCH_DIR/valtio"
 SCULE_DIR="$EXTERNAL_BENCH_DIR/scule"
 MITT_DIR="$EXTERNAL_BENCH_DIR/mitt"
+TSLIB_DIR="$EXTERNAL_BENCH_DIR/tslib"
+EVENTEMITTER3_DIR="$EXTERNAL_BENCH_DIR/eventemitter3"
+YOCTO_QUEUE_DIR="$EXTERNAL_BENCH_DIR/yocto-queue"
+P_LIMIT_DIR="$EXTERNAL_BENCH_DIR/p-limit"
+TINY_INVARIANT_DIR="$EXTERNAL_BENCH_DIR/tiny-invariant"
 TS_BELT_DIR="$EXTERNAL_BENCH_DIR/ts-belt"
 TS_EXTRAS_DIR="$EXTERNAL_BENCH_DIR/ts-extras"
 SUPERJSON_DIR="$EXTERNAL_BENCH_DIR/superjson"
@@ -457,6 +462,31 @@ ensure_scule_fixture() {
 ensure_mitt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
     tsz_ensure_git_fixture "mitt" "$MITT_REPO" "$MITT_REF" "$MITT_DIR" 1
+}
+
+ensure_tslib_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "tslib" "$TSLIB_REPO" "$TSLIB_REF" "$TSLIB_DIR" 1
+}
+
+ensure_eventemitter3_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "eventemitter3" "$EVENTEMITTER3_REPO" "$EVENTEMITTER3_REF" "$EVENTEMITTER3_DIR" 1
+}
+
+ensure_yocto_queue_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "yocto-queue" "$YOCTO_QUEUE_REPO" "$YOCTO_QUEUE_REF" "$YOCTO_QUEUE_DIR" 1
+}
+
+ensure_p_limit_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "p-limit" "$P_LIMIT_REPO" "$P_LIMIT_REF" "$P_LIMIT_DIR" 1
+}
+
+ensure_tiny_invariant_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "tiny-invariant" "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF" "$TINY_INVARIANT_DIR" 1
 }
 
 ensure_ts_belt_fixture() {
@@ -1063,6 +1093,81 @@ run_mitt_project_benchmarks() {
     local src_dir="$MITT_DIR/src"
     tsz_write_mitt_config "$tsconfig"
     run_project_benchmark "mitt-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_tslib_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "tslib-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - tslib"
+    ensure_tslib_fixture
+    local tsconfig="$TSLIB_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TSLIB_DIR/modules"
+    tsz_write_tslib_config "$tsconfig"
+    run_project_benchmark "tslib-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_eventemitter3_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "eventemitter3-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - eventemitter3"
+    ensure_eventemitter3_fixture
+    local tsconfig="$EVENTEMITTER3_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$EVENTEMITTER3_DIR"
+    tsz_write_eventemitter3_config "$tsconfig"
+    run_project_benchmark "eventemitter3-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_yocto_queue_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "yocto-queue-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - yocto-queue"
+    ensure_yocto_queue_fixture
+    local tsconfig="$YOCTO_QUEUE_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$YOCTO_QUEUE_DIR"
+    tsz_write_yocto_queue_config "$tsconfig"
+    run_project_benchmark "yocto-queue-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_p_limit_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "p-limit-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - p-limit"
+    ensure_p_limit_fixture
+    local tsconfig="$P_LIMIT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$P_LIMIT_DIR"
+    tsz_write_p_limit_config "$tsconfig"
+    run_project_benchmark "p-limit-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_tiny_invariant_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "tiny-invariant-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - tiny-invariant"
+    ensure_tiny_invariant_fixture
+    local tsconfig="$TINY_INVARIANT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TINY_INVARIANT_DIR/src"
+    tsz_write_tiny_invariant_config "$tsconfig"
+    run_project_benchmark "tiny-invariant-project" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -1722,6 +1827,11 @@ main() {
     run_isolated "valtio-project"                    run_valtio_project_benchmarks
     run_isolated "scule-project"                     run_scule_project_benchmarks
     run_isolated "mitt-project"                      run_mitt_project_benchmarks
+    run_isolated "tslib-project"                     run_tslib_project_benchmarks
+    run_isolated "eventemitter3-project"             run_eventemitter3_project_benchmarks
+    run_isolated "yocto-queue-project"               run_yocto_queue_project_benchmarks
+    run_isolated "p-limit-project"                   run_p_limit_project_benchmarks
+    run_isolated "tiny-invariant-project"            run_tiny_invariant_project_benchmarks
     run_isolated "ts-belt-project"                   run_ts_belt_project_benchmarks
     run_isolated "ts-extras-project"                 run_ts_extras_project_benchmarks
     run_isolated "superjson-project"                 run_superjson_project_benchmarks
