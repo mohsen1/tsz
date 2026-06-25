@@ -1495,6 +1495,9 @@ mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
 #[cfg(test)]
+#[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
+mod ts2445_protected_access_via_subclass_this_tests;
+#[cfg(test)]
 #[path = "tests/ts2564_constructor_throw_guard_tests.rs"]
 mod ts2564_constructor_throw_guard_tests;
 #[cfg(test)]
