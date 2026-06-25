@@ -115,6 +115,101 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ids
     }
 
+    /// #14345 scoped structural-strip flag (default-OFF, reuses
+    /// `TSZ_TYPEPARAM_DECL_IDENTITY`). When OFF this strip is never applied, so
+    /// the alpha-rename body comparison is byte-identical to pre-strip behavior.
+    /// Gated together with the construction stamp so the two halves of the
+    /// flag-flip move as one: the stamp fixes the 278 at construction, the strip
+    /// clears the +53 alpha-equiv-through-Application regressions the stamp
+    /// exposes in the signature relation.
+    fn scoped_decl_param_strip_enabled() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+    }
+
+    /// Build a name-keyed substitution that maps every free `DeclScoped` type
+    /// parameter occurring in `source`/`target` back to its `User`-canonical
+    /// structural intern (origin erased, surface preserved). Applying it to both
+    /// cloned bodies collapses alpha-equivalent params from distinct decls to
+    /// ONE id — the flag-OFF identity — so the structural comparison relates
+    /// them.
+    ///
+    /// Soundness: collapsing two `DeclScoped` params to one `User` id is sound
+    /// ONLY when they are genuinely alpha-equivalent — same name AND same
+    /// surface (`constraint`/`default`/`is_const`). The interner's `type_param`
+    /// already enforces this: distinct surfaces produce distinct `User` ids, so
+    /// `<A>` and `<A extends string>` never collapse. The remaining hazard is a
+    /// name collision where the SAME name has TWO different `DeclScoped`
+    /// surfaces across the two bodies (one decl's `<A>` vs another's
+    /// `<A extends string>`): a name-keyed substitution cannot represent that
+    /// split, so such names are EXCLUDED from the strip entirely (left at their
+    /// distinct `DeclScoped` ids, the conservative non-collapsing choice — no
+    /// over-relate). Only names whose every `DeclScoped` occurrence shares one
+    /// surface are stripped.
+    fn build_decl_param_structural_strip(
+        &self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> TypeSubstitution {
+        use crate::types::TypeParamOrigin;
+        use rustc_hash::FxHashMap;
+
+        let roots = source
+            .params
+            .iter()
+            .map(|p| p.type_id)
+            .chain(source.this_type)
+            .chain(std::iter::once(source.return_type))
+            .chain(target.params.iter().map(|p| p.type_id))
+            .chain(target.this_type)
+            .chain(std::iter::once(target.return_type));
+        let free_ids =
+            crate::visitors::visitor_predicates::free_type_parameter_ids_in(self.interner, roots);
+
+        // Per name: the single canonical (`User`-stripped) target id, or a
+        // poison marker once a conflicting surface is seen for the same name.
+        let mut by_name: FxHashMap<tsz_common::interner::Atom, Option<TypeId>> =
+            FxHashMap::default();
+        for id in free_ids {
+            let Some(info) = type_param_info(self.interner, id) else {
+                continue;
+            };
+            // Only DeclScoped params carry the construction stamp that splits
+            // alpha-equivalent decls. Leave User/inference placeholders alone.
+            if !matches!(info.origin, TypeParamOrigin::DeclScoped { .. }) {
+                continue;
+            }
+            // The User-canonical structural intern: same surface, origin erased.
+            // Alpha-equivalent DeclScoped params (same name+surface, distinct
+            // origins) all map to this single id.
+            let canonical = self.interner.type_param(TypeParamInfo {
+                origin: TypeParamOrigin::User,
+                ..info
+            });
+            match by_name.get_mut(&info.name) {
+                None => {
+                    by_name.insert(info.name, Some(canonical));
+                }
+                Some(slot @ Some(_)) if *slot == Some(canonical) => {}
+                // Two DeclScoped params share a name but strip to DISTINCT
+                // canonical ids = different surfaces. A name-keyed strip would
+                // unsoundly merge them; poison this name so it is excluded.
+                Some(slot) => {
+                    *slot = None;
+                }
+            }
+        }
+
+        let mut strip = TypeSubstitution::new();
+        for (name, canonical) in by_name {
+            if let Some(canonical) = canonical {
+                strip.insert(name, canonical);
+            }
+        }
+        strip
+    }
+
     fn check_function_subtype_impl(
         &mut self,
         source: &FunctionShape,
@@ -307,6 +402,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &target_instantiated,
                     &target_to_source_substitution,
                 );
+
+                // #14345 scoped structural-strip (flag-gated, byte-parity-inert
+                // OFF). The construction stamp (`9a94c97a95`) gives every
+                // user-written type parameter a `DeclScoped { file, node }`
+                // origin so two distinct declarations sharing an identical
+                // surface intern to DISTINCT ids — fixing the self-ref-guard
+                // over-collapse at construction/registration (the 278 fp-ts
+                // fixes). But that stamp also makes two ALPHA-EQUIVALENT
+                // signature bodies (e.g. `<A>(r: Record<string, A>) => number`
+                // vs `<A>(r: ReadonlyRecord<string, A>) => number` after their
+                // aliases reduce to the same shape) fail to relate: their `A`s
+                // carry distinct `DeclScoped` origins that are re-minted to a
+                // THIRD id through the name-keyed substitution + per-body
+                // `instantiate_type`, so the id-keyed equivalence registered
+                // above (lines ~289-300) never bridges them — the +53
+                // equiv-through-Application regressions.
+                //
+                // Flag-OFF, those same params intern to ONE structural (`User`)
+                // id and relate trivially (zero +53). This strip reproduces that
+                // flag-OFF identity SCOPED to the two cloned bodies used for the
+                // structural compare ONLY: each free `DeclScoped` parameter is
+                // mapped back to its `User`-canonical structural intern (origin
+                // erased, surface preserved), so alpha-equivalent params from
+                // distinct decls collapse to the SAME id and unify. It does NOT
+                // touch construction-time stamping (the 278 fire at a different
+                // level — registration/`is_identity_for`), so it is additive to
+                // the construction fix.
+                if Self::scoped_decl_param_strip_enabled() {
+                    let strip = self.build_decl_param_structural_strip(
+                        &source_instantiated,
+                        &target_instantiated,
+                    );
+                    if !strip.is_empty() {
+                        source_instantiated =
+                            self.instantiate_function_shape(&source_instantiated, &strip);
+                        target_instantiated =
+                            self.instantiate_function_shape(&target_instantiated, &strip);
+                    }
+                }
             } else if mapped_constraint_sensitive {
                 // When mapped/indexed types are involved, constraint differences are
                 // semantically significant and cannot be erased safely. Reject immediately.
