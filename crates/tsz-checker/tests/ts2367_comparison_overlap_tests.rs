@@ -767,6 +767,36 @@ if (shade === "violet") {}
     );
 }
 
+// ── `null`/`undefined` union members (tsc `isTypeEqualityComparableTo`) ───────
+//
+// A `null`/`undefined` member of a union must not grant the union blanket
+// overlap with everything: `tsc` decides overlap on the non-nullish part and
+// exempts a comparison only when a *whole operand* is the bare `null`/
+// `undefined` intrinsic (the `target.flags & Nullable` term). Binder names are
+// varied so the rule is structural, not name-driven.
+
+#[test]
+fn test_undefined_union_vs_disjoint_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+declare const shade: 1 | undefined;
+if (shade === "x") {}
+"#
+        ),
+        "Expected TS2367: the non-nullish part `1` has no overlap with \"x\""
+    );
+    // Different binder/literal families, both operand orders.
+    assert!(
+        has_ts2367(r#"declare const rank: number | undefined; if (rank === "lo") {}"#),
+        "Expected TS2367 for number|undefined === string literal"
+    );
+    assert!(
+        has_ts2367(r#"declare const heading: "n" | undefined; if ("s" === heading) {}"#),
+        "Expected TS2367 for string literal === string-union|undefined (reversed)"
+    );
+}
+
 #[test]
 fn test_const_string_enum_vs_matching_member_literal_no_ts2367() {
     assert!(
@@ -880,5 +910,64 @@ if (Color.Red === Color.Green) {}
 "#
         ),
         "Expected TS2367: distinct members of the same enum can never be equal"
+    );
+}
+
+#[test]
+fn test_null_union_vs_disjoint_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(r#"declare const access: 1 | null; if (access === "x") {}"#),
+        "Expected TS2367: `null` member does not grant overlap with \"x\""
+    );
+    assert!(
+        has_ts2367(r#"declare const grade: 1 | null | undefined; if (grade === "x") {}"#),
+        "Expected TS2367 for 1|null|undefined === string literal"
+    );
+}
+
+#[test]
+fn test_nullish_only_union_vs_literal_keeps_ts2367() {
+    // `null | undefined` is a union, not the bare nullable intrinsic, so it is
+    // not exempt: tsc reports TS2367 against a disjoint literal.
+    assert!(
+        has_ts2367(r#"declare const slot: null | undefined; if (slot === "x") {}"#),
+        "Expected TS2367 for null|undefined === string literal"
+    );
+}
+
+#[test]
+fn test_bare_nullable_operand_is_exempt() {
+    // A whole bare `undefined`/`null` operand is always equality-comparable.
+    assert!(
+        !has_ts2367(r#"declare const probe: undefined; if (probe === "x") {}"#),
+        "Expected NO TS2367: bare `undefined` operand is exempt"
+    );
+    assert!(
+        !has_ts2367(r#"declare const beacon: null; if (beacon === 42) {}"#),
+        "Expected NO TS2367: bare `null` operand is exempt"
+    );
+    assert!(
+        !has_ts2367(r#"declare const tag: 1 | undefined; if (undefined === tag) {}"#),
+        "Expected NO TS2367: bare `undefined` operand exempt against a union"
+    );
+}
+
+#[test]
+fn test_undefined_union_real_overlap_no_ts2367() {
+    // Shared non-nullish member → genuine overlap.
+    assert!(
+        !has_ts2367(r#"declare const code: 1 | undefined; if (code === 1) {}"#),
+        "Expected NO TS2367: `1` overlaps `1 | undefined`"
+    );
+    // Two unions overlapping only on `undefined` still overlap.
+    assert!(
+        !has_ts2367(
+            r#"
+declare const lhs: 1 | undefined;
+declare const rhs: 2 | undefined;
+if (lhs === rhs) {}
+"#
+        ),
+        "Expected NO TS2367: both operands share the `undefined` member"
     );
 }

@@ -868,9 +868,11 @@ fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
 }
 
 #[test]
-fn ts2367_preserves_literal_types_in_display() {
-    // tsc preserves literal types in TS2367 messages: `1 | 2` and `"hello"`
-    // rather than widening to `number` and `string`.
+fn ts2367_widens_cross_family_literals_in_display() {
+    // tsc widens both operands to their base types in TS2367 messages when they
+    // belong to different primitive families: `1 | 2` vs `"hello"` is displayed
+    // as `number` and `string` (verified against tsc 6.0.2), distributing the
+    // base-of-literal widening over the union.
     let diags = check_source_diagnostics(r#"declare let x: 1 | 2; if (x === "hello") {}"#);
     let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
     assert_eq!(
@@ -885,8 +887,33 @@ fn ts2367_preserves_literal_types_in_display() {
     assert!(
         relevant[0]
             .message_text
-            .contains("types '1 | 2' and '\"hello\"' have no overlap"),
-        "Expected narrow type display matching tsc, got: {:?}",
+            .contains("types 'number' and 'string' have no overlap"),
+        "Expected cross-family widened display matching tsc, got: {:?}",
+        relevant[0].message_text
+    );
+}
+
+#[test]
+fn ts2367_preserves_same_family_literals_in_display() {
+    // When both operands share a single primitive family, tsc preserves the
+    // literal types in the message: `1` vs `2` stays `1` and `2` rather than
+    // widening to `number` (verified against tsc 6.0.2).
+    let diags = check_source_diagnostics(r#"const unused = (1 as 1) === (2 as 2);"#);
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected exactly one TS2367, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        relevant[0]
+            .message_text
+            .contains("types '1' and '2' have no overlap"),
+        "Expected same-family literal display matching tsc, got: {:?}",
         relevant[0].message_text
     );
 }

@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
                 && right_narrow != TypeId::ERROR
                 && left_narrow != TypeId::NEVER
                 && right_narrow != TypeId::NEVER
-                && self.types_have_no_overlap(left_narrow, right_narrow)
+                && self.equality_operands_have_no_overlap(left_narrow, right_narrow)
                 // Suppress TS2367 when the DECLARED type of either operand has overlap
                 // with the other. This handles loop narrowing: e.g., `code: 0 | 1 = 0;
                 // while (...) { code = code === 1 ? 0 : 1; }` — flow narrows `code` to `0`
