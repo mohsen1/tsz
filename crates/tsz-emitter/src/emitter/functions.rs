@@ -409,6 +409,15 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // tsc keeps a single-line source body single-line when the only injected
+        // prologue is an object-rest (`__rest`) lowering (its ES2018-transform
+        // statements are not `startOnNewLine`). Route those bodies through the
+        // inline emitter; everything else keeps the multi-line layout below.
+        if self.block_with_param_prologue_emits_single_line(block_idx, block_node, transforms) {
+            self.emit_single_line_block_with_param_prologue(block_node, transforms);
+            return;
+        }
+
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -446,6 +455,92 @@ impl<'a> Printer<'a> {
         }
         self.decrease_indent();
         self.write("}");
+    }
+
+    /// Whether an ES5 function body with a parameter prologue should be emitted
+    /// on a single line: the source body is single-line, the only prologue is an
+    /// object-rest lowering, and no other state forces line-leading declarations
+    /// (`var _this = this;`, captured `new.target`, an async-arrow `super`
+    /// capture, or hoisted assignment/for-of temps).
+    fn block_with_param_prologue_emits_single_line(
+        &self,
+        block_idx: NodeIndex,
+        block_node: &Node,
+        transforms: &ParamTransformPlan,
+    ) -> bool {
+        self.emitting_function_body_block
+            && self.param_prologue_is_object_rest_only(transforms)
+            && self.is_single_line(block_node)
+            && self.transforms.this_capture_name(block_idx).is_none()
+            && !self.has_pending_new_target_capture()
+            && self.pending_lowered_async_arrow_super_capture.is_none()
+            && self.hoisted_assignment_value_temps.is_empty()
+            && self.hoisted_for_of_temps.is_empty()
+    }
+
+    /// Emit an ES5 function body with an object-rest parameter prologue on a
+    /// single line, matching `tsc`:
+    /// `function f(_a) { var a = _a.a, rest = __rest(_a, ["a"]); return rest; }`.
+    /// The preamble is written inline; any temps the body itself hoists
+    /// (optional-chaining / logical-assignment value temps) are spliced in right
+    /// after `{ `, ahead of the preamble.
+    fn emit_single_line_block_with_param_prologue(
+        &mut self,
+        block_node: &Node,
+        transforms: &ParamTransformPlan,
+    ) {
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+        let statements = block.statements.nodes.to_vec();
+
+        self.emitting_function_body_block = false;
+        let private_static_shadow =
+            self.block_shadows_private_static_class_alias(&statements, true);
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth += 1;
+        }
+        self.ctx.block_scope_state.enter_function_scope();
+        self.seed_block_scope_value_binding_names(&block.statements);
+        self.register_pending_function_body_parameters();
+
+        self.map_opening_brace(block_node);
+        self.write("{ ");
+        // Anchor for inline hoisted temp declarations, captured right after `{ `
+        // and ahead of the object-rest preamble (matching the ES2018 single-line
+        // path in `emit_block`).
+        let var_insert_pos = self.writer.len();
+        let wrote_prologue = self.emit_param_prologue_inline_es5(transforms);
+
+        let block_close_pos = self
+            .find_block_closing_brace_end(block_node)
+            .saturating_sub(1);
+        // A single space separates the inline prologue from the first statement
+        // and each statement from the next (matching the ES2018 path in
+        // `emit_block`).
+        if wrote_prologue {
+            self.write(" ");
+        }
+        for (si, &stmt_idx) in statements.iter().enumerate() {
+            if si > 0 {
+                self.write(" ");
+            }
+            let previous_trailing_comment_scan_max = self.trailing_comment_scan_max_pos;
+            self.trailing_comment_scan_max_pos = Some(block_close_pos);
+            self.emit(stmt_idx);
+            self.trailing_comment_scan_max_pos = previous_trailing_comment_scan_max;
+        }
+
+        let prologue = self.take_single_line_hoisted_temp_prologue();
+        if !prologue.is_empty() {
+            self.writer.insert_at(var_insert_pos, &prologue);
+        }
+        self.map_closing_brace(block_node);
+        self.write(" }");
+        self.ctx.block_scope_state.exit_scope();
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth -= 1;
+        }
     }
 
     /// Emit the statements of a downleveled async body block (the body that
@@ -1693,6 +1788,83 @@ mod tests {
         assert!(
             output.contains("var _b, _c; var { a } = _a, rest = __rest(_a, [\"a\"]);"),
             "Hoisted optional-chaining temps must precede the object-rest preamble on the single line.\nOutput:\n{output}"
+        );
+    }
+
+    /// At ES5 the object-rest parameter preamble is lowered to property-access
+    /// reads (`var a = _a.a, rest = __rest(_a, ["a"])`) instead of staying a
+    /// binding pattern, and that lowering previously routed exclusively through
+    /// the multi-line `emit_block_with_param_prologue` path. tsc still keeps a
+    /// single-line source body single-line here (the object-rest prologue is not
+    /// `startOnNewLine`), so the ES5 path must match.
+    #[test]
+    fn object_rest_param_keeps_single_line_function_body_es5() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f({ a, ...rest }: { a: number; b: string }) { return rest; }";
+        let (parser, root) = parse_test_source(source);
+        let output = lower_and_print(&parser.arena, root, PrintOptions::es5()).code;
+
+        assert!(
+            output.contains(
+                "function f(_a) { var a = _a.a, rest = __rest(_a, [\"a\"]); return rest; }"
+            ),
+            "ES5 object-rest parameter must keep a single-line body on one line (matching tsc).\nOutput:\n{output}"
+        );
+    }
+
+    /// Two object-rest parameters at ES5 produce two combined `var` statements;
+    /// tsc keeps the single-line body single-line, the statements separated by a
+    /// single space (`var a = _a.a, r1 = __rest(...); var c = _b.c, r2 = ...;`).
+    #[test]
+    fn two_object_rest_params_keep_single_line_function_body_es5() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f({ a, ...r1 }: { a: number; b: string }, { c, ...r2 }: { c: number; d: string }) { return r1; }";
+        let (parser, root) = parse_test_source(source);
+        let output = lower_and_print(&parser.arena, root, PrintOptions::es5()).code;
+
+        assert!(
+            output.contains(
+                "function f(_a, _b) { var a = _a.a, r1 = __rest(_a, [\"a\"]); var c = _b.c, r2 = __rest(_b, [\"c\"]); return r1; }"
+            ),
+            "Two ES5 object-rest parameters must keep a single-line body on one line.\nOutput:\n{output}"
+        );
+    }
+
+    /// A non-object-rest transformed parameter (a plain destructure, an array
+    /// pattern, or a default value) goes through the ES2015 transform, whose
+    /// statements ARE `startOnNewLine`, so tsc emits the body multi-line. The
+    /// single-line fast path must not fire for those, including when mixed with
+    /// an object-rest parameter.
+    #[test]
+    fn simple_destructure_param_stays_multi_line_es5() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f({ a }: { a: number }) { return a; }";
+        let (parser, root) = parse_test_source(source);
+        let output = lower_and_print(&parser.arena, root, PrintOptions::es5()).code;
+
+        assert!(
+            output.contains("function f(_a) {\n    var a = _a.a;\n    return a;\n}"),
+            "ES5 simple destructure parameter must keep the body multi-line (matching tsc).\nOutput:\n{output}"
+        );
+    }
+
+    /// A `...args` rest parameter contributes an `arguments`-copy loop (a
+    /// `startOnNewLine` prologue), so tsc keeps the body multi-line even when an
+    /// object-rest parameter is also present.
+    #[test]
+    fn rest_param_with_object_rest_stays_multi_line_es5() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f({ a, ...rest }: { a: number; b: string }, ...args: number[]) { return rest; }";
+        let (parser, root) = parse_test_source(source);
+        let output = lower_and_print(&parser.arena, root, PrintOptions::es5()).code;
+
+        assert!(
+            output.contains("function f(_a) {\n"),
+            "An ES5 `...args` rest parameter must keep the body multi-line.\nOutput:\n{output}"
         );
     }
 
