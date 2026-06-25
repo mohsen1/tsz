@@ -192,6 +192,12 @@ impl<'a> CheckerContext<'a> {
             }
             DefStorePlan::Deferred => false,
         };
+        // #14345 WAVE-2-CLEAN measurement-only: register the shared store on
+        // this thread so the solver FIRE probe can resolve body DefIds. No-op
+        // unless TSZ_PERF_COUNTERS is set. REVERT before landing.
+        if warm {
+            tsz_solver::observability::wave2_clean_set_store(ctx.definition_store.clone());
+        }
         match cache {
             None => {
                 if warm {

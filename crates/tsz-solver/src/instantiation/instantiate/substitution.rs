@@ -55,6 +55,289 @@ fn same_decl_param_identity(
         && mapped.is_const == param.is_const
 }
 
+// === #14345 WAVE-2-CLEAN probe (default-OFF, byte-parity-inert) ============
+//
+// Measurement-only bins surfaced through the existing TSZ_PERF_COUNTERS dump.
+// Every increment is gated by enabled_fast() (and, for Q1 call classification,
+// the decl-identity flag). REVERT before landing.
+mod probe {
+    use super::{TypeDatabase, TypeId, TypeParamInfo};
+    use crate::def::{DefId, DefinitionStore};
+    use crate::types::{TypeData, TypeParamOrigin};
+    use std::cell::{Cell, RefCell};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tsz_common::interner::Atom;
+
+    thread_local! {
+        static STORE: RefCell<Option<Arc<DefinitionStore>>> = const { RefCell::new(None) };
+        static FIRE_FLAG: Cell<bool> = const { Cell::new(false) };
+        static FIRE_MAPPED_NODE: Cell<Option<(Atom, u32)>> = const { Cell::new(None) };
+    }
+
+    fn perf_on() -> bool {
+        tsz_common::perf_counters::enabled_fast()
+    }
+
+    /// Checker registers the shared store on this thread (measurement-only).
+    pub fn set_measurement_store(store: Arc<DefinitionStore>) {
+        if !perf_on() {
+            return;
+        }
+        STORE.with(|s| *s.borrow_mut() = Some(store));
+    }
+    fn clear_fire_flag() {
+        FIRE_FLAG.with(|f| f.set(false));
+        FIRE_MAPPED_NODE.with(|f| f.set(None));
+    }
+    fn set_fire_flag(mapped: Option<(Atom, u32)>) {
+        FIRE_FLAG.with(|f| f.set(true));
+        FIRE_MAPPED_NODE.with(|f| f.set(mapped));
+    }
+
+    // Q1: is_identity_for call classification by body-param origin composition.
+    static CALLS_TOTAL: AtomicU64 = AtomicU64::new(0);
+    static CALLS_BODY_ALL_USER: AtomicU64 = AtomicU64::new(0);
+    static CALLS_BODY_SOME_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
+    static CALLS_BODY_EMPTY: AtomicU64 = AtomicU64::new(0);
+
+    // same_decl_param_identity FIRE classification (Q3).
+    static FIRE_TOTAL: AtomicU64 = AtomicU64::new(0);
+    static FIRE_BODY_HAS_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
+    static FIRE_BODY_ALL_USER: AtomicU64 = AtomicU64::new(0);
+
+    // Q4a: body TypeData kind on the FIRE path.
+    static BODY_FUNCTION: AtomicU64 = AtomicU64::new(0);
+    static BODY_CALLABLE: AtomicU64 = AtomicU64::new(0);
+    static BODY_OBJECT: AtomicU64 = AtomicU64::new(0);
+    static BODY_APPLICATION: AtomicU64 = AtomicU64::new(0);
+    static BODY_LAZY: AtomicU64 = AtomicU64::new(0);
+    static BODY_CONDITIONAL: AtomicU64 = AtomicU64::new(0);
+    static BODY_MAPPED: AtomicU64 = AtomicU64::new(0);
+    static BODY_INDEXACCESS: AtomicU64 = AtomicU64::new(0);
+    static BODY_OTHER: AtomicU64 = AtomicU64::new(0);
+
+    // Q4b: of FIRE-path calls, does the body type_id have a DefId?
+    static BODY_DEF_SOME: AtomicU64 = AtomicU64::new(0);
+    static BODY_DEF_NONE: AtomicU64 = AtomicU64::new(0);
+    static STORE_UNAVAILABLE: AtomicU64 = AtomicU64::new(0);
+
+    // Q4c: body-def's OWN type_params vs mapped DeclScoped (file,node).
+    static FIRE_DEF_PARAMS_HAS_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_PARAMS_ALL_USER: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_SAMEDECL: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_CROSSDECL: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_FILE_MATCH: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_FILE_MISMATCH: AtomicU64 = AtomicU64::new(0);
+    static FIRE_DEF_NO_MAPPED_NODE: AtomicU64 = AtomicU64::new(0);
+
+    /// Q1: classify one `is_identity_for` call.
+    pub fn record_call(type_params: &[TypeParamInfo]) {
+        if !perf_on() || !super::identity_for_same_decl_enabled() {
+            return;
+        }
+        CALLS_TOTAL.fetch_add(1, Ordering::Relaxed);
+        if type_params.is_empty() {
+            CALLS_BODY_EMPTY.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        if type_params
+            .iter()
+            .any(|p| matches!(p.origin, TypeParamOrigin::DeclScoped { .. }))
+        {
+            CALLS_BODY_SOME_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            CALLS_BODY_ALL_USER.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Q3: record a FIRE; also stash the mapped (file,node) for Q4c.
+    pub fn record_fire(mapped_origin: TypeParamOrigin, type_params: &[TypeParamInfo]) {
+        if !perf_on() {
+            return;
+        }
+        FIRE_TOTAL.fetch_add(1, Ordering::Relaxed);
+        let mapped = match mapped_origin {
+            TypeParamOrigin::DeclScoped { file, node } => Some((file, node)),
+            _ => None,
+        };
+        set_fire_flag(mapped);
+        if type_params
+            .iter()
+            .any(|p| matches!(p.origin, TypeParamOrigin::DeclScoped { .. }))
+        {
+            FIRE_BODY_HAS_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            FIRE_BODY_ALL_USER.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Called from api.rs BEFORE is_identity_for so a stale flag never leaks.
+    pub fn arm_fire() {
+        if perf_on() {
+            clear_fire_flag();
+        }
+    }
+
+    /// Called from api.rs AFTER is_identity_for. If a FIRE occurred, record
+    /// Q4a/b/c using the body `type_id` (available only at the caller).
+    pub fn record_fire_body_if_fired(interner: &dyn TypeDatabase, body: TypeId) {
+        if !perf_on() || !FIRE_FLAG.with(|f| f.get()) {
+            return;
+        }
+        // Q4a: body kind.
+        match interner.lookup(body) {
+            Some(TypeData::Function(_)) => &BODY_FUNCTION,
+            Some(TypeData::Callable(_)) => &BODY_CALLABLE,
+            Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => &BODY_OBJECT,
+            Some(TypeData::Application(_)) => &BODY_APPLICATION,
+            Some(TypeData::Lazy(_)) => &BODY_LAZY,
+            Some(TypeData::Conditional(_)) => &BODY_CONDITIONAL,
+            Some(TypeData::Mapped(_)) => &BODY_MAPPED,
+            Some(TypeData::IndexAccess(_, _)) => &BODY_INDEXACCESS,
+            _ => &BODY_OTHER,
+        }
+        .fetch_add(1, Ordering::Relaxed);
+
+        let mapped = FIRE_MAPPED_NODE.with(|f| f.get());
+        STORE.with(|s| {
+            let store_ref = s.borrow();
+            let Some(store) = store_ref.as_ref() else {
+                STORE_UNAVAILABLE.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+            let def_id: Option<DefId> =
+                store
+                    .find_def_for_type(body)
+                    .or_else(|| match interner.lookup(body) {
+                        Some(TypeData::Lazy(d)) => Some(d),
+                        _ => None,
+                    });
+            let Some(def_id) = def_id else {
+                BODY_DEF_NONE.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+            BODY_DEF_SOME.fetch_add(1, Ordering::Relaxed);
+            let Some(info) = store.get(def_id) else {
+                return;
+            };
+            // Are the body def's OWN stored params DeclScoped-stamped?
+            if info
+                .type_params
+                .iter()
+                .any(|p| matches!(p.origin, TypeParamOrigin::DeclScoped { .. }))
+            {
+                FIRE_DEF_PARAMS_HAS_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
+            } else {
+                FIRE_DEF_PARAMS_ALL_USER.fetch_add(1, Ordering::Relaxed);
+            }
+            let Some((mfile, mnode)) = mapped else {
+                FIRE_DEF_NO_MAPPED_NODE.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+            // Q4c decisive: is the mapped (file,node) one of the body def's OWN
+            // declared params' (file,node)?
+            let samedecl = info.type_params.iter().any(|p| {
+                matches!(p.origin, TypeParamOrigin::DeclScoped { file, node }
+                    if (file, node) == (mfile, mnode))
+            });
+            if samedecl {
+                FIRE_DEF_SAMEDECL.fetch_add(1, Ordering::Relaxed);
+            } else {
+                FIRE_DEF_CROSSDECL.fetch_add(1, Ordering::Relaxed);
+            }
+            // Coarser file-only signal (robust to node-stamp gaps).
+            let file_match = info.type_params.iter().any(
+                |p| matches!(p.origin, TypeParamOrigin::DeclScoped { file, .. } if file == mfile),
+            );
+            if file_match {
+                FIRE_DEF_FILE_MATCH.fetch_add(1, Ordering::Relaxed);
+            } else {
+                FIRE_DEF_FILE_MISMATCH.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+    }
+
+    pub fn dump() -> String {
+        if !perf_on() {
+            return String::new();
+        }
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        format!(
+            "\n=== #14345 WAVE-2-CLEAN probe ===\n  \
+             is_identity_for calls      {:>12}\n  \
+             ... body all-User          {:>12}\n  \
+             ... body some-DeclScoped   {:>12}\n  \
+             ... body empty             {:>12}\n  \
+             same_decl FIRE total       {:>12}\n  \
+             ... FIRE body has-DeclSc   {:>12}\n  \
+             ... FIRE body all-User     {:>12}\n  \
+             Q4a body kind (FIRE path):\n  \
+             ... Function               {:>12}\n  \
+             ... Callable               {:>12}\n  \
+             ... Object                 {:>12}\n  \
+             ... Application            {:>12}\n  \
+             ... Lazy                   {:>12}\n  \
+             ... Conditional            {:>12}\n  \
+             ... Mapped                 {:>12}\n  \
+             ... IndexAccess            {:>12}\n  \
+             ... other                  {:>12}\n  \
+             Q4b body DefId:\n  \
+             ... find_def Some          {:>12}\n  \
+             ... find_def None          {:>12}\n  \
+             ... store unavailable      {:>12}\n  \
+             Q4c body-def own params:\n  \
+             ... def params has-DeclSc  {:>12}\n  \
+             ... def params all-User    {:>12}\n  \
+             ... mapped IS body param   {:>12}\n  \
+             ... mapped CROSS-decl      {:>12}\n  \
+             ... file match            {:>12}\n  \
+             ... file mismatch         {:>12}\n  \
+             ... no mapped node        {:>12}\n",
+            g(&CALLS_TOTAL),
+            g(&CALLS_BODY_ALL_USER),
+            g(&CALLS_BODY_SOME_DECLSCOPED),
+            g(&CALLS_BODY_EMPTY),
+            g(&FIRE_TOTAL),
+            g(&FIRE_BODY_HAS_DECLSCOPED),
+            g(&FIRE_BODY_ALL_USER),
+            g(&BODY_FUNCTION),
+            g(&BODY_CALLABLE),
+            g(&BODY_OBJECT),
+            g(&BODY_APPLICATION),
+            g(&BODY_LAZY),
+            g(&BODY_CONDITIONAL),
+            g(&BODY_MAPPED),
+            g(&BODY_INDEXACCESS),
+            g(&BODY_OTHER),
+            g(&BODY_DEF_SOME),
+            g(&BODY_DEF_NONE),
+            g(&STORE_UNAVAILABLE),
+            g(&FIRE_DEF_PARAMS_HAS_DECLSCOPED),
+            g(&FIRE_DEF_PARAMS_ALL_USER),
+            g(&FIRE_DEF_SAMEDECL),
+            g(&FIRE_DEF_CROSSDECL),
+            g(&FIRE_DEF_FILE_MATCH),
+            g(&FIRE_DEF_FILE_MISMATCH),
+            g(&FIRE_DEF_NO_MAPPED_NODE),
+        )
+    }
+}
+
+/// Public re-exports so the checker (store registration) and dump can reach the probe.
+pub fn probe_typeparam_decl_identity_dump() -> String {
+    probe::dump()
+}
+pub fn probe_set_measurement_store(store: std::sync::Arc<crate::def::DefinitionStore>) {
+    probe::set_measurement_store(store);
+}
+pub(super) fn probe_arm_fire() {
+    probe::arm_fire();
+}
+pub(super) fn probe_record_fire_body_if_fired(interner: &dyn TypeDatabase, body: TypeId) {
+    probe::record_fire_body_if_fired(interner, body);
+}
+
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
 pub struct TypeSubstitution {
@@ -227,11 +510,22 @@ impl TypeSubstitution {
         interner: &dyn TypeDatabase,
         type_params: &[TypeParamInfo],
     ) -> bool {
+        probe::record_call(type_params);
         type_params.iter().all(|param| {
             match self.map.get(&param.name) {
                 Some(&type_id) => {
-                    interner.type_param(*param) == type_id
-                        || same_decl_param_identity(interner, *param, type_id)
+                    if interner.type_param(*param) == type_id {
+                        return true;
+                    }
+                    let fired = same_decl_param_identity(interner, *param, type_id);
+                    if fired {
+                        let mapped_origin = match interner.lookup(type_id) {
+                            Some(crate::types::TypeData::TypeParameter(m)) => m.origin,
+                            _ => crate::types::TypeParamOrigin::User,
+                        };
+                        probe::record_fire(mapped_origin, type_params);
+                    }
+                    fired
                 }
                 None => true, // unmapped params don't change anything
             }

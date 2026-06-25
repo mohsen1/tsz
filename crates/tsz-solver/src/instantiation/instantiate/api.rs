@@ -1486,7 +1486,14 @@ pub fn instantiate_generic_cached(
         return type_id;
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
-    if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
+    super::substitution::probe_arm_fire();
+    if substitution.is_empty() {
+        return type_id;
+    }
+    if substitution.is_identity_for(interner, type_params) {
+        // #14345 WAVE-2-CLEAN probe (measurement-only): record Q4a/b/c for the
+        // body when a same_decl FIRE drove this identity verdict.
+        super::substitution::probe_record_fire_body_if_fired(interner, type_id);
         return type_id;
     }
     instantiate_with_request_cached(
