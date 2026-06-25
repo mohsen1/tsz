@@ -91,6 +91,10 @@ OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
 TS_PATTERN_DIR="$EXTERNAL_BENCH_DIR/ts-pattern"
 RADASH_DIR="$EXTERNAL_BENCH_DIR/radash"
 VALTIO_DIR="$EXTERNAL_BENCH_DIR/valtio"
+SCULE_DIR="$EXTERNAL_BENCH_DIR/scule"
+MITT_DIR="$EXTERNAL_BENCH_DIR/mitt"
+CHANGE_CASE_DIR="$EXTERNAL_BENCH_DIR/change-case"
+TINY_INVARIANT_DIR="$EXTERNAL_BENCH_DIR/tiny-invariant"
 TS_BELT_DIR="$EXTERNAL_BENCH_DIR/ts-belt"
 TS_EXTRAS_DIR="$EXTERNAL_BENCH_DIR/ts-extras"
 SUPERJSON_DIR="$EXTERNAL_BENCH_DIR/superjson"
@@ -445,6 +449,26 @@ ensure_radash_fixture() {
 ensure_valtio_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
     tsz_ensure_git_fixture "valtio" "$VALTIO_REPO" "$VALTIO_REF" "$VALTIO_DIR" 1
+}
+
+ensure_scule_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "scule" "$SCULE_REPO" "$SCULE_REF" "$SCULE_DIR" 1
+}
+
+ensure_mitt_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "mitt" "$MITT_REPO" "$MITT_REF" "$MITT_DIR" 1
+}
+
+ensure_change_case_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "change-case" "$CHANGE_CASE_REPO" "$CHANGE_CASE_REF" "$CHANGE_CASE_DIR" 1
+}
+
+ensure_tiny_invariant_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "tiny-invariant" "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF" "$TINY_INVARIANT_DIR" 1
 }
 
 ensure_ts_belt_fixture() {
@@ -1021,6 +1045,66 @@ run_valtio_project_benchmarks() {
     local src_dir="$VALTIO_DIR/src"
     tsz_write_valtio_config "$tsconfig"
     run_project_benchmark "valtio-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_scule_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "scule-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - scule"
+    ensure_scule_fixture
+    local tsconfig="$SCULE_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$SCULE_DIR/src"
+    tsz_write_scule_config "$tsconfig"
+    run_project_benchmark "scule-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_mitt_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "mitt-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - mitt"
+    ensure_mitt_fixture
+    local tsconfig="$MITT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$MITT_DIR/src"
+    tsz_write_mitt_config "$tsconfig"
+    run_project_benchmark "mitt-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_change_case_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "change-case-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - change-case"
+    ensure_change_case_fixture
+    local tsconfig="$CHANGE_CASE_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$CHANGE_CASE_DIR/packages/change-case/src"
+    tsz_write_change_case_config "$tsconfig"
+    run_project_benchmark "change-case-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_tiny_invariant_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "tiny-invariant-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - tiny-invariant"
+    ensure_tiny_invariant_fixture
+    local tsconfig="$TINY_INVARIANT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TINY_INVARIANT_DIR/src"
+    tsz_write_tiny_invariant_config "$tsconfig"
+    run_project_benchmark "tiny-invariant-project" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -1678,6 +1762,10 @@ main() {
     run_isolated "ts-pattern-project"     run_ts_pattern_project_benchmarks
     run_isolated "radash-project"                    run_radash_project_benchmarks
     run_isolated "valtio-project"                    run_valtio_project_benchmarks
+    run_isolated "scule-project"                     run_scule_project_benchmarks
+    run_isolated "mitt-project"                      run_mitt_project_benchmarks
+    run_isolated "change-case-project"               run_change_case_project_benchmarks
+    run_isolated "tiny-invariant-project"            run_tiny_invariant_project_benchmarks
     run_isolated "ts-belt-project"                   run_ts_belt_project_benchmarks
     run_isolated "ts-extras-project"                 run_ts_extras_project_benchmarks
     run_isolated "superjson-project"                 run_superjson_project_benchmarks

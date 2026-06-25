@@ -56,6 +56,32 @@ pub enum DeferredFlowEnvWrite {
         def_id: DefId,
         kind: tsz_solver::def::DefKind,
     },
+    /// `insert_typeof_value_type` — register a merged interface+value symbol's
+    /// `typeof` value-space type.
+    InsertTypeofValueType {
+        symbol: tsz_solver::SymbolRef,
+        value_type: TypeId,
+    },
+    /// `register_well_known_symbol_name` — register a `[Symbol.*]` computed
+    /// property name's backing `SymbolRef`.
+    RegisterWellKnownSymbolName {
+        name: String,
+        symbol_ref: tsz_solver::SymbolRef,
+    },
+    /// `register_enum_namespace_type` — register an enum's namespace object type
+    /// for `typeof Enum` / `keyof typeof Enum`.
+    RegisterEnumNamespaceType { def_id: DefId, ns_type: TypeId },
+    /// `register_enum_parent` — register an enum member's parent enum for member
+    /// widening and discriminant narrowing.
+    RegisterEnumParent {
+        member_def_id: DefId,
+        parent_def_id: DefId,
+    },
+    /// `insert` — register a symbol's resolved type (`SymbolRef -> TypeId`).
+    InsertSymbolType {
+        symbol: tsz_solver::SymbolRef,
+        ty: TypeId,
+    },
 }
 
 impl DeferredFlowEnvWrite {
@@ -121,6 +147,20 @@ impl DeferredFlowEnvWrite {
                 is_class,
             } => apply_augmented_def(env, *def_id, *augmented, *is_class),
             Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
+            Self::InsertTypeofValueType { symbol, value_type } => {
+                env.insert_typeof_value_type(*symbol, *value_type);
+            }
+            Self::RegisterWellKnownSymbolName { name, symbol_ref } => {
+                env.register_well_known_symbol_name(name.clone(), *symbol_ref);
+            }
+            Self::RegisterEnumNamespaceType { def_id, ns_type } => {
+                env.register_enum_namespace_type(*def_id, *ns_type);
+            }
+            Self::RegisterEnumParent {
+                member_def_id,
+                parent_def_id,
+            } => env.register_enum_parent(*member_def_id, *parent_def_id),
+            Self::InsertSymbolType { symbol, ty } => env.insert(*symbol, *ty),
         }
     }
 }

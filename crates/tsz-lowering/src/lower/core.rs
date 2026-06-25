@@ -26,6 +26,18 @@ use tsz_solver::types::{
 
 use super::host::{ClosureLoweringHost, LoweringHost};
 
+/// #14344 STEP-B flag (default-OFF). When `TSZ_TYPEPARAM_DECL_IDENTITY=1`, the
+/// dominant lowering construction path (`collect_type_parameters`) stamps each
+/// user type parameter's origin with its declaration site `(file, name_node)`,
+/// so distinct declarations sharing identical surface info intern distinctly —
+/// the activation that reaches the fp-ts self-ref-guard collapse (the 257).
+/// Measure-only until the activation gate holds; flag-OFF = `User` (byte-parity).
+fn decl_identity_activation() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+}
+
 mod signature_members;
 
 #[cfg(test)]
@@ -1385,7 +1397,33 @@ impl<'a> TypeLowering<'a> {
         (params, result)
     }
 
+    /// #14344 dispatch-split: a zero-cost dispatcher that reads the activation
+    /// flag once and tail-calls the matching leaf. The split is a CODEGEN
+    /// requirement, not just organization: prepending the flag-branch inside the
+    /// recursive body pulled the decl-scoped path into the same mutual-recursion
+    /// SCC as `lower_type_parameter`, defeating the baseline inlining of the
+    /// flag-OFF path and growing its hot frame enough to overflow fp-ts's
+    /// at-the-limit recursion (even at a 2 GB stack). With `inline(always)` here
+    /// and `inline(never)` on both leaves, the flag-OFF leaf
+    /// (`collect_type_parameters_user`) keeps codegen byte-identical to the
+    /// pre-`#14344` baseline (no flag, no branch, no `DeclScoped`), so its frame
+    /// matches baseline and the overflow does not occur; the flag-ON leaf carries
+    /// the decl-identity logic in isolation.
+    #[inline(always)]
     pub fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
+        if decl_identity_activation() {
+            self.collect_type_parameters_decl_scoped(list)
+        } else {
+            self.collect_type_parameters_user(list)
+        }
+    }
+
+    /// Flag-OFF leaf: byte-identical to the pre-`#14344` `collect_type_parameters`
+    /// body (no flag read, no branch, no `DeclScoped`). `inline(never)` keeps it
+    /// out of the decl-scoped path's SCC so its codegen — and thus its stack
+    /// frame across the deep `lower_type_parameter` recursion — matches baseline.
+    #[inline(never)]
+    fn collect_type_parameters_user(&self, list: &NodeList) -> Vec<TypeParamInfo> {
         let mut param_names = Vec::with_capacity(list.nodes.len());
         for &idx in &list.nodes {
             let Some(node) = self.arena.get(idx) else {
@@ -1430,6 +1468,104 @@ impl<'a> TypeLowering<'a> {
             }
         }
         params
+    }
+
+    /// #14344 STEP-B (flag-ON only): like `collect_type_parameters` but stamps
+    /// each param's origin with its declaration site `(file, name_node)` so two
+    /// distinct declarations sharing identical surface info intern distinctly.
+    /// Separate from the flag-OFF path so the hot recursion there is unchanged.
+    /// `inline(never)` keeps this flag-ON leaf out of the flag-OFF leaf's codegen
+    /// (the dispatch-split's other half — see `collect_type_parameters`).
+    #[inline(never)]
+    fn collect_type_parameters_decl_scoped(&self, list: &NodeList) -> Vec<TypeParamInfo> {
+        let mut param_names = Vec::with_capacity(list.nodes.len());
+        for &idx in &list.nodes {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            let Some(data) = self.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .map_or_else(
+                    || self.interner.intern_string("T"),
+                    |id_data| self.interner.intern_string(&id_data.escaped_text),
+                );
+            let is_const = self
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+            let origin = self.decl_scoped_origin(data.name);
+            let placeholder = TypeParamInfo {
+                is_const,
+                name,
+                constraint: None,
+                default: None,
+                origin,
+            };
+            self.add_type_param_binding(name, self.interner.type_param(placeholder));
+            param_names.push((idx, name, is_const, origin));
+        }
+
+        let mut params = Vec::with_capacity(param_names.len());
+        for (idx, name, is_const, origin) in param_names {
+            if let Some(mut info) = self.lower_type_parameter(idx) {
+                info.name = name;
+                info.is_const = is_const;
+                info.origin = origin;
+                let type_id = self.interner.type_param(info);
+                self.update_type_param_binding(info.name, type_id);
+                params.push(info);
+            }
+        }
+        params
+    }
+
+    /// #14344 STEP-B: the decl-scoped origin for a type-param name node — stamps
+    /// `(file, name_node)` under the activation flag, else `User` (byte-parity).
+    ///
+    /// `file` is the interned source-file name (deterministic + stable across
+    /// re-lowerings of the same declaration), recovered by walking `name_node`
+    /// up to its root source-file node — mirroring the checker's existing
+    /// `intern_string(&ctx.file_name)` decl-node key. `node` is the parse-stable
+    /// name `NodeIndex`. Two distinct declarations differ in `(file, node)` so
+    /// they intern distinctly; the SAME declaration lowered repeatedly yields the
+    /// SAME `(file, node)` so it stays a single identity (no over-split).
+    fn decl_scoped_origin(&self, name_node: NodeIndex) -> TypeParamOrigin {
+        if decl_identity_activation() {
+            let file = self.source_file_atom_for(name_node);
+            TypeParamOrigin::DeclScoped {
+                file,
+                node: name_node.0,
+            }
+        } else {
+            TypeParamOrigin::User
+        }
+    }
+
+    /// The interned source-file-name `Atom` for a node, by walking up the
+    /// extended-parent chain to the root source-file node. Deterministic and
+    /// stable across re-lowerings (the file name is the canonical compile path),
+    /// unlike a per-run arena pointer. Falls back to a fixed sentinel atom when
+    /// no source-file root is reachable (synthetic/detached arenas), which keeps
+    /// the `(file, node)` key well-defined without leaking a heap address.
+    fn source_file_atom_for(&self, start: NodeIndex) -> Atom {
+        let mut current = start;
+        while let Some(ext) = self.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        self.arena
+            .get(current)
+            .and_then(|node| self.arena.get_source_file(node))
+            .map_or_else(
+                || self.interner.intern_string("__no_source_file"),
+                |source| self.interner.intern_string(&source.file_name),
+            )
     }
 
     /// Collect type parameters without adding scope bindings.

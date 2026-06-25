@@ -1035,7 +1035,7 @@ jobs:
           # check green.
           - label: bench-canaries
             timeout: 135
-            filter: 'valibot-project|msw-project|effect-project|drizzle-orm-project|ts-rest-project|ofetch-project|ts-pattern-project|radash-project|valtio-project|ts-belt-project|ts-extras-project|superjson-project|trpc-project|tanstack-query-project|tanstack-router-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|ts-morph-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|class-transformer-project|type-graphql-project|neverthrow-project|xstate-project|mobx-project'
+            filter: 'valibot-project|msw-project|effect-project|drizzle-orm-project|ts-rest-project|ofetch-project|ts-pattern-project|radash-project|valtio-project|scule-project|mitt-project|change-case-project|tiny-invariant-project|ts-belt-project|ts-extras-project|superjson-project|trpc-project|tanstack-query-project|tanstack-router-project|zustand-project|jotai-project|fp-ts-project|io-ts-project|immer-project|remeda-project|ts-morph-project|arktype-project|superstruct-project|runtypes-project|hotscript-project|typebox-project|class-transformer-project|type-graphql-project|neverthrow-project|xstate-project|mobx-project'
           # Application rows need their real dependency graph to produce a
           # meaningful tsz-vs-tsgo timing pair. Keep them in an optional shard:
           # clean rows get chart data when timing completes, but app install

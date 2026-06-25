@@ -1821,3 +1821,84 @@ mod function_type_nested_check_tests {
         );
     }
 }
+
+/// A `catch (e)` clause variable introduces its own lexical scope and never
+/// shadows an enclosing block-scoped binding (it is not a hoisting `var`).
+/// These cases must stay clean of TS2451/TS2300/TS2481 (#14734), while a
+/// genuine redeclaration *inside* the catch body still reports TS2492.
+#[cfg(test)]
+mod catch_clause_scope_tests {
+    use super::test_utils::check_and_collect;
+
+    fn assert_no_redeclare(source: &str) {
+        for code in [2451u32, 2300, 2481] {
+            let errors = check_and_collect(source, code);
+            assert!(
+                errors.is_empty(),
+                "expected no TS{code} for catch-clause shadow, got {errors:?}\nsource:\n{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn const_before_catch_same_function_scope() {
+        // tsc: clean. Previously emitted TS2451 x2.
+        assert_no_redeclare(
+            "function f() {\n  const err = 1;\n  try {\n  } catch (err) {\n    err;\n  }\n}",
+        );
+    }
+
+    #[test]
+    fn const_before_catch_nested_block() {
+        // tsc: clean. Previously emitted TS2481.
+        assert_no_redeclare(
+            "function g() {\n  const err = 2;\n  {\n    try {} catch (err) { err; }\n  }\n}",
+        );
+    }
+
+    #[test]
+    fn catch_before_const_same_scope() {
+        // tsc: clean. Previously emitted TS2300 x2 (catch ordered before const).
+        assert_no_redeclare("function h() {\n  try {} catch (err) { err; }\n  const err = 3;\n}");
+    }
+
+    #[test]
+    fn destructured_catch_binding_vs_enclosing_const() {
+        // tsc: clean. Catch binding pattern names get their own scope too.
+        assert_no_redeclare(
+            "function d() {\n  const a = 1;\n  try {} catch ({ message: a }) { a; }\n}",
+        );
+    }
+
+    #[test]
+    fn let_param_shadowed_by_catch() {
+        // A catch variable may shadow an enclosing parameter without conflict.
+        assert_no_redeclare("function p(err: unknown) {\n  try {} catch (err) { err; }\n}");
+    }
+
+    #[test]
+    fn sibling_catches_same_name_are_clean() {
+        assert_no_redeclare(
+            "function s() {\n  try {} catch (e) { e; }\n  try {} catch (e) { e; }\n}",
+        );
+    }
+
+    #[test]
+    fn let_inside_catch_body_still_redeclares() {
+        // Negative: a let/const inside the catch body collides with the catch
+        // binding. tsc reports TS2492 ("Cannot redeclare identifier in catch
+        // clause"); the shadow-check skip must not suppress it.
+        let source = "function n() {\n  try {} catch (e) { let e = 1; e; }\n}";
+        let errors = check_and_collect(source, 2492);
+        assert_eq!(errors.len(), 1, "expected 1 TS2492, got {errors:?}");
+    }
+
+    #[test]
+    fn genuine_var_shadow_still_reports() {
+        // Negative: a real `var` in a nested block shadowing an outer block-scoped
+        // `let` must still emit TS2481 — the catch guard must not over-suppress.
+        let source = "{\n  let x;\n  {\n    var x = 1;\n  }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "expected 1 TS2481, got {errors:?}");
+    }
+}

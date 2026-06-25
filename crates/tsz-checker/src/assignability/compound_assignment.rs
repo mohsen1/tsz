@@ -315,27 +315,48 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2791: bigint exponentiation assignment requires target >= ES2016.
-        // Skip when either type is any/unknown (TSC skips the bigint branch for those).
+        //
+        // Same result-type precedence as the binary `**` path (see
+        // `types/computation/binary.rs`): fire only when the arithmetic result is
+        // `bigint`. `any`/`unknown`/`error`/`never` are wildcards that resolve to
+        // the number branch unless paired with a genuine `bigint`, so a wildcard
+        // pair (`x: never; x **= y`) must not fire while `x: any; x **= 1n` must.
         if operator == SyntaxKind::AsteriskAsteriskEqualsToken as u16
             && (self.ctx.compiler_options.target as u32)
                 < (tsz_common::common::ScriptTarget::ES2016 as u32)
-            && left_read_type != TypeId::ANY
-            && right_type != TypeId::ANY
-            && left_read_type != TypeId::UNKNOWN
-            && right_type != TypeId::UNKNOWN
-            && self
-                .diagnostic_subtype_outcome(left_read_type, TypeId::BIGINT)
-                .related
-            && self
-                .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
-                .related
         {
-            self.error_at_node_msg(
-                expr_idx,
-                crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
-                &[],
-            );
-            emitted_operator_error = true;
+            let left_wild = left_read_type == TypeId::ANY
+                || left_read_type == TypeId::UNKNOWN
+                || left_read_type == TypeId::ERROR
+                || left_read_type == TypeId::NEVER;
+            let right_wild = right_type == TypeId::ANY
+                || right_type == TypeId::UNKNOWN
+                || right_type == TypeId::ERROR
+                || right_type == TypeId::NEVER;
+            let left_bigint = left_wild
+                || self
+                    .diagnostic_subtype_outcome(left_read_type, TypeId::BIGINT)
+                    .related;
+            let right_bigint = right_wild
+                || self
+                    .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
+                    .related;
+            let left_number = left_wild
+                || self
+                    .diagnostic_subtype_outcome(left_read_type, TypeId::NUMBER)
+                    .related;
+            let right_number = right_wild
+                || self
+                    .diagnostic_subtype_outcome(right_type, TypeId::NUMBER)
+                    .related;
+            if left_bigint && right_bigint && !(left_number && right_number) {
+                self.error_at_node_msg(
+                    expr_idx,
+                    crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                    &[],
+                );
+                emitted_operator_error = true;
+            }
         }
 
         // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=

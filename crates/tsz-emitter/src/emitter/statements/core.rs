@@ -17,6 +17,12 @@ impl<'a> Printer<'a> {
         // Reset the flag so nested blocks (for/if/while inside this function)
         // are not treated as function body blocks.
         self.emitting_function_body_block = false;
+        // Consume the synthesized-body marker (e.g. a lowered `static {}` IIFE
+        // body) so it applies only to this block, not nested ones. When set, the
+        // body always prints multi-line — tsc synthesizes a fresh block here and
+        // never inherits the source's single-line brace layout.
+        let force_multiline = self.force_function_body_multiline;
+        self.force_function_body_multiline = false;
 
         // For non-function-body blocks (bare `{}`, if/for/while bodies),
         // save/restore declared_namespace_names so that block-scoped `let`
@@ -91,7 +97,7 @@ impl<'a> Printer<'a> {
                         .all_comments
                         .get(self.comment_emit_idx)
                         .is_some_and(|c| c.end <= closing_brace_pos);
-                    if self.is_single_line(node) && !has_remaining_comments {
+                    if !force_multiline && self.is_single_line(node) && !has_remaining_comments {
                         self.map_opening_brace(node);
                         self.write("{ }");
                     } else if has_remaining_comments {
@@ -141,7 +147,8 @@ impl<'a> Printer<'a> {
                     self.map_closing_brace(node);
                     self.write_with_end_marker("}");
                 }
-            } else if self.is_single_line(node) || (is_function_body_block && node.pos == node.end)
+            } else if !force_multiline
+                && (self.is_single_line(node) || (is_function_body_block && node.pos == node.end))
             {
                 // Single-line empty block: { }
                 self.map_opening_brace(node);
@@ -175,6 +182,7 @@ impl<'a> Printer<'a> {
         // this;`, captured `new.target`, hoisted assignment/for-of temps) forces
         // multi-line.
         let should_emit_single_line = !block.statements.nodes.is_empty()
+            && !force_multiline
             && self.is_single_line(node)
             && !needs_this_capture
             && !self.has_pending_new_target_capture()

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   mainCiHealth,
+  classifyJobsFailure,
   extractRegressedTests,
   formatIssueBody,
   formatReport,
@@ -85,6 +86,143 @@ test("timed_out and startup_failure count as red", () => {
     const v = mainCiHealth([run({ id: 1, conclusion: c, created_at: "2026-06-12T21:00:00Z" })]);
     assert.equal(v.red, true, `${c} should be red`);
   }
+});
+
+// --- infra-interruption classification (issue #14688) ---
+
+// The witnessed false-red signature: the `unit` job concluded `failure` but its
+// "Submit ... to Cloud Build pool" work step ended with `conclusion: null`
+// (submission interrupted) while every other step succeeded.
+const INTERRUPTED_UNIT_JOBS = {
+  jobs: [
+    {
+      name: "unit",
+      conclusion: "failure",
+      steps: [
+        { name: "Set up job", conclusion: "success" },
+        { name: "Checkout", conclusion: "success" },
+        { name: "Submit unit suite to Cloud Build pool", conclusion: null },
+        { name: "Complete job", conclusion: null },
+      ],
+    },
+    // Cancelled siblings (GitHub cancels the rest once one job fails).
+    { name: "conformance-0", conclusion: "cancelled", steps: [] },
+  ],
+};
+
+test("classifyJobsFailure: interrupted/null work step with no failing step => infra", () => {
+  assert.equal(classifyJobsFailure(INTERRUPTED_UNIT_JOBS), "infra");
+});
+
+test("classifyJobsFailure: a step that concluded failure => real (never masked)", () => {
+  const jobs = {
+    jobs: [{
+      name: "fourslash",
+      conclusion: "failure",
+      steps: [
+        { name: "Checkout", conclusion: "success" },
+        { name: "Run fourslash", conclusion: "failure" },
+      ],
+    }],
+  };
+  assert.equal(classifyJobsFailure(jobs), "real");
+});
+
+test("classifyJobsFailure: job-level timed_out/startup_failure => real", () => {
+  for (const c of ["timed_out", "startup_failure"]) {
+    const jobs = { jobs: [{ name: "unit", conclusion: c, steps: [{ conclusion: null }] }] };
+    assert.equal(classifyJobsFailure(jobs), "real", `${c} job must stay real`);
+  }
+});
+
+test("classifyJobsFailure: cancelled work step counts as interrupted => infra", () => {
+  const jobs = {
+    jobs: [{
+      name: "unit-checker-integration",
+      conclusion: "failure",
+      steps: [
+        { name: "Checkout", conclusion: "success" },
+        { name: "Submit checker integration suite to Cloud Build pool", conclusion: "cancelled" },
+      ],
+    }],
+  };
+  assert.equal(classifyJobsFailure(jobs), "infra");
+});
+
+test("classifyJobsFailure: failing job with no steps is unattributable => real (conservative)", () => {
+  assert.equal(classifyJobsFailure({ jobs: [{ name: "x", conclusion: "failure", steps: [] }] }), "real");
+});
+
+test("classifyJobsFailure: no failing job => unknown (caller must not suppress)", () => {
+  assert.equal(classifyJobsFailure({ jobs: [{ name: "ok", conclusion: "success", steps: [] }] }), "unknown");
+  assert.equal(classifyJobsFailure({ jobs: [] }), "unknown");
+  assert.equal(classifyJobsFailure(null), "unknown");
+});
+
+test("classifyJobsFailure: a real failure alongside an infra one => real", () => {
+  const jobs = {
+    jobs: [
+      INTERRUPTED_UNIT_JOBS.jobs[0],
+      { name: "conformance-1", conclusion: "failure", steps: [{ name: "shard", conclusion: "failure" }] },
+    ],
+  };
+  assert.equal(classifyJobsFailure(jobs), "real");
+});
+
+test("mainCiHealth: infra-classified newest red is skipped, falls through to green", () => {
+  const classifyRun = (r) => (r.id === 2 ? "infra" : "unknown");
+  const v = mainCiHealth([
+    run({ id: 2, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" }),
+    run({ id: 1, conclusion: "success", created_at: "2026-06-12T20:00:00Z" }),
+  ], { classifyRun });
+  assert.equal(v.red, false);
+  assert.equal(v.status, "green");
+  assert.equal(v.run.id, 1);
+  assert.equal(v.infraSkipped, 1);
+});
+
+test("mainCiHealth: a real newest red is NOT suppressed", () => {
+  const classifyRun = () => "real";
+  const v = mainCiHealth([
+    run({ id: 2, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" }),
+    run({ id: 1, conclusion: "success", created_at: "2026-06-12T20:00:00Z" }),
+  ], { classifyRun });
+  assert.equal(v.red, true);
+  assert.equal(v.run.id, 2);
+  assert.equal(v.infraSkipped, 0);
+});
+
+test("mainCiHealth: infra red over a real red still reports the real red", () => {
+  const classifyRun = (r) => (r.id === 3 ? "infra" : "real");
+  const v = mainCiHealth([
+    run({ id: 3, conclusion: "failure", created_at: "2026-06-12T22:00:00Z" }),
+    run({ id: 2, conclusion: "failure", created_at: "2026-06-12T21:00:00Z", head_sha: "realred00" }),
+    run({ id: 1, conclusion: "success", created_at: "2026-06-12T20:00:00Z", head_sha: "lastgreen0" }),
+  ], { classifyRun });
+  assert.equal(v.red, true);
+  assert.equal(v.run.id, 2);
+  assert.equal(v.infraSkipped, 1);
+  assert.equal(v.lastGreen.sha, "lastgreen0");
+});
+
+test("mainCiHealth: every conclusive run infra-red => unknown, not a breach", () => {
+  const classifyRun = () => "infra";
+  const v = mainCiHealth([
+    run({ id: 2, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" }),
+    run({ id: 1, conclusion: "failure", created_at: "2026-06-12T20:00:00Z" }),
+  ], { classifyRun });
+  assert.equal(v.red, false);
+  assert.equal(v.status, "unknown");
+  assert.equal(v.infraSkipped, 2);
+});
+
+test("formatReport surfaces ignored infra-interrupted runs", () => {
+  const classifyRun = () => "infra";
+  const v = mainCiHealth([
+    run({ id: 2, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" }),
+  ], { classifyRun });
+  assert.match(formatReport(v), /Ignored 1 infra-interrupted red run/);
+  assert.match(formatReport(v), /#14688/);
 });
 
 test("extractRegressedTests dedupes and parses aggregate log", () => {

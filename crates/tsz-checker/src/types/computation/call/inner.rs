@@ -432,6 +432,16 @@ impl<'a> CheckerState<'a> {
             let (non_nullish, cause) = self.split_nullish_type(callee_for_split);
             nullish_cause = cause;
             let Some(non_nullish) = non_nullish else {
+                // The callee is entirely nullish (`null`, `undefined`, or
+                // `null | undefined`). The chain short-circuits to `undefined`,
+                // but tsc still computes the non-nullish slice as `never`, which
+                // has no call signatures, and reports TS2349 — unless a property
+                // access on a `never` receiver already emitted the companion
+                // TS2339. Mirror that so `fn?.()` where `fn: undefined` is not
+                // silently accepted.
+                if !self.never_callee_has_companion_property_diagnostic(call.expression) {
+                    self.error_not_callable_at(TypeId::NEVER, call.expression);
+                }
                 return TypeId::UNDEFINED;
             };
             callee_type = non_nullish;

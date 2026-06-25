@@ -77,15 +77,22 @@ fn bigint_lhs_reports_ts2322() {
 }
 
 #[test]
-fn unknown_lhs_reports_ts2322() {
-    let diags =
-        in_lhs_errors("declare const o: object;\ndeclare const u: unknown;\nconst x = u in o;\n");
-    assert_eq!(
-        diags,
-        vec![(
-            TS2322,
-            "Type 'unknown' is not assignable to type 'string | number | symbol'.".to_string()
-        )]
+fn unknown_lhs_reports_ts18046_not_ts2322() {
+    // An `unknown` key operand is "of type 'unknown'" (TS18046 for a named
+    // entity), the same as an `unknown` object operand — tsc does not route it
+    // through the TS2322 key-mismatch path. Verified against tsc 6.0.2.
+    let all = check_source_code_messages(
+        "declare const o: object;\ndeclare const u: unknown;\nconst x = u in o;\n",
+    );
+    assert!(
+        all.iter().all(|(code, _)| *code != TS2322),
+        "unknown key should not report the TS2322 key mismatch, got {all:#?}"
+    );
+    assert!(
+        all.iter()
+            .any(|(code, msg)| *code == diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                && msg == "'u' is of type 'unknown'."),
+        "expected TS18046 for the unknown key operand, got {all:#?}"
     );
 }
 

@@ -597,6 +597,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A type-parameter constraint written as a conditional reduces to a
+        // single branch once its check/extends types are concrete. After
+        // type-argument substitution `string extends string ? Box<string> :
+        // string` becomes `Box<string>` and `number extends string ?
+        // number[] : number` becomes `number`. tsc instantiates the
+        // conditional eagerly, so its TS2344 message prints the reduced
+        // branch; tsz keeps the conditional deferred. Mirror tsc by displaying
+        // the evaluated constraint when a conditional constraint actually
+        // reduced to a non-conditional type. A constraint that stays a
+        // conditional (a genuinely deferred conditional with free type
+        // parameters) and every non-conditional constraint (aliases, unions,
+        // object shapes) keep their original display so alias names survive.
+        let display_constraint = if common::is_conditional_type(self.ctx.types, constraint)
+            && !common::is_conditional_type(self.ctx.types, ready_constraint)
+            && ready_constraint != TypeId::ERROR
+        {
+            ready_constraint
+        } else {
+            constraint
+        };
+
         // tsc widens a literal type-arg to its primitive base when the
         // constraint is a primitive base type that the literal's primitive
         // class doesn't match (e.g. `Uppercase<42>` shows `Type 'number'`
@@ -604,7 +625,7 @@ impl<'a> CheckerState<'a> {
         // the literal display (`Foo<"false">` against `"true"` shows
         // `Type '"false"'`).
         let display_type_arg =
-            self.widen_literal_type_arg_for_constraint_display(type_arg, constraint);
+            self.widen_literal_type_arg_for_constraint_display(type_arg, display_constraint);
         let mut type_str = self.format_type_diagnostic(display_type_arg);
         // When the type arg node is a `typeof expr<Args>` (TYPE_QUERY with type args),
         // tsc includes "typeof" in the TS2344 message. The type formatter strips
@@ -633,7 +654,7 @@ impl<'a> CheckerState<'a> {
             }
         }
         let constraint_str = constraint_display
-            .unwrap_or_else(|| self.format_type_diagnostic_constraint(constraint));
+            .unwrap_or_else(|| self.format_type_diagnostic_constraint(display_constraint));
         // Structural check: `IndexedAccess(M, K)` where K is a bounded
         // type parameter satisfies any constraint that ALL of M's property
         // value types are assignable to. tsc's `getApparentType` reduces

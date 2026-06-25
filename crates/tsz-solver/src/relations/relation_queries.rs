@@ -595,7 +595,7 @@ pub fn query_relation_with_overrides<
             )
         }
         RelationKind::Overlap => {
-            let checker = configured_subtype_checker(interner, resolver, policy, context);
+            let mut checker = configured_subtype_checker(interner, resolver, policy, context);
             let related = checker.are_types_overlapping(source, target);
             (
                 related,

@@ -91,6 +91,136 @@ class Holder {
 }
 
 // ---------------------------------------------------------------------------
+// Calling a `never` callee that has NO companion TS2339.
+//
+// A property access on a `never` *receiver* collapses to the any-like error
+// fallback (TS2339, no TS2349 — covered above). But a callee whose type is
+// `never` for any other reason still has no call signatures, so `tsc` reports
+// TS2349: indexed access on a `never` receiver (silent access), a member that
+// legitimately resolves to a `never`-typed value, an index signature whose
+// value is `never`, and a `never[]` element. These previously slipped through
+// because the suppression keyed on the *syntactic* member-access shape rather
+// than on whether a companion diagnostic actually fired.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn indexed_access_on_never_receiver_call_reports_ts2349() {
+    // `empty["slot"]` is `never` and emits no TS2339 (indexed access on never is
+    // silent), so the trailing call must still report TS2349.
+    let codes = check(r#"function reach(empty: never) { empty["slot"](); }"#);
+    assert_eq!(
+        count(&codes, 2349),
+        1,
+        "indexed access on a never receiver then call should report one TS2349, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "indexed access on a never receiver is silent — no TS2339, got: {codes:?}"
+    );
+}
+
+#[test]
+fn never_typed_member_call_reports_ts2349() {
+    // The member exists (no TS2339) but is typed `never`, so both the dotted and
+    // the indexed call have no call signatures.
+    let dotted = check("function take(holder: { slot: never }) { holder.slot(); }");
+    assert_eq!(
+        count(&dotted, 2349),
+        1,
+        "dotted call on a never-typed member should report one TS2349, got: {dotted:?}"
+    );
+    assert!(
+        !dotted.contains(&2339),
+        "the member exists — no TS2339, got: {dotted:?}"
+    );
+
+    let indexed = check(r#"function grab(carrier: { slot: never }) { carrier["slot"](); }"#);
+    assert_eq!(
+        count(&indexed, 2349),
+        1,
+        "indexed call on a never-typed member should report one TS2349, got: {indexed:?}"
+    );
+}
+
+#[test]
+fn never_index_signature_value_call_reports_ts2349() {
+    // A string index signature whose value type is `never` means every element
+    // is `never`.
+    let dotted = check("function load(table: { [k: string]: never }) { table.key(); }");
+    assert_eq!(
+        count(&dotted, 2349),
+        1,
+        "dotted call through a never index signature should report one TS2349, got: {dotted:?}"
+    );
+
+    let indexed =
+        check(r#"function fetch(registry: { [k: string]: never }) { registry["key"](); }"#);
+    assert_eq!(
+        count(&indexed, 2349),
+        1,
+        "indexed call through a never index signature should report one TS2349, got: {indexed:?}"
+    );
+}
+
+#[test]
+fn never_array_element_call_reports_ts2349() {
+    let codes = check("function scan(list: never[]) { list[0](); }");
+    assert_eq!(
+        count(&codes, 2349),
+        1,
+        "calling a never[] element should report one TS2349, got: {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Optional call (`?.()`) on an entirely-nullish callee.
+//
+// When the callee of an optional call is exactly `null`/`undefined` (or their
+// union), the chain short-circuits to `undefined`, but `tsc` computes the
+// non-nullish slice as `never` (no call signatures) and reports TS2349. A
+// callee that still has a callable non-nullish slice is fine.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn optional_call_on_undefined_callee_reports_ts2349() {
+    let codes = check("function ring(buzzer: undefined) { buzzer?.(); }");
+    assert_eq!(
+        count(&codes, 2349),
+        1,
+        "optional call on an `undefined` callee should report one TS2349, got: {codes:?}"
+    );
+}
+
+#[test]
+fn optional_call_on_nullish_union_callee_reports_ts2349() {
+    let codes = check("function ping(beacon: null | undefined) { beacon?.(); }");
+    assert_eq!(
+        count(&codes, 2349),
+        1,
+        "optional call on a `null | undefined` callee should report one TS2349, got: {codes:?}"
+    );
+}
+
+#[test]
+fn optional_call_on_callable_or_undefined_is_allowed() {
+    // The non-nullish slice is callable, so the optional call is valid.
+    let codes = check("function maybe(handler: (() => void) | undefined) { handler?.(); }");
+    assert!(
+        !codes.contains(&2349),
+        "optional call with a callable non-nullish slice must not report TS2349, got: {codes:?}"
+    );
+}
+
+#[test]
+fn optional_call_on_present_method_is_allowed() {
+    let codes = check("function wire(panel: { run?: () => void }) { panel.run?.(); }");
+    assert!(
+        !codes.contains(&2349),
+        "optional call on a present optional method must not report TS2349, got: {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Spreading `never`: allowed in array literals, rejected elsewhere.
 // ---------------------------------------------------------------------------
 

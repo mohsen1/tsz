@@ -1692,6 +1692,14 @@ pub enum TypeParamOrigin {
     /// A type parameter written in user source (or any non-inference synthetic).
     #[default]
     User,
+    /// #14344 STEP-B: a user-written type parameter stamped with its declaration
+    /// site `(file, name_node)`, so two distinct declarations sharing an
+    /// identical surface `TypeParamInfo` intern to DISTINCT ids (the bare info
+    /// now differs per-decl) — fixing the self-ref-guard over-collapse. Stamped
+    /// at the dominant lowering construction path (`collect_type_parameters`)
+    /// under `TSZ_TYPEPARAM_DECL_IDENTITY`; flag-OFF keeps `User` (byte-parity).
+    /// Behaves as `User` for all classification (NOT an inference placeholder).
+    DeclScoped { file: Atom, node: u32 },
     /// A call-local inference placeholder minted for a generic call's own type
     /// parameter (`__infer_{id}` historically). `id` keeps it program-unique.
     InferPlaceholder { id: u64 },
@@ -1712,7 +1720,9 @@ impl TypeParamOrigin {
     /// Replaces the historical `starts_with("__infer_")` scan.
     #[inline]
     pub const fn is_infer_placeholder(self) -> bool {
-        !matches!(self, TypeParamOrigin::User)
+        // `DeclScoped` is a user-written param (decl-stamped for identity), NOT
+        // an inference placeholder — classify it with `User` (#14344 STEP-B).
+        !matches!(self, Self::User | Self::DeclScoped { .. })
     }
 
     /// Higher-order *source* inference placeholder only.

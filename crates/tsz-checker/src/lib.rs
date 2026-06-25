@@ -685,6 +685,9 @@ mod assign_to_import_shadowing_local_tests;
 #[path = "tests/base_type_param_default_inheritance_tests.rs"]
 mod base_type_param_default_inheritance_tests;
 #[cfg(test)]
+#[path = "../tests/bigint_exponentiation_target_tests.rs"]
+mod bigint_exponentiation_target_tests;
+#[cfg(test)]
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
@@ -813,6 +816,9 @@ mod cross_file_class_merge_tests;
 #[cfg(test)]
 #[path = "tests/cross_file_generic_alias_union_implements_tests.rs"]
 mod cross_file_generic_alias_union_implements_tests;
+#[cfg(test)]
+#[path = "../tests/cross_file_interface_merge_ts2717_tests.rs"]
+mod cross_file_interface_merge_ts2717_tests;
 #[cfg(test)]
 #[path = "tests/cross_file_interface_property_access_tests.rs"]
 mod cross_file_interface_property_access_tests;
@@ -1243,6 +1249,9 @@ mod nullish_coalescing_discriminated_union_tests;
 #[path = "../tests/nullish_coalescing_unknown_result_tests.rs"]
 mod nullish_coalescing_unknown_result_tests;
 #[cfg(test)]
+#[path = "../tests/nullish_operand_checknonnull_parity_tests.rs"]
+mod nullish_operand_checknonnull_parity_tests;
+#[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]
@@ -1491,6 +1500,9 @@ mod ts2341_private_access_via_type_param_constraint_tests;
 #[cfg(test)]
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
+#[cfg(test)]
+#[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
+mod ts2445_protected_access_via_subclass_this_tests;
 #[cfg(test)]
 #[path = "tests/ts2564_constructor_throw_guard_tests.rs"]
 mod ts2564_constructor_throw_guard_tests;

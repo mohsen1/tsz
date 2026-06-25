@@ -980,7 +980,7 @@ impl<'a> NarrowingContext<'a> {
         let resolved_source = self.resolve_type(source);
         let resolved_instance = self.resolve_type(instance_type);
 
-        let checker = SubtypeChecker::new(self.db.as_type_database()).with_query_db(self.db);
+        let mut checker = SubtypeChecker::new(self.db.as_type_database()).with_query_db(self.db);
         checker.are_types_overlapping(resolved_source, resolved_instance)
     }
 

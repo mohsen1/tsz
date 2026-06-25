@@ -104,7 +104,24 @@ impl<'a> CheckerState<'a> {
                     _ => {}
                 }
             }
-            self.error_cannot_find_name_install_node_types(name, idx);
+            // Non-JS (`.ts`) fallthrough. tsc's `getCannotFindNameDiagnosticForName`
+            // gives the "@types/node" hint (TS2591) only to `module` / `require`
+            // here; `exports`, `__dirname`, and `__filename` are CommonJS wrapper
+            // locals reported as plain TS2304 (`process` / `Buffer` / `NodeJS`
+            // never reach this branch — they are not CommonJS wrapper locals and
+            // are routed through the shared install-hint dispatch).
+            match name {
+                "module" | "require" => {
+                    self.error_cannot_find_name_install_node_types(name, idx);
+                }
+                _ => {
+                    self.error_at_node_msg(
+                        idx,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        &[name],
+                    );
+                }
+            }
             return TypeId::ERROR;
         }
 
@@ -256,7 +273,24 @@ impl<'a> CheckerState<'a> {
         }
 
         let first_char = name.chars().next().unwrap_or('a');
-        if first_char.is_uppercase() || self.is_known_global_value_name(name) {
+        // A genuinely-missing *known global* (lib + binder lookup already failed
+        // above, and it is not one of the lib/install-hint categories handled in
+        // the match) is a real "cannot find name": `tsc` reports TS2304 for it,
+        // e.g. `window` / `fetch` / `URL` without the `dom` lib. Only a
+        // *non-global* uppercase identifier stays `any` here — it may be a
+        // not-yet-resolved user type, where suppressing TS2304 avoids a cascade.
+        // Known globals fall through to `report_not_found_at_boundary` so the
+        // diagnostic is actually emitted (previously they returned `any` and
+        // silently dropped the error — masked only because the over-broad DOM
+        // classifier used to mis-route them to TS2584).
+        //
+        // `globalThis` is the exception: it is the ambient global-object
+        // reference, in scope under every `lib`/`target` (tsc never reports it
+        // as missing), so it keeps the `any` fallback rather than gaining a
+        // spurious TS2304.
+        if name == "globalThis"
+            || (first_char.is_uppercase() && !self.is_known_global_value_name(name))
+        {
             return TypeId::ANY;
         }
 

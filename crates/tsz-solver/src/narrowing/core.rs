@@ -1200,12 +1200,63 @@ impl<'a> NarrowingContext<'a> {
             "bigint" => TypeId::BIGINT,
             "symbol" => TypeId::SYMBOL,
             "undefined" => TypeId::UNDEFINED,
-            "object" => TypeId::OBJECT, // includes null
+            "object" => return self.narrow_to_typeof_object(source_type),
             "function" => return self.narrow_to_function(source_type),
             _ => return source_type,
         };
 
         self.narrow_to_type(source_type, target_type)
+    }
+
+    /// Narrow a type to its `typeof x === "object"` (true-branch) facet.
+    ///
+    /// `narrow_to_type(source, object)` owns the union and type-parameter
+    /// narrowing, but it leaves the empty object type `{}` unchanged: tsz treats
+    /// `{}` as assignable to `object`, so the assignability short-circuit
+    /// returns the broader `{}`. `typeof` of a primitive is never `"object"`,
+    /// though, so the object facet of `{}` is the non-primitive `object` type —
+    /// never `{}` itself. Canonicalizing any `{}` left in the narrowed result to
+    /// `object` is therefore always correct here, and is what lets
+    /// `if (value && typeof value === "object")` narrow an `unknown`/`{}` value
+    /// to `object` so a subsequent `"k" in value` is a valid `in` right operand
+    /// rather than a spurious TS2638.
+    fn narrow_to_typeof_object(&self, source_type: TypeId) -> TypeId {
+        let narrowed = self.narrow_to_type(source_type, TypeId::OBJECT);
+        self.map_empty_object_to_object(narrowed)
+    }
+
+    /// Replace empty object type `{}` constituents with the non-primitive
+    /// `object` intrinsic, recursing through unions. Every other shape
+    /// (including non-empty object literals, intersections, and type
+    /// parameters) is returned unchanged.
+    fn map_empty_object_to_object(&self, source_type: TypeId) -> TypeId {
+        let resolved = self.resolve_type(source_type);
+
+        if let Some(members_id) = union_list_id(self.db, resolved) {
+            let members = self.db.type_list(members_id);
+            let mut mapped: Option<Vec<TypeId>> = None;
+            for (index, &member) in members.iter().enumerate() {
+                let replacement = self.map_empty_object_to_object(member);
+                if replacement != member && mapped.is_none() {
+                    let mut acc = Vec::with_capacity(members.len());
+                    acc.extend_from_slice(&members[..index]);
+                    mapped = Some(acc);
+                }
+                if let Some(acc) = mapped.as_mut() {
+                    acc.push(replacement);
+                }
+            }
+            return match mapped {
+                Some(acc) => self.db.union(acc),
+                None => source_type,
+            };
+        }
+
+        if crate::type_queries::is_empty_object_type(self.db, resolved) {
+            return TypeId::OBJECT;
+        }
+
+        source_type
     }
 
     /// Narrow a type to include only members assignable to target.
@@ -1773,6 +1824,38 @@ impl<'a> NarrowingContext<'a> {
                     if let Some(narrowed) = self.narrow_type_param_excluding(member, excluded_type)
                     {
                         return narrowed.non_never();
+                    }
+                    // A union member that is itself an alias (`Lazy`/`Application`)
+                    // whose body is a *union* must be descended into, not kept
+                    // whole. tsc's `filterType` excludes per top-level constituent,
+                    // so a member like `Updater<P, R> = R | ((p) => R)` has its
+                    // callable constituent stripped in the `!isFunction(x)` branch
+                    // — instead of surviving because the *whole* alias is not
+                    // assignable to the excluded type (the shallow
+                    // `member_excluded_by` check below). The descent is the dual of
+                    // the `intersection`/type-parameter member recursion already
+                    // handled above, and is bounded by the shared exclusion budget
+                    // and the `narrow_excluding_visiting` cycle guard. Only adopt it
+                    // when the alias expands to a union: a non-union alias is left to
+                    // the assignability check below, which already sees through it
+                    // (#14739).
+                    if matches!(
+                        self.db.lookup(member),
+                        Some(TypeData::Lazy(_) | TypeData::Application(_))
+                    ) {
+                        let resolved_member = self.resolve_type(member);
+                        if resolved_member != member
+                            && union_list_id(self.db, resolved_member).is_some()
+                        {
+                            let narrowed =
+                                self.narrow_excluding_type(resolved_member, excluded_type);
+                            // Preserve the alias member's identity/display when
+                            // nothing inside it was excluded.
+                            if narrowed == resolved_member {
+                                return Some(member);
+                            }
+                            return narrowed.non_never();
+                        }
                     }
                     // A `boolean` (or `true`/`false`) union member is the implicit
                     // `true | false` union; excluding one boolean literal must leave

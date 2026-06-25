@@ -64,17 +64,15 @@ fn test_node_global_process_classified_correctly() {
         Some(MissingGlobalKind::NodeGlobal)
     );
     assert_eq!(
-        caps.classify_missing_global("__filename"),
+        caps.classify_missing_global("NodeJS"),
         Some(MissingGlobalKind::NodeGlobal)
     );
-    assert_eq!(
-        caps.classify_missing_global("__dirname"),
-        Some(MissingGlobalKind::NodeGlobal)
-    );
-    assert_eq!(
-        caps.classify_missing_global("exports"),
-        Some(MissingGlobalKind::NodeGlobal)
-    );
+    // `exports`, `__filename`, and `__dirname` are CommonJS wrapper locals that
+    // tsc reports as plain TS2304 (not on `getCannotFindNameDiagnosticForName`),
+    // so they must NOT classify as Node globals.
+    assert_eq!(caps.classify_missing_global("__filename"), None);
+    assert_eq!(caps.classify_missing_global("__dirname"), None);
+    assert_eq!(caps.classify_missing_global("exports"), None);
 }
 
 // =============================================================================
@@ -337,20 +335,18 @@ fn test_capabilities_classify_global_names() {
         caps.classify_missing_global("require"),
         Some(MissingGlobalKind::NodeGlobal)
     );
-    assert_eq!(
-        caps.classify_missing_global("__dirname"),
-        Some(MissingGlobalKind::NodeGlobal)
-    );
+    // `__dirname` is a CommonJS wrapper local — plain TS2304 in tsc, not a
+    // Node-types suggestion.
+    assert_eq!(caps.classify_missing_global("__dirname"), None);
 
-    // DOM globals
+    // DOM globals: tsc gates the TS2584 "include dom" hint to exactly
+    // `document` and `console`. Other dom-lib names (`window`, `HTMLElement`,
+    // `fetch`, …) are plain TS2304.
     assert_eq!(
         caps.classify_missing_global("document"),
         Some(MissingGlobalKind::DomGlobal)
     );
-    assert_eq!(
-        caps.classify_missing_global("window"),
-        Some(MissingGlobalKind::DomGlobal)
-    );
+    assert_eq!(caps.classify_missing_global("window"), None);
     assert_eq!(
         caps.classify_missing_global("crypto"),
         Some(MissingGlobalKind::PlainGlobalValue)
@@ -445,7 +441,7 @@ fn test_capability_diagnostic_node_global_availability() {
     let caps = EnvironmentCapabilities::from_options(&CheckerOptions::default(), true);
 
     // Node globals produce the missing-node-global diagnostic via diagnose_missing_name.
-    for name in &["require", "process", "Buffer", "__filename", "__dirname"] {
+    for name in &["require", "process", "Buffer", "module", "NodeJS"] {
         let diag = caps.diagnose_missing_name(name);
         assert!(
             matches!(diag, Some(CapabilityDiagnostic::MissingNodeGlobal { .. })),

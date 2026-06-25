@@ -50,6 +50,21 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node_flags;
 
+        // A `catch (e)` clause variable introduces its own lexical scope (ES2015+);
+        // it is not a hoisting `var` and never shadows an enclosing block-scoped
+        // binding. tsc structurally never runs this check on a catch variable
+        // (`checkCatchClause` calls `checkVariableLikeDeclaration`, not
+        // `checkVariableDeclaration`/`checkVarDeclaredNamesNotShadowed`), so a
+        // `const x` outside the `catch` plus `catch (x)` must stay clean rather
+        // than producing TS2451/TS2300/TS2481. The same holds for a destructuring
+        // catch binding (`catch ({ x })`), which is why this guard precedes the
+        // name collection below. A genuine redeclaration *inside* the catch body
+        // (`catch (x) { let x }`) is reported separately as TS2492 by
+        // `check_catch_clause_variable_redeclaration`. (#14734)
+        if self.is_catch_clause_variable_declaration(decl_idx) {
+            return;
+        }
+
         // Skip block-scoped variables (let/const) and parameters — only var triggers TS2481
         if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
