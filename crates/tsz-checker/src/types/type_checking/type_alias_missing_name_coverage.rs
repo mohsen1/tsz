@@ -762,10 +762,14 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(op) = self.ctx.arena.get_type_operator(node) {
+                    // A missing operand (`type U = readonly ;`) already produced TS1110
+                    // `Type expected` in the parser; tsc does not also report the
+                    // array/tuple grammar error, so skip it for the recovery node.
                     if op.operator == SyntaxKind::ReadonlyKeyword as u16
                         && let Some(operand_node) = self.ctx.arena.get(op.type_node)
                         && operand_node.kind != syntax_kind_ext::ARRAY_TYPE
                         && operand_node.kind != syntax_kind_ext::TUPLE_TYPE
+                        && !self.ctx.arena.is_missing_recovery_identifier(op.type_node)
                     {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.ctx.error(
