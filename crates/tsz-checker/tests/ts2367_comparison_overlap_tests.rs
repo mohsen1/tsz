@@ -351,3 +351,211 @@ function f<T>(value: T extends string ? number : 1): void {
         "Expected TS2367: number constraint does not overlap with \"foo\""
     );
 }
+
+// ── Template literal type operands ───────────────────────────────────────────
+//
+// A template literal type's value set is a subset of `string`, so for TS2367 it
+// overlaps another operand exactly when a value can belong to both: it overlaps
+// `string`, the open object type `{}`, and a string literal that matches the
+// pattern; it is disjoint from every non-string type (number/boolean/bigint/
+// symbol, the `object` keyword, arrays/functions, a numeric enum, and a string
+// literal or nominal string enum whose value falls outside the pattern). Before
+// this fix the structural overlap routine reported "overlaps" whenever exactly
+// one operand was a template literal type, suppressing every TS2367 below.
+
+#[test]
+fn test_template_literal_vs_number_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+declare const greeting: `x${string}`;
+declare const count: number;
+if (greeting === count) {}
+"#
+        ),
+        "Expected TS2367: `x${{string}}` (string subtype) is disjoint from number"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_boolean_and_bigint_keeps_ts2367() {
+    // Binder-name variation (`tag`/`flag`, `slug`/`big`) proves no name-dependence.
+    assert!(
+        has_ts2367(
+            r#"
+declare const tag: `id-${string}`;
+declare const flag: boolean;
+if (tag === flag) {}
+"#
+        ),
+        "Expected TS2367: template literal type vs boolean"
+    );
+    assert!(
+        has_ts2367(
+            r#"
+declare const slug: `id-${string}`;
+declare const big: bigint;
+if (slug !== big) {}
+"#
+        ),
+        "Expected TS2367: template literal type vs bigint"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_object_keyword_and_array_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+declare const route: `/${string}`;
+declare const obj: object;
+if (route === obj) {}
+"#
+        ),
+        "Expected TS2367: a string value is never assignable to the `object` keyword"
+    );
+    assert!(
+        has_ts2367(
+            r#"
+declare const route: `/${string}`;
+declare const list: number[];
+if (route === list) {}
+"#
+        ),
+        "Expected TS2367: template literal type vs array"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_empty_object_no_ts2367() {
+    // `{}` accepts every non-nullish value, strings included, so it overlaps.
+    assert!(
+        !has_ts2367(
+            r#"
+declare const route: `/${string}`;
+declare const anything: {};
+if (route === anything) {}
+"#
+        ),
+        "Expected NO TS2367: a template literal type is assignable to the empty object type"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_string_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+declare const route: `/${string}`;
+declare const text: string;
+if (route === text) {}
+"#
+        ),
+        "Expected NO TS2367: a template literal type is a subtype of `string`"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_matching_and_nonmatching_literal() {
+    assert!(
+        !has_ts2367(
+            r#"
+declare const route: `x${string}`;
+declare const lit: "xyz";
+if (route === lit) {}
+"#
+        ),
+        "Expected NO TS2367: \"xyz\" matches `x${{string}}`"
+    );
+    assert!(
+        has_ts2367(
+            r#"
+declare const route: `x${string}`;
+declare const lit: "abc";
+if (route === lit) {}
+"#
+        ),
+        "Expected TS2367: \"abc\" does not match `x${{string}}`"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_union_with_one_matching_member_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+declare const route: `x${string}`;
+declare const choices: "abc" | "xyz" | 7;
+if (route === choices) {}
+"#
+        ),
+        "Expected NO TS2367: the \"xyz\" member matches the pattern"
+    );
+}
+
+#[test]
+fn test_numeric_placeholder_template_vs_numeric_string_only() {
+    assert!(
+        !has_ts2367(
+            r#"
+declare const port: `${number}`;
+declare const digits: "123";
+if (port === digits) {}
+"#
+        ),
+        "Expected NO TS2367: \"123\" matches `${{number}}`"
+    );
+    assert!(
+        has_ts2367(
+            r#"
+declare const port: `${number}`;
+declare const word: "abc";
+if (port === word) {}
+"#
+        ),
+        "Expected TS2367: \"abc\" is not a numeric string, so it cannot match `${{number}}`"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_string_enum_value_aware() {
+    // Non-matching members: nominal string enum disjoint from the pattern.
+    assert!(
+        has_ts2367(
+            r#"
+enum Color { Red = "red", Blue = "blue" }
+declare const route: `x${string}`;
+declare const c: Color;
+if (route === c) {}
+"#
+        ),
+        "Expected TS2367: no Color member matches `x${{string}}`"
+    );
+    // Matching member: `Tag.Xy = \"xylophone\"` matches `x${string}` → overlap.
+    assert!(
+        !has_ts2367(
+            r#"
+enum Tag { Xy = "xylophone", Other = "z" }
+declare const route: `x${string}`;
+declare const t: Tag;
+if (route === t) {}
+"#
+        ),
+        "Expected NO TS2367: Tag.Xy (\"xylophone\") matches `x${{string}}`"
+    );
+}
+
+#[test]
+fn test_template_literal_vs_numeric_enum_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Size { Small, Large }
+declare const route: `x${string}`;
+declare const s: Size;
+if (route === s) {}
+"#
+        ),
+        "Expected TS2367: numeric enum members are numbers, never matching string values"
+    );
+}
