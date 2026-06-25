@@ -106,12 +106,6 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
-/// Program-wide index of global-scope (non-module script) interface
-/// declarations, keyed by interface name and mapping to `(declaration node,
-/// file index)` pairs. Built once per checker for the cross-file
-/// interface-merge TS2717 scan.
-pub type GlobalScriptInterfaceDecls = rustc_hash::FxHashMap<String, Vec<(NodeIndex, usize)>>;
-
 /// Overflow state observed from relation checks that feed assignability
 /// diagnostics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1667,14 +1661,6 @@ pub struct CheckerContext<'a> {
     /// all files contain neither construct, so this collapses those walks to
     /// one pass per checker. Entries preserve (file, statement) order.
     pub global_scope_conflict_candidates: OnceCell<Vec<(usize, tsz_parser::parser::NodeIndex)>>,
-
-    /// Lazily-built per-checker index of every global-scope (non-module script)
-    /// interface declaration in the program, keyed by interface name and mapping
-    /// to its `(declaration node, file index)` pairs. The cross-file
-    /// interface-merge TS2717 scan otherwise walks every arena's top-level
-    /// statements once per interface symbol per file; this collapses those walks
-    /// to a single program-wide pass shared across all interface lookups.
-    pub global_script_interface_decls: OnceCell<GlobalScriptInterfaceDecls>,
 
     /// Lazily-built per-checker set of JSX-runtime module specifiers
     /// (`<source>/jsx-runtime`, `<source>/jsx-dev-runtime`) implied by the

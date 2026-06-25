@@ -718,56 +718,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Look up every global-scope interface declaration named `name` across the
+    /// Collect every global-scope interface declaration named `name` across the
     /// program, paired with the index of the file that declares it.
     ///
-    /// The program-wide index (interface name → `(declaration node, file index)`
-    /// pairs) is built once per checker and cached on the context, so repeated
-    /// per-interface lookups during duplicate-identifier checking do not re-walk
-    /// every arena. Only top-level interface declarations in files that are NOT
-    /// external modules are indexed: those are the declarations that merge into a
-    /// single global interface symbol across files. Module-scoped interfaces with
-    /// the same name in different files are distinct symbols and never merge.
+    /// Only top-level interface declarations in files that are NOT external
+    /// modules are returned: those are the declarations that merge into a single
+    /// global interface symbol across files. Module-scoped interfaces with the
+    /// same name in different files are distinct symbols and never merge. This
+    /// runs only for the rare global-script program (the caller gates on the
+    /// current file being a non-module script), so a direct scan is sufficient.
     fn global_script_interface_declarations(&self, name: &str) -> Vec<(NodeIndex, usize)> {
-        use rustc_hash::FxHashMap;
         use tsz_parser::parser::syntax_kind_ext;
 
-        let index = self.ctx.global_script_interface_decls.get_or_init(|| {
-            let mut index: FxHashMap<String, Vec<(NodeIndex, usize)>> = FxHashMap::default();
-            let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
-                return index;
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
             };
-            for (file_idx, arena) in all_arenas.iter().enumerate() {
-                let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+            if binder.is_external_module() {
+                continue;
+            }
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
                     continue;
                 };
-                if binder.is_external_module() {
+                if stmt_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
                     continue;
                 }
-                let Some(source_file) = arena.source_files.first() else {
-                    continue;
-                };
-                for &stmt_idx in &source_file.statements.nodes {
-                    let Some(stmt_node) = arena.get(stmt_idx) else {
-                        continue;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
-                        continue;
-                    }
-                    if let Some(iface_name) = arena
-                        .get_interface(stmt_node)
-                        .and_then(|decl| arena.get_identifier_at(decl.name))
-                    {
-                        index
-                            .entry(iface_name.escaped_text.clone())
-                            .or_default()
-                            .push((stmt_idx, file_idx));
-                    }
+                if arena
+                    .get_interface(stmt_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name)
+                {
+                    out.push((stmt_idx, file_idx));
                 }
             }
-            index
-        });
-        index.get(name).cloned().unwrap_or_default()
+        }
+        out
     }
 
     /// Cross-file (cross-arena) global interface merge — TS2717.
