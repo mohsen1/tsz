@@ -187,6 +187,79 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Maximum alias-target recursion depth for decorator-metadata serialization, so
+/// a cyclic alias (`type A = B; type B = A`) cannot loop forever; past the cap a
+/// metadata type reference yields `Object`.
+pub(crate) const METADATA_ALIAS_MAX_DEPTH: u32 = 32;
+
+/// How an entity-name reference in a `design:type`/`design:paramtypes`/
+/// `design:returntype` annotation resolves, for runtime metadata serialization.
+///
+/// `tsc` serializes such a reference from its resolved symbol's *declared type*
+/// rather than its (possibly erased) spelling; emitting the bare name of a
+/// type-only binding produces a runtime `ReferenceError` when the metadata is
+/// read. This classification reproduces that decision from positive, file-local
+/// syntactic evidence (the model the rest of the metadata serializer uses).
+pub(crate) enum MetadataEntityKind {
+    /// A local runtime value (class / enum / function), **or** a name with no
+    /// local type-only declaration (a global lib value such as `Map`, an import,
+    /// …). Both emit the binding verbatim; the syntactic value-declaration set
+    /// cannot tell a global value from a type-only one, so an over-eager `Object`
+    /// here would drop a real constructor from the metadata.
+    ValueOrUnknown,
+    /// A type alias; carries its target type node so the caller can serialize the
+    /// aliased type instead of the erased alias name.
+    TypeAlias(NodeIndex),
+    /// A purely type-only binding (interface): erased to `Object`.
+    TypeOnly,
+}
+
+/// Classify the declaration(s) named `name` for decorator-metadata serialization
+/// using only positive, file-local evidence. A value declaration outranks a
+/// merged type-only one (`class C` + `interface C` is a runtime value), an
+/// interface is type-only, and a type alias carries its target node. Shared by
+/// the `Printer` and ES5 transform metadata serializers so they cannot drift.
+pub(crate) fn classify_metadata_entity(arena: &NodeArena, name: &str) -> MetadataEntityKind {
+    if name.is_empty() {
+        return MetadataEntityKind::ValueOrUnknown;
+    }
+    let matches = |idx: NodeIndex| identifier_text_or_empty(arena, idx) == name;
+    let mut has_interface = false;
+    let mut alias_target: Option<NodeIndex> = None;
+    for node in &arena.nodes {
+        let kind = node.kind;
+        if kind == syntax_kind_ext::CLASS_DECLARATION {
+            if arena.get_class(node).is_some_and(|c| matches(c.name)) {
+                return MetadataEntityKind::ValueOrUnknown;
+            }
+        } else if kind == syntax_kind_ext::ENUM_DECLARATION {
+            if arena.get_enum(node).is_some_and(|e| matches(e.name)) {
+                return MetadataEntityKind::ValueOrUnknown;
+            }
+        } else if kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            if arena.get_function(node).is_some_and(|f| matches(f.name)) {
+                return MetadataEntityKind::ValueOrUnknown;
+            }
+        } else if kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            if arena.get_interface(node).is_some_and(|i| matches(i.name)) {
+                has_interface = true;
+            }
+        } else if kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            && let Some(alias) = arena.get_type_alias(node)
+            && matches(alias.name)
+        {
+            alias_target = Some(alias.type_node);
+        }
+    }
+    if let Some(target) = alias_target {
+        return MetadataEntityKind::TypeAlias(target);
+    }
+    if has_interface {
+        return MetadataEntityKind::TypeOnly;
+    }
+    MetadataEntityKind::ValueOrUnknown
+}
+
 /// Collect the runtime (non-type-only) bindings of an import clause as
 /// `(name node, name)` pairs: the default name, the namespace name, and each
 /// named specifier's local name. Shared by the printer's and the lowering

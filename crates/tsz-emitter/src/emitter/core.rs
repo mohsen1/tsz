@@ -564,6 +564,17 @@ pub struct Printer<'a> {
     /// resolve generic type parameters to "Object".
     pub(crate) metadata_class_type_params: Option<Vec<String>>,
 
+    /// True while serializing the *target* of a type alias for decorator metadata.
+    /// In this mode a type reference that names a runtime value (class/enum) is
+    /// serialized as its declared object type (`Object`/`Number`) instead of the
+    /// value's binding, because `tsc` resolves an alias to its declared type and
+    /// never chases the alias to a constructor value (`type A = SomeClass` -> `Object`).
+    pub(crate) metadata_in_alias_target: bool,
+
+    /// Recursion guard for alias-target metadata serialization, so a cyclic alias
+    /// (`type A = B; type B = A`) cannot loop forever; past the cap we yield `Object`.
+    pub(crate) metadata_alias_depth: u32,
+
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,

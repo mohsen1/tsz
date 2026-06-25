@@ -1,5 +1,8 @@
 use super::super::super::Printer;
 use crate::context::transform::TransformDirective;
+use crate::transforms::emit_utils::{
+    METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity,
+};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -748,6 +751,30 @@ impl<'a> Printer<'a> {
             "any" | "unknown" | "object" => return "Object".to_string(),
             _ => {}
         }
+
+        // `tsc` serializes a metadata type reference from its resolved symbol's
+        // declared type rather than its (possibly erased) spelling: a type alias
+        // resolves to its target type, an interface erases to `Object`, and only a
+        // runtime value emits its binding. Emitting the bare name for a type-only
+        // reference would throw a `ReferenceError` when the metadata is read.
+        match classify_metadata_entity(self.arena, name) {
+            MetadataEntityKind::TypeAlias(target) => {
+                return self.metadata_serialize_alias_target(target);
+            }
+            MetadataEntityKind::TypeOnly => return "Object".to_string(),
+            // A local runtime value, or a name with no local type-only evidence (a
+            // global lib value, an import, …), falls through to the established
+            // value-reference emission below.
+            MetadataEntityKind::ValueOrUnknown => {}
+        }
+
+        // A value reference whose declared type is being serialized as an alias
+        // target classifies to its instance/object type, not the constructor
+        // binding (`type A = SomeClass` -> `Object`, matching `tsc`).
+        if self.metadata_in_alias_target {
+            return "Object".to_string();
+        }
+
         if !self.suppress_commonjs_named_import_substitution
             && let Some(substituted) = self.commonjs_named_import_substitutions.get(name)
         {
@@ -757,6 +784,26 @@ impl<'a> Printer<'a> {
             return self.serialize_metadata_fallback_entity(&[name.to_string()]);
         }
         name.to_string()
+    }
+
+    /// Serialize the resolved target type of a type alias for decorator metadata.
+    ///
+    /// Runs `serialize_type_for_metadata` on the alias target in "alias target"
+    /// mode so nested value references collapse to their declared object type
+    /// (`Object`) instead of the runtime binding, matching `tsc`'s
+    /// `getDeclaredTypeOfSymbol` + classify behavior. A recursion cap keeps a
+    /// cyclic alias (`type A = B; type B = A`) from looping.
+    fn metadata_serialize_alias_target(&mut self, target: NodeIndex) -> String {
+        if self.metadata_alias_depth >= METADATA_ALIAS_MAX_DEPTH {
+            return "Object".to_string();
+        }
+        let prev_mode = self.metadata_in_alias_target;
+        self.metadata_in_alias_target = true;
+        self.metadata_alias_depth += 1;
+        let result = self.serialize_type_for_metadata(target);
+        self.metadata_alias_depth -= 1;
+        self.metadata_in_alias_target = prev_mode;
+        result
     }
 
     fn metadata_entity_name_parts(&self, idx: NodeIndex) -> Option<Vec<String>> {
