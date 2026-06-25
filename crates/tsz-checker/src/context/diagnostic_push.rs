@@ -67,12 +67,25 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    fn diagnostic_dedup_key_from_parts(&self, start: u32, code: u32, message: &str) -> (u32, u32) {
-        if code == 2318 && start == 0 {
-            use std::hash::{Hash, Hasher};
+    fn diagnostic_dedup_key_from_parts(
+        &self,
+        start: u32,
+        length: u32,
+        code: u32,
+        message: &str,
+    ) -> (u32, u32) {
+        // Fold a value into a `u32` so diagnostics that tie on `(start, code)`
+        // but differ in the hashed component (message text, or span length for
+        // the `??` family) get distinct dedup keys.
+        fn fold_u32(value: impl std::hash::Hash) -> u32 {
+            use std::hash::Hasher;
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            message.hash(&mut hasher);
-            (hasher.finish() as u32, code)
+            value.hash(&mut hasher);
+            hasher.finish() as u32
+        }
+
+        if code == 2318 && start == 0 {
+            (fold_u32(message), code)
         } else if code == 18047
             || code == 18048
             || code == 18049
@@ -88,17 +101,26 @@ impl<'a> CheckerContext<'a> {
             || code == 2538
             || code == 4094
         {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            message.hash(&mut hasher);
-            (start ^ (hasher.finish() as u32), code)
+            (start ^ fold_u32(message), code)
+        } else if code == 2869 || code == 2871 {
+            // The `??` operand checks classify the left operand syntactically
+            // (`getSyntacticNullishnessSemantics`), recursing through nested
+            // `??`/comma/conditional chains. A `??` chain therefore reports the
+            // never-nullish (TS2869) or always-nullish (TS2871) diagnostic once
+            // per `??` operator, every one anchored at the same leftmost token —
+            // e.g. `null ?? null ?? 1` yields two TS2871 at one start, spanning
+            // `null` and `null ?? null` respectively. tsc keys deduplication on
+            // span length as well as start/code/message, so the differing spans
+            // stay distinct. Fold the length into the key to keep each one
+            // instead of collapsing the chain to a single diagnostic.
+            (start ^ fold_u32(length), code)
         } else {
             (start, code)
         }
     }
 
     pub fn diagnostic_dedup_key(&self, diag: &Diagnostic) -> (u32, u32) {
-        self.diagnostic_dedup_key_from_parts(diag.start, diag.code, &diag.message_text)
+        self.diagnostic_dedup_key_from_parts(diag.start, diag.length, diag.code, &diag.message_text)
     }
 
     pub(crate) fn rebuild_diagnostic_aux_indices(&mut self) {
@@ -144,13 +166,17 @@ impl<'a> CheckerContext<'a> {
     ///   private/protected member of an exported anonymous class expression at the
     ///   owning variable/function name, producing one TS4094 per member at the
     ///   same span.
+    /// - TS2869/TS2871 use (start ^ `length_hash`, code) because a `??` chain
+    ///   reports the never-/always-nullish operand diagnostic once per `??`,
+    ///   all anchored at the same leftmost token but spanning successively wider
+    ///   left operands; keying on length keeps each distinct-span diagnostic.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
         if self.reconcile_name_resolution_precedence(start, code) {
             return;
         }
 
         // Check if we've already emitted this diagnostic
-        let key = self.diagnostic_dedup_key_from_parts(start, code, &message);
+        let key = self.diagnostic_dedup_key_from_parts(start, length, code, &message);
         if self.diagnostic_indices.emitted.contains(&key) {
             return;
         }
