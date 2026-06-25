@@ -238,14 +238,6 @@ pub mod observability {
             .map(|s| s.clone())
             .unwrap_or_default()
     }
-
-    /// #14345 WAVE-2-CLEAN measurement-only probe report. Bins the
-    /// `is_identity_for` / `same_decl_param_identity` over-fire by body-param
-    /// origin composition. Empty unless `TSZ_PERF_COUNTERS` is set. REVERT
-    /// before landing (measurement-only).
-    pub fn wave2_clean_probe_report() -> String {
-        crate::instantiation::instantiate::substitution::probe_typeparam_decl_identity_dump()
-    }
 }
 
 /// Tier 4: Type construction — building new types.

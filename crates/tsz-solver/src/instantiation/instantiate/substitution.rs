@@ -55,151 +55,6 @@ fn same_decl_param_identity(
         && mapped.is_const == param.is_const
 }
 
-// === #14345 WAVE-2-CLEAN probe (default-OFF, byte-parity-inert) ============
-//
-// Measurement-only bins surfaced through the existing `TSZ_PERF_COUNTERS`
-// dump (see `dump.rs` -> `probe_typeparam_decl_identity_dump`). Every
-// increment is gated by BOTH the perf-counter fast gate AND the decl-identity
-// flag, so a normal compile (neither env set) pays nothing and emits no
-// behavior change. The bins answer the three over-fire questions:
-//   Q1: of the `type_params` slice handed to `is_identity_for`, how many calls
-//       carry an all-`User` body vs some-`DeclScoped` body?
-//   Q3: when `same_decl_param_identity` FIRES, does the body slice already
-//       carry a same-name `DeclScoped` param (an in-operand identity signal)
-//       whose `(file,node)` differs from the mapped param's `(file,node)`?
-mod probe {
-    use super::{TypeDatabase, TypeParamInfo};
-    use crate::types::TypeParamOrigin;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    // Q1: is_identity_for call classification by body-param origin composition.
-    pub static CALLS_TOTAL: AtomicU64 = AtomicU64::new(0);
-    pub static CALLS_BODY_ALL_USER: AtomicU64 = AtomicU64::new(0);
-    pub static CALLS_BODY_SOME_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
-    pub static CALLS_BODY_EMPTY: AtomicU64 = AtomicU64::new(0);
-
-    // same_decl_param_identity FIRE classification (the match that nets +46/+16).
-    pub static FIRE_TOTAL: AtomicU64 = AtomicU64::new(0);
-    // Of the FIREs: does the body slice contain ANY DeclScoped param?
-    pub static FIRE_BODY_HAS_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
-    pub static FIRE_BODY_ALL_USER: AtomicU64 = AtomicU64::new(0);
-    // Of the FIREs: is there a SAME-NAME DeclScoped param in the body whose
-    // (file,node) DIFFERS from the mapped DeclScoped param? (Q3 identity signal:
-    // a distinguishing node present in the operands.)
-    pub static FIRE_BODY_HAS_SAMENAME_DECLSCOPED: AtomicU64 = AtomicU64::new(0);
-    pub static FIRE_BODY_SAMENAME_NODE_DIFFERS: AtomicU64 = AtomicU64::new(0);
-    pub static FIRE_BODY_SAMENAME_NODE_EQUALS: AtomicU64 = AtomicU64::new(0);
-
-    fn perf_on() -> bool {
-        tsz_common::perf_counters::enabled_fast()
-    }
-
-    /// Classify one `is_identity_for` call by the origin composition of its
-    /// `type_params` (the body being instantiated). Q1.
-    pub fn record_call(interner: &dyn TypeDatabase, type_params: &[TypeParamInfo]) {
-        if !perf_on() || !super::identity_for_same_decl_enabled() {
-            return;
-        }
-        let _ = interner;
-        CALLS_TOTAL.fetch_add(1, Ordering::Relaxed);
-        if type_params.is_empty() {
-            CALLS_BODY_EMPTY.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        let any_declscoped = type_params
-            .iter()
-            .any(|p| matches!(p.origin, TypeParamOrigin::DeclScoped { .. }));
-        if any_declscoped {
-            CALLS_BODY_SOME_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
-        } else {
-            CALLS_BODY_ALL_USER.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Record a `same_decl_param_identity` FIRE. `param` is the stored (`User`)
-    /// def-list param; `mapped` is the map's `DeclScoped` `TypeParameter`;
-    /// `type_params` is the full body slice handed to `is_identity_for`. Q3.
-    pub fn record_fire(
-        param: &TypeParamInfo,
-        mapped_origin: TypeParamOrigin,
-        type_params: &[TypeParamInfo],
-    ) {
-        if !perf_on() {
-            return;
-        }
-        FIRE_TOTAL.fetch_add(1, Ordering::Relaxed);
-
-        let mapped_node = match mapped_origin {
-            TypeParamOrigin::DeclScoped { file, node } => Some((file, node)),
-            _ => None,
-        };
-
-        let mut body_has_declscoped = false;
-        let mut samename_declscoped: Option<(tsz_common::interner::Atom, u32)> = None;
-        for p in type_params {
-            if let TypeParamOrigin::DeclScoped { file, node } = p.origin {
-                body_has_declscoped = true;
-                if p.name == param.name && samename_declscoped.is_none() {
-                    samename_declscoped = Some((file, node));
-                }
-            }
-        }
-
-        if body_has_declscoped {
-            FIRE_BODY_HAS_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
-        } else {
-            FIRE_BODY_ALL_USER.fetch_add(1, Ordering::Relaxed);
-        }
-
-        if let Some(body_node) = samename_declscoped {
-            FIRE_BODY_HAS_SAMENAME_DECLSCOPED.fetch_add(1, Ordering::Relaxed);
-            if let Some(mn) = mapped_node {
-                if mn == body_node {
-                    FIRE_BODY_SAMENAME_NODE_EQUALS.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    FIRE_BODY_SAMENAME_NODE_DIFFERS.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
-    }
-
-    /// Render the probe bins for the perf dump. Empty when disabled.
-    pub fn dump() -> String {
-        if !perf_on() {
-            return String::new();
-        }
-        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
-        format!(
-            "\n=== #14345 WAVE-2-CLEAN probe ===\n  \
-             is_identity_for calls      {:>12}\n  \
-             ... body all-User          {:>12}\n  \
-             ... body some-DeclScoped   {:>12}\n  \
-             ... body empty             {:>12}\n  \
-             same_decl FIRE total       {:>12}\n  \
-             ... FIRE body has-DeclSc   {:>12}\n  \
-             ... FIRE body all-User     {:>12}\n  \
-             ... FIRE body samename-DS  {:>12}\n  \
-             ... FIRE samename node!=   {:>12}\n  \
-             ... FIRE samename node==   {:>12}\n",
-            g(&CALLS_TOTAL),
-            g(&CALLS_BODY_ALL_USER),
-            g(&CALLS_BODY_SOME_DECLSCOPED),
-            g(&CALLS_BODY_EMPTY),
-            g(&FIRE_TOTAL),
-            g(&FIRE_BODY_HAS_DECLSCOPED),
-            g(&FIRE_BODY_ALL_USER),
-            g(&FIRE_BODY_HAS_SAMENAME_DECLSCOPED),
-            g(&FIRE_BODY_SAMENAME_NODE_DIFFERS),
-            g(&FIRE_BODY_SAMENAME_NODE_EQUALS),
-        )
-    }
-}
-
-/// Public re-export so `dump.rs` can splice the probe into the perf dump.
-pub fn probe_typeparam_decl_identity_dump() -> String {
-    probe::dump()
-}
-
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
 pub struct TypeSubstitution {
@@ -372,24 +227,11 @@ impl TypeSubstitution {
         interner: &dyn TypeDatabase,
         type_params: &[TypeParamInfo],
     ) -> bool {
-        probe::record_call(interner, type_params);
         type_params.iter().all(|param| {
             match self.map.get(&param.name) {
                 Some(&type_id) => {
-                    if interner.type_param(*param) == type_id {
-                        return true;
-                    }
-                    let fired = same_decl_param_identity(interner, *param, type_id);
-                    if fired {
-                        // Re-read the mapped origin for the FIRE probe (cheap;
-                        // the match already established it is DeclScoped).
-                        let mapped_origin = match interner.lookup(type_id) {
-                            Some(crate::types::TypeData::TypeParameter(m)) => m.origin,
-                            _ => crate::types::TypeParamOrigin::User,
-                        };
-                        probe::record_fire(param, mapped_origin, type_params);
-                    }
-                    fired
+                    interner.type_param(*param) == type_id
+                        || same_decl_param_identity(interner, *param, type_id)
                 }
                 None => true, // unmapped params don't change anything
             }
