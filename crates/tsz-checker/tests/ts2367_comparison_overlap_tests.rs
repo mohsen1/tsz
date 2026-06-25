@@ -559,3 +559,160 @@ if (route === s) {}
         "Expected TS2367: numeric enum members are numbers, never matching string values"
     );
 }
+
+// ── NoInfer / readonly wrapper transparency (issue #14738) ───────────────────
+//
+// Wrappers that don't change a type's value set (`NoInfer<T>`, `readonly T`)
+// must be transparent to the overlap relation. In particular `NoInfer<T>` over
+// a constrained type parameter must consult `T`'s constraint, not be treated
+// as an opaque non-overlapping type.
+
+#[test]
+fn test_noinfer_typeparam_constraint_overlap() {
+    assert!(
+        !has_ts2367(
+            r#"
+function f<TInput extends string | true>(input: NoInfer<TInput>) {
+  if (input === true) { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected NO TS2367: NoInfer<TInput> should consult TInput's constraint (string | true overlaps true)"
+    );
+}
+
+#[test]
+fn test_noinfer_typeparam_constraint_overlap_negated() {
+    // The negative comparison goes through the same overlap predicate.
+    assert!(
+        !has_ts2367(
+            r#"
+function f<TInput extends string | true>(input: NoInfer<TInput>) {
+  if (input !== true) { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected NO TS2367 for !== against a constraint member through NoInfer"
+    );
+}
+
+#[test]
+fn test_noinfer_typeparam_string_literal_union_constraint() {
+    assert!(
+        !has_ts2367(
+            r#"
+function f<T extends "x" | "y">(input: NoInfer<T>) {
+  if (input === "x") { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected NO TS2367: \"x\" is in the constraint \"x\" | \"y\" through NoInfer"
+    );
+}
+
+#[test]
+fn test_noinfer_typeparam_literal_outside_constraint_keeps_ts2367() {
+    // True positive must survive: "c" is NOT in the constraint, so the
+    // constraint recursion still reports no overlap.
+    assert!(
+        has_ts2367(
+            r#"
+function f<T extends "a" | "b">(input: NoInfer<T>) {
+  if (input === "c") { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected TS2367: \"c\" is not in the constraint \"a\" | \"b\" (true positive preserved)"
+    );
+}
+
+#[test]
+fn test_noinfer_over_concrete_union_still_overlaps() {
+    assert!(
+        !has_ts2367(
+            r#"
+function f(input: NoInfer<string | true>) {
+  if (input === true) { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected NO TS2367: NoInfer over a concrete union containing true overlaps true"
+    );
+}
+
+#[test]
+fn test_noinfer_over_concrete_union_disjoint_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+function f(input: NoInfer<"a" | "b">) {
+  if (input === 1) { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected TS2367: NoInfer<\"a\"|\"b\"> is disjoint from number literal 1"
+    );
+}
+
+#[test]
+fn test_noinfer_comparison_emits_no_cascade() {
+    // Regression guard for the cascading failure in the issue: the spurious
+    // TS2367 collapsed the truthy branch to `never`, which then produced
+    // TS2339/TS7006 downstream. With the overlap fixed, the witnessed pattern
+    // must type-check completely cleanly (no diagnostics at all).
+    let codes = check_source_codes(
+        r#"
+function f<TInput extends string | true>(input: NoInfer<TInput>) {
+  if (input === true) {
+    return 1;
+  }
+  return 0;
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "Expected a clean check for NoInfer<TInput> === true; got {codes:?}"
+    );
+}
+
+#[test]
+fn test_readonly_wrapped_typeparam_constraint_overlap() {
+    // The same gap applied to `readonly`-wrapped constrained params.
+    assert!(
+        !has_ts2367(
+            r#"
+function f<T extends readonly (string | true)[]>(input: T[number]) {
+  if (input === true) { return 1; }
+  return 0;
+}
+"#
+        ),
+        "Expected NO TS2367: readonly tuple/array element constraint contains true"
+    );
+}
+
+#[test]
+fn test_noinfer_switch_discriminant_overlap() {
+    // switch/case discriminant goes through the same overlap path.
+    let codes = check_source_codes(
+        r#"
+function f<T extends "a" | "b">(input: NoInfer<T>) {
+  switch (input) {
+    case "a": return 1;
+    default: return 0;
+  }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2367),
+        "Expected no TS2367 for switch on NoInfer<T> with case in constraint; got {codes:?}"
+    );
+}

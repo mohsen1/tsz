@@ -943,6 +943,28 @@ impl<'a> CheckerState<'a> {
 
     // Inner implementation of overlap checking (after depth guard).
 
+    /// Strip wrappers that are transparent for overlap (TS2367) purposes:
+    /// `NoInfer<T>` and `readonly T`. Neither changes the set of runtime values
+    /// a type can hold, so the overlap relation must look through them to the
+    /// inner type. The loop reduces a nested chain such as
+    /// `readonly NoInfer<T>` to its structural core in one pass.
+    ///
+    /// In particular this lets `NoInfer<T>` over a constrained type parameter be
+    /// recognized as type-parameter-like so the comparability delegation in
+    /// `types_have_no_overlap_inner` consults `T`'s constraint (issue #14738).
+    fn strip_overlap_transparent_wrappers(&self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::unwrap_readonly_or_noinfer;
+        let mut current = type_id;
+        // Bound defensively; real wrapper depth is tiny.
+        for _ in 0..64 {
+            match unwrap_readonly_or_noinfer(self.ctx.types, current) {
+                Some(inner) => current = inner,
+                None => break,
+            }
+        }
+        current
+    }
+
     /// Check if a type is a "weak type" (all properties optional) for overlap purposes.
     /// tsc never emits TS2367 when comparing against weak types.
     fn is_weak_type_for_overlap(&self, type_id: TypeId) -> bool {
@@ -1013,6 +1035,20 @@ impl<'a> CheckerState<'a> {
         if left == right {
             tracing::trace!("same type");
             return false;
+        }
+
+        // Look through wrappers that don't change a type's value set —
+        // `NoInfer<T>` and `readonly T`. For overlap (TS2367) these are
+        // transparent: `NoInfer<T>` over a constrained type parameter must
+        // consult `T`'s constraint via the comparability delegation below, not
+        // be treated as an opaque non-parameter type that ends up reported as
+        // non-overlapping (issue #14738). Recurse once with the unwrapped
+        // operands so the existing type-parameter / union / object handling
+        // sees the structural core.
+        let unwrapped_left = self.strip_overlap_transparent_wrappers(left);
+        let unwrapped_right = self.strip_overlap_transparent_wrappers(right);
+        if unwrapped_left != left || unwrapped_right != right {
+            return self.types_have_no_overlap(unwrapped_left, unwrapped_right);
         }
 
         // Deferred conditional operands (e.g. `Exclude<T, U>` = `T extends U ?
