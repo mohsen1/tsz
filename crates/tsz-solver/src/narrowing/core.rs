@@ -1774,6 +1774,38 @@ impl<'a> NarrowingContext<'a> {
                     {
                         return narrowed.non_never();
                     }
+                    // A union member that is itself an alias (`Lazy`/`Application`)
+                    // whose body is a *union* must be descended into, not kept
+                    // whole. tsc's `filterType` excludes per top-level constituent,
+                    // so a member like `Updater<P, R> = R | ((p) => R)` has its
+                    // callable constituent stripped in the `!isFunction(x)` branch
+                    // — instead of surviving because the *whole* alias is not
+                    // assignable to the excluded type (the shallow
+                    // `member_excluded_by` check below). The descent is the dual of
+                    // the `intersection`/type-parameter member recursion already
+                    // handled above, and is bounded by the shared exclusion budget
+                    // and the `narrow_excluding_visiting` cycle guard. Only adopt it
+                    // when the alias expands to a union: a non-union alias is left to
+                    // the assignability check below, which already sees through it
+                    // (#14739).
+                    if matches!(
+                        self.db.lookup(member),
+                        Some(TypeData::Lazy(_) | TypeData::Application(_))
+                    ) {
+                        let resolved_member = self.resolve_type(member);
+                        if resolved_member != member
+                            && union_list_id(self.db, resolved_member).is_some()
+                        {
+                            let narrowed =
+                                self.narrow_excluding_type(resolved_member, excluded_type);
+                            // Preserve the alias member's identity/display when
+                            // nothing inside it was excluded.
+                            if narrowed == resolved_member {
+                                return Some(member);
+                            }
+                            return narrowed.non_never();
+                        }
+                    }
                     // A `boolean` (or `true`/`false`) union member is the implicit
                     // `true | false` union; excluding one boolean literal must leave
                     // the other rather than keeping the whole member. The top-level
