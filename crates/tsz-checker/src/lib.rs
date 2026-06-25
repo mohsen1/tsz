@@ -901,6 +901,9 @@ mod explicit_alias_constraint_relation_routing_arch_tests;
 #[path = "tests/explicit_type_arg_overload_pruning_tests.rs"]
 mod explicit_type_arg_overload_pruning_tests;
 #[cfg(test)]
+#[path = "../tests/expr_statement_never_call_return_inference_tests.rs"]
+mod expr_statement_never_call_return_inference_tests;
+#[cfg(test)]
 #[path = "../tests/file_session_switch_to_file_tests.rs"]
 mod file_session_switch_to_file_tests;
 #[cfg(test)]
