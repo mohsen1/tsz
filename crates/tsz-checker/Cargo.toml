@@ -773,6 +773,9 @@ path = "tests/accessor_assignment_read_surface_tests.rs"
 name = "inferred_getter_return_property_access_tests"
 path = "tests/inferred_getter_return_property_access_tests.rs"
 [[test]]
+name = "object_literal_getter_self_reference_ts7023_tests"
+path = "tests/object_literal_getter_self_reference_ts7023_tests.rs"
+[[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 [[test]]
