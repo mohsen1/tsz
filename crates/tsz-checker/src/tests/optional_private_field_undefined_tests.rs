@@ -326,3 +326,81 @@ class A {
         "expected undefined-write rejection under exactOptionalPropertyTypes. Got: {c:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #14737: optional class field initialized to `undefined` at the DECLARATION
+// site (`prop?: T = undefined`). This is a distinct path from #10749's
+// write/assignment path: an optional property's declared type includes
+// `| undefined` under strictNullChecks (without exactOptionalPropertyTypes),
+// so the declaration-site initializer is assignable. tsc 5.9.3 accepts it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_2322_optional_field_initialized_to_undefined_at_declaration() {
+    // Public + private, primitive + union-typed; renamed binders prove the rule
+    // is structural, not name-based.
+    let c = check_source_codes(
+        "
+interface VTO { types: string[] }
+class Router {
+    shouldViewTransition?: boolean | VTO = undefined;
+    plain?: string = undefined;
+    #secret?: number = undefined;
+}
+",
+    );
+    assert!(
+        !c.contains(&2322),
+        "unexpected TS2322 on optional field initialized to undefined. Got: {c:?}"
+    );
+}
+
+#[test]
+fn optional_field_undefined_init_still_rejects_wrong_value_type() {
+    // The widening adds only `undefined`; a value outside `T | undefined` must
+    // still be rejected.
+    let c = check_source_codes(
+        "
+class A {
+    p?: string = 42;
+}
+",
+    );
+    assert!(
+        c.contains(&2322),
+        "expected TS2322 for a wrong-typed optional field initializer. Got: {c:?}"
+    );
+}
+
+#[test]
+fn non_optional_field_undefined_init_at_declaration_still_rejected() {
+    // No `?` → the declared type does not include `undefined`.
+    let c = check_source_codes(
+        "
+class A {
+    req: number = undefined;
+}
+",
+    );
+    assert!(
+        c.contains(&2322),
+        "expected TS2322 for a non-optional field initialized to undefined. Got: {c:?}"
+    );
+}
+
+#[test]
+fn exact_optional_property_types_rejects_undefined_init_at_declaration() {
+    // With the flag on, the optional property type is exactly `T`, so the
+    // declaration-site `= undefined` remains an error (mirrors the write path).
+    let c = codes_exact_optional(
+        "
+class A {
+    p?: string = undefined;
+}
+",
+    );
+    assert!(
+        c.contains(&2322),
+        "expected TS2322 on optional field = undefined under exactOptionalPropertyTypes. Got: {c:?}"
+    );
+}
