@@ -637,36 +637,51 @@ impl<'a> CheckerState<'a> {
                                 // the contextual type into multiple candidate
                                 // object literals (`?:`, `??`, `||`, parens,
                                 // `,`, `=`), the call above sees the composite
-                                // source and cannot iterate its shape. Run the
-                                // per-literal excess check on every fresh
-                                // object literal reachable through those
-                                // wrappers so nested excess properties on
-                                // branch literals are surfaced (e.g. `c ? { a:
-                                // { b:1, c:2 } } : { a: { b:2 } }` should
-                                // still emit TS2353 for the inner `c`). See
-                                // #9681. Skip when the initializer is itself
-                                // an object literal — the canonical
-                                // `check_object_literal_excess_properties`
-                                // call above already runs against the literal
-                                // and rerunning it via
-                                // `get_type_of_node(literal)` can disagree on
-                                // the source type for symbol-named computed
-                                // keys / sibling-initializer destructuring
-                                // shapes.
+                                // source and cannot iterate its shape. Skip when
+                                // the initializer is itself an object literal —
+                                // the canonical
+                                // `check_object_literal_excess_properties` call
+                                // above already runs against the literal and
+                                // rerunning it via `get_type_of_node(literal)`
+                                // can disagree on the source type for
+                                // symbol-named computed keys / sibling-initializer
+                                // destructuring shapes.
                                 if self.ctx.diagnostics.len() == diags_before
                                     && !self.ctx.arena.get(facts.initializer).is_some_and(|n| {
                                         n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                                     })
                                 {
-                                    let literals =
-                                        self.collect_rhs_object_literals(facts.initializer);
-                                    for obj_idx in literals {
-                                        let lit_type = self.get_type_of_node(obj_idx);
-                                        self.check_object_literal_excess_properties(
-                                            lit_type,
-                                            excess_property_target,
-                                            obj_idx,
-                                        );
+                                    // When the composite source stays a UNION of
+                                    // distinct members (`cond ? {a:1,b:2} : {a:3}`
+                                    // → `{ … } | { … }`), tsc reports ONE TS2322
+                                    // over the union with the excess message as a
+                                    // nested elaboration — not a per-branch TS2353
+                                    // (#14832). `report_fresh_object_union_excess`
+                                    // emits that shape and returns `true`. It
+                                    // returns `false` when the source is not a
+                                    // union (branches widen to one shape, so the
+                                    // source collapses to a single object type) or
+                                    // has only nested excess; in both cases run the
+                                    // per-literal walk so each fresh branch literal
+                                    // still gets its standalone TS2353 (e.g.
+                                    // `c ? { a: { b:1, c:2 } } : { a: { b:2 } }`
+                                    // surfaces the inner `c`). See #9681.
+                                    if !self.report_fresh_object_union_excess(
+                                        checked_init_type,
+                                        excess_property_target,
+                                        facts.initializer,
+                                        facts.initializer,
+                                    ) {
+                                        let literals =
+                                            self.collect_rhs_object_literals(facts.initializer);
+                                        for obj_idx in literals {
+                                            let lit_type = self.get_type_of_node(obj_idx);
+                                            self.check_object_literal_excess_properties(
+                                                lit_type,
+                                                excess_property_target,
+                                                obj_idx,
+                                            );
+                                        }
                                     }
                                 }
                                 if self.ctx.diagnostics.len() == diags_before {
