@@ -294,6 +294,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let source_tp_type = self.interner.type_param(*source_tp);
                     let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
+                        // #14345 Stage-2 PROBE: bin the origin-kind of the
+                        // REGISTERED equiv pair (shape.type_params). If these are
+                        // User-origin while the body refs are DeclScoped, the
+                        // surface won't match → the consult miss.
+                        if crate::instantiation::instantiate::stage2_probe::enabled() {
+                            use crate::types::TypeParamOrigin::DeclScoped;
+                            let sd = matches!(source_tp.origin, DeclScoped { .. });
+                            let td = matches!(target_tp.origin, DeclScoped { .. });
+                            crate::instantiation::instantiate::stage2_probe::record_reg(sd, td);
+                        }
                         self.type_param_equivalences
                             .push((source_tp_type, target_tp_type));
                     }

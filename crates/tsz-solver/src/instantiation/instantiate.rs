@@ -27,6 +27,120 @@ use tsz_common::interner::Atom;
 /// `instantiationDepth` parity) despite the shared name; see the divergence
 /// notes at the canonical definition in [`crate::limits`].
 pub const MAX_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_TYPE_SUBSTITUTION_DEPTH;
+
+// ===========================================================================
+// #14345 Stage-2 STEP-1 PROBE (gated `TSZ_STAGE2_PROBE=1`). Bins which of the 3
+// name-keyed paths in the `instantiate_key` TypeParameter arm produces a
+// re-minted id whose DeclScoped origin DIFFERS from the incoming `info`'s
+// (the cross-decl same-name re-mint = the +53 drift). Pure observability; no
+// behavior change. REMOVE before gauging.
+// ===========================================================================
+pub mod stage2_probe {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("TSZ_STAGE2_PROBE").is_ok_and(|v| v == "1"))
+    }
+    // instantiate_key bins:
+    // [0 local_same, 1 local_drift, 2 subst_same, 3 subst_drift,
+    //  4 fallback_non_declscoped, 5 fallback_declscoped]
+    // consult-MISS bins (cache.rs):
+    // [6 miss_samename_both_declscoped_crossdecl,
+    //  7 miss_samename_both_declscoped_samedecl,
+    //  8 miss_samename_has_user_origin,
+    //  9 miss_diffname]
+    pub static BINS: [AtomicU64; 10] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ];
+    pub fn bump(idx: usize) {
+        BINS[idx].fetch_add(1, Ordering::Relaxed);
+    }
+    // Registration origin-kind histogram:
+    // [both_declscoped, source_only, target_only, neither]
+    pub static REG: [AtomicU64; 4] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ];
+    pub fn record_reg(source_declscoped: bool, target_declscoped: bool) {
+        let idx = match (source_declscoped, target_declscoped) {
+            (true, true) => 0,
+            (true, false) => 1,
+            (false, true) => 2,
+            (false, false) => 3,
+        };
+        REG[idx].fetch_add(1, Ordering::Relaxed);
+    }
+    pub static MISS_TUPLES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    pub fn record_miss_tuple(
+        file_a: u32,
+        node_a: u32,
+        file_b: u32,
+        node_b: u32,
+        name: &str,
+        same_file: bool,
+    ) {
+        if let Ok(mut v) = MISS_TUPLES.lock() {
+            v.push(format!(
+                "{}\tfa={} na={}\tfb={} nb={}\tsame_file={}",
+                name, file_a, node_a, file_b, node_b, same_file
+            ));
+        }
+    }
+    /// Write the bins to the file named by `TSZ_STAGE2_PROBE_OUT` (default
+    /// `/tmp/stage2-probe.txt`). Called once at process end.
+    pub fn dump() {
+        if !enabled() {
+            return;
+        }
+        let path = std::env::var("TSZ_STAGE2_PROBE_OUT")
+            .unwrap_or_else(|_| "/tmp/stage2-probe.txt".to_string());
+        let labels = [
+            "local_same",
+            "local_drift",
+            "subst_same",
+            "subst_drift",
+            "fallback_non_declscoped",
+            "fallback_declscoped",
+            "miss_samename_both_declscoped_crossdecl",
+            "miss_samename_both_declscoped_samedecl",
+            "miss_samename_has_user_origin",
+            "miss_diffname",
+        ];
+        let mut s = String::new();
+        for (i, l) in labels.iter().enumerate() {
+            s.push_str(&format!("{}\t{}\n", l, BINS[i].load(Ordering::Relaxed)));
+        }
+        let reg_labels = [
+            "reg_both_declscoped",
+            "reg_source_only",
+            "reg_target_only",
+            "reg_neither",
+        ];
+        for (i, l) in reg_labels.iter().enumerate() {
+            s.push_str(&format!("{}\t{}\n", l, REG[i].load(Ordering::Relaxed)));
+        }
+        let _ = std::fs::write(&path, s);
+        if let Ok(v) = MISS_TUPLES.lock() {
+            let tuples_path = format!("{path}.tuples");
+            let mut sorted = v.clone();
+            sorted.sort();
+            sorted.dedup();
+            let _ = std::fs::write(tuples_path, sorted.join("\n"));
+        }
+    }
+}
 const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
 /// Instantiator for applying type substitutions.
@@ -522,6 +636,25 @@ impl<'a> TypeInstantiator<'a> {
             .find_map(|(bound_name, type_id)| (*bound_name == name).then_some(*type_id))
     }
 
+    /// #14345 Stage-2 PROBE: does the re-minted `result` carry a DeclScoped
+    /// origin whose `(file, node)` DIFFERS from the incoming `info`'s — i.e. a
+    /// cross-decl same-name re-mint (the +53 drift)?  `Some(true)` = drift,
+    /// `Some(false)` = same decl-identity preserved, `None` = not comparable
+    /// (info not DeclScoped, or result is not a DeclScoped TypeParameter).
+    fn probe_decl_drift(&self, info: &TypeParamInfo, result: TypeId) -> Option<bool> {
+        use crate::types::TypeParamOrigin::DeclScoped;
+        let DeclScoped { file: fa, node: na } = info.origin else {
+            return None;
+        };
+        let Some(TypeData::TypeParameter(r)) = self.interner.lookup(result) else {
+            return None;
+        };
+        let DeclScoped { file: fb, node: nb } = r.origin else {
+            return None;
+        };
+        Some(fa != fb || na != nb)
+    }
+
     /// Apply the substitution to a type, returning the instantiated type.
     ///
     /// Wrapped with `stacker::maybe_grow()` to handle deeply nested generic
@@ -680,6 +813,13 @@ impl<'a> TypeInstantiator<'a> {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
                 if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+                    if stage2_probe::enabled() {
+                        match self.probe_decl_drift(info, local_type_param) {
+                            Some(true) => stage2_probe::bump(1),  // local_drift
+                            Some(false) => stage2_probe::bump(0), // local_same
+                            None => {}
+                        }
+                    }
                     return local_type_param;
                 }
                 if self.is_shadowed(info.name) {
@@ -702,6 +842,13 @@ impl<'a> TypeInstantiator<'a> {
                         substituted = substituted.0,
                         "instantiate TypeParameter: SUBSTITUTED"
                     );
+                    if stage2_probe::enabled() {
+                        match self.probe_decl_drift(info, substituted) {
+                            Some(true) => stage2_probe::bump(3),  // subst_drift
+                            Some(false) => stage2_probe::bump(2), // subst_same
+                            None => {}
+                        }
+                    }
                     substituted
                 } else {
                     if !self.preserve_unsubstituted_type_params
@@ -730,6 +877,17 @@ impl<'a> TypeInstantiator<'a> {
                     // structural canonical, splitting identity between
                     // instantiated and never-instantiated mentions of the
                     // same declaration (#13044).
+                    if stage2_probe::enabled() {
+                        // Fallback returns the body ref's own id. Bin whether the
+                        // incoming info is DeclScoped (a decl-stamped body ref that
+                        // found NO substitution entry — the registration-keyed-on
+                        // shape param could not redirect it).
+                        if matches!(info.origin, crate::types::TypeParamOrigin::DeclScoped { .. }) {
+                            stage2_probe::bump(5); // fallback_declscoped (no subst entry)
+                        } else {
+                            stage2_probe::bump(4); // fallback_non_declscoped
+                        }
+                    }
                     type_id
                 }
             }

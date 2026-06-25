@@ -39,6 +39,11 @@ mod diagnostics;
 pub mod evaluation;
 mod inference;
 mod instantiation;
+
+/// #14345 Stage-2 PROBE dump (temporary; gated by `TSZ_STAGE2_PROBE`).
+pub fn stage2_probe_dump() {
+    instantiation::instantiate::stage2_probe::dump();
+}
 mod intern;
 mod limits;
 pub mod narrowing;

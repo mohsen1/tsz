@@ -183,6 +183,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
             }
+            // #14345 Stage-2 PROBE: a both-TypeParameter pair reached the consult
+            // with a non-empty equiv set but MISSED. Bin by origin to confirm the
+            // +53 is the registration-drift (both DeclScoped, distinct decls), and
+            // whether the missed pair's source/target ids are alpha-equivalent to a
+            // REGISTERED equiv pair by (name,origin) but differ by id (= the third
+            // re-minted id the consult cannot see).
+            if crate::instantiation::instantiate::stage2_probe::enabled() {
+                use crate::instantiation::instantiate::stage2_probe::bump;
+                use crate::types::TypeParamOrigin::DeclScoped;
+                let s = self.interner.lookup(source);
+                let t = self.interner.lookup(target);
+                if let (Some(TypeData::TypeParameter(si)), Some(TypeData::TypeParameter(ti))) =
+                    (s, t)
+                {
+                    let same_name = si.name == ti.name;
+                    if !same_name {
+                        bump(9);
+                    } else {
+                        match (si.origin, ti.origin) {
+                            (
+                                DeclScoped { file: fa, node: na },
+                                DeclScoped { file: fb, node: nb },
+                            ) => {
+                                if fa == fb && na == nb {
+                                    bump(7);
+                                } else {
+                                    bump(6);
+                                    // For the crossdecl miss: is there a registered
+                                    // equiv pair whose eq_a/eq_b share (name,origin)
+                                    // with source/target but differs by id? That =
+                                    // the re-minted third id.
+                                    let matches_reg_by_surface = self
+                                        .type_param_equivalences
+                                        .iter()
+                                        .any(|&(eq_a, eq_b)| {
+                                            let surface_match = |id: TypeId, info: &crate::types::TypeParamInfo| {
+                                                matches!(self.interner.lookup(id),
+                                                    Some(TypeData::TypeParameter(e))
+                                                        if e.name == info.name && e.origin == info.origin)
+                                            };
+                                            (surface_match(eq_a, &si) || surface_match(eq_b, &si))
+                                                && (surface_match(eq_a, &ti) || surface_match(eq_b, &ti))
+                                        });
+                                    if matches_reg_by_surface {
+                                        // registered pair has SAME surface but the
+                                        // consult ids differ → the body ref kept its
+                                        // own decl id (registration-keyed-on-shape drift)
+                                        bump(8); // reuse bin 8 as "surface-match-but-id-miss"
+                                    }
+                                    // record the actual (file,node) tuples + name +
+                                    // same-file flag for offline analysis.
+                                    let name = self.interner.resolve_atom_ref(si.name).to_string();
+                                    crate::instantiation::instantiate::stage2_probe::record_miss_tuple(
+                                        fa.0, na, fb.0, nb, &name, fa == fb,
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
 
         // PERF: Intrinsic disjointness fast-path for common primitive pairs.

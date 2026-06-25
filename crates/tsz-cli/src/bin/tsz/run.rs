@@ -199,6 +199,10 @@ pub(crate) fn run_compile(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         }
     }
 
+    // #14345 Stage-2 PROBE dump (temporary; gated by `TSZ_STAGE2_PROBE`).
+    // Placed before every exit path in this function so the bins always flush.
+    tsz_solver::stage2_probe_dump();
+
     if args.sound_report_only {
         std::process::exit(EXIT_SUCCESS);
     }
