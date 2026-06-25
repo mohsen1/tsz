@@ -1481,15 +1481,24 @@ impl<'a> CheckerState<'a> {
                                     any_found = true;
                                 }
                                 PropertyAccessResult::PropertyNotFound { .. } => {
+                                    let db = self.ctx.types.as_type_database();
                                     if crate::query_boundaries::common::is_empty_object_type(
-                                        self.ctx.types.as_type_database(),
-                                        member,
+                                        db, member,
+                                    ) || crate::query_boundaries::common::is_fresh_object_type(
+                                        db, member,
                                     ) {
-                                        // Empty object member — contributes undefined.
+                                        // Empty object member, or a fresh object
+                                        // literal member, lacks the property: tsc's
+                                        // getTypeOfDestructuredProperty contributes
+                                        // implicit `undefined` for it rather than
+                                        // failing the whole lookup. Freshness
+                                        // (FRESH_LITERAL) is absent on named types,
+                                        // call-return types, and freshness-widened
+                                        // const-bound values, so those still error.
                                         member_types.push(TypeId::UNDEFINED);
                                     } else {
-                                        // Non-empty member missing the property —
-                                        // this is a real type error.
+                                        // Non-empty, non-fresh member missing the
+                                        // property — this is a real type error.
                                         non_empty_missing = true;
                                         break;
                                     }
