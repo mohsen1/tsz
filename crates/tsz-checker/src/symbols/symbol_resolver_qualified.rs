@@ -1091,9 +1091,16 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
         name: &str,
     ) -> Option<SymbolId> {
-        // Only applies in global scripts -- in external modules, namespaces
-        // in different files do NOT merge (each file is its own module).
-        if self.ctx.binder.is_external_module() {
+        // Namespace merging across files applies to global scripts; in external
+        // modules user namespaces in different files do NOT merge (each file is
+        // its own module). But a reference *inside a built-in `lib.*.d.ts`
+        // global-script namespace* (e.g. a `Temporal`/`Intl` member type
+        // resolved during lazy materialization while the current checker file is
+        // an ES module) must still resolve against its own global namespace.
+        // Keying the bail on the current binder's module-ness wrongly blocked
+        // those lib-internal sibling lookups, forcing a fall-through to the
+        // expensive full-symbol spelling scan during assignability (ts-toolbelt).
+        if self.ctx.binder.is_external_module() && !self.node_is_in_builtin_lib_file(node_idx) {
             return None;
         }
 

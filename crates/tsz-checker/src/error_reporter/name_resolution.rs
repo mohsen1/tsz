@@ -1257,7 +1257,7 @@ impl<'a> CheckerState<'a> {
     /// gating must still consult `suggestion_scan_eligible` first; this method
     /// only owns the candidate scan and its cache.
     /// Whether `idx` lives inside a built-in `lib.*.d.ts` declaration file.
-    fn node_is_in_builtin_lib_file(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn node_is_in_builtin_lib_file(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             if ext.parent.is_none() {
