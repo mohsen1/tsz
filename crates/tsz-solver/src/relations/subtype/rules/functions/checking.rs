@@ -17,10 +17,13 @@ use super::erase_type_params_to_constraints;
 
 mod context_instantiation;
 mod generic_constraints;
+mod name_pairing;
 mod overloads;
 mod params;
 
 type HoistedTypeParams = (Vec<TypeParamInfo>, Vec<(TypeId, TypeId)>);
+
+use name_pairing::{alpha_name_pair_enabled, name_aware_target_permutation};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_function_subtype(
@@ -207,13 +210,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            // #14345 Stage-3: pair the source/target type params for the
+            // alpha-rename. By default this is positional (`source[i]` with
+            // `target[i]`). When the name multisets are equal but the order
+            // differs (`<E,A>` vs `<A,E>`), positional pairing renames the
+            // target body onto the wrong source identities and produces
+            // spurious mismatches; under `TSZ_ALPHA_NAME_PAIR=1`, pair by name
+            // instead so same-named params line up across the reorder. Every
+            // downstream consumer (constraint classification, equivalence
+            // registration, fallback canonicalization) iterates this single
+            // pairing so the chosen alignment is used uniformly.
+            let name_aware_perm = if alpha_name_pair_enabled() {
+                name_aware_target_permutation(
+                    &source_instantiated.type_params,
+                    &target_instantiated.type_params,
+                )
+            } else {
+                None
+            };
+            // Materialize the paired `(source_tp, target_tp)` once so all sites
+            // below agree on the alignment. `TypeParamInfo` is `Copy`, so own
+            // the pairs rather than borrow -- `source_instantiated` /
+            // `target_instantiated` are reassigned by the alpha-rename below.
+            let paired_type_params: Vec<(TypeParamInfo, TypeParamInfo)> = match &name_aware_perm {
+                Some(perm) => perm
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &j)| {
+                        (
+                            source_instantiated.type_params[i],
+                            target_instantiated.type_params[j],
+                        )
+                    })
+                    .collect(),
+                None => source_instantiated
+                    .type_params
+                    .iter()
+                    .zip(target_instantiated.type_params.iter())
+                    .map(|(s, t)| (*s, *t))
+                    .collect(),
+            };
+
             let mut target_to_source_substitution = TypeSubstitution::new();
             let mut source_identity_substitution = TypeSubstitution::new();
-            for (source_tp, target_tp) in source_instantiated
-                .type_params
-                .iter()
-                .zip(target_instantiated.type_params.iter())
-            {
+            for (source_tp, target_tp) in &paired_type_params {
                 let source_type_param_type = self.interner.type_param(*source_tp);
                 target_to_source_substitution.insert(target_tp.name, source_type_param_type);
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
@@ -252,11 +292,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // merely wraps the target's recursive constraint in extra application
             // layers. For mapped/indexed contexts both directions must hold so
             // apparent-member facts are preserved.
-            let constraints_allow_alpha_rename = source_instantiated
-                .type_params
-                .iter()
-                .zip(target_instantiated.type_params.iter())
-                .all(|(source_tp, target_tp)| {
+            let constraints_allow_alpha_rename =
+                paired_type_params.iter().all(|(source_tp, target_tp)| {
                     let relation = self.classify_generic_tp_constraint(
                         source_tp,
                         target_tp,
@@ -286,11 +323,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // allow structural comparison to treat the original source/target type params
                 // as identical, fixing false mismatches for structurally identical generic
                 // method signatures with different type param names.
-                for (source_tp, target_tp) in source_instantiated
-                    .type_params
-                    .iter()
-                    .zip(target_instantiated.type_params.iter())
-                {
+                for (source_tp, target_tp) in &paired_type_params {
                     let source_tp_type = self.interner.type_param(*source_tp);
                     let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
@@ -355,11 +388,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // (`T` clamps to `{p: string}`, source param becomes `{p: string}[]`,
                 // which the opaque `S extends {p: string}[]` marker accepts).
                 let mut source_substitution = TypeSubstitution::new();
-                for (source_tp, target_tp) in source_instantiated
-                    .type_params
-                    .iter()
-                    .zip(target_instantiated.type_params.iter())
-                {
+                for (source_tp, target_tp) in &paired_type_params {
                     let relation = self.classify_generic_tp_constraint(
                         source_tp,
                         target_tp,
