@@ -120,6 +120,9 @@ path = "tests/assertion_source_literal_display_tests.rs"
 name = "return_context_identity_wrapper_literal_tests"
 path = "tests/return_context_identity_wrapper_literal_tests.rs"
 [[test]]
+name = "nested_generic_union_callback_return_tests"
+path = "tests/nested_generic_union_callback_return_tests.rs"
+[[test]]
 name = "nested_mapped_optional_modifier_inline_application_tests"
 path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
 [[test]]
