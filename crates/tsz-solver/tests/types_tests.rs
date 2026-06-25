@@ -578,3 +578,27 @@ fn test_property_info_eq_ignores_single_quoted_name() {
         "PropertyInfo hash must ignore single_quoted_name"
     );
 }
+
+/// #14344 layout guard: the `DeclScoped { file: Atom, node: u32 }` decl-identity
+/// variant must stay SIZE-NEUTRAL — its `(Atom, u32)` = 8-byte payload fits inside
+/// the pre-existing `InferSource { id: u64, origin_name: Option<Atom> }` 16-byte
+/// envelope, so `TypeParamOrigin` stays 16 bytes and `TypeParamInfo` stays 40.
+/// `TypeParamInfo` rides every `collect_type_parameters` frame in the deep
+/// `lower_type_parameter` recursion; any growth re-introduces the fp-ts
+/// stack-overflow the dispatch-split fixes. Keep this assertion green.
+#[test]
+fn typeparam_origin_layout_is_size_neutral() {
+    use std::mem::{align_of, size_of};
+    assert_eq!(
+        size_of::<TypeParamOrigin>(),
+        16,
+        "TypeParamOrigin must stay 16 bytes (DeclScoped fits inside InferSource's envelope)"
+    );
+    assert_eq!(align_of::<TypeParamOrigin>(), 8);
+    assert_eq!(
+        size_of::<TypeParamInfo>(),
+        40,
+        "TypeParamInfo must stay 40 bytes; it rides every collect_type_parameters frame"
+    );
+    assert!(size_of::<(Atom, u32)>() <= size_of::<(u64, Option<Atom>)>());
+}
