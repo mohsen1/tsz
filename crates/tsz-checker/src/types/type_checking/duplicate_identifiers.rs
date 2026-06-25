@@ -810,6 +810,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Cross-file (cross-arena) global interface merge TS2717: the
+            // `interface_decls` collection above is filtered to local
+            // declarations, so a member-type conflict that spans files is never
+            // seen by `check_merged_interface_declaration_diagnostics`. Handle it
+            // here for global-script interfaces (current file is not a module).
+            if !is_external_module && symbol.has_any_flags(symbol_flags::INTERFACE) {
+                let name = symbol.escaped_name.clone();
+                self.check_cross_file_global_interface_member_conflicts(&name);
+            }
+
             let class_interface_decls: Vec<NodeIndex> = declarations
                 .iter()
                 .filter(|(_, flags, is_local, _, _)| {
