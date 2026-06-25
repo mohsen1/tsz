@@ -1220,6 +1220,14 @@ impl CheckerState<'_> {
         if matches!(left_type, TypeId::ANY | TypeId::ERROR) {
             return;
         }
+        // An `unknown` key operand is reported as TS18046 (named) / TS2571
+        // (unnamed) "is of type 'unknown'", the same as the RHS object operand —
+        // not as a TS2322 key mismatch. tsc applies this regardless of
+        // `strictNullChecks`.
+        if left_type == TypeId::UNKNOWN {
+            self.error_is_of_type_unknown(left_idx);
+            return;
+        }
         // Mirror tsc's checkNonNullType: strip the nullish part before the key check
         // so `string | undefined` is not spuriously rejected. A purely nullish operand
         // contributes no key and is left to the existing nullish diagnostics.
@@ -1251,6 +1259,32 @@ impl CheckerState<'_> {
             tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
         );
+    }
+
+    /// Mirror tsc's `checkNonNullType` for an `in`-operator operand.
+    ///
+    /// Under `strictNullChecks`, a nullable operand is reported as
+    /// TS18047/18048/18049 for a named entity (identifier, property access,
+    /// `this`), TS2531/2532/2533 for an unnamed expression (call result,
+    /// parenthesized expression, …), or TS18050 for the literal
+    /// `null`/`undefined` keyword — exactly the routing `report_nullish_object`
+    /// already implements. The non-nullish remainder is returned so the caller's
+    /// structural check (key type for the LHS, object shape for the RHS) runs on
+    /// the stripped type; `None` means the operand was purely nullish, so no
+    /// structural check applies. `any`/`error`/`unknown` carry no nullish part
+    /// and pass through unchanged.
+    fn check_in_operand_non_null(&mut self, idx: NodeIndex, ty: TypeId) -> Option<TypeId> {
+        if !self.ctx.compiler_options.strict_null_checks
+            || matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+        {
+            return Some(ty);
+        }
+        let (non_nullish, nullish_cause) = self.split_nullish_type(ty);
+        let Some(cause) = nullish_cause else {
+            return Some(ty);
+        };
+        self.report_nullish_object(idx, cause, non_nullish.is_none());
+        non_nullish
     }
 
     /// Check the `in` operator.
@@ -1288,43 +1322,19 @@ impl CheckerState<'_> {
         } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
             // Direct private identifier as LHS — validate it
             self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
-        } else {
-            self.check_in_operator_lhs_key_type(left_idx, left_type);
+        } else if let Some(left_key_type) = self.check_in_operand_non_null(left_idx, left_type) {
+            // The key check runs on the non-nullish remainder so e.g.
+            // `string | undefined` is not also rejected as a bad key.
+            self.check_in_operator_lhs_key_type(left_idx, left_key_type);
         }
 
-        // TS18047/TS18049: RHS of `in` must not be possibly null (or null|undefined).
-        // When strict null checks is enabled and the RHS includes null, emit TS18047.
-        // tsc only emits this when there is a name for the expression (identifier etc.).
-        if self.ctx.compiler_options.strict_null_checks && right_type != TypeId::UNKNOWN {
-            let (_, nullish_cause) = self.split_nullish_type(right_type);
-            if let Some(cause) = nullish_cause {
-                // Only emit for null-involving cases (not pure undefined).
-                // TS18047 = "is possibly null", TS18049 = "is possibly null or undefined"
-                let includes_null = cause == TypeId::NULL
-                    || (cause != TypeId::UNDEFINED
-                        && crate::query_boundaries::common::union_members(self.ctx.types, cause)
-                            .is_some_and(|members| members.contains(&TypeId::NULL)));
-                if includes_null {
-                    let name = self.expression_text(right_idx);
-                    if let Some(ref name) = name {
-                        use crate::diagnostics::diagnostic_codes;
-                        let code = if cause == TypeId::NULL {
-                            diagnostic_codes::IS_POSSIBLY_NULL
-                        } else {
-                            diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
-                        };
-                        self.emit_render_request(
-                            right_idx,
-                            crate::error_reporter::DiagnosticRenderRequest::simple_msg(
-                                code,
-                                &[name],
-                            ),
-                        );
-                    }
-                    return TypeId::BOOLEAN;
-                }
-            }
-        }
+        // `checkNonNullType` on the RHS, then the object-shape check on the
+        // non-nullish remainder: `object | undefined` keeps only the nullish
+        // diagnostic, while `string | undefined` also reports the `string`
+        // remainder's structural mismatch. A purely-nullish RHS has no remainder.
+        let Some(right_type) = self.check_in_operand_non_null(right_idx, right_type) else {
+            return TypeId::BOOLEAN;
+        };
 
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
