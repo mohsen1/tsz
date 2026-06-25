@@ -238,19 +238,6 @@ pub mod observability {
             .map(|s| s.clone())
             .unwrap_or_default()
     }
-
-    /// #14345 WAVE-2-CLEAN measurement-only probe report. Empty unless
-    /// `TSZ_PERF_COUNTERS` is set. REVERT before landing.
-    pub fn wave2_clean_probe_report() -> String {
-        crate::instantiation::instantiate::substitution::probe_typeparam_decl_identity_dump()
-    }
-
-    /// #14345 WAVE-2-CLEAN measurement-only: register the shared `DefinitionStore`
-    /// on the calling thread for the solver FIRE probe. No-op unless
-    /// `TSZ_PERF_COUNTERS` is set. REVERT before landing.
-    pub fn wave2_clean_set_store(store: std::sync::Arc<crate::def::DefinitionStore>) {
-        crate::instantiation::instantiate::substitution::probe_set_measurement_store(store);
-    }
 }
 
 /// Tier 4: Type construction — building new types.
