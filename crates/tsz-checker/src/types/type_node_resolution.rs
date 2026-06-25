@@ -1393,12 +1393,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     };
                     let is_const = decl_arena
                         .has_modifier(&param_data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+                    // #14345 WAVE-1: stamp the STORED def type-param list with the
+                    // SAME DeclScoped(file, name_node) the lowering body refs carry
+                    // (mint site #2). The carrier only stamped the lowering mint
+                    // (#1); this stored list was hardcoded `User`, so the
+                    // instantiator's `is_identity_for` re-minted `User` params that
+                    // didn't match the stamped body refs → equivalence missed →
+                    // TS2719. `lowering` wraps `decl_arena`, so `decl_scoped_origin`
+                    // derives the identical `(file_atom, name_node)`. Flag-OFF =
+                    // `User` (byte-parity).
+                    let origin = lowering.decl_scoped_origin(param_data.name);
                     let info = tsz_solver::TypeParamInfo {
                         name: atom,
                         constraint,
                         default,
                         is_const,
-                        origin: tsz_solver::TypeParamOrigin::User,
+                        origin,
                     };
                     bindings[binding_idx] = (atom, factory.type_param(info));
                     params.push(info);

@@ -1533,7 +1533,16 @@ impl<'a> TypeLowering<'a> {
     /// name `NodeIndex`. Two distinct declarations differ in `(file, node)` so
     /// they intern distinctly; the SAME declaration lowered repeatedly yields the
     /// SAME `(file, node)` so it stays a single identity (no over-split).
-    fn decl_scoped_origin(&self, name_node: NodeIndex) -> TypeParamOrigin {
+    /// #14345 WAVE-1: public so the checker's SECOND def-type-param mint path
+    /// (`insert_def_type_params` source, e.g. `type_node_resolution`) can stamp
+    /// the STORED def type-param list with the IDENTICAL `DeclScoped(file,
+    /// name_node)` the lowering body refs carry — the carrier only stamped the
+    /// lowering body-ref mint (mint site #1); the checker's stored-list mint
+    /// (#2) was `User`, so `is_identity_for` re-minted `User` params that didn't
+    /// match the stamped body refs. Sharing this one helper keeps both mint
+    /// sites' origins identical (same `file_atom` + `name_node`). Flag-OFF
+    /// returns `User` (byte-parity).
+    pub fn decl_scoped_origin(&self, name_node: NodeIndex) -> TypeParamOrigin {
         if decl_identity_activation() {
             let file = self.source_file_atom_for(name_node);
             TypeParamOrigin::DeclScoped {
