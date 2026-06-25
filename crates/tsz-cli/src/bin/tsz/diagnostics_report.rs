@@ -252,6 +252,11 @@ fn build_diagnostics_report(
     report
         .perf_counter_dump
         .push_str(&tsz_solver::observability::type_param_divergence_report());
+    // #14345 WAVE-2-CLEAN measurement-only probe (REVERT before landing).
+    // Empty unless TSZ_PERF_COUNTERS is set.
+    report
+        .perf_counter_dump
+        .push_str(&tsz_solver::observability::wave2_clean_probe_report());
 
     report
 }

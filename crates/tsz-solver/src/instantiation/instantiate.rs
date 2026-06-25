@@ -1080,7 +1080,7 @@ mod homomorphic;
 mod indexed;
 mod mapped;
 mod signatures;
-mod substitution;
+pub(crate) mod substitution;
 
 pub use self::api::*;
 use self::api::{
