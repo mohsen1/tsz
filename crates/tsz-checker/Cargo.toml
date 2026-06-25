@@ -857,6 +857,9 @@ path = "tests/inherited_constructor_defaulted_type_arg_tests.rs"
 name = "ts2454_indexed_access_undefined_tests"
 path = "tests/ts2454_indexed_access_undefined_tests.rs"
 [[test]]
+name = "lib_namespace_sibling_external_module_tests"
+path = "tests/lib_namespace_sibling_external_module_tests.rs"
+[[test]]
 name = "intersection_infer_last_member_tests"
 path = "tests/intersection_infer_last_member_tests.rs"
 [[test]]
