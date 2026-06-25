@@ -339,8 +339,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use the relation-shape declared type here so a fresh-symbol
-        // initializer can flow into a `static readonly: unique symbol`.
-        let effective_declared_type = self.class_property_relation_declared_type(member_idx, prop);
+        // initializer can flow into a `static readonly: unique symbol`. For an
+        // optional property the target includes `undefined` (unless
+        // `exactOptionalPropertyTypes`), so `prop?: T = undefined` is accepted.
+        let effective_declared_type = self.class_property_initializer_target_type(member_idx, prop);
         let contextual_member_type =
             self.contextual_class_member_type_from_request(request, prop.name);
         let mut inferred_initializer_type = None;

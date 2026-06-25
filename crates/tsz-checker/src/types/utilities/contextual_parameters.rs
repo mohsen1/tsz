@@ -280,6 +280,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// The value type a class property's declaration-site initializer (and, more
+    /// generally, an assignment) is checked against.
+    ///
+    /// For an optional property (`prop?: T`) under `strictNullChecks` without
+    /// `exactOptionalPropertyTypes`, the declared value type implicitly includes
+    /// `undefined` — so `prop?: T = undefined` (and any `T | undefined`-valued
+    /// initializer) is accepted, mirroring tsc's `addOptionality`. The
+    /// optionality flag is otherwise carried separately on `PropertyInfo`, so the
+    /// bare [`class_property_relation_declared_type`] never augments the type; this
+    /// helper applies the augmentation only where the write/initializer target is
+    /// needed.
+    ///
+    /// Under `exactOptionalPropertyTypes` the bare type is kept, so initializing
+    /// an optional property to `undefined` still reports `TS2322` (only an
+    /// explicit `| undefined` in the annotation accepts it).
+    pub(crate) fn class_property_initializer_target_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+    ) -> Option<TypeId> {
+        let declared = self.class_property_relation_declared_type(member_idx, prop)?;
+        if prop.question_token
+            && self.ctx.strict_null_checks()
+            && !self.ctx.exact_optional_property_types()
+        {
+            // `union_with_undefined` is idempotent, so an annotation that already
+            // includes `undefined` (e.g. `prop?: T | undefined`) is unchanged.
+            return Some(crate::query_boundaries::common::union_with_undefined(
+                self.ctx.types,
+                declared,
+            ));
+        }
+        Some(declared)
+    }
+
     /// Lift a `symbol`-typed `static readonly p: unique symbol` annotation to
     /// `unique_symbol(SymbolRef(prop_sym))` so downstream `typeof Class.p`
     /// queries see a distinct unique-symbol identity, mirroring the wrapping
