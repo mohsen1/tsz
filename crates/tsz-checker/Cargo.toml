@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
+name = "enum_literal_comparison_overlap_tests"
+path = "tests/enum_literal_comparison_overlap_tests.rs"
+[[test]]
 name = "cannot_find_name_lib_hint_parity_tests"
 path = "tests/cannot_find_name_lib_hint_parity_tests.rs"
 [[test]]

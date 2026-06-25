@@ -1063,6 +1063,20 @@ impl<'a> CheckerState<'a> {
             return self.types_have_no_overlap(apparent_left, apparent_right);
         }
 
+        // An enum operand overlaps a *non-enum* operand exactly when one of its
+        // member values does, so relate it through its member-value union
+        // (`Color` vs `"red"` → `"red" | "blue"` vs `"red"` → overlap). Without
+        // this, a string enum reaches the assignability fall-through below where
+        // a string literal is never assignable to the nominal enum, producing a
+        // false TS2367. Enum-vs-enum stays nominal (the helper returns `None`).
+        if let Some((l, r)) = crate::query_boundaries::enum_analysis::enum_comparison_operands(
+            self.ctx.types,
+            left,
+            right,
+        ) {
+            return self.types_have_no_overlap(l, r);
+        }
+
         // For type parameters, delegate to the comparability check which correctly handles:
         // - T vs {} → comparable (overlap exists, return false)
         // - T vs U (unrelated) → not comparable (no overlap, return true)

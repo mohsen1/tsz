@@ -382,6 +382,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // An enum operand is comparable to a *non-enum* operand through its
+        // member-value union (`switch(c: Color){ case "red": }` is comparable
+        // because `"red"` is a member value), while enum-vs-enum stays nominal.
+        // Without this, the nominal enum type reaches neither the assignability
+        // fast path nor the union decomposition below, so a valid string-enum
+        // case wrongly reports TS2678.
+        if let Some((src, tgt)) = crate::query_boundaries::enum_analysis::enum_comparison_operands(
+            self.ctx.types,
+            source_apparent,
+            target_apparent,
+        ) {
+            return self.is_type_comparable_to(src, tgt);
+        }
+
         // TSC's comparable relation decomposes unions and checks if ANY member
         // is related to the other type. This handles cases like:
         // - `User.A | User.B` comparable to `User.A` (User.A member matches)
