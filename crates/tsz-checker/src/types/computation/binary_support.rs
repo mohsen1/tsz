@@ -628,176 +628,6 @@ impl CheckerState<'_> {
         }
     }
 
-    fn expression_is_object_string_literal(&self, expr_idx: NodeIndex) -> bool {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        node.kind == SyntaxKind::StringLiteral as u16
-            && self
-                .ctx
-                .arena
-                .get_literal(node)
-                .is_some_and(|literal| literal.text == "object")
-    }
-
-    fn expression_is_typeof_identifier_symbol(
-        &mut self,
-        expr_idx: NodeIndex,
-        symbol_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-            return false;
-        }
-        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
-            return false;
-        };
-        unary.operator == SyntaxKind::TypeOfKeyword as u16
-            && self.expression_is_identifier_symbol(unary.operand, symbol_id)
-    }
-
-    fn expression_is_typeof_object_guard_for_symbol(
-        &mut self,
-        expr_idx: NodeIndex,
-        symbol_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return false;
-        }
-        let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
-            return false;
-        };
-        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16
-            && binary.operator_token != SyntaxKind::EqualsEqualsToken as u16
-        {
-            return false;
-        }
-
-        (self.expression_is_typeof_identifier_symbol(binary.left, symbol_id)
-            && self.expression_is_object_string_literal(binary.right))
-            || (self.expression_is_object_string_literal(binary.left)
-                && self.expression_is_typeof_identifier_symbol(binary.right, symbol_id))
-    }
-
-    fn expression_contains_typeof_object_guard_for_symbol(
-        &mut self,
-        expr_idx: NodeIndex,
-        symbol_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        if self.expression_is_typeof_object_guard_for_symbol(expr_idx, symbol_id) {
-            return true;
-        }
-
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
-            && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-        {
-            return self.expression_contains_typeof_object_guard_for_symbol(binary.left, symbol_id)
-                || self
-                    .expression_contains_typeof_object_guard_for_symbol(binary.right, symbol_id);
-        }
-
-        false
-    }
-
-    fn in_rhs_has_typeof_object_guard(&mut self, right_idx: NodeIndex) -> bool {
-        let stripped_right = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
-        let Some(right_node) = self.ctx.arena.get(stripped_right) else {
-            return false;
-        };
-        if right_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let Some(right_symbol) = self.resolve_identifier_symbol(stripped_right) else {
-            return false;
-        };
-
-        let mut current = right_idx;
-        let in_expression = loop {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-            else {
-                return false;
-            };
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                return false;
-            };
-            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
-                && parent_binary.operator_token == SyntaxKind::InKeyword as u16
-                && self.node_matches_after_outer_expressions(parent_binary.right, current)
-            {
-                break parent_idx;
-            }
-
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                    | syntax_kind_ext::AS_EXPRESSION
-                    | syntax_kind_ext::SATISFIES_EXPRESSION
-                    | syntax_kind_ext::NON_NULL_EXPRESSION
-                    | syntax_kind_ext::TYPE_ASSERTION
-            ) {
-                current = parent_idx;
-                continue;
-            }
-
-            return false;
-        };
-
-        current = in_expression;
-        loop {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-            else {
-                return false;
-            };
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                return false;
-            };
-
-            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
-                && parent_binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-            {
-                if self.node_matches_after_outer_expressions(parent_binary.right, current)
-                    && self.expression_contains_typeof_object_guard_for_symbol(
-                        parent_binary.left,
-                        right_symbol,
-                    )
-                {
-                    return true;
-                }
-                current = parent_idx;
-                continue;
-            }
-
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                    | syntax_kind_ext::AS_EXPRESSION
-                    | syntax_kind_ext::SATISFIES_EXPRESSION
-                    | syntax_kind_ext::NON_NULL_EXPRESSION
-                    | syntax_kind_ext::TYPE_ASSERTION
-            ) {
-                current = parent_idx;
-                continue;
-            }
-
-            return false;
-        }
-    }
-
     /// Get the operator name for a unary operator token (for TS17006 error messages).
     ///
     /// Returns the string representation of unary operators that are not allowed
@@ -1341,9 +1171,15 @@ impl CheckerState<'_> {
         } else {
             let type_may_represent_primitive =
                 in_operator::type_may_represent_primitive(self, right_type);
-            let truthiness_narrowed_unknown = self
-                .truthiness_narrowed_from_unknown(right_idx, right_type)
-                && !self.in_rhs_has_typeof_object_guard(right_idx);
+            // The flow type is the source of truth: when a `typeof x ===
+            // "object"` guard (in the same `&&` chain, an outer `if` body, a
+            // nested `if`, or via a stored boolean) has narrowed the RHS, the
+            // solver already produces `object` here, so
+            // `truthiness_narrowed_from_unknown` is false and TS2638 is not
+            // emitted. Only a still-`{}` flow type (truthiness alone, no
+            // `typeof` guard) reaches the diagnostic.
+            let truthiness_narrowed_unknown =
+                self.truthiness_narrowed_from_unknown(right_idx, right_type);
             if type_may_represent_primitive || truthiness_narrowed_unknown {
                 let truthiness_guarded_type_parameter =
                     in_operator::in_rhs_is_type_parameter_assignability_shape(

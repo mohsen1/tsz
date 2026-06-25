@@ -41,6 +41,7 @@ pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_declaration;
 mod def_mapping;
+mod def_mapping_env_writes;
 mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
 mod def_mapping_resolved_env;

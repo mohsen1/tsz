@@ -719,3 +719,65 @@ fn test_narrow_excluding_function_shares_the_budget() {
     bounded_ctx.set_narrow_excluding_budget(1);
     assert_eq!(bounded_ctx.narrow_excluding_function(param), param);
 }
+
+/// Regression (#14739): the false branch of a `x is Function` guard exclude-
+/// narrows the source by the global `Function`. When a top-level union member is
+/// itself an alias (`Lazy`/`Application`) whose body is a *union* carrying both a
+/// non-callable and a callable constituent (`Updater<P, R> = R | ((p) => R)`),
+/// the callable must be stripped from *inside* that member — tsc's `filterType`
+/// excludes per top-level constituent. Before the fix the whole alias member
+/// survived because it was not, *as a whole*, assignable to `Function`, leaving
+/// the callable in the false branch (false TS2322 in tanstack-router
+/// `functionalUpdate`). The descent is structural, so two differently numbered
+/// alias `DefId`s narrow identically.
+#[test]
+fn test_narrow_excluding_function_descends_into_union_bodied_alias_members() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+
+    let callable = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Two distinct aliases, each `<non-callable> | <callable>`.
+    let def_a = DefId(101);
+    let def_b = DefId(102);
+    let alias_a = interner.intern(TypeData::Lazy(def_a));
+    let alias_b = interner.intern(TypeData::Lazy(def_b));
+    let body_a = interner.union(vec![TypeId::STRING, callable]);
+    let body_b = interner.union(vec![TypeId::NUMBER, callable]);
+
+    struct AliasResolver {
+        entries: [(DefId, TypeId); 2],
+    }
+    impl TypeResolver for AliasResolver {
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            self.entries
+                .iter()
+                .find_map(|&(d, t)| (d == def_id).then_some(t))
+        }
+    }
+
+    let resolver = AliasResolver {
+        entries: [(def_a, body_a), (def_b, body_b)],
+    };
+    let ctx = NarrowingContext::new(&interner).with_resolver(&resolver);
+
+    let source = interner.union(vec![alias_a, alias_b]);
+    let function_type = ctx.function_type();
+
+    // The callable constituents are stripped from inside each alias body,
+    // leaving only the non-callable residual `string | number`.
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(ctx.narrow_excluding_type(source, function_type), expected);
+}

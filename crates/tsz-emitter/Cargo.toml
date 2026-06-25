@@ -71,6 +71,10 @@ name = "enum_metadata_number_tests"
 path = "tests/enum_metadata_number_tests.rs"
 
 [[test]]
+name = "decorator_metadata_type_only_tests"
+path = "tests/decorator_metadata_type_only_tests.rs"
+
+[[test]]
 name = "private_element_naming_tests"
 path = "tests/private_element_naming_tests.rs"
 
@@ -349,6 +353,10 @@ path = "tests/dynamic_import_amd_umd_parity_tests.rs"
 [[test]]
 name = "es5_instance_field_init_order_tests"
 path = "tests/es5_instance_field_init_order_tests.rs"
+
+[[test]]
+name = "logical_assignment_temp_numbering_tests"
+path = "tests/logical_assignment_temp_numbering_tests.rs"
 
 [lints]
 workspace = true

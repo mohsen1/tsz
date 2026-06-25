@@ -1553,7 +1553,6 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) -> Option<TypeId> {
         use crate::call_checker::CallableContext;
-        use tsz_parser::parser::syntax_kind_ext;
 
         // TS18046: Calling an expression of type `unknown` is not allowed.
         // tsc emits TS18046 instead of TS2349 when the callee is `unknown`.
@@ -1598,26 +1597,67 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ANY);
         }
 
-        // Calling `never` returns `never` (bottom type propagation).
-        // tsc treats `never` as having no call signatures.
-        // For method calls (e.g., `a.toFixed()` where `a: never`), TS2339 is already
-        // emitted by the property access check, so we suppress the redundant TS2349.
-        // For direct calls on `never` (e.g., `f()` where `f: never`), emit TS2349.
+        // Calling `never` returns `never` (bottom type propagation). tsc treats
+        // `never` as having no call signatures and reports TS2349 — the only
+        // exception is when a dotted property access on a `never` receiver
+        // (`a.m()` where `a: never`) already emitted the companion TS2339
+        // ("Property 'm' does not exist on type 'never'"). Element access on
+        // `never` (`a["m"]()`) is silent, and a property/index that legitimately
+        // resolves to `never` (`o.k()` / `o["k"]()` where the member is typed
+        // `never`) emits no companion, so those still warrant TS2349.
         if callee_type == TypeId::NEVER {
-            let is_method_call = matches!(
-                self.ctx.arena.kind_at(callee_expr),
-                Some(
-                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                )
-            );
-            if !is_method_call {
+            if !self.never_callee_has_companion_property_diagnostic(callee_expr) {
                 self.error_not_callable_at(callee_type, callee_expr);
             }
             return Some(TypeId::NEVER);
         }
 
         None
+    }
+
+    /// Whether a call with a `never` callee already has a companion TS2339
+    /// ("Property 'p' does not exist on type 'never'") and so should suppress
+    /// the redundant TS2349 ("not callable") diagnostic.
+    ///
+    /// The companion fires from the member-access leg itself. Reproduce the two
+    /// shapes that tsz's property/element-access checks already report:
+    /// - When the receiver is **entirely nullish** (`null`/`undefined`), both a
+    ///   dotted (`o?.m`) and an indexed (`o?.["m"]`) optional access narrow the
+    ///   receiver to `never` and report TS2339, so the call leg stays silent.
+    /// - A **dotted** property access additionally reports TS2339 when the
+    ///   non-nullish receiver slice is itself `never` (`x.a` where `x: never`).
+    ///
+    /// Element access on a `never` receiver (`x["a"]`) is silent, and any member
+    /// that legitimately resolves to a `never`-typed value on a non-`never`,
+    /// non-nullish receiver (`o.k` / `o["k"]` where the member is typed `never`)
+    /// emits no companion — those keep TS2349, matching tsc. Parentheses,
+    /// non-null assertions, and type assertions around the callee are unwrapped
+    /// before inspecting the access shape.
+    fn never_callee_has_companion_property_diagnostic(&mut self, callee_expr: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // `access_receiver_type` unwraps parens/assertions and yields `None`
+        // for anything that is not a property or element access.
+        let Some(receiver) = self.access_receiver_type(callee_expr) else {
+            return false;
+        };
+        let unwrapped = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(callee_expr);
+        let is_property =
+            self.ctx.arena.kind_at(unwrapped) == Some(syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION);
+        let evaluated = self.evaluate_application_type(receiver);
+        match self.split_nullish_type(evaluated).0 {
+            // Receiver is entirely nullish: the optional access already
+            // narrowed it to `never` and reported TS2339.
+            None => true,
+            // A dotted property access on a `never` receiver slice reports
+            // TS2339; an indexed access on `never` does not.
+            Some(slice) => {
+                is_property && self.resolve_type_for_property_access(slice) == TypeId::NEVER
+            }
+        }
     }
 }
 

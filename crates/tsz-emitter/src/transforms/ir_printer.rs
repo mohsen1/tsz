@@ -164,12 +164,10 @@ impl<'a> IRPrinter<'a> {
     }
 
     fn emit_static_block_iife_expression(&mut self, statements: &[IRNode]) {
+        // The lowered static-block IIFE body is a synthesized function body: tsc
+        // always prints it multi-line, including the empty case
+        // (`(function () {\n})()`), never the single-line `{ }` form.
         self.write("(function () {");
-        if statements.is_empty() {
-            self.write(" })()");
-            return;
-        }
-
         self.write_line();
         self.increase_indent();
         for stmt in statements {

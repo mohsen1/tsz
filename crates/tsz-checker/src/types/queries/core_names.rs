@@ -599,12 +599,8 @@ impl<'a> CheckerState<'a> {
         }
         let name_key = name.to_string();
 
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            env.register_well_known_symbol_name(name_key.clone(), symbol_ref);
-        }
-        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-            env.register_well_known_symbol_name(name_key, symbol_ref);
-        }
+        self.ctx
+            .register_well_known_symbol_name_in_envs(name_key, symbol_ref);
     }
 
     pub(crate) fn register_well_known_symbol_name_from_canonical(

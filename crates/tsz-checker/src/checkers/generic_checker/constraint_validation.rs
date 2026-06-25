@@ -64,7 +64,15 @@ impl CheckerState<'_> {
                     // apparent constraint (`string[][number]` -> `string`) for the
                     // diagnostic display on a genuine violation.
                     let reduced_constraint = self.evaluate_type_for_assignability(inst_constraint);
-                    if !matches!(reduced_constraint, TypeId::ANY | TypeId::UNKNOWN) {
+                    // A constraint is a top type not only when it reduces to the
+                    // canonical `any`/`unknown`, but also when it is structurally
+                    // equal to `unknown` — e.g. `{} | null | undefined` (TypeScript's
+                    // `NonReducibleUnknown` idiom), which `unknown` is assignable to.
+                    // Defer to the assignability relation so `unknown` satisfies any
+                    // such top-type constraint, matching tsc (xstate `NonReducibleUnknown`).
+                    if !matches!(reduced_constraint, TypeId::ANY | TypeId::UNKNOWN)
+                        && !self.is_assignable_to(TypeId::UNKNOWN, reduced_constraint)
+                    {
                         let constraint_str =
                             self.format_type_diagnostic_constraint(reduced_constraint);
                         self.error_at_node_msg(

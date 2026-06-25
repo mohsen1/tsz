@@ -464,6 +464,15 @@ pub struct Printer<'a> {
     /// Marker that the next block emission is a function body.
     pub(crate) emitting_function_body_block: bool,
 
+    /// Marker that the next function-body block is a *synthesized* body (e.g. the
+    /// arrow/function IIFE that lowers a `static {}` class block to a target
+    /// below ES2022). tsc builds these bodies as fresh synthesized blocks with no
+    /// source range, so they always print multi-line regardless of how the
+    /// original braces were laid out in source. Without this, the source
+    /// single-line heuristic (`is_single_line`) leaks into the synthesized IIFE
+    /// and emits `(() => { stmt; })()` where tsc emits the multi-line form.
+    pub(crate) force_function_body_multiline: bool,
+
     /// Set while emitting the expression that is the synthesized `return`
     /// argument of a concise-body arrow function converted to a block body
     /// (e.g. `=> classExpr` lowered to `=> { var _a; return _a = classExpr,
@@ -554,6 +563,17 @@ pub struct Printer<'a> {
     /// Set during `emit_legacy_member_decorator_calls` so `serialize_type_for_metadata` can
     /// resolve generic type parameters to "Object".
     pub(crate) metadata_class_type_params: Option<Vec<String>>,
+
+    /// True while serializing the *target* of a type alias for decorator metadata.
+    /// In this mode a type reference that names a runtime value (class/enum) is
+    /// serialized as its declared object type (`Object`/`Number`) instead of the
+    /// value's binding, because `tsc` resolves an alias to its declared type and
+    /// never chases the alias to a constructor value (`type A = SomeClass` -> `Object`).
+    pub(crate) metadata_in_alias_target: bool,
+
+    /// Recursion guard for alias-target metadata serialization, so a cyclic alias
+    /// (`type A = B; type B = A`) cannot loop forever; past the cap we yield `Object`.
+    pub(crate) metadata_alias_depth: u32,
 
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.

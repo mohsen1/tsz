@@ -280,6 +280,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// The assignability target for a class property's declaration-site
+    /// initializer. An optional property (`prop?: T`) has declared type
+    /// `T | undefined` under `strictNullChecks` without
+    /// `exactOptionalPropertyTypes`, so its initializer (e.g. `= undefined`) is
+    /// checked against `T | undefined`; otherwise the bare declared type is used.
+    /// Scoped to the initializer relation — it does not change the member's
+    /// stored type, the contextual type, or the excess-property shape. (#14737)
+    pub(crate) fn class_property_init_relation_target(
+        &mut self,
+        prop: &PropertyDeclData,
+        declared_type: TypeId,
+    ) -> TypeId {
+        if prop.question_token
+            && declared_type != TypeId::ANY
+            && declared_type != TypeId::ERROR
+            && self.ctx.strict_null_checks()
+            && !self.ctx.exact_optional_property_types()
+        {
+            self.ctx
+                .types
+                .factory()
+                .union2(declared_type, TypeId::UNDEFINED)
+        } else {
+            declared_type
+        }
+    }
+
     /// Lift a `symbol`-typed `static readonly p: unique symbol` annotation to
     /// `unique_symbol(SymbolRef(prop_sym))` so downstream `typeof Class.p`
     /// queries see a distinct unique-symbol identity, mirroring the wrapping

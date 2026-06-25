@@ -43,6 +43,155 @@ fn assert_clean(files: &[(&str, &str)], entry: &str) {
     assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
 }
 
+// --- a local generic type alias wrapping a re-exported generic interface ---
+//
+// `type L<T> = Box<T>` forwards its argument into `Box`, reached through a
+// barrel re-export. The shared evaluator substitutes the *alias* parameter
+// correctly (`L<number>` -> `Box<number>`) but then drops the *interface*
+// parameter substitution on the cross-arena `Box<number>`, surfacing the
+// inherited member as the unsubstituted declared `T` (a false TS2322). A direct
+// interface receiver avoids this because it is materialized through
+// `resolve_application_base_body`; the alias wrapper now reaches the same
+// materialization via `materialize_alias_wrapped_interface_receiver`.
+
+#[test]
+fn member_access_through_alias_over_value_reexport() {
+    assert_clean(
+        &[
+            ("./decl.ts", "export interface Box<T> { value: T; }\n"),
+            ("./barrel.ts", "export { Box } from './decl';\n"),
+            (
+                "./main.ts",
+                "import type { Box } from './barrel';\ntype Wrap<T> = Box<T>;\ndeclare const h: Wrap<number>;\nconst n: number = h.value;\n",
+            ),
+        ],
+        "./main.ts",
+    );
+}
+
+#[test]
+fn member_access_through_alias_over_type_only_reexport() {
+    assert_clean(
+        &[
+            ("./model.ts", "export interface Cell<V> { payload: V; }\n"),
+            ("./index.ts", "export type { Cell } from './model';\n"),
+            (
+                "./consumer.ts",
+                "import type { Cell } from './index';\ntype Slot<V> = Cell<V>;\ndeclare const c: Slot<string>;\nconst s: string = c.payload;\n",
+            ),
+        ],
+        "./consumer.ts",
+    );
+}
+
+#[test]
+fn member_access_through_alias_renames_parameter() {
+    // The alias parameter name differs from the interface parameter name; the
+    // forwarding must still bind the concrete argument to the inherited member.
+    assert_clean(
+        &[
+            ("./store.ts", "export interface Holder<T> { item: T; }\n"),
+            ("./gateway.ts", "export type { Holder } from './store';\n"),
+            (
+                "./app.ts",
+                "import type { Holder } from './gateway';\ntype Keep<Q> = Holder<Q>;\ndeclare const h: Keep<number>;\nconst n: number = h.item;\n",
+            ),
+        ],
+        "./app.ts",
+    );
+}
+
+#[test]
+fn member_access_through_alias_two_type_args() {
+    assert_clean(
+        &[
+            (
+                "./pair.ts",
+                "export interface Pair<A, B> { left: A; right: B; }\n",
+            ),
+            ("./barrel.ts", "export type { Pair } from './pair';\n"),
+            (
+                "./use.ts",
+                "import type { Pair } from './barrel';\ntype Combo<A, B> = Pair<A, B>;\ndeclare const c: Combo<number, string>;\nconst l: number = c.left;\nconst r: string = c.right;\n",
+            ),
+        ],
+        "./use.ts",
+    );
+}
+
+#[test]
+fn member_access_through_alias_wrong_arg_still_errors() {
+    // Negative control: a genuine mismatch must still report TS2322 — the
+    // forwarding applies the substitution rather than skipping the check.
+    let diags = check(
+        &[
+            ("./carrier.ts", "export interface Carrier<T> { load: T; }\n"),
+            ("./hub.ts", "export type { Carrier } from './carrier';\n"),
+            (
+                "./bad.ts",
+                "import type { Carrier } from './hub';\ntype Wrap<T> = Carrier<T>;\ndeclare const c: Wrap<string>;\nconst n: number = c.load;\n",
+            ),
+        ],
+        "./bad.ts",
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for string-vs-number mismatch through the alias, got: {diags:?}"
+    );
+}
+
+#[test]
+fn member_access_through_alias_over_direct_import_control() {
+    // Control: the same alias over a *direct* import already resolved correctly;
+    // it must stay clean (the fix only adds a recovery for the re-export hop).
+    assert_clean(
+        &[
+            ("./decl.ts", "export interface Box<T> { value: T; }\n"),
+            (
+                "./main.ts",
+                "import type { Box } from './decl';\ntype Wrap<T> = Box<T>;\ndeclare const h: Wrap<number>;\nconst n: number = h.value;\n",
+            ),
+        ],
+        "./main.ts",
+    );
+}
+
+#[test]
+fn member_access_through_alias_over_local_interface_control() {
+    // Control: an all-local alias-over-interface was already correct.
+    assert_clean(
+        &[(
+            "./main.ts",
+            "interface Box<T> { value: T; }\ntype Wrap<T> = Box<T>;\ndeclare const h: Wrap<number>;\nconst n: number = h.value;\n",
+        )],
+        "./main.ts",
+    );
+}
+
+#[test]
+#[ignore = "open follow-up: the assignment-target form (`const h: Wrap<number> = \
+            { value: 1 }`) does not route through the property-access receiver \
+            materialization, so the cross-arena interface application still drops \
+            its parameter substitution during relation evaluation. That is the \
+            general cross-file generic-interface instantiation root (#14344 \
+            type-parameter identity), not the property-access facet this slice \
+            fixes."]
+fn assignment_to_alias_over_reexport_target() {
+    assert_clean(
+        &[
+            ("./decl.ts", "export interface Box<T> { value: T; }\n"),
+            ("./barrel.ts", "export type { Box } from './decl';\n"),
+            (
+                "./main.ts",
+                "import type { Box } from './barrel';\ntype Wrap<T> = Box<T>;\nconst h: Wrap<number> = { value: 1 };\n",
+            ),
+        ],
+        "./main.ts",
+    );
+}
+
 // --- member access through each re-export form (consumer uses `import type`) ---
 
 #[test]

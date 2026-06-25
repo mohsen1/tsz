@@ -789,16 +789,24 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                // Emit the lowered IIFE into the writer at the target body indent
+                // (one level deeper than the surrounding class IIFE), then capture
+                // the multi-line text verbatim. Emitting at native indent — rather
+                // than re-indenting a single-line capture by string surgery —
+                // keeps each statement on its own line (matching tsc) and avoids
+                // corrupting multi-line literals (e.g. template strings) in the
+                // body.
                 let before = self.writer.len();
+                self.increase_indent();
                 self.emit_static_block_iife_expression_with_class_this(member_idx);
-                let captured = self.format_tc39_es5_static_block_iife(
-                    self.writer.get_output()[before..].trim(),
-                    &body_indent,
-                );
-                self.writer.truncate(before);
+                self.decrease_indent();
+                // Push the captured IIFE text straight into `out` (no owned copy):
+                // the borrow of the writer output ends before `truncate` rolls the
+                // staging emission back out of the writer.
                 out.push_str(&body_indent);
-                out.push_str(&captured);
+                out.push_str(self.writer.get_output()[before..].trim());
                 out.push_str(";\n");
+                self.writer.truncate(before);
                 continue;
             }
             if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
@@ -846,17 +854,6 @@ impl<'a> Printer<'a> {
             }
         }
         out
-    }
-
-    fn format_tc39_es5_static_block_iife(&self, captured: &str, body_indent: &str) -> String {
-        let Some(inner) = captured
-            .strip_prefix("(function () { ")
-            .and_then(|text| text.strip_suffix(" })()"))
-        else {
-            return captured.to_string();
-        };
-        let statement_indent = format!("{body_indent}    ");
-        format!("(function () {{\n{statement_indent}{inner}\n{body_indent}}})()")
     }
 
     fn emit_static_block_iife_expression_with_class_this(&mut self, static_block_idx: NodeIndex) {

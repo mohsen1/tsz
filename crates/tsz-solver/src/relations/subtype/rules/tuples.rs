@@ -365,82 +365,132 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a tuple type is a subtype of an array type.
     ///
-    /// Tuple is subtype of array if all tuple elements are subtypes of the array element type.
+    /// Tuple is subtype of array if the *union* of the tuple's element types is a
+    /// subtype of the array element type. tsc collects every positional/rest
+    /// element type, forms a single union, and relates it once to the array
+    /// element. Relating element-wise instead is observably different whenever the
+    /// union normalizes to something the individual members are not subtypes of:
+    /// most importantly `any | undefined` collapses to `any` (so
+    /// `[any, undefined] <: IObject[]` holds, where the per-element `undefined <:
+    /// IObject` would spuriously fail). Collect the expanded element types into a
+    /// union and relate that union once.
+    ///
     /// Handles both regular elements and rest elements (with expansion).
     ///
     /// ## Examples:
     /// - `[number, number]` <: `number[]` ✅
     /// - `[number, string]` <: `number[]` ❌ (string is not subtype of number)
     /// - `[number, ...string[]]` <: `(number | string)[]` ✅
+    /// - `[any, undefined]` <: `IObject[]` ✅ (`any | undefined` = `any`)
     pub(crate) fn check_tuple_to_array_subtype(
         &mut self,
         elems: TupleListId,
         t_elem: TypeId,
     ) -> SubtypeResult {
+        // Accumulate every expanded scalar element type so they can be unioned and
+        // related to the array element type *once*, reproducing tsc's union-then-
+        // relate behavior (notably `any` absorption).
+        let mut element_types: Vec<TypeId> = Vec::new();
         let elems = self.interner.tuple_list(elems);
         for elem in elems.iter() {
             if elem.rest {
                 let expansion = self.expand_tuple_rest(elem.type_id);
                 for fixed in expansion.fixed {
-                    if !self.check_subtype(fixed.type_id, t_elem).is_true() {
-                        return SubtypeResult::False;
+                    element_types.push(fixed.type_id);
+                }
+                if let Some(variadic) = expansion.variadic {
+                    // `expand_tuple_rest` reduces a plain element spread
+                    // (`...undefined[]`, `...string[]`) to its element type, but
+                    // keeps an *instantiable* spread (`...X` where `X` is a type
+                    // parameter or deferred conditional) unreduced as the variadic.
+                    //
+                    // A plain element folds into the element union alongside the
+                    // other scalar elements, so `...undefined[]`'s `undefined`
+                    // participates in the `any` absorption. An unreduced array-like
+                    // spread instead needs the array-form `[...X] <: E[]` ⇒
+                    // `X <: E[]` handling below, which can resolve the spread
+                    // through its constraint; only if none of those array-form
+                    // probes apply do we fold the spread in as a single element
+                    // (matching the original direct `variadic <: E` relation).
+                    if array_element_type(self.interner, elem.type_id).is_some() {
+                        // Concrete array/tuple spread (`...undefined[]`): `variadic`
+                        // is its element type. Fold it into the union.
+                        element_types.push(variadic);
+                    } else {
+                        // `[...X] <: E[]` reduces to `X <: E[]` when the spread `X`
+                        // is itself array-like. expand_tuple_rest keeps such a
+                        // spread unreduced as the variadic — a type parameter
+                        // constrained to an array/tuple or a deferred conditional
+                        // like `Parameters<F>` whose base constraint is array-like.
+                        // Relate the spread to the array form `E[]` (which resolves
+                        // an instantiable spread through its constraint), or fall
+                        // back to the constraint's rest-spread element type.
+                        let variadic_as_array = self.interner.array(t_elem);
+                        let array_form_ok = self
+                            .check_subtype(variadic, variadic_as_array)
+                            .is_true()
+                            || type_param_info(self.interner, variadic).is_some_and(|info| {
+                                info.constraint.is_some_and(|c| {
+                                    let e = crate::type_queries::rest_spread_element_type(
+                                        self.interner,
+                                        c,
+                                    );
+                                    // `rest_spread_element_type` returns its input
+                                    // unchanged for a non-array-like constraint;
+                                    // `e != c` means the constraint actually
+                                    // decomposed to an element type.
+                                    e != c && self.check_subtype(e, t_elem).is_true()
+                                })
+                            })
+                            // A deferred infer-extraction conditional spread element
+                            // (`[...Parameters<F>] <: never[]`) decomposes only after
+                            // `getConstraintFromConditionalType` resolves it to its
+                            // array base; check that base's element type against the
+                            // target.
+                            || self.infer_extraction_conditional_constraint(variadic).is_some_and(
+                                |c| {
+                                    let e = crate::type_queries::rest_spread_element_type(
+                                        self.interner,
+                                        c,
+                                    );
+                                    e != c && self.check_subtype(e, t_elem).is_true()
+                                },
+                            );
+                        if !array_form_ok {
+                            // Not an array-like spread that resolved through its
+                            // constraint: treat the spread as a single element and
+                            // fold it into the union (e.g. bare `...T`), so the
+                            // single union relation decides — and `any` still
+                            // absorbs it when present.
+                            element_types.push(variadic);
+                        }
                     }
                 }
-                if let Some(variadic) = expansion.variadic
-                    && !self.check_subtype(variadic, t_elem).is_true()
-                {
-                    // `[...X] <: E[]` reduces to `X <: E[]` when the spread `X` is
-                    // itself array-like. expand_tuple_rest keeps such a spread
-                    // unreduced as the variadic — a type parameter constrained to
-                    // an array/tuple or a deferred conditional like `Parameters<F>`
-                    // whose base constraint is array-like. Relate the spread to the
-                    // array form `E[]` (which resolves an instantiable spread
-                    // through its constraint), or fall back to the constraint's
-                    // rest-spread element type.
-                    let variadic_as_array = self.interner.array(t_elem);
-                    let ok = self.check_subtype(variadic, variadic_as_array).is_true()
-                        || type_param_info(self.interner, variadic).is_some_and(|info| {
-                            info.constraint.is_some_and(|c| {
-                                let e =
-                                    crate::type_queries::rest_spread_element_type(self.interner, c);
-                                // `rest_spread_element_type` returns its input unchanged
-                                // for a non-array-like constraint; `e != c` means the
-                                // constraint actually decomposed to an element type.
-                                 e != c && self.check_subtype(e, t_elem).is_true()
-                             })
-                         })
-                        // A deferred infer-extraction conditional spread element
-                        // (`[...Parameters<F>] <: never[]`) decomposes only after
-                        // `getConstraintFromConditionalType` resolves it to its
-                        // array base; check that base's element type against the
-                        // target.
-                        || self
-                            .infer_extraction_conditional_constraint(variadic)
-                            .is_some_and(|c| {
-                                let e = crate::type_queries::rest_spread_element_type(
-                                    self.interner,
-                                    c,
-                                );
-                                e != c && self.check_subtype(e, t_elem).is_true()
-                            });
-                    if !ok {
-                        return SubtypeResult::False;
-                    }
-                }
-                // Check tail elements from nested tuple spreads
+                // Tail elements from nested tuple spreads
                 for tail_elem in expansion.tail {
-                    if !self.check_subtype(tail_elem.type_id, t_elem).is_true() {
-                        return SubtypeResult::False;
-                    }
+                    element_types.push(tail_elem.type_id);
                 }
             } else {
-                // Regular element: T <: U
-                if !self.check_subtype(elem.type_id, t_elem).is_true() {
-                    return SubtypeResult::False;
-                }
+                // Regular element
+                element_types.push(elem.type_id);
             }
         }
-        SubtypeResult::True
+
+        if element_types.is_empty() {
+            // `[] <: E[]` (or a tuple that expanded only to array-form spreads,
+            // already validated above): no scalar elements to constrain.
+            return SubtypeResult::True;
+        }
+
+        // Union the collected element types once. `interner.union` applies tsc's
+        // universal absorptions (`any | T` = `any`, literal/primitive collapse),
+        // so `any | undefined` becomes `any` and the single relation succeeds.
+        let union = self.interner.union(element_types);
+        if self.check_subtype(union, t_elem).is_true() {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
     }
 
     /// Expand a tuple rest element into its constituent parts.
