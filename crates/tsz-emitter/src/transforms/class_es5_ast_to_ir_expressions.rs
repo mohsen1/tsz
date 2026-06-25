@@ -133,6 +133,22 @@ impl<'a> AstToIr<'a> {
                 return optional_call;
             }
 
+            // Private member call `recv.#m(args)`: a private method, a private
+            // field holding a function, or a private getter invoked in call
+            // position. The member is read through `__classPrivateFieldGet(...)`
+            // and invoked with `.call(recv, args)` so the original receiver is
+            // preserved as `this` (mirroring tsc and the main, non-ES5 emitter).
+            // Without `.call`, a private method read (`kind: "m"`) would emit the
+            // bare callee `recv.()` because a private identifier has no plain
+            // property name; the `.call` form is what makes the lowering valid.
+            if let Some(private_call) = self.try_convert_private_member_call(
+                call.expression,
+                &args,
+                node.is_optional_chain(),
+            ) {
+                return private_call;
+            }
+
             let callee = self.convert_expression(call.expression);
             IRNode::CallExpr {
                 callee: Box::new(callee),
@@ -141,6 +157,62 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    /// Lower `recv.#name(args)` where `#name` is a private member with a read
+    /// slot (method, function-valued field, or getter) to
+    /// `__classPrivateFieldGet(recv, brand, kind[, fn]).call(recv, args)`.
+    ///
+    /// The receiver is referenced twice (once to read the member, once as the
+    /// `.call` `this`), so a side-effecting receiver is captured once into a
+    /// hoisted temp: `(_a = side()).….call(_a, args)`. Returns `None` for a
+    /// non-private callee, an optional chain (handled separately), or a private
+    /// name with no read slot (e.g. a static private method, left to the
+    /// fallthrough).
+    fn try_convert_private_member_call(
+        &self,
+        callee_idx: NodeIndex,
+        args: &[IRNode],
+        is_optional_chain: bool,
+    ) -> Option<IRNode> {
+        if is_optional_chain {
+            return None;
+        }
+        let (receiver_idx, clean) = self.private_access_target(callee_idx)?;
+        // A private name with no read slot (e.g. a static private method) is
+        // left to the fallthrough. Checked before any temp is allocated so the
+        // fallthrough cannot leak a hoisted `var`.
+        if !self.has_private_read_slot(&clean) {
+            return None;
+        }
+
+        // Capture a side-effecting receiver once so it is evaluated a single
+        // time and shared between the member read and the `.call` `this`.
+        let (get_ir, call_receiver) =
+            if crate::transforms::emit_utils::is_simple_copiable_expression(
+                self.arena,
+                receiver_idx,
+            ) {
+                (
+                    self.private_field_get_ir(receiver_idx, &clean)?,
+                    self.convert_expression(receiver_idx),
+                )
+            } else {
+                let temp = self.generate_hoisted_temp();
+                let captured = IRNode::Parenthesized(Box::new(IRNode::assign(
+                    IRNode::id(temp.clone()),
+                    self.convert_expression(receiver_idx),
+                )));
+                (
+                    self.private_field_get_ir_with_receiver(captured, &clean)?,
+                    IRNode::id(temp),
+                )
+            };
+
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(call_receiver);
+        call_args.extend(args.iter().cloned());
+        Some(IRNode::call(IRNode::prop(get_ir, "call"), call_args))
     }
 
     fn convert_wrapped_dynamic_import(&self, args: Option<&NodeList>) -> IRNode {
@@ -424,18 +496,8 @@ impl<'a> AstToIr<'a> {
                 if let Some(ident) = self.arena.get_identifier(name_node) {
                     let raw = &ident.escaped_text;
                     let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
-                    if let Some((storage_var, kind)) = self.private_read_info(clean) {
-                        let object = self.convert_expression(access.expression);
-                        return IRNode::call(
-                            IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
-                                "__classPrivateFieldGet",
-                            )),
-                            vec![
-                                object,
-                                IRNode::id(storage_var),
-                                IRNode::StringLiteral(kind.into()),
-                            ],
-                        );
+                    if let Some(get_ir) = self.private_field_get_ir(access.expression, clean) {
+                        return get_ir;
                     }
                 }
                 // Unknown private name — fall through to ASTRef
@@ -547,18 +609,10 @@ impl<'a> AstToIr<'a> {
         }
     }
 
-    /// If `idx` is a `recv.#name` property access whose member is a private
-    /// field or accessor with **both** a read and a write slot, and whose
-    /// receiver is a simple, side-effect-free expression safe to evaluate more
-    /// than once, return `(receiver_idx, clean_name)`.
-    ///
-    /// Compound assignment (`this.#x += v`) and `++`/`--` mutation read the slot
-    /// and then write it, so they reference the receiver twice. A non-simple
-    /// receiver (which must be evaluated exactly once) and a private *method*
-    /// (no field slot) are intentionally rejected here and left to the existing
-    /// fallthrough. The rule keys on the member being a `PrivateIdentifier` with
-    /// a storage entry, never on its spelling.
-    fn private_mutation_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
+    /// Decompose a `recv.#name` property access into `(receiver_idx,
+    /// clean_name)`, or `None` when `idx` is not a private-identifier property
+    /// access. Pure AST shape — it does not consult the storage maps.
+    fn private_access_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
         let node = self.arena.get(idx)?;
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
@@ -571,33 +625,61 @@ impl<'a> AstToIr<'a> {
         let ident = self.arena.get_identifier(name_node)?;
         let raw = &ident.escaped_text;
         let clean = raw.strip_prefix('#').unwrap_or(raw.as_str()).to_string();
-        // Read-modify-write needs both a get slot and a set slot.
-        self.private_read_info(&clean)?;
-        self.private_write_info(&clean)?;
-        if !crate::transforms::emit_utils::is_simple_copiable_expression(
-            self.arena,
-            access.expression,
-        ) {
-            return None;
-        }
         Some((access.expression, clean))
     }
 
-    /// `__classPrivateFieldGet(receiver, <read_var>, "<read_kind>")` for a known
-    /// private field/accessor read. `None` when the name has no read slot.
+    /// If `idx` is a `recv.#name` property access whose member is a private
+    /// field or accessor with **both** a read and a write slot, and whose
+    /// receiver is a simple, side-effect-free expression safe to evaluate more
+    /// than once, return `(receiver_idx, clean_name)`.
+    ///
+    /// Compound assignment (`this.#x += v`) and `++`/`--` mutation read the slot
+    /// and then write it, so they reference the receiver twice. A non-simple
+    /// receiver (which must be evaluated exactly once) and a private *method*
+    /// (no field slot) are intentionally rejected here and left to the existing
+    /// fallthrough. The rule keys on the member being a `PrivateIdentifier` with
+    /// a storage entry, never on its spelling.
+    fn private_mutation_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
+        let (receiver_idx, clean) = self.private_access_target(idx)?;
+        // Read-modify-write needs both a get slot and a set slot.
+        self.private_read_info(&clean)?;
+        self.private_write_info(&clean)?;
+        if !crate::transforms::emit_utils::is_simple_copiable_expression(self.arena, receiver_idx) {
+            return None;
+        }
+        Some((receiver_idx, clean))
+    }
+
+    /// `__classPrivateFieldGet(receiver, <brand>, "<kind>"[, <fn>])` for a known
+    /// private field/accessor/method read. `None` when the name has no read slot.
     fn private_field_get_ir(&self, receiver_idx: NodeIndex, clean_name: &str) -> Option<IRNode> {
-        let (storage_var, kind) = self.private_read_info(clean_name)?;
+        self.private_field_get_ir_with_receiver(self.convert_expression(receiver_idx), clean_name)
+    }
+
+    /// Like [`Self::private_field_get_ir`] but with a pre-built receiver node,
+    /// so a side-effecting receiver can be captured once (e.g.
+    /// `(_a = side())`) before it is reused by a `.call`.
+    fn private_field_get_ir_with_receiver(
+        &self,
+        receiver: IRNode,
+        clean_name: &str,
+    ) -> Option<IRNode> {
+        let (brand_var, kind, member_ref) = self.private_read_info(clean_name)?;
+        let mut args = vec![
+            receiver,
+            IRNode::id(brand_var),
+            IRNode::StringLiteral(kind.into()),
+        ];
+        if let Some(member_ref) = member_ref {
+            args.push(IRNode::id(member_ref));
+        }
         Some(IRNode::call(
             IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldGet")),
-            vec![
-                self.convert_expression(receiver_idx),
-                IRNode::id(storage_var),
-                IRNode::StringLiteral(kind.into()),
-            ],
+            args,
         ))
     }
 
-    /// `__classPrivateFieldSet(receiver, <write_var>, value, "<write_kind>")` for
+    /// `__classPrivateFieldSet(receiver, <brand>, value, "<kind>"[, <fn>])` for
     /// a known private field/accessor write. `None` when the name has no write
     /// slot (e.g. a getter-only accessor).
     fn private_field_set_ir(
@@ -606,15 +688,19 @@ impl<'a> AstToIr<'a> {
         clean_name: &str,
         value: IRNode,
     ) -> Option<IRNode> {
-        let (storage_var, kind) = self.private_write_info(clean_name)?;
+        let (brand_var, kind, member_ref) = self.private_write_info(clean_name)?;
+        let mut args = vec![
+            self.convert_expression(receiver_idx),
+            IRNode::id(brand_var),
+            value,
+            IRNode::StringLiteral(kind.into()),
+        ];
+        if let Some(member_ref) = member_ref {
+            args.push(IRNode::id(member_ref));
+        }
         Some(IRNode::call(
             IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldSet")),
-            vec![
-                self.convert_expression(receiver_idx),
-                IRNode::id(storage_var),
-                value,
-                IRNode::StringLiteral(kind.into()),
-            ],
+            args,
         ))
     }
 
@@ -686,7 +772,7 @@ impl<'a> AstToIr<'a> {
         };
         // Short-circuit assignment may only be folded into an unconditional set
         // for a plain field; accessors keep their conditional-write semantics.
-        if self.private_write_info(&clean).map(|(_, kind)| kind) != Some("f") {
+        if self.private_write_info(&clean).map(|(_, kind, _)| kind) != Some("f") {
             return None;
         }
         let get_ir = self.private_field_get_ir(receiver_idx, &clean)?;
@@ -791,19 +877,24 @@ impl<'a> AstToIr<'a> {
                     if let Some(ident) = self.arena.get_identifier(name_node) {
                         let raw = &ident.escaped_text;
                         let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
-                        if let Some((storage_var, kind)) = self.private_write_info(clean) {
+                        if let Some((brand_var, kind, member_ref)) = self.private_write_info(clean)
+                        {
                             let receiver = self.convert_expression(lhs_access.expression);
                             let value = self.convert_expression(bin.right);
+                            let mut set_args = vec![
+                                receiver,
+                                IRNode::id(brand_var),
+                                value,
+                                IRNode::StringLiteral(kind.into()),
+                            ];
+                            if let Some(member_ref) = member_ref {
+                                set_args.push(IRNode::id(member_ref));
+                            }
                             return IRNode::call(
                                 IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
                                     "__classPrivateFieldSet",
                                 )),
-                                vec![
-                                    receiver,
-                                    IRNode::id(storage_var),
-                                    value,
-                                    IRNode::StringLiteral(kind.into()),
-                                ],
+                                set_args,
                             );
                         }
                     }
@@ -1105,6 +1196,120 @@ mod optional_chain_in_class_member_tests {
         printer.get_output().to_string()
     }
 
+    // Structural rule: at ES5 a `recv.#name(args)` call where `#name` is a
+    // private member with a read slot (method, function-valued field, or
+    // getter) lowers to `__classPrivateFieldGet(recv, brand, kind[, fn])
+    // .call(recv, args)`. The brand for an instance method/getter is the
+    // class's `_instances` WeakSet (never the function var), and the call is
+    // routed through `.call` so the receiver is preserved as `this`. Without
+    // this the private method read had no brand entry and emitted the invalid
+    // bare callee `recv.()`. The rule keys on the member's read slot and kind,
+    // not on its spelling — these tests vary class/member/binder names.
+
+    #[test]
+    fn instance_private_method_call_uses_instances_brand_and_call() {
+        let output = emit_es5(
+            "class Counter {\n    #step(n: number) { return n; }\n    bump() { return this.#step(2); }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldGet(this, _Counter_instances, \"m\", _Counter_step).call(this, 2)"
+            ),
+            "Instance `this.#step(2)` must read through the `_instances` brand and invoke via `.call`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("this.()") && !output.contains(".()"),
+            "Lowered output must not contain the invalid bare private callee.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn instance_private_method_reference_without_call_reads_function_value() {
+        // A private method read in value position (not called) lowers to the
+        // bare 4-arg get with no `.call`.
+        let output = emit_es5(
+            "class Registry {\n    #lookup() { return 1; }\n    handle() { const f = this.#lookup; return f; }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldGet(this, _Registry_instances, \"m\", _Registry_lookup)"
+            ),
+            "A private-method reference must read the 4-arg function value.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_Registry_lookup).call"),
+            "A bare reference must not synthesize a `.call`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn instance_private_getter_in_call_position_preserves_receiver() {
+        // Distinct binder names (anti-hardcoding): the call lowering keys on the
+        // read slot, not the member spelling.
+        let output = emit_es5(
+            "class Service {\n    get #handler() { return () => 1; }\n    run() { return this.#handler(); }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldGet(this, _Service_instances, \"a\", _Service_handler_get).call(this)"
+            ),
+            "A private getter invoked in call position must brand against `_instances` and `.call`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn instance_private_method_call_captures_side_effecting_receiver_once() {
+        // The receiver is referenced twice (read + `.call` this), so a
+        // side-effecting receiver must be captured into a single hoisted temp.
+        let output = emit_es5(
+            "class Node {\n    #weight() { return 1; }\n    total(make: () => Node) { return make().#weight(); }\n}\n",
+        );
+        assert!(
+            output.contains("(_a = make())")
+                && output.contains(
+                    "__classPrivateFieldGet((_a = make()), _Node_instances, \"m\", _Node_weight).call(_a)"
+                ),
+            "A side-effecting receiver must be captured once and reused by the `.call`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn instance_private_accessor_read_uses_instances_brand_and_getter_ref() {
+        let output = emit_es5(
+            "class Cell {\n    get #value() { return 7; }\n    peek() { return this.#value; }\n}\n",
+        );
+        assert!(
+            output
+                .contains("__classPrivateFieldGet(this, _Cell_instances, \"a\", _Cell_value_get)"),
+            "An instance accessor read must brand against `_instances` and pass the getter ref.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn instance_private_accessor_write_uses_instances_brand_and_setter_ref() {
+        let output = emit_es5(
+            "class Slot {\n    set #value(v: number) {}\n    fill() { this.#value = 9; }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Slot_instances, 9, \"a\", _Slot_value_set)"
+            ),
+            "An instance accessor write must brand against `_instances` and pass the setter ref.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_function_call_routes_through_call_to_preserve_this() {
+        // A private field holding a function is still read with kind "f", but a
+        // call must use `.call(this)` like tsc (preserving the receiver).
+        let output =
+            emit_es5("class Box {\n    #run = () => 1;\n    go() { return this.#run(); }\n}\n");
+        assert!(
+            output.contains("__classPrivateFieldGet(this, _Box_run, \"f\").call(this)"),
+            "A private field-function call must route through `.call(this)`.\nOutput:\n{output}"
+        );
+    }
+
     // Structural rule: when the ES5 class-IR converter sees a property/element
     // access (or `recv?.m()` method call) carrying `?.`, it must lower the
     // nullish short-circuit guard rather than dropping the token. The rule keys
@@ -1294,18 +1499,18 @@ mod optional_chain_in_class_member_tests {
     }
 
     #[test]
-    fn private_accessor_compound_uses_distinct_get_set_storage() {
-        // Accessor read/write use different storage vars and kind "a"; a compound
-        // assignment must thread the get-storage into the read and the
-        // set-storage into the write.
+    fn private_accessor_compound_uses_instances_brand_and_get_set_refs() {
+        // An instance accessor brands against `_Box_instances` and threads the
+        // getter as the trailing read argument and the setter as the trailing
+        // write argument (tsc's 4-arg get / 5-arg set forms).
         let output = emit_es5(
             "class Box {\n    get #val() { return 1; }\n    set #val(v: number) {}\n    add() {\n        this.#val += 3;\n    }\n}\n",
         );
         assert!(
-            output.contains("__classPrivateFieldGet(this, _Box_val_get, \"a\")")
-                && output.contains("__classPrivateFieldSet(this, _Box_val_set, ")
-                && output.contains(", \"a\")"),
-            "Accessor `#val += 3` must read get-storage and write set-storage with kind \"a\".\nOutput:\n{output}"
+            output.contains(
+                "__classPrivateFieldSet(this, _Box_instances, __classPrivateFieldGet(this, _Box_instances, \"a\", _Box_val_get) + 3, \"a\", _Box_val_set)"
+            ),
+            "Accessor `#val += 3` must brand against `_Box_instances` and pass the getter/setter refs.\nOutput:\n{output}"
         );
     }
 
@@ -1346,16 +1551,17 @@ mod optional_chain_in_class_member_tests {
 
     #[test]
     fn private_accessor_exponent_assign_threads_get_and_set_storage() {
-        // `**=` is unconditional, so it is also correct for accessors: read from
-        // get-storage, write to set-storage, kind "a".
+        // `**=` is unconditional, so it is also correct for accessors: read
+        // through the getter and write through the setter, both branded against
+        // the `_instances` `WeakSet` with kind "a".
         let output = emit_es5(
             "class Box {\n    get #v() { return 2; }\n    set #v(x: number) {}\n    grow() {\n        this.#v **= 4;\n    }\n}\n",
         );
         assert!(
             output.contains(
-                "__classPrivateFieldSet(this, _Box_v_set, Math.pow(__classPrivateFieldGet(this, _Box_v_get, \"a\"), 4), \"a\")"
+                "__classPrivateFieldSet(this, _Box_instances, Math.pow(__classPrivateFieldGet(this, _Box_instances, \"a\", _Box_v_get), 4), \"a\", _Box_v_set)"
             ),
-            "Accessor `#v **= 4` must read get-storage and write set-storage.\nOutput:\n{output}"
+            "Accessor `#v **= 4` must brand against `_Box_instances` and thread the getter/setter refs.\nOutput:\n{output}"
         );
     }
 
