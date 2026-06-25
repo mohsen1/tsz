@@ -11,7 +11,9 @@ use crate::query_boundaries::flow_analysis::{
     is_promise_like_type, literal_value, union_members_for_type, unwrap_promise_type_argument,
     widen_literal_to_primitive,
 };
-use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
+use crate::types_domain::queries::lib_resolution::{
+    keyword_name_to_type_id, keyword_syntax_to_type_id,
+};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -234,8 +236,51 @@ impl<'a> FlowAnalyzer<'a> {
                     elem,
                 ))
             }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                // Resolve an inline object type annotation (`{ v: string }`) so a
+                // reference whose declared type is a structural object resolves to a
+                // real object type the property-access fallback can read, instead of
+                // an opaque `Lazy`. Conservative: bail to `None` (keep the `Lazy`) if
+                // any member is not a plain typed property signature, so partial or
+                // unsupported shapes never produce a structurally wrong object type.
+                let type_literal = self.arena.get_type_literal(node)?;
+                let mut properties = Vec::with_capacity(type_literal.members.nodes.len());
+                for &member in &type_literal.members.nodes {
+                    let member_node = self.arena.get(member)?;
+                    if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                        return None;
+                    }
+                    let signature = self.arena.get_signature(member_node)?;
+                    if signature.type_annotation.is_none() {
+                        return None;
+                    }
+                    let name_atom = self.fallback_object_property_name_atom(signature.name)?;
+                    let member_type =
+                        self.fallback_type_from_type_node_syntax(signature.type_annotation)?;
+                    properties.push(if signature.question_token {
+                        PropertyInfo::opt(name_atom, member_type)
+                    } else {
+                        PropertyInfo::new(name_atom, member_type)
+                    });
+                }
+                Some(self.interner.factory().object(properties))
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let type_ref = self.arena.get_type_ref(node)?;
+                // Primitive keyword types (`string`, `number`, `boolean`, …) are
+                // parsed as bare type references whose name is a reserved keyword,
+                // not as dedicated keyword type nodes. They carry no binder symbol,
+                // so the symbol-resolution path below would bail and the syntactic
+                // fallback would return `None` whenever the annotation node has not
+                // been cached in `node_types`. Map the reserved keyword name to its
+                // built-in `TypeId` directly. These names cannot be user-declared,
+                // so this is a true-builtin lookup, not an identifier-string heuristic.
+                if type_ref.type_arguments.is_none()
+                    && let Some(name) = self.arena.get_identifier_at(type_ref.type_name)
+                    && let Some(builtin) = keyword_name_to_type_id(&name.escaped_text)
+                {
+                    return Some(builtin);
+                }
                 let sym_id = self
                     .binder
                     .resolve_identifier(self.arena, type_ref.type_name)
@@ -649,6 +694,23 @@ impl<'a> FlowAnalyzer<'a> {
                 self.resolve_symbol_to_lazy(SymbolRef(sym_id.0))
                     .map(|ty| self.resolve_lazy_via_env(ty))
             });
+        // Recover from an unresolved `Lazy` declared type. A parameter or
+        // block-scoped local whose declaration statement has not been checked in
+        // this pass (e.g. during inferred-return inference, which evaluates only
+        // return expressions and `if` conditions — not sibling assignment
+        // statements) resolves its symbol to a `Lazy(DefId)` that the
+        // `TypeEnvironment` cannot resolve here, so it leaks out opaque. An opaque
+        // `Lazy` is "subtype of nothing" for `narrow_assignment`, so an assignment
+        // RHS that reads such a reference (`x = param`, `x = local`) would silently
+        // contribute nothing to the flow type and the declared union would survive.
+        // Read the declaration's syntactic type annotation directly to recover the
+        // concrete declared type without depending on `node_types`/env priming.
+        let declared_type = match declared_type {
+            Some(ty) if self.is_unresolved_lazy_type(ty) => {
+                self.fallback_declared_annotation_type(decl).or(Some(ty))
+            }
+            other => other,
+        };
         if let (Some(initial_type), Some(flow_node)) =
             (declared_type, self.binder.get_node_flow(reference))
         {
@@ -658,6 +720,35 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
         declared_type.or_else(|| self.fallback_declaration_type(decl))
+    }
+
+    /// True when `ty` is a `Lazy(DefId)` that no `TypeEnvironment` resolution has
+    /// collapsed to a concrete type. Such a type carries no structural shape, so
+    /// flow narrowing (`narrow_assignment`, truthiness filtering) cannot reduce a
+    /// union against it; callers must recover a concrete declared type instead.
+    fn is_unresolved_lazy_type(&self, ty: TypeId) -> bool {
+        tsz_solver::type_queries::get_lazy_def_id(self.interner.as_type_database(), ty).is_some()
+    }
+
+    /// Resolve a declaration's declared type from its syntactic type annotation.
+    ///
+    /// Handles parameters and variable declarations — the binding forms whose
+    /// `Lazy(DefId)` can leak unresolved during inferred-return inference. Returns
+    /// `None` when the declaration has no annotation or the annotation syntax is
+    /// not one the syntactic resolver understands (callers then keep the `Lazy`).
+    fn fallback_declared_annotation_type(&self, decl: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(decl)?;
+        let annotation = match node.kind {
+            k if k == syntax_kind_ext::PARAMETER => self.arena.get_parameter(node)?.type_annotation,
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                self.arena.get_variable_declaration(node)?.type_annotation
+            }
+            _ => return None,
+        };
+        if annotation.is_none() {
+            return None;
+        }
+        self.fallback_type_from_type_node_syntax(annotation)
     }
 
     fn fallback_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
