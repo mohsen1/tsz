@@ -63,6 +63,9 @@ path = "tests/object_literal_unique_symbol_member_tests.rs"
 name = "unique_symbol_grammar_tests"
 path = "tests/unique_symbol_grammar_tests.rs"
 [[test]]
+name = "type_operator_missing_operand_recovery_tests"
+path = "tests/type_operator_missing_operand_recovery_tests.rs"
+[[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
 [[test]]
@@ -119,6 +122,9 @@ path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
 name = "return_context_identity_wrapper_literal_tests"
 path = "tests/return_context_identity_wrapper_literal_tests.rs"
+[[test]]
+name = "nested_generic_union_callback_return_tests"
+path = "tests/nested_generic_union_callback_return_tests.rs"
 [[test]]
 name = "nested_mapped_optional_modifier_inline_application_tests"
 path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
@@ -1253,6 +1259,9 @@ path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 name = "ts2344_keyof_constraint_display_tests"
 path = "tests/ts2344_keyof_constraint_display_tests.rs"
 [[test]]
+name = "ts2344_conditional_constraint_display_tests"
+path = "tests/ts2344_conditional_constraint_display_tests.rs"
+[[test]]
 name = "keyof_call_parameter_display_tests"
 path = "tests/keyof_call_parameter_display_tests.rs"
 [[test]]
@@ -2195,6 +2204,9 @@ path = "tests/untyped_call_keyword_type_arg_tests.rs"
 [[test]]
 name = "destructuring_deferred_conditional_iterability_tests"
 path = "tests/destructuring_deferred_conditional_iterability_tests.rs"
+[[test]]
+name = "destructuring_fresh_union_member_tolerance_tests"
+path = "tests/destructuring_fresh_union_member_tolerance_tests.rs"
 [[test]]
 name = "es5_constrained_generic_array_iterability_tests"
 path = "tests/es5_constrained_generic_array_iterability_tests.rs"

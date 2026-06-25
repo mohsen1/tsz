@@ -1,6 +1,8 @@
 //! Helper types and functions for the ES5 class IR transformer.
 
-use crate::transforms::emit_utils::identifier_text;
+use crate::transforms::emit_utils::{
+    METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity, identifier_text,
+};
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -11,6 +13,19 @@ use tsz_scanner::SyntaxKind;
 /// Serialize a type annotation to a metadata runtime type string.
 /// Mirrors the `Printer::serialize_type_for_metadata` logic for ES5 context.
 pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String {
+    serialize_type_for_metadata_impl(arena, type_idx, false, 0)
+}
+
+/// `in_alias_target` is set while serializing the resolved target of a type
+/// alias: there a reference that names a runtime value classifies to its
+/// declared object type (`Object`) rather than the constructor binding, matching
+/// `tsc`'s "resolve the alias to its declared type, never chase it to a value".
+fn serialize_type_for_metadata_impl(
+    arena: &NodeArena,
+    type_idx: NodeIndex,
+    in_alias_target: bool,
+    alias_depth: u32,
+) -> String {
     let Some(type_node) = arena.get(type_idx) else {
         return "Object".to_string();
     };
@@ -35,20 +50,42 @@ pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex
             "Object".to_string()
         }
         k if k == syntax_kind_ext::TYPE_REFERENCE => {
-            if let Some(type_ref) = arena.get_type_ref(type_node) {
-                let name = get_identifier_text(arena, type_ref.type_name).unwrap_or_default();
-                match name.as_str() {
-                    "string" => "String".to_string(),
-                    "number" => "Number".to_string(),
-                    "boolean" => "Boolean".to_string(),
-                    "symbol" => "Symbol".to_string(),
-                    "bigint" => "BigInt".to_string(),
-                    "void" | "undefined" | "null" | "never" => "void 0".to_string(),
-                    "any" | "unknown" | "object" => "Object".to_string(),
-                    _ => name,
+            let Some(type_ref) = arena.get_type_ref(type_node) else {
+                return "Object".to_string();
+            };
+            let name = get_identifier_text(arena, type_ref.type_name).unwrap_or_default();
+            match name.as_str() {
+                "string" => return "String".to_string(),
+                "number" => return "Number".to_string(),
+                "boolean" => return "Boolean".to_string(),
+                "symbol" => return "Symbol".to_string(),
+                "bigint" => return "BigInt".to_string(),
+                "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
+                "any" | "unknown" | "object" => return "Object".to_string(),
+                _ => {}
+            }
+            // A type-only reference (interface / alias) has no runtime binding;
+            // emitting its bare name would throw a `ReferenceError` when the
+            // metadata is read. Classify it like `tsc` does.
+            match classify_metadata_entity(arena, name.as_str()) {
+                MetadataEntityKind::TypeAlias(target) => {
+                    if alias_depth >= METADATA_ALIAS_MAX_DEPTH {
+                        return "Object".to_string();
+                    }
+                    serialize_type_for_metadata_impl(arena, target, true, alias_depth + 1)
                 }
-            } else {
-                "Object".to_string()
+                MetadataEntityKind::TypeOnly => "Object".to_string(),
+                // A local runtime value, or a name with no local type-only
+                // evidence (a global lib value, an import, …). Inside an alias
+                // target it classifies to its declared object type (`Object`);
+                // otherwise it emits its binding verbatim.
+                MetadataEntityKind::ValueOrUnknown => {
+                    if in_alias_target {
+                        "Object".to_string()
+                    } else {
+                        name
+                    }
+                }
             }
         }
         k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => {
@@ -90,14 +127,25 @@ pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex
                     })
                     .collect();
                 if meaningful.len() == 1 {
-                    return serialize_type_for_metadata(arena, meaningful[0]);
+                    return serialize_type_for_metadata_impl(
+                        arena,
+                        meaningful[0],
+                        in_alias_target,
+                        alias_depth,
+                    );
                 }
                 if meaningful.len() > 1 {
-                    let first = serialize_type_for_metadata(arena, meaningful[0]);
+                    let first = serialize_type_for_metadata_impl(
+                        arena,
+                        meaningful[0],
+                        in_alias_target,
+                        alias_depth,
+                    );
                     if first != "Object"
-                        && meaningful[1..]
-                            .iter()
-                            .all(|&m| serialize_type_for_metadata(arena, m) == first)
+                        && meaningful[1..].iter().all(|&m| {
+                            serialize_type_for_metadata_impl(arena, m, in_alias_target, alias_depth)
+                                == first
+                        })
                     {
                         return first;
                     }
@@ -110,7 +158,12 @@ pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex
         }
         k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
             if let Some(wrapped) = arena.get_wrapped_type(type_node) {
-                return serialize_type_for_metadata(arena, wrapped.type_node);
+                return serialize_type_for_metadata_impl(
+                    arena,
+                    wrapped.type_node,
+                    in_alias_target,
+                    alias_depth,
+                );
             }
             "Object".to_string()
         }
@@ -137,20 +190,40 @@ pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex
         k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => "String".to_string(),
         k if k == syntax_kind_ext::TYPE_OPERATOR => {
             if let Some(type_op) = arena.get_type_operator(type_node) {
-                return serialize_type_for_metadata(arena, type_op.type_node);
+                return serialize_type_for_metadata_impl(
+                    arena,
+                    type_op.type_node,
+                    in_alias_target,
+                    alias_depth,
+                );
             }
             "Object".to_string()
         }
         k if k == syntax_kind_ext::OPTIONAL_TYPE => {
             if let Some(wrapped) = arena.get_wrapped_type(type_node) {
-                return serialize_type_for_metadata(arena, wrapped.type_node);
+                return serialize_type_for_metadata_impl(
+                    arena,
+                    wrapped.type_node,
+                    in_alias_target,
+                    alias_depth,
+                );
             }
             "Object".to_string()
         }
         k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
             if let Some(cond) = arena.get_conditional_type(type_node) {
-                let true_type = serialize_type_for_metadata(arena, cond.true_type);
-                let false_type = serialize_type_for_metadata(arena, cond.false_type);
+                let true_type = serialize_type_for_metadata_impl(
+                    arena,
+                    cond.true_type,
+                    in_alias_target,
+                    alias_depth,
+                );
+                let false_type = serialize_type_for_metadata_impl(
+                    arena,
+                    cond.false_type,
+                    in_alias_target,
+                    alias_depth,
+                );
                 if true_type == false_type {
                     return true_type;
                 }

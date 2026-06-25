@@ -1198,3 +1198,7 @@ pub fn parse_files_with_stats(files: Vec<(String, String)>) -> (Vec<ParseResult>
 #[cfg(test)]
 #[path = "../../../tests/parallel_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/cross_file_interface_merge_ts2717_driver_tests.rs"]
+mod cross_file_interface_merge_ts2717_driver_tests;

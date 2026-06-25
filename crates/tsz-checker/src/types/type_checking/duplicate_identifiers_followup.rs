@@ -718,6 +718,251 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect every global-scope interface declaration named `name` across the
+    /// program, paired with the index of the file that declares it.
+    ///
+    /// Only top-level interface declarations in files that are NOT external
+    /// modules are returned: those are the declarations that merge into a single
+    /// global interface symbol across files. Module-scoped interfaces with the
+    /// same name in different files are distinct symbols and never merge. This
+    /// runs only for the rare global-script program (the caller gates on the
+    /// current file being a non-module script), so a direct scan is sufficient.
+    fn global_script_interface_declarations(&self, name: &str) -> Vec<(NodeIndex, usize)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
+            };
+            if binder.is_external_module() {
+                continue;
+            }
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                    continue;
+                }
+                if arena
+                    .get_interface(stmt_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name)
+                {
+                    out.push((stmt_idx, file_idx));
+                }
+            }
+        }
+        out
+    }
+
+    /// Cross-file (cross-arena) global interface merge — TS2717.
+    ///
+    /// When the same global-scope interface is declared in two or more global
+    /// script files (non-module `.ts` / `.d.ts`) and the declarations disagree
+    /// on a property's type, tsc reports TS2717
+    /// ("Subsequent property declarations must have the same type") anchored at
+    /// the subsequent declaration. The same-file merge path
+    /// ([`Self::check_merged_interface_declaration_diagnostics`]) only ever sees
+    /// the current file's (local) declarations, because the upstream
+    /// `interface_decls` collection filters to `is_local`; a conflict that spans
+    /// files is therefore invisible to it and tsz emits nothing.
+    ///
+    /// This routine closes that gap order-independently — it never relies on the
+    /// merged symbol type (which is only populated cross-file once some file has
+    /// been checked, a per-file/parallel-order race). Instead it resolves the
+    /// canonical first-declaration property type directly:
+    /// - when the first declaration in program order is in the current file, via
+    ///   the full local type resolver, covering every annotation form;
+    /// - when it is in another file, via the foreign arena using only annotations
+    ///   that need no checker context (keyword / intrinsic types). Any other
+    ///   foreign first-declaration annotation is left unresolved and that property
+    ///   is conservatively skipped, so the check never emits a false positive.
+    ///
+    /// Each LOCAL subsequent property signature is compared against that canonical
+    /// type and TS2717 is emitted at the local member when the types differ.
+    /// Diagnostics are anchored only on local members, so each file's check
+    /// contributes its own subsequent-declaration errors and the union across all
+    /// files reproduces tsc's full set. Overlaps with the same-file path collapse
+    /// on the shared `(start, 2717)` dedup key.
+    pub(crate) fn check_cross_file_global_interface_member_conflicts(&mut self, name: &str) {
+        use crate::diagnostics::diagnostic_codes;
+        use crate::types_domain::queries::core::get_literal_property_name;
+        use rustc_hash::FxHashMap;
+        use std::sync::Arc;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // A single-file program cannot have a cross-file merge.
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return;
+        };
+        if all_arenas.len() <= 1 {
+            return;
+        }
+        // Own a handle to the arenas so the foreign-arena reads below do not
+        // borrow `self`, leaving `&mut self` free for type resolution.
+        let all_arenas = Arc::clone(all_arenas);
+
+        let decls = self.global_script_interface_declarations(name);
+        if decls.len() <= 1 {
+            return;
+        }
+        // Require declarations spanning at least two distinct files. A pure
+        // same-file merge is already handled by
+        // `check_merged_interface_declaration_diagnostics`.
+        let mut files: Vec<usize> = decls.iter().map(|&(_, f)| f).collect();
+        files.sort_unstable();
+        files.dedup();
+        if files.len() <= 1 {
+            return;
+        }
+
+        let current = self.ctx.current_file_idx;
+
+        // Generic global interfaces are skipped: a member that references the
+        // interface's own type parameter resolves to a distinct `TypeParameter`
+        // instance per declaration, which would compare unequal and produce a
+        // false TS2717. Cross-file generic global merges with conflicting members
+        // are vanishingly rare; the property-identity facet covers the reported
+        // cases.
+        for &(decl_idx, file_idx) in &decls {
+            let Some(arena) = all_arenas.get(file_idx) else {
+                continue;
+            };
+            if arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_interface(node))
+                .is_some_and(|iface| {
+                    iface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|tp| !tp.nodes.is_empty())
+                })
+            {
+                return;
+            }
+        }
+
+        // Order declarations by (file index, declaration position) = program
+        // order, matching how tsc picks the "first" declaration of a property.
+        let mut ordered = decls;
+        ordered.sort_by_key(|&(decl_idx, file_idx)| {
+            let pos = all_arenas
+                .get(file_idx)
+                .and_then(|arena| arena.get(decl_idx))
+                .map_or(u32::MAX, |node| node.pos);
+            (file_idx, pos)
+        });
+
+        // Pre-collect every declaration's property members (read-only, from its
+        // own arena) before any `&mut self` type resolution.
+        struct Member {
+            file_idx: usize,
+            is_local: bool,
+            name_node: NodeIndex,
+            type_node: NodeIndex,
+            prop_name: String,
+        }
+        let mut members: Vec<Member> = Vec::new();
+        for &(decl_idx, file_idx) in &ordered {
+            let Some(arena) = all_arenas.get(file_idx) else {
+                continue;
+            };
+            let Some(node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(iface) = arena.get_interface(node) else {
+                continue;
+            };
+            let is_local = file_idx == current;
+            for &member_idx in &iface.members.nodes {
+                let Some(member_node) = arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                    continue;
+                }
+                let Some(sig) = arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(prop_name) = get_literal_property_name(arena, sig.name) else {
+                    continue;
+                };
+                members.push(Member {
+                    file_idx,
+                    is_local,
+                    name_node: sig.name,
+                    type_node: sig.type_annotation,
+                    prop_name,
+                });
+            }
+        }
+
+        // Canonical first-declaration property type per name. `None` records that
+        // the first declaration's type could not be resolved without its file's
+        // checker context (a foreign non-keyword annotation); subsequent
+        // comparisons for that name are then conservatively skipped.
+        let mut canonical: FxHashMap<String, Option<TypeId>> = FxHashMap::default();
+
+        for m in members {
+            if let Some(&first) = canonical.get(&m.prop_name) {
+                // Subsequent declaration of this property.
+                let Some(first_type) = first else {
+                    continue;
+                };
+                // Remote subsequents are reported when their own file is checked.
+                if !m.is_local {
+                    continue;
+                }
+                let local_type = if m.type_node.is_some() {
+                    self.get_type_from_type_node(m.type_node)
+                } else {
+                    TypeId::ANY
+                };
+                if self.type_contains_error(first_type) || self.type_contains_error(local_type) {
+                    continue;
+                }
+                // TS2717 uses type identity; `duplicate_decl_types_match` is the
+                // same bidirectional comparison the same-file merge path uses.
+                if self.duplicate_decl_types_match(first_type, local_type) {
+                    continue;
+                }
+                let display_name = self
+                    .get_member_name_display_text(m.name_node)
+                    .unwrap_or_else(|| m.prop_name.clone());
+                let first_str = self.format_type(first_type);
+                let local_str = self.format_type(local_type);
+                self.error_at_node_msg(
+                    m.name_node,
+                    diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                    &[&display_name, &first_str, &local_str],
+                );
+            } else {
+                // First declaration of this property: resolve its canonical type.
+                let first_type = if m.is_local {
+                    Some(if m.type_node.is_some() {
+                        self.get_type_from_type_node(m.type_node)
+                    } else {
+                        TypeId::ANY
+                    })
+                } else if let Some(arena) = all_arenas.get(m.file_idx) {
+                    foreign_keyword_type_id(arena, m.type_node)
+                } else {
+                    None
+                };
+                canonical.insert(m.prop_name, first_type);
+            }
+        }
+    }
+
     pub(crate) fn declaration_participates_in_default_export_conflict(
         &self,
         decl_idx: NodeIndex,
@@ -771,4 +1016,52 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|name| name == "default")
         })
     }
+}
+
+/// Resolve a type-annotation node to its `TypeId` when — and only when — the
+/// annotation is a primitive / intrinsic type that maps to a fixed,
+/// interner-stable `TypeId` with no symbol-resolution or type-parameter context
+/// required.
+///
+/// Used to resolve a property's type from a FOREIGN arena (a different file's
+/// AST) for the cross-file interface-merge TS2717 check, where the current
+/// checker context cannot lower the node. Primitive types cover the overwhelming
+/// majority of real cross-file property conflicts; any other annotation returns
+/// `None` so the caller conservatively skips the property (never a false
+/// positive).
+///
+/// Two encodings reach here: a bare keyword token (e.g. `void`, `null`) and —
+/// more commonly — a `TYPE_REFERENCE` whose name is a primitive (`number`,
+/// `string`, ...). A reference with type arguments (`Array<number>`) or a
+/// non-primitive name is left unresolved. The keyword/name → `TypeId` mappings
+/// reuse the shared lib-resolution tables so this stays in lockstep with how the
+/// lowering pipeline resolves the same syntax.
+fn foreign_keyword_type_id(
+    arena: &tsz_parser::parser::node::NodeArena,
+    type_node: NodeIndex,
+) -> Option<TypeId> {
+    use crate::types_domain::queries::lib_resolution::{
+        keyword_name_to_type_id, keyword_syntax_to_type_id,
+    };
+    use tsz_parser::parser::syntax_kind_ext;
+
+    // A property with no annotation is implicitly `any`.
+    if type_node.is_none() {
+        return Some(TypeId::ANY);
+    }
+    let node = arena.get(type_node)?;
+
+    // Primitive named type reference, e.g. `number` / `string` (no type args).
+    if node.kind == syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(node)
+    {
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let name = arena.get_identifier_at(type_ref.type_name)?;
+        return keyword_name_to_type_id(&name.escaped_text);
+    }
+
+    // Bare keyword token encodings.
+    keyword_syntax_to_type_id(node.kind)
 }
