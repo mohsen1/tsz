@@ -1253,6 +1253,9 @@ path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 name = "ts2344_keyof_constraint_display_tests"
 path = "tests/ts2344_keyof_constraint_display_tests.rs"
 [[test]]
+name = "ts2344_conditional_constraint_display_tests"
+path = "tests/ts2344_conditional_constraint_display_tests.rs"
+[[test]]
 name = "keyof_call_parameter_display_tests"
 path = "tests/keyof_call_parameter_display_tests.rs"
 [[test]]
