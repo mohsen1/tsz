@@ -219,6 +219,103 @@ fn single_line_constructor_body_with_return() {
 }
 
 #[test]
+fn multi_statement_single_line_constructor_body_preserved() {
+    // tsc's `shouldEmitBlockFunctionBodyOnSingleLine` keeps a constructor body on
+    // one line whenever the source wrote it on one line, regardless of how many
+    // statements it has. Binder names are varied to keep this structural (no
+    // identifier-driven fast path).
+    let source = "class Widget {\n    constructor(width: number, height: number) { this.w = width; this.h = height; }\n}";
+    let output = emit_ts(source);
+    assert!(
+        output.contains("constructor(width, height) { this.w = width; this.h = height; }"),
+        "Multi-statement single-line constructor body should stay on one line.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn single_line_constructor_with_object_rest_param_keeps_inline_preamble() {
+    // When an object-rest parameter is downleveled (target < ES2018), tsc injects
+    // the destructuring preamble (`var { a } = _a, rest = __rest(_a, ["a"]);`)
+    // inline so a single-line source body stays single-line. The single-line
+    // constructor branch must emit that preamble, not drop it (which would leave
+    // the body referencing undeclared bindings).
+    let source = "class Bag {\n    constructor({ a, ...rest }: any) { use(a); use(rest); }\n}";
+    let output = emit_ts_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+    assert!(
+        output.contains(
+            "constructor(_a) { var { a } = _a, rest = __rest(_a, [\"a\"]); use(a); use(rest); }"
+        ),
+        "Single-line constructor with an object-rest param must keep its inline destructuring preamble.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn single_line_constructor_with_param_properties_goes_multiline() {
+    // A parameter-property prologue (`this.x = x;`) is a synthesized rewrite of the
+    // body, so tsc emits the constructor multi-line even though the source body was
+    // on one line. The generalized single-line branch must defer to the multi-line
+    // path whenever a prologue is injected.
+    let source = "class Point {\n    constructor(public x: number, private y: number) { log(x); log(y); }\n}";
+    let output = emit_ts(source);
+    assert!(
+        !output.contains("constructor(x, y) { "),
+        "Param-property constructors must not collapse to one line.\nOutput: {output}"
+    );
+    assert!(
+        output.contains("this.x = x;") && output.contains("this.y = y;"),
+        "Param-property assignments should be injected.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn es2017_field_init_forces_constructor_multiline_even_if_source_single_line() {
+    // At a target without native class fields, the field initializer is lowered into
+    // the constructor body (`this.count = 0;`), synthesizing it, so tsc emits the
+    // constructor multi-line.
+    let source = "class Counter {\n    count = 0;\n    constructor() { tick(); tock(); }\n}";
+    let output = emit_ts_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+    assert!(
+        output.contains("this.count = 0;"),
+        "Field initializer should be lowered into the constructor at ES2017.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("constructor() { tick(); tock(); }"),
+        "A constructor with an injected field-init prologue must be multi-line.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn single_line_derived_constructor_with_super_preserved() {
+    // `super(...)` is an original source statement (not an injected prologue), so a
+    // single-line derived constructor with no field/param-property injection stays
+    // on one line, matching tsc.
+    let source = "class Sub extends Base {\n    constructor() { super(1); ready(); }\n}";
+    let output = emit_ts_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+    assert!(
+        output.contains("constructor() { super(1); ready(); }"),
+        "Single-line derived constructor (no injected prologue) should stay on one line.\nOutput: {output}"
+    );
+}
+
+#[test]
 fn bodyless_optional_class_methods_emit_empty_bodies_for_recovery() {
     let output = emit_ts_with_options(
         "class C {\n    x()?: number;\n}\nclass C2<T> {\n    x()?: T;\n}\n",

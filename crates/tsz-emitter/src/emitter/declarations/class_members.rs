@@ -1210,9 +1210,14 @@ impl<'a> Printer<'a> {
         }
 
         // Single-line non-empty constructor body: preserve single-line formatting
-        // when source was on one line, there's no prologue to inject, and no
-        // hoisted temps. e.g. `constructor(x) { this.a = x; }` stays on one line.
-        if block.statements.nodes.len() == 1
+        // when the source was on one line, there's no prologue to inject, and no
+        // hoisted temps. Both `constructor(x) { this.a = x; }` and the
+        // multi-statement `constructor(a, b) { this.x = a; this.y = b; }` stay on
+        // one line, mirroring tsc's `shouldEmitBlockFunctionBodyOnSingleLine`,
+        // which preserves the source layout regardless of statement count (it only
+        // forces multi-line when the body is synthesized — i.e. when a prologue or
+        // hoisted-temp transform rewrites it, the cases excluded below).
+        if !block.statements.nodes.is_empty()
             && !has_prologue
             && !has_function_temps
             && !has_using_region
@@ -1221,16 +1226,29 @@ impl<'a> Printer<'a> {
             self.map_opening_brace(block_node);
             self.write("{ ");
             let var_insert_pos = self.writer.len();
+            // An ES2018 object-rest parameter preamble (`var { a } = _a, rest =
+            // __rest(_a, ["a"]);`) is written inline so a single-line source body
+            // stays single-line, matching tsc and the shared `emit_block`
+            // single-line path. Hoisted `??=`/optional-chaining temps still anchor
+            // at `var_insert_pos` (captured above, ahead of this preamble).
+            if self.emit_object_rest_param_prologue(true, true) {
+                self.write(" ");
+            }
             let block_close_pos = self
                 .find_block_closing_brace_end(block_node)
                 .saturating_sub(1);
             let previous_trailing_comment_scan_max = self.trailing_comment_scan_max_pos;
             self.trailing_comment_scan_max_pos = Some(block_close_pos);
-            self.emit(block.statements.nodes[0]);
+            for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+                if i > 0 {
+                    self.write(" ");
+                }
+                self.emit(stmt_idx);
+            }
             self.trailing_comment_scan_max_pos = previous_trailing_comment_scan_max;
             // A `??=` read-cache temp (or optional-chaining temp) can be created
-            // while emitting the single statement; declare it inline so the body
-            // stays runnable instead of referencing an undeclared `_a`.
+            // while emitting a statement; declare it inline so the body stays
+            // runnable instead of referencing an undeclared `_a`.
             let prologue = self.take_single_line_hoisted_temp_prologue();
             if !prologue.is_empty() {
                 self.writer.insert_at(var_insert_pos, &prologue);
