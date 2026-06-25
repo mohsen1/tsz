@@ -199,6 +199,13 @@ pub(crate) fn unique_symbol_grammar_violation(
         return None;
     }
 
+    // A missing operand (`unique ;`) already produced TS1110 `Type expected` in
+    // the parser; tsc does not also pile on the operand-shape grammar error, so
+    // neither do we.
+    if arena.is_missing_recovery_identifier(type_op.type_node) {
+        return None;
+    }
+
     // `unique` is only permitted over the `symbol` keyword. tsc reports the
     // operand position with TS1005 "'symbol' expected" otherwise (e.g.
     // `unique number`, `unique symbol[]`).
