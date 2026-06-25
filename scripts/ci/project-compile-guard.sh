@@ -1028,6 +1028,16 @@ run_project_row() {
       tsz_write_mitt_config "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mitt/src"
       ;;
+    change-case-project)
+      ensure_git_fixture "change-case" "$CHANGE_CASE_REPO" "$CHANGE_CASE_REF" "$FIXTURE_ROOT/change-case"
+      tsz_write_change_case_config "$FIXTURE_ROOT/change-case/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/change-case/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/change-case/packages/change-case/src"
+      ;;
+    tiny-invariant-project)
+      ensure_git_fixture "tiny-invariant" "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF" "$FIXTURE_ROOT/tiny-invariant"
+      tsz_write_tiny_invariant_config "$FIXTURE_ROOT/tiny-invariant/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/tiny-invariant/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tiny-invariant/src"
+      ;;
     ts-belt-project)
       ensure_git_fixture "ts-belt" "$TS_BELT_REPO" "$TS_BELT_REF" "$FIXTURE_ROOT/ts-belt"
       tsz_write_ts_belt_config "$FIXTURE_ROOT/ts-belt/tsconfig.tsz-guard.json"
