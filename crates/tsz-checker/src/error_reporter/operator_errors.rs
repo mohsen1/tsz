@@ -303,45 +303,40 @@ impl<'a> CheckerState<'a> {
                 };
                 self.emit_render_request(idx, DiagnosticRenderRequest::simple_msg(code, &[name]));
             } else {
-                // Non-identifier expression with nullish type — fall back to TS18050
-                let value_name = if cause == TypeId::NULL {
-                    "null"
-                } else if cause == TypeId::UNDEFINED {
-                    "undefined"
-                } else {
-                    "null | undefined"
-                };
-                self.emit_render_request(
-                    idx,
-                    DiagnosticRenderRequest::simple_msg(
-                        diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                        &[value_name],
-                    ),
-                );
+                // Unnamed non-literal expression with a nullish type (a call result,
+                // parenthesized expression, etc.). tsc's `checkNonNullType` reports
+                // these through `reportObjectPossiblyNullOrUndefinedError`, which has no
+                // entity name and so emits TS2531/TS2532/TS2533 ("Object is possibly
+                // 'null'/'undefined'/...") — not the literal-value TS18050. The literal
+                // `null`/`undefined` keyword is handled by the `is_literal` branch above.
+                self.report_nullish_object(idx, cause, false);
             }
         }
     }
 
-    /// Under `strictNullChecks`, emit TS18047/TS18048 if `operand_type` contains
-    /// a nullish union member AND the non-nullish part is arithmetic (number/bigint/enum).
+    /// Under `strictNullChecks`, emit the "possibly null/undefined" operand
+    /// diagnostic when the operand of a unary `+`/`-`/`~` is nullable.
     ///
-    /// When the non-nullish part is non-arithmetic (e.g. `string | undefined`) or absent
-    /// (purely-nullish types like `null` or `undefined` alone), tsc emits TS2362 for the
-    /// type mismatch rather than TS18048 for the nullish member.
+    /// tsc's `checkPrefixUnaryExpression` runs `checkNonNullType(operandType, operand)`
+    /// **unconditionally** for `+`/`-`/`~` — there is no arithmetic-operand check for
+    /// unary arithmetic (that only exists for binary `- * / % **`). So a nullable
+    /// operand always reports TS18047/TS18048/TS18049 (named) or TS2531/TS2532/TS2533
+    /// (unnamed), regardless of the non-nullish remainder's kind: `null`/`undefined`
+    /// alone, `string | undefined`, `object | null`, `symbol | null` (alongside the
+    /// separate TS2469), and type parameters whose constraint is nullable all report.
+    ///
+    /// `void` is not in tsc's `Nullable` flag set, so a `void` operand never triggers
+    /// this (it is handled by the operator-specific paths instead).
     pub(crate) fn check_nullish_unary_operand(&mut self, operand: NodeIndex, operand_type: TypeId) {
         if !self.ctx.strict_null_checks() {
             return;
         }
-        let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
-        let Some(cause) = nullish_cause else { return };
-        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
-        let nullish_can_flow_to_arithmetic = non_nullish.is_some_and(|ty| {
-            let evaluated = self.evaluate_type_with_env(ty);
-            evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
-        });
-        if nullish_can_flow_to_arithmetic {
-            self.emit_nullish_operand_error(operand, cause);
+        if operand_type == TypeId::VOID {
+            return;
         }
+        let (_non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
+        let Some(cause) = nullish_cause else { return };
+        self.emit_nullish_operand_error(operand, cause);
     }
 
     /// Check if a type is string-like (intrinsic `string` or a string literal).

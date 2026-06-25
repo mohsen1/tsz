@@ -1243,6 +1243,9 @@ mod nullish_coalescing_discriminated_union_tests;
 #[path = "../tests/nullish_coalescing_unknown_result_tests.rs"]
 mod nullish_coalescing_unknown_result_tests;
 #[cfg(test)]
+#[path = "../tests/nullish_operand_checknonnull_parity_tests.rs"]
+mod nullish_operand_checknonnull_parity_tests;
+#[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]
