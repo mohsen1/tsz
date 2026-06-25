@@ -14,7 +14,7 @@ use super::{check_files_parallel, compile_files_with_libs};
 use crate::checker::context::CheckerOptions;
 
 /// Compile and check a multi-file global-script program with no libs, returning
-/// every (file_name, code) pair across all files.
+/// every (`file_name`, `code`) pair across all files.
 fn diagnostics(files: &[(&str, &str)]) -> Vec<(String, u32)> {
     let owned: Vec<(String, String)> = files
         .iter()
