@@ -21,6 +21,19 @@ type TypeParamPushResult = (
     Vec<(String, Option<TypeId>, bool)>,
 );
 
+/// #14345 WAVE-1 flag (default-OFF, the SAME `TSZ_TYPEPARAM_DECL_IDENTITY` the
+/// carrier's lowering stamp reads). When on, the checker's def-type-param mint
+/// (`intern_type_param_for_decl`) stamps `DeclScoped(file, name_node)` instead of
+/// `User` — mint site #2 the carrier missed. The stored def-param list then
+/// interns to the SAME `DeclScoped` `TypeId` as the lowered body refs, so
+/// `is_identity_for`'s re-mint reproduces the matching id instead of the
+/// structural-canonical `User` one.
+fn decl_identity_activation() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+}
+
 impl CheckerState<'_> {
     fn cache_resolved_symbol_type_for_owner(&self, sym_id: SymbolId, type_id: TypeId) {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -826,8 +839,24 @@ impl CheckerState<'_> {
     pub(crate) fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
-        info: tsz_solver::TypeParamInfo,
+        mut info: tsz_solver::TypeParamInfo,
     ) -> tsz_solver::TypeId {
+        let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
+
+        // #14345 WAVE-1: stamp the checker's def-type-param mint (site #2) with
+        // the IDENTICAL DeclScoped(file, name_node) the carrier's lowering body
+        // refs carry — `info` arrives `User` from `push_type_parameters`, but the
+        // `(file_atom, name_node)` are exactly the carrier's decl key. Stamping
+        // BEFORE the cache/decl-node lookups makes every key (L1 cache, decl-node
+        // map) reflect the stamp, so the stored list and the lowered body refs
+        // converge on the SAME DeclScoped TypeId. Flag-OFF = `User` (byte-parity).
+        if decl_identity_activation() {
+            info.origin = tsz_solver::TypeParamOrigin::DeclScoped {
+                file: file_atom,
+                node: name_node.0,
+            };
+        }
+
         // L1: per-context cache. `name_node` always belongs to `ctx.arena`,
         // so the arena-local key is unambiguous within one context.
         if let Some(&cached) = self.ctx.type_param_node_cache.get(&(name_node.0, info)) {
@@ -840,8 +869,6 @@ impl CheckerState<'_> {
             .node_symbols
             .get(&name_node.0)
             .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0));
-
-        let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
 
         let cached =
             self.ctx
