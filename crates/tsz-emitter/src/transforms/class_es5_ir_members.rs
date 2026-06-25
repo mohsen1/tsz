@@ -22,7 +22,37 @@ use super::{
     has_effective_static_modifier,
 };
 
+/// Deferred output of [`ES5ClassTransformer::emit_all_members_ir`]. The members
+/// pass emits methods/accessors directly into the IIFE body but hands these two
+/// groups back so the caller can place them correctly relative to the
+/// private-field storage block, matching tsc.
+#[derive(Default)]
+pub(super) struct ClassMembersEmit {
+    /// Public static field initializer assignments and (when the class also has
+    /// static properties) source-ordered static block IIFEs, plus their
+    /// class-alias / temp-decl preamble. The caller appends these to the IIFE
+    /// body *after* the private-field storage block, so the body order matches
+    /// tsc: methods -> private storage -> static field inits -> decorators ->
+    /// `return`.
+    pub(super) deferred_static_prop_stmts: Vec<IRNode>,
+    /// Static blocks for property-less classes, rendered as IIFEs *after* the
+    /// whole class IIFE (carried through to `ES5ClassIIFE::deferred_static_blocks`).
+    pub(super) deferred_static_blocks: Vec<IRNode>,
+}
+
 impl<'a> ES5ClassTransformer<'a> {
+    /// Whether the class has any static private member (field, method, or
+    /// accessor). Such members force a class-value alias and route private
+    /// storage through the IIFE-local `var _a; ...` block.
+    pub(super) fn has_static_private_lowering(&self) -> bool {
+        self.private_fields.iter().any(|field| field.is_static)
+            || self.private_methods.iter().any(|method| method.is_static)
+            || self
+                .private_accessors
+                .iter()
+                .any(|accessor| accessor.is_static)
+    }
+
     fn member_contains_new_target(
         &self,
         body_idx: NodeIndex,
@@ -421,13 +451,8 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(instances) = self.private_instances_weakset_name.as_ref() {
             decls.push(instances.clone());
         }
-        let has_static_private_lowering = self.private_fields.iter().any(|field| field.is_static)
-            || self.private_methods.iter().any(|method| method.is_static)
-            || self
-                .private_accessors
-                .iter()
-                .any(|accessor| accessor.is_static);
-        if has_static_private_lowering && let Some(alias) = self.current_static_class_alias.as_ref()
+        if self.has_static_private_lowering()
+            && let Some(alias) = self.current_static_class_alias.as_ref()
         {
             decls.push(alias.clone());
         }
@@ -685,12 +710,12 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         body: &mut Vec<IRNode>,
         class_idx: NodeIndex,
-    ) -> Vec<IRNode> {
+    ) -> ClassMembersEmit {
         let Some(class_node) = self.arena.get(class_idx) else {
-            return Vec::new();
+            return ClassMembersEmit::default();
         };
         let Some(class_data) = self.arena.get_class(class_node) else {
-            return Vec::new();
+            return ClassMembersEmit::default();
         };
 
         // --- Static member preamble ---
@@ -1489,14 +1514,21 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        // Emit deferred static property initializers and static blocks after
-        // all methods/accessors, matching tsc's ES5 class member ordering.
+        // Collect deferred static property initializers and static blocks so the
+        // caller can emit them AFTER the private-field storage block, matching
+        // tsc's ES5 class member ordering (methods -> private storage -> public
+        // static field inits / static blocks -> decorators -> return). Emitting
+        // them inline here would place public static field assignments before the
+        // `var _C_x; _C_x = new WeakMap();` storage setup, which is a runtime
+        // defect when a static initializer constructs an instance whose private
+        // fields rely on that storage.
+        let mut deferred_static_prop_stmts: Vec<IRNode> = Vec::new();
         if !deferred_static_prop_inits.is_empty() {
             if let Some(alias) = self.class_self_reference_alias.as_ref()
                 && !self.class_decorators.is_empty()
                 && self.has_static_property_initializer(&class_data.members)
             {
-                body.push(IRNode::VarDecl {
+                deferred_static_prop_stmts.push(IRNode::VarDecl {
                     name: alias.clone().into(),
                     initializer: None,
                 });
@@ -1506,7 +1538,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 .as_ref()
                 .is_some_and(|alias| deferred_static_temp_decls.contains(alias));
             if !deferred_static_temp_decls.is_empty() {
-                body.push(IRNode::VarDeclList(
+                deferred_static_prop_stmts.push(IRNode::VarDeclList(
                     deferred_static_temp_decls
                         .into_iter()
                         .map(|name| IRNode::VarDecl {
@@ -1516,22 +1548,30 @@ impl<'a> ES5ClassTransformer<'a> {
                         .collect(),
                 ));
             }
-            if let Some(ref alias) = class_alias {
+            // When the class has static private lowering, the private-field
+            // storage block (emitted by the caller before these deferred static
+            // inits) already declares and assigns the class alias
+            // (`var _a; ... _a = C, ...`), so re-emitting it here would declare
+            // and assign it twice. The preamble is still required when the alias
+            // exists only because a static initializer references `this`.
+            if let Some(ref alias) = class_alias
+                && !self.has_static_private_lowering()
+            {
                 if !class_alias_declared_in_static_temp_decls {
-                    body.push(IRNode::VarDecl {
+                    deferred_static_prop_stmts.push(IRNode::VarDecl {
                         name: alias.clone().into(),
                         initializer: None,
                     });
                 }
-                body.push(IRNode::expr_stmt(IRNode::assign(
+                deferred_static_prop_stmts.push(IRNode::expr_stmt(IRNode::assign(
                     IRNode::id(alias.clone()),
                     IRNode::id(self.class_name.clone()),
                 )));
             }
-            body.append(&mut deferred_static_prop_inits);
+            deferred_static_prop_stmts.append(&mut deferred_static_prop_inits);
         }
 
-        deferred_static_block_indices
+        let deferred_static_blocks = deferred_static_block_indices
             .into_iter()
             .map(|member_idx| {
                 let statements = self.convert_block_body_with_alias_impl(
@@ -1542,7 +1582,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 );
                 IRNode::StaticBlockIIFE { statements }
             })
-            .collect()
+            .collect();
+
+        ClassMembersEmit {
+            deferred_static_prop_stmts,
+            deferred_static_blocks,
+        }
     }
 
     pub(super) fn has_static_property_initializer(

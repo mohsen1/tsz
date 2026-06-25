@@ -86,6 +86,7 @@ mod helpers;
 #[path = "class_es5_ir_members.rs"]
 mod members;
 use helpers::*;
+use members::ClassMembersEmit;
 
 use crate::context::transform::TransformContext;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
@@ -1511,12 +1512,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // This must happen before constructor/member IR emission so that temps
         // are available when building property assignment IR nodes.
         self.computed_prop_temp_map.clear();
-        let has_static_private_lowering = self.private_fields.iter().any(|field| field.is_static)
-            || self.private_methods.iter().any(|method| method.is_static)
-            || self
-                .private_accessors
-                .iter()
-                .any(|accessor| accessor.is_static);
+        let has_static_private_lowering = self.has_static_private_lowering();
         self.current_static_class_alias = if self
             .static_members_need_class_alias(&class_data.members)
             || has_static_private_lowering
@@ -1728,44 +1724,15 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 (computed_prop_temp_decls, computed_prop_init_entries)
             };
-        // Prototype methods and static members interleaved in source order
-        let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
-
-        // Legacy decorator __decorate calls (inside IIFE, before return)
-        if self.legacy_decorators {
-            self.emit_member_decorator_ir(&mut body, class_idx);
-        }
-        if !self.class_decorators.is_empty() {
-            if let Some(alias) = self.class_self_reference_alias.as_ref()
-                && !self.has_static_property_initializer(&class_data.members)
-            {
-                body.push(IRNode::VarDecl {
-                    name: alias.clone().into(),
-                    initializer: None,
-                });
-            }
-            self.emit_class_decorator_ir(&mut body, class_idx);
-        } else if self.legacy_decorators {
-            // Even without class-level decorators, constructor parameter decorators
-            // need a class-level __decorate call: C = __decorate([__param(0, dec)], C)
-            self.emit_ctor_param_decorator_ir(&mut body, class_idx);
-        }
-
-        // Emit var declarations for hoisted temp variables collected during
-        // member expression conversion (e.g., from computed property lowering
-        // inside object literals like `{ [expr]: val }` → `(_a = {}, _a[expr] = val, _a)`).
-        let extra_temps: Vec<String> = std::mem::take(&mut *self.extra_hoisted_temps.borrow_mut());
-        if !extra_temps.is_empty() {
-            let var_decls: Vec<IRNode> = extra_temps
-                .into_iter()
-                .map(|name| IRNode::VarDecl {
-                    name: name.into(),
-                    initializer: None,
-                })
-                .collect();
-            // tsc puts `var _a;` at the very top of the IIFE body, before __extends.
-            body.insert(0, IRNode::VarDeclList(var_decls));
-        }
+        // Prototype methods and static members in source order. Public static
+        // field initializers and static blocks are returned (not emitted inline)
+        // so they land AFTER the private-field storage block below, matching
+        // tsc's IIFE body order: methods -> private storage -> static field
+        // inits / static blocks -> decorators -> return.
+        let ClassMembersEmit {
+            deferred_static_prop_stmts,
+            deferred_static_blocks,
+        } = self.emit_all_members_ir(&mut body, class_idx);
 
         if self.auto_accessor_storage_decls_in_iife() {
             self.emit_auto_accessor_storage_decls_and_static_inits(&mut body);
@@ -1834,6 +1801,51 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         let post_weakmap_statements = Vec::new();
+
+        // Public static field initializers and static blocks come AFTER the
+        // private-field storage block (tsc order), so a static initializer that
+        // constructs an instance observes fully-initialized private storage
+        // (`var _C_x; _C_x = new WeakMap();`) rather than `undefined`.
+        body.extend(deferred_static_prop_stmts);
+
+        // Decorator __decorate calls (inside IIFE, after the static field inits,
+        // matching tsc: `C.s = 1; __decorate([...], C.prototype, "m", null);`).
+        if self.legacy_decorators {
+            self.emit_member_decorator_ir(&mut body, class_idx);
+        }
+        if !self.class_decorators.is_empty() {
+            if let Some(alias) = self.class_self_reference_alias.as_ref()
+                && !self.has_static_property_initializer(&class_data.members)
+            {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+            }
+            self.emit_class_decorator_ir(&mut body, class_idx);
+        } else if self.legacy_decorators {
+            // Even without class-level decorators, constructor parameter decorators
+            // need a class-level __decorate call: C = __decorate([__param(0, dec)], C)
+            self.emit_ctor_param_decorator_ir(&mut body, class_idx);
+        }
+
+        // Emit var declarations for hoisted temp variables collected during
+        // member expression conversion (e.g., from computed property lowering
+        // inside object literals like `{ [expr]: val }` → `(_a = {}, _a[expr] = val, _a)`).
+        // Taken last so temps created while emitting members, static field inits,
+        // and decorators are all captured.
+        let extra_temps: Vec<String> = std::mem::take(&mut *self.extra_hoisted_temps.borrow_mut());
+        if !extra_temps.is_empty() {
+            let var_decls: Vec<IRNode> = extra_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            // tsc puts `var _a;` at the very top of the IIFE body, before __extends.
+            body.insert(0, IRNode::VarDeclList(var_decls));
+        }
 
         // return ClassName;
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));

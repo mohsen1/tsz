@@ -1309,3 +1309,83 @@ fn derived_constructor_nested_super_schedules_properties_before_body() {
         "Nested super calls should assign into the `_this` capture.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn static_field_initializer_emitted_after_private_field_storage() {
+    // tsc emits the private-field WeakMap storage (`var _X; _X = new WeakMap()`)
+    // before any public static field initializer, so a static initializer that
+    // constructs an instance observes initialized storage. Emitting
+    // `Widget.total = new Widget()...` before `_Widget_count = new WeakMap()`
+    // throws `Cannot read properties of undefined (reading 'set')` at runtime.
+    let source = r#"class Widget {
+            #count = 2;
+            static total = new Widget().read();
+            read() { return this.#count; }
+        }"#;
+    let output = transform_class(source).expect("transform should succeed");
+
+    let weakmap_decl = output.find("var _Widget_count;").expect("weakmap decl");
+    let weakmap_init = output
+        .find("_Widget_count = new WeakMap();")
+        .expect("weakmap init");
+    let static_init = output
+        .find("Widget.total = new Widget().read();")
+        .expect("static init");
+    let ret = output.find("return Widget;").expect("return");
+
+    assert!(
+        weakmap_decl < weakmap_init && weakmap_init < static_init && static_init < ret,
+        "Public static field initializers must follow the private-field WeakMap storage block.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_field_after_private_storage_does_not_duplicate_class_alias() {
+    // A static private field forces a class-value alias (`_a = Registry`) in the
+    // private-storage block. Because that block now precedes the deferred static
+    // initializers, the static-init preamble must not re-emit the alias, or it
+    // would be declared and assigned twice.
+    let source = r#"class Registry {
+            static #seq = 10;
+            static label = "x";
+            use() { return 0; }
+        }"#;
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert_eq!(
+        output.matches("_a = Registry").count(),
+        1,
+        "The class-value alias must be assigned exactly once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_Registry_seq = { value: 10 };\n    Registry.label = \"x\";"),
+        "The static private field init must precede the public static field init.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn deferred_static_block_and_fields_follow_private_storage_in_source_order() {
+    // The entire deferred block (public static field inits interleaved with
+    // static-block IIFEs, in source order) moves together to after the private
+    // storage, matching tsc.
+    let source = r#"class Cache {
+            #hits = 0;
+            static a = 1;
+            static { console.log("init"); }
+            static b = 2;
+            read() { return this.#hits; }
+        }"#;
+    let output = transform_class(source).expect("transform should succeed");
+
+    let weakmap_init = output
+        .find("_Cache_hits = new WeakMap();")
+        .expect("weakmap init");
+    let first = output.find("Cache.a = 1;").expect("Cache.a");
+    let block = output.find("console.log(\"init\")").expect("static block");
+    let second = output.find("Cache.b = 2;").expect("Cache.b");
+
+    assert!(
+        weakmap_init < first && first < block && block < second,
+        "Static field inits and static blocks must follow private storage in source order.\nOutput:\n{output}"
+    );
+}
