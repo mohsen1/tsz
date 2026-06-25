@@ -36,7 +36,7 @@ use crate::type_queries::{
 };
 use crate::types::{PropertyLookup, TypeId};
 use crate::visitor::{
-    intersection_list_id, is_literal_type_through_type_constraints, object_shape_id,
+    intersection_list_id, is_error_type, is_literal_type_through_type_constraints, object_shape_id,
     object_with_index_shape_id, union_list_id,
 };
 use rustc_hash::FxHashSet;
@@ -45,6 +45,36 @@ use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
 impl<'a> NarrowingContext<'a> {
+    /// Whether a discriminant *property* type is inert for value-exclusion
+    /// narrowing of the enclosing object — i.e. the member must be KEPT because
+    /// we cannot prove the property is *always* one of the excluded values.
+    ///
+    /// This holds when the property type is `any` (it can hold any value,
+    /// including a non-excluded one) or an *error* type (an unresolved /
+    /// failed-import name stays inert, matching tsc, which never discriminates a
+    /// union member away on an error-typed property). A literal `TypeId::ANY`
+    /// already collapses absorbed unions (`any | undefined` -> `any`), but an
+    /// alias that resolves to `any` and an error type do not, so resolve the
+    /// type first and inspect union members structurally rather than relying on
+    /// `TypeId` identity alone.
+    fn discriminant_property_inert_for_exclusion(&self, resolved_prop_type: TypeId) -> bool {
+        let type_db = self.db.as_type_database();
+        let is_inert_atom = |t: TypeId| t.is_any() || is_error_type(type_db, t);
+        if is_inert_atom(resolved_prop_type) {
+            return true;
+        }
+        // A `T | undefined` property where `T` resolves to `any`/error keeps the
+        // any/error facet, so the property is not *always* the excluded value.
+        if let Some(members_id) = union_list_id(self.db, resolved_prop_type) {
+            return self
+                .db
+                .type_list(members_id)
+                .iter()
+                .any(|&m| is_inert_atom(self.resolve_type(m)));
+        }
+        false
+    }
+
     /// Resolve a type into its union members and build a property evaluator.
     ///
     /// This is the shared setup for all discriminant/property-based narrowing:
@@ -467,7 +497,7 @@ impl<'a> NarrowingContext<'a> {
                         .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
                         .unwrap_or(raw_prop_type),
                 );
-                if prop_type == TypeId::ANY {
+                if self.discriminant_property_inert_for_exclusion(prop_type) {
                     continue;
                 }
                 let is_excluded = if prop_type == literal_value {
@@ -511,7 +541,7 @@ impl<'a> NarrowingContext<'a> {
                     .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
                     .unwrap_or(raw_prop_type),
             );
-            if !keep_matching && prop_type == TypeId::ANY {
+            if !keep_matching && self.discriminant_property_inert_for_exclusion(prop_type) {
                 kept.push(member);
                 continue;
             }
@@ -1308,11 +1338,14 @@ impl<'a> NarrowingContext<'a> {
                 // CRITICAL: Resolve Lazy types in property type before comparison.
                 let resolved_prop_type = self.resolve_type(prop_type);
 
-                // `any` properties can hold any value, so we can never prove the
-                // property is ALWAYS the excluded value. is_subtype_of(any, T)
-                // returns true for every non-never T (any is universally
-                // assignable), which would incorrectly drop the member here.
-                if resolved_prop_type == TypeId::ANY {
+                // `any`/error properties can hold any value, so we can never
+                // prove the property is ALWAYS the excluded value.
+                // is_subtype_of(any, T) returns true for every non-never T (any
+                // is universally assignable) and an error type short-circuits
+                // assignability to true, either of which would incorrectly drop
+                // the member here. Catches alias-`any` and `T | undefined` whose
+                // `T` is any/error, not just the literal `TypeId::ANY`.
+                if self.discriminant_property_inert_for_exclusion(resolved_prop_type) {
                     return true;
                 }
 
@@ -1581,11 +1614,14 @@ impl<'a> NarrowingContext<'a> {
                 let resolved_prop_type = self.resolve_type(prop_type);
                 let resolved_prop_type = normalize_constructor_property_type(resolved_prop_type);
 
-                // `any` properties can hold any value, so we can never prove the
-                // property is ALWAYS one of the excluded values. is_subtype_of(any, T)
-                // returns true for every non-never T, which would incorrectly drop
-                // the member in this batch path too.
-                if resolved_prop_type == TypeId::ANY {
+                // `any`/error properties can hold any value, so we can never
+                // prove the property is ALWAYS one of the excluded values.
+                // is_subtype_of(any, T) returns true for every non-never T and
+                // an error type short-circuits assignability to true, either of
+                // which would incorrectly drop the member in this batch path
+                // too. Catches alias-`any` and `T | undefined` whose `T` is
+                // any/error, not just the literal `TypeId::ANY`.
+                if self.discriminant_property_inert_for_exclusion(resolved_prop_type) {
                     return true;
                 }
 

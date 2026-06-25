@@ -156,6 +156,9 @@ path = "tests/variadic_tuple_spread_element_type_tests.rs"
 name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
 [[test]]
+name = "exclusion_narrow_any_error_member_tests"
+path = "tests/exclusion_narrow_any_error_member_tests.rs"
+[[test]]
 name = "flow_property_reference_cache_tests"
 path = "tests/flow_property_reference_cache_tests.rs"
 [[test]]
