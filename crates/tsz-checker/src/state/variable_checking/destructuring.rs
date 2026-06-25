@@ -1481,24 +1481,17 @@ impl<'a> CheckerState<'a> {
                                     any_found = true;
                                 }
                                 PropertyAccessResult::PropertyNotFound { .. } => {
+                                    // Empty `{}` or fresh object-literal members lacking the
+                                    // property contribute implicit `undefined` (tsc
+                                    // getTypeOfDestructuredProperty); named, call-return, and
+                                    // freshness-widened const-bound members lack FRESH and error.
+                                    use crate::query_boundaries::common;
                                     let db = self.ctx.types.as_type_database();
-                                    if crate::query_boundaries::common::is_empty_object_type(
-                                        db, member,
-                                    ) || crate::query_boundaries::common::is_fresh_object_type(
-                                        db, member,
-                                    ) {
-                                        // Empty object member, or a fresh object
-                                        // literal member, lacks the property: tsc's
-                                        // getTypeOfDestructuredProperty contributes
-                                        // implicit `undefined` for it rather than
-                                        // failing the whole lookup. Freshness
-                                        // (FRESH_LITERAL) is absent on named types,
-                                        // call-return types, and freshness-widened
-                                        // const-bound values, so those still error.
+                                    if common::is_empty_object_type(db, member)
+                                        || common::is_fresh_object_type(db, member)
+                                    {
                                         member_types.push(TypeId::UNDEFINED);
                                     } else {
-                                        // Non-empty, non-fresh member missing the
-                                        // property — this is a real type error.
                                         non_empty_missing = true;
                                         break;
                                     }
