@@ -940,6 +940,46 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // TS2362/TS2363: validate each operand of an arithmetic (`- * / % **`)
+            // or bitwise (`& | ^ << >> >>>`) operator independently, mirroring
+            // tsc's per-operand `checkArithmeticOperandType`. This runs once, here,
+            // before the operator-specific handling — which otherwise short-circuits
+            // on an `unknown` operand (skipping the *other* operand) or defers the
+            // verdict to the binary-op evaluator (which accepts `never`-paired and
+            // string-enum operands that tsc rejects). `+` has its own rules and is
+            // excluded; boxed-primitive arithmetic operands are reported on the raw
+            // (pre-coercion) type by a dedicated path below and are skipped here to
+            // avoid a double diagnostic.
+            // `(operator string, is_arithmetic)` — `is_arithmetic` distinguishes
+            // `- * / % **` (which has the boxed-primitive carve-out below) from the
+            // bitwise `& | ^ << >> >>>`.
+            let arith_bitwise_op: Option<(&'static str, bool)> = match op_kind {
+                k if k == SyntaxKind::MinusToken as u16 => Some(("-", true)),
+                k if k == SyntaxKind::AsteriskToken as u16 => Some(("*", true)),
+                k if k == SyntaxKind::AsteriskAsteriskToken as u16 => Some(("**", true)),
+                k if k == SyntaxKind::SlashToken as u16 => Some(("/", true)),
+                k if k == SyntaxKind::PercentToken as u16 => Some(("%", true)),
+                k if k == SyntaxKind::AmpersandToken as u16 => Some(("&", false)),
+                k if k == SyntaxKind::BarToken as u16 => Some(("|", false)),
+                k if k == SyntaxKind::CaretToken as u16 => Some(("^", false)),
+                k if k == SyntaxKind::LessThanLessThanToken as u16 => Some(("<<", false)),
+                k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => Some((">>", false)),
+                k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                    Some((">>>", false))
+                }
+                _ => None,
+            };
+            if let Some((arith_op, is_arithmetic)) = arith_bitwise_op {
+                let boxed = is_arithmetic
+                    && (self.is_boxed_primitive_type(left_type)
+                        || self.is_boxed_primitive_type(right_type));
+                if !boxed {
+                    self.emit_arithmetic_operand_errors(
+                        left_idx, right_idx, left_type, right_type, arith_op,
+                    );
+                }
+            }
+
             let op_str = match op_kind {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",
@@ -1055,40 +1095,8 @@ impl<'a> CheckerState<'a> {
                                 );
                     }
 
-                    // TS2362/TS2363: Per-operand validity check for bitwise operators.
-                    // Same issue as arithmetic: when one operand is `any`, the evaluator
-                    // returns Success but tsc still validates the other operand individually.
-                    if !emitted_nullish_error {
-                        let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
-                        let right_any_like =
-                            eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
-
-                        if (left_any_like || right_any_like)
-                            && left_type != TypeId::ERROR
-                            && right_type != TypeId::ERROR
-                        {
-                            if left_any_like
-                                && !evaluator.is_arithmetic_operand(eval_right)
-                                && !self.is_enum_type(right_type)
-                            {
-                                self.error_at_node(
-                                    right_idx,
-                                    "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
-                                    crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                                );
-                            }
-                            if right_any_like
-                                && !evaluator.is_arithmetic_operand(eval_left)
-                                && !self.is_enum_type(left_type)
-                            {
-                                self.error_at_node(
-                                    left_idx,
-                                    "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
-                                    crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                                );
-                            }
-                        }
-                    }
+                    // (Per-operand TS2362/TS2363 validity for bitwise operators is
+                    // emitted once, up-front, by `emit_arithmetic_operand_errors`.)
 
                     let result = evaluator.evaluate(eval_left, eval_right, op_str);
                     // Equality and relational operators always produce boolean,
@@ -1337,37 +1345,8 @@ impl<'a> CheckerState<'a> {
             let eval_left = self.evaluate_type_for_binary_ops(left_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
 
-            // TS2362/TS2363: Per-operand validity check for arithmetic operators.
-            // When one operand is `any`, the evaluator returns Success(NUMBER) but tsc
-            // still requires the OTHER operand to be a valid arithmetic type (any, number,
-            // bigint, or enum). Without this pre-check, `any * T` silently passes.
-            if is_arithmetic_op && op_str != "+" && !emitted_nullish_error {
-                let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
-                let right_any_like = eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
-
-                if left_any_like || right_any_like {
-                    if left_any_like
-                        && !evaluator.is_arithmetic_operand(eval_right)
-                        && !self.is_enum_type(right_type)
-                    {
-                        self.error_at_node(
-                            right_idx,
-                            "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
-                            crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        );
-                    }
-                    if right_any_like
-                        && !evaluator.is_arithmetic_operand(eval_left)
-                        && !self.is_enum_type(left_type)
-                    {
-                        self.error_at_node(
-                            left_idx,
-                            "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
-                            crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        );
-                    }
-                }
-            }
+            // (Per-operand TS2362/TS2363 validity for arithmetic operators is
+            // emitted once, up-front, by `emit_arithmetic_operand_errors`.)
 
             // For relational operators, widen literal/enum types to their base types
             // before comparison (matching tsc's getBaseTypeOfLiteralTypeForComparison).

@@ -39,6 +39,9 @@ path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 name = "cannot_find_name_lib_hint_parity_tests"
 path = "tests/cannot_find_name_lib_hint_parity_tests.rs"
 [[test]]
+name = "arithmetic_operand_validity_tests"
+path = "tests/arithmetic_operand_validity_tests.rs"
+[[test]]
 name = "generic_interface_target_property_elaboration_tests"
 path = "tests/generic_interface_target_property_elaboration_tests.rs"
 [[test]]
