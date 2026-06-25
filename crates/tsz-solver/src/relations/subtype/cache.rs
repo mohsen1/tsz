@@ -32,6 +32,13 @@ pub(crate) use crate::limits::{
 };
 pub use crate::limits::{lazy_resolve_failure_count, reset_subtype_thread_local_state};
 
+/// #14345 Stage-2 CANDIDATE gate (flag `TSZ_STAGE2_CANDIDATE=1`, measurement).
+fn stage2_candidate_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_STAGE2_CANDIDATE").is_ok_and(|v| v == "1"))
+}
+
 /// Whether the relation reduces two deferred `Conditional` operands whose check
 /// types are concrete (the branch is decidable) and relates the reduced forms
 /// before falling back to the raw deferred-conditional comparison.
@@ -181,6 +188,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             for &(eq_a, eq_b) in &self.type_param_equivalences {
                 if (source == eq_a && target == eq_b) || (source == eq_b && target == eq_a) {
                     return SubtypeResult::True;
+                }
+            }
+            // #14345 Stage-2 CANDIDATE (flag `TSZ_STAGE2_CANDIDATE=1`): accept a
+            // same-name both-DeclScoped pair that misses the id-keyed equiv but is
+            // covered by name within the active alpha-rename frame. Measures the
+            // make-or-break: does relaxing id-match to name-match close the +53,
+            // and does it re-introduce the +16 over-unification?
+            if stage2_candidate_enabled() {
+                use crate::types::TypeParamOrigin::DeclScoped;
+                if let (Some(TypeData::TypeParameter(si)), Some(TypeData::TypeParameter(ti))) =
+                    (self.interner.lookup(source), self.interner.lookup(target))
+                    && si.name == ti.name
+                    && matches!(si.origin, DeclScoped { .. })
+                    && matches!(ti.origin, DeclScoped { .. })
+                {
+                    // Only accept when BOTH names appear (by name) on the registered
+                    // equiv pairs — i.e. the active alpha-rename frame is renaming
+                    // these names. This scopes the relaxation to the current
+                    // generic-subtype comparison rather than a global surface match.
+                    let name_covered = |n: tsz_common::interner::Atom| {
+                        self.type_param_equivalences.iter().any(|&(a, b)| {
+                            let nm = |id: TypeId| {
+                                matches!(self.interner.lookup(id),
+                                    Some(TypeData::TypeParameter(e)) if e.name == n)
+                            };
+                            nm(a) || nm(b)
+                        })
+                    };
+                    if name_covered(si.name) {
+                        return SubtypeResult::True;
+                    }
                 }
             }
             // #14345 Stage-2 PROBE: a both-TypeParameter pair reached the consult
