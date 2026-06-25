@@ -170,7 +170,7 @@ const sink = [a, b];
 "#,
     );
     assert!(
-        ts2339(&diagnostics).iter().any(|m| m.contains("b")),
+        ts2339(&diagnostics).iter().any(|m| m.contains('b')),
         "named (non-fresh) member missing `b` should still emit TS2339 on `b`: {diagnostics:#?}"
     );
 }
@@ -191,7 +191,7 @@ const sink = [a, b];
 "#,
     );
     assert!(
-        ts2339(&diagnostics).iter().any(|m| m.contains("b")),
+        ts2339(&diagnostics).iter().any(|m| m.contains('b')),
         "call-return (non-fresh) member missing `b` should still emit TS2339 on `b`: {diagnostics:#?}"
     );
 }
@@ -211,7 +211,7 @@ const sink = [a, b];
 "#,
     );
     assert!(
-        ts2339(&diagnostics).iter().any(|m| m.contains("b")),
+        ts2339(&diagnostics).iter().any(|m| m.contains('b')),
         "const-bound (freshness-lost) member missing `b` should still emit TS2339 on `b`: {diagnostics:#?}"
     );
 }
@@ -252,7 +252,7 @@ const value = obj.b;
 "#,
     );
     assert!(
-        ts2339(&diagnostics).iter().any(|m| m.contains("b")),
+        ts2339(&diagnostics).iter().any(|m| m.contains('b')),
         "direct member access of a required prop absent from a fresh union member should still emit TS2339: {diagnostics:#?}"
     );
 }
@@ -290,7 +290,7 @@ const value = obj.b;
 "#,
     );
     assert!(
-        ts2339(&direct).iter().any(|m| m.contains("b")),
+        ts2339(&direct).iter().any(|m| m.contains('b')),
         "direct access of a required prop absent from a fresh member should still error: {direct:#?}"
     );
 }
