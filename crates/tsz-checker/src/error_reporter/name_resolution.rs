@@ -1073,21 +1073,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit the "install @types/X" diagnostic for a missing global whose
-    /// category is reported the same way in value and type position: Node.js
-    /// (TS2591), jQuery, a test runner, or Bun. Returns `true` if a diagnostic
-    /// was emitted; `false` when `name` is not such a global (or a Node
-    /// special-case falls through), so callers emit their own position-correct
-    /// plain `Cannot find name` (TS2304).
+    /// Emit the position-independent "cannot find name" hint for a missing
+    /// global whose category tsc reports the same way in value and type
+    /// position: Node.js (TS2591), jQuery, a test runner, Bun, or a `dom`-lib
+    /// global (TS2584, the fixed `{document, console}` set). Returns `true` if a
+    /// diagnostic was emitted; `false` when `name` is not such a global (or a
+    /// Node special-case falls through), so callers emit their own
+    /// position-correct plain `Cannot find name` (TS2304).
     ///
-    /// The es2015 "change target library" (TS2583) and DOM cases are
-    /// intentionally NOT handled here: tsc's choice there depends on
-    /// value-vs-type position (the es2015 value-lib gate, and
-    /// `check_missing_global_types` for type position), and type position
-    /// already matches tsc for those. This helper is the single source of truth
-    /// for the position-independent categories, shared by the value path
-    /// ([`error_cannot_find_name_at`]) and the type-position name-resolution
-    /// failure arm.
+    /// The es2015 "change target library" (TS2583) case is intentionally NOT
+    /// handled here: tsc gates it on value-vs-type position (the es2015
+    /// value-lib gate in the value path, and `check_missing_global_types` for
+    /// type position). The `{document, console}` DOM hint, by contrast, is
+    /// emitted by tsc in BOTH positions (`getCannotFindNameDiagnosticForName`
+    /// keys purely on the name), so it lives here as a position-independent
+    /// category, shared by the value path ([`error_cannot_find_name_at`]) and
+    /// the type-position name-resolution failure arm.
     pub(crate) fn try_emit_install_types_for_missing_global(
         &mut self,
         name: &str,
@@ -1098,6 +1099,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         match cap_diag {
+            CapabilityDiagnostic::MissingDomGlobal { .. } => {
+                // `document`/`console` without the dom lib: tsc emits TS2584 in
+                // both value and type position. The value path also reaches this
+                // via its own DOM arm, but routing it here keeps the type path
+                // (which would otherwise fall to plain TS2304) at parity.
+                self.error_cannot_find_name_change_target_lib(name, idx);
+                true
+            }
             CapabilityDiagnostic::MissingNodeGlobal { .. } => {
                 // Private-name access bases and `module` amid parse errors fall
                 // through to plain TS2304, matching tsc and the value path.
