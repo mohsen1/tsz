@@ -146,109 +146,75 @@ impl<'a> CheckerState<'a> {
     ///     return 1;
     /// }
     /// ```
-    /// Pre-check before the more expensive `function_body_falls_through`: does the
-    /// function body contain a statement that could keep it from falling off the end?
-    ///
-    /// This gates the (potentially expensive) full fall-through analysis so simple
-    /// bodies that obviously fall through don't trigger type evaluation. It must
-    /// stay conservative in the safe direction: it may return `true` for a body that
-    /// actually falls through (the full check then corrects to `void`), but it must
-    /// not return `false` for a body that does *not* fall through, or the inferred
-    /// return type would wrongly default to `void` instead of `never`.
-    ///
-    /// `throw` statements are detected with a cheap AST-only scan. Expression
-    /// statements whose expression is a never-returning call also stop fall-through,
-    /// but recognizing those requires type checking, so they are detected by
-    /// consulting `call_expression_terminates_control_flow` (the same classifier the
-    /// full reachability analysis uses), keeping never-call detection consistent
-    /// across paths.
-    fn body_contains_throw_or_never_call(&mut self, body_idx: NodeIndex) -> bool {
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return false;
-        };
-        if body_node.kind != syntax_kind_ext::BLOCK {
-            return false;
-        }
-        let Some(block) = self.ctx.arena.get_block(body_node) else {
-            return false;
-        };
-        let statements = block.statements.nodes.clone();
-        self.statements_contain_throw_or_never_call(&statements)
-    }
-
-    /// Recursive companion to `body_contains_throw_or_never_call` that walks the
-    /// statement shapes a `throw`/never-call could hide in. Expression-statement
-    /// never-calls are detected via `call_expression_terminates_control_flow` so the
-    /// classification stays consistent with the full reachability analysis.
-    fn statements_contain_throw_or_never_call(&mut self, stmts: &[NodeIndex]) -> bool {
-        for &idx in stmts {
-            let Some(node) = self.ctx.arena.get(idx) else {
-                continue;
-            };
-            match node.kind {
-                syntax_kind_ext::THROW_STATEMENT => return true,
-                syntax_kind_ext::EXPRESSION_STATEMENT => {
-                    if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
-                        let expr = expr_stmt.expression;
-                        if self.call_expression_terminates_control_flow(expr) {
-                            return true;
-                        }
-                    }
-                }
-                syntax_kind_ext::BLOCK => {
-                    if let Some(block) = self.ctx.arena.get_block(node) {
-                        let inner = block.statements.nodes.clone();
-                        if self.statements_contain_throw_or_never_call(&inner) {
-                            return true;
-                        }
-                    }
-                }
-                syntax_kind_ext::IF_STATEMENT => {
-                    if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
-                        let then_stmt = if_data.then_statement;
-                        let else_stmt = if_data.else_statement;
-                        if self.statements_contain_throw_or_never_call(&[then_stmt]) {
-                            return true;
-                        }
-                        if else_stmt.is_some()
-                            && self.statements_contain_throw_or_never_call(&[else_stmt])
+    /// Lightweight AST scan: does the function body contain any `throw` statements?
+    /// This is used as a pre-check before the more expensive `function_body_falls_through`
+    /// to avoid triggering type evaluation in simple function bodies that obviously fall through.
+    fn body_contains_throw_or_never_call(&self, body_idx: NodeIndex) -> bool {
+        fn scan_stmts(arena: &tsz_parser::parser::NodeArena, stmts: &[NodeIndex]) -> bool {
+            use tsz_parser::parser::syntax_kind_ext;
+            for &idx in stmts {
+                let Some(node) = arena.get(idx) else {
+                    continue;
+                };
+                match node.kind {
+                    syntax_kind_ext::THROW_STATEMENT => return true,
+                    syntax_kind_ext::BLOCK => {
+                        if let Some(block) = arena.get_block(node)
+                            && scan_stmts(arena, &block.statements.nodes)
                         {
                             return true;
                         }
                     }
-                }
-                syntax_kind_ext::TRY_STATEMENT => {
-                    if let Some(try_data) = self.ctx.arena.get_try(node) {
-                        let try_block = try_data.try_block;
-                        if self.statements_contain_throw_or_never_call(&[try_block]) {
+                    syntax_kind_ext::IF_STATEMENT => {
+                        if let Some(if_data) = arena.get_if_statement(node) {
+                            if scan_stmts(arena, &[if_data.then_statement]) {
+                                return true;
+                            }
+                            if if_data.else_statement.is_some()
+                                && scan_stmts(arena, &[if_data.else_statement])
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    syntax_kind_ext::TRY_STATEMENT => {
+                        if let Some(try_data) = arena.get_try(node)
+                            && scan_stmts(arena, &[try_data.try_block])
+                        {
                             return true;
                         }
                     }
-                }
-                syntax_kind_ext::SWITCH_STATEMENT => {
-                    let clause_statements = self
-                        .ctx
-                        .arena
-                        .get_switch(node)
-                        .and_then(|switch_data| self.ctx.arena.get(switch_data.case_block))
-                        .and_then(|cb_node| self.ctx.arena.get_block(cb_node))
-                        .map(|cb| cb.statements.nodes.clone())
-                        .unwrap_or_default();
-                    for clause_idx in clause_statements {
-                        let stmts = self
-                            .ctx
-                            .arena
-                            .get(clause_idx)
-                            .and_then(|cn| self.ctx.arena.get_case_clause(cn))
-                            .map(|clause| clause.statements.nodes.clone())
-                            .unwrap_or_default();
-                        if self.statements_contain_throw_or_never_call(&stmts) {
-                            return true;
+                    syntax_kind_ext::SWITCH_STATEMENT => {
+                        if let Some(switch_data) = arena.get_switch(node)
+                            && let Some(cb_node) = arena.get(switch_data.case_block)
+                            && let Some(cb) = arena.get_block(cb_node)
+                        {
+                            for &clause_idx in &cb.statements.nodes {
+                                if let Some(cn) = arena.get(clause_idx)
+                                    && let Some(clause) = arena.get_case_clause(cn)
+                                    && scan_stmts(arena, &clause.statements.nodes)
+                                {
+                                    return true;
+                                }
+                            }
                         }
                     }
+                    // Expression statements could contain never-returning calls,
+                    // but detecting those requires type checking. We conservatively
+                    // return false here; the full falls_through check will catch them.
+                    _ => {}
                 }
-                _ => {}
             }
+            false
+        }
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            return scan_stmts(self.ctx.arena, &block.statements.nodes);
         }
         false
     }
