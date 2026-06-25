@@ -2199,6 +2199,9 @@ path = "tests/untyped_call_keyword_type_arg_tests.rs"
 name = "destructuring_deferred_conditional_iterability_tests"
 path = "tests/destructuring_deferred_conditional_iterability_tests.rs"
 [[test]]
+name = "destructuring_fresh_union_member_tolerance_tests"
+path = "tests/destructuring_fresh_union_member_tolerance_tests.rs"
+[[test]]
 name = "es5_constrained_generic_array_iterability_tests"
 path = "tests/es5_constrained_generic_array_iterability_tests.rs"
 
