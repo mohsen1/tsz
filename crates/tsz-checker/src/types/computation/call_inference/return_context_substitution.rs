@@ -337,20 +337,63 @@ impl<'a> CheckerState<'a> {
 
         if let Some(target_members) = common::union_members(self.ctx.types, target) {
             let before_len = substitution.len();
+            // Probe *every* non-nullish union arm and only bind a tracked
+            // parameter from the return context when the arms agree on a single
+            // value — rather than stopping at the first arm that produces a
+            // binding.
+            //
+            // A nested generic call whose signature return is `U[]` checked
+            // against a contextual union like `string[] | string[][]` matches
+            // both arms but binds `U` differently (`U := string` from the
+            // `string[]` arm, `U := string[]` from the `string[][]` arm). Taking
+            // only the first arm pinned `U := string`, which contextually typed
+            // the callback's return as `string` and spuriously rejected its body
+            // (and, in a nested `U | U[]` callback target, leaked the outer type
+            // parameter into the result — issue #14731). The arms are genuinely
+            // ambiguous, so the return context must not pin `U`; leaving it
+            // unbound lets argument inference (the callback body) decide it, as
+            // `tsc` does. When every contributing arm agrees on the same value,
+            // binding it is unambiguous and preserved.
+            let mut per_param: rustc_hash::FxHashMap<Atom, Vec<TypeId>> =
+                rustc_hash::FxHashMap::default();
+            let mut param_order: Vec<Atom> = Vec::new();
             for member in target_members
                 .into_iter()
                 .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
             {
+                let mut member_substitution = TypeSubstitution::new();
+                let mut member_visited = FxHashSet::default();
                 self.collect_return_context_substitution(
                     source,
                     member,
                     tracked_type_params,
-                    substitution,
-                    visited,
+                    &mut member_substitution,
+                    &mut member_visited,
                 );
-                if substitution.len() > before_len {
-                    return;
+                for (&name, &member_ty) in member_substitution.map() {
+                    let values = per_param.entry(name).or_insert_with(|| {
+                        param_order.push(name);
+                        Vec::new()
+                    });
+                    if !values.contains(&member_ty) {
+                        values.push(member_ty);
+                    }
                 }
+            }
+            for name in param_order {
+                // Earlier blocks (and an outer arm) may have already bound this
+                // parameter; never override an existing binding, and skip
+                // parameters the arms disagree on (genuine ambiguity).
+                if substitution.get(name).is_some() {
+                    continue;
+                }
+                let values = &per_param[&name];
+                if values.len() == 1 {
+                    substitution.insert(name, values[0]);
+                }
+            }
+            if substitution.len() > before_len {
+                return;
             }
         }
 

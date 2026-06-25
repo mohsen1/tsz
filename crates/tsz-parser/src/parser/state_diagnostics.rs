@@ -441,7 +441,14 @@ impl ParserState {
                     }
                 }
                 _ => {
-                    j += 1;
+                    // `\X` (where X is neither `x` nor `u`) is a single escape
+                    // atom: the backslash escapes the following byte. Consume
+                    // BOTH bytes so an escaped backslash `\\` cannot leave its
+                    // second `\` to seed a phantom `\u`/`\x` escape on the next
+                    // iteration (e.g. `\\u005` is a literal backslash followed
+                    // by literal `u005`, not a `\u` escape). This mirrors the
+                    // escape-pairing the body-scan loop above already tracks.
+                    j += 2;
                 }
             }
         }

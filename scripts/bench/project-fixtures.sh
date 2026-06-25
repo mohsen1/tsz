@@ -52,6 +52,8 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "valtio-project"
   "scule-project"
   "mitt-project"
+  "change-case-project"
+  "tiny-invariant-project"
   "ts-belt-project"
   "ts-extras-project"
   "superjson-project"
@@ -352,6 +354,12 @@ tsz_project_fixture_sources() {
       ;;
     mitt-project)
       printf 'mitt|%s|%s\n' "$MITT_REPO" "$MITT_REF"
+      ;;
+    change-case-project)
+      printf 'change-case|%s|%s\n' "$CHANGE_CASE_REPO" "$CHANGE_CASE_REF"
+      ;;
+    tiny-invariant-project)
+      printf 'tiny-invariant|%s|%s\n' "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF"
       ;;
     ts-belt-project)
       printf 'ts-belt|%s|%s\n' "$TS_BELT_REPO" "$TS_BELT_REF"
@@ -914,6 +922,25 @@ tsz_write_mitt_config() {
   # mitt is zero-dependency; a single `src/index.ts` event-emitter module. Its
   # test sources live under `test/` (outside the `src/**` include), so the
   # shared baseline checks only the library source. Clean green row.
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_change_case_config() {
+  # change-case is zero-dependency; its `packages/change-case/src/index.ts` and
+  # `keys.ts` (~332 lines of real `.ts`) implement the string-casing helpers.
+  # The `*.spec.ts` vitest sources are excluded by the shared baseline, so the
+  # `packages/change-case/src/**` include checks only the library source under
+  # the standard es2022/esnext/bundler config (no allowImportingTsExtensions:
+  # the sources use extensionless sibling specifiers). Clean green row
+  # (tsz/tsc both 0 errors).
+  tsz_write_basic_external_project_config "$1" "packages/change-case/src"
+}
+
+tsz_write_tiny_invariant_config() {
+  # tiny-invariant is zero-dependency; its `src/tiny-invariant.ts` implements
+  # the runtime invariant helper. Both tsz and tsc emit only the shared
+  # TS5101/TS2591 baseUrl/process baseline line (0 tsz-only delta), so this is
+  # a clean green row.
   tsz_write_basic_external_project_config "$1" "src"
 }
 

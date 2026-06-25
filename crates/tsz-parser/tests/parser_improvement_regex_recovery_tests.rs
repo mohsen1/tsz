@@ -572,6 +572,86 @@ fn test_regex_trailing_flag_scan_uses_es_identifier_part() {
 }
 
 #[test]
+fn test_regex_escaped_backslash_does_not_seed_phantom_unicode_or_hex_escape() {
+    // In a regex literal, `\\` is a single literal-backslash atom; the chars
+    // after it are literals, not a `\u`/`\x` escape. The regex escape validator
+    // previously did not pair backslashes, so the second `\` of `\\u005` seeded
+    // a phantom `\u` validation -> false TS1125. These are clean under tsc.
+    for source in [
+        "const r = /\\\\u005[Ff]/;\n", // /\\u005[Ff]/
+        "const r = /[\\\\u005]/;\n",   // /[\\u005]/
+        "const r = /\\\\xA/;\n",       // /\\xA/
+        // destr's proto/constructor guard regex shape (escaped backslashes).
+        "const r = /\"(?:_|\\\\u005[Ff])(?:_|\\\\u005[Ff])(?:p|\\\\u0070)\"/;\n",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+            "escaped backslash `\\\\` must not seed a phantom `\\u`/`\\x` escape (TS1125) in {source:?}, got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_regex_plain_escapes_and_valid_escapes_stay_clean() {
+    // Unchanged-clean controls: ordinary regex and valid escapes never emit
+    // TS1125, before or after the backslash-pairing fix.
+    for source in [
+        "const r = /A/;\n",
+        "const r = /\\u{1F600}/u;\n",
+        "const r = /\\xAB/;\n",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+            "valid regex escape must stay clean of TS1125 in {source:?}, got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_regex_genuine_incomplete_escapes_still_report_ts1125() {
+    // Genuine incomplete `\u`/`\x` escapes (unescaped backslash) must STILL
+    // fire TS1125 after the backslash-pairing fix.
+    for source in [
+        "const r = /\\u00G1/;\n", // non-hex G at slot 3
+        "const r = /\\u00/;\n",   // truncated \u
+        "const r = /\\xZZ/;\n",   // non-hex Z after \x
+    ] {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+            "genuine incomplete regex `\\u`/`\\x` escape must still emit TS1125 in {source:?}, got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_string_context_unicode_escape_validation_unchanged() {
+    // The backslash-pairing fix is scoped to the regex escape loop only;
+    // string-literal escapes are validated on a different path and stay
+    // unchanged. `"\u005"` is a genuinely incomplete string `\u` escape.
+    let source = "const s = \"\\u005\";\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+        "incomplete string `\\u` escape must still emit TS1125, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_trailing_non_identifier_codepoint_ends_flag_scan() {
     // Negative guard: U+2117 SOUND RECORDING COPYRIGHT is not in ES
     // `ID_Continue`, so tsc ends the flag scan before it and never reports

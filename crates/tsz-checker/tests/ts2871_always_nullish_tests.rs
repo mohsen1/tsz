@@ -69,6 +69,52 @@ fn deep_nullish_chain_emits_ts2871_at_top() {
     );
 }
 
+/// A bare (unparenthesised) `??` chain whose operands are all always-nullish
+/// reports TS2871 once per `??` operator, every one anchored at the leftmost
+/// `null` but spanning a successively wider left operand
+/// (`null`, then `null ?? null`, then `null ?? null ?? null`, ...). tsc keeps
+/// each because it keys deduplication on span length as well as start. The
+/// dedup key must not collapse the chain to a single diagnostic.
+///
+/// Witnesses (tsc 6.0): `null ?? null ?? 5` → 2; the four-operand chain → 3.
+#[test]
+fn nested_always_nullish_chain_emits_one_ts2871_per_operator() {
+    let two = check_source_codes("const z = null ?? null ?? 5;\n");
+    assert_eq!(
+        two.iter().filter(|&&c| c == 2871).count(),
+        2,
+        "two `??` over always-nullish operands must emit TS2871 twice; got: {two:?}",
+    );
+
+    let three = check_source_codes("const z = undefined ?? undefined ?? undefined ?? 1;\n");
+    assert_eq!(
+        three.iter().filter(|&&c| c == 2871).count(),
+        3,
+        "three `??` over always-nullish operands must emit TS2871 three times; got: {three:?}",
+    );
+}
+
+/// Mixed chain `null ?? 1 ?? 2` = `(null ?? 1) ?? 2`: the inner `??` has an
+/// always-nullish left (`null`, TS2871) while the outer `??` sees a
+/// syntactically never-nullish left (`null ?? 1` resolves to its non-nullish
+/// right, TS2869). Both anchor at the same start but carry different codes, so
+/// they were never collapsed — this guards that the length-aware key for the
+/// nullish family leaves the cross-code case intact.
+#[test]
+fn mixed_nullish_chain_keeps_both_ts2871_and_ts2869() {
+    let diags = check_source_codes("const z = null ?? 1 ?? 2;\n");
+    assert_eq!(
+        diags.iter().filter(|&&c| c == 2871).count(),
+        1,
+        "inner always-nullish `null` must emit one TS2871; got: {diags:?}",
+    );
+    assert_eq!(
+        diags.iter().filter(|&&c| c == 2869).count(),
+        1,
+        "outer never-nullish `null ?? 1` must emit one TS2869; got: {diags:?}",
+    );
+}
+
 // =========================================================================
 // Regression guards — TS2871 must NOT fire on non-nullish-only expressions
 // =========================================================================

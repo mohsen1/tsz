@@ -1535,11 +1535,13 @@ impl CheckerState<'_> {
                         if let Some(&parent_sym) = parents.first()
                             && let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym)
                         {
-                            env.register_class_extends(def_id, parent_def_id);
-                            // Also register in type_environment so FlowAnalyzer sees it.
-                            if let Ok(mut te) = self.ctx.type_environment.try_borrow_mut() {
-                                te.register_class_extends(def_id, parent_def_id);
-                            }
+                            // Register the class `extends` edge in BOTH envs through
+                            // the dual-env deferral discipline. The held `type_env`
+                            // borrow makes the evaluator-env write defer-and-replay
+                            // rather than drop, and the flow-analyzer mirror is applied
+                            // (or deferred) the same way, so the FlowAnalyzer sees it.
+                            self.ctx
+                                .register_class_extends_in_envs(def_id, parent_def_id);
                         }
                     }
                 } else if type_params.is_empty() {
