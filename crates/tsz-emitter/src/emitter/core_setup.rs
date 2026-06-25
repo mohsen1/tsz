@@ -314,6 +314,8 @@ impl<'a> Printer<'a> {
             in_top_level_using_scope: false,
             in_system_top_level_using_prelude: false,
             metadata_class_type_params: None,
+            metadata_in_alias_target: false,
+            metadata_alias_depth: 0,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
             pending_cjs_namespace_export_names: Vec::new(),
