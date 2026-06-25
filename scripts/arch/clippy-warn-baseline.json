@@ -25,7 +25,7 @@
   "clippy::implicit_hasher": 28,
   "clippy::inconsistent_struct_constructor": 4,
   "clippy::inefficient_to_string": 14,
-  "clippy::inline_always": 36,
+  "clippy::inline_always": 38,
   "clippy::items_after_statements": 1079,
   "clippy::large_stack_arrays": 5,
   "clippy::manual_assert": 49,

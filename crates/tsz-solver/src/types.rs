@@ -1722,10 +1722,7 @@ impl TypeParamOrigin {
     pub const fn is_infer_placeholder(self) -> bool {
         // `DeclScoped` is a user-written param (decl-stamped for identity), NOT
         // an inference placeholder — classify it with `User` (#14344 STEP-B).
-        !matches!(
-            self,
-            TypeParamOrigin::User | TypeParamOrigin::DeclScoped { .. }
-        )
+        !matches!(self, Self::User | Self::DeclScoped { .. })
     }
 
     /// Higher-order *source* inference placeholder only.
