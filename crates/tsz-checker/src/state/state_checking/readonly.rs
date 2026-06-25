@@ -279,7 +279,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let obj_type = self.get_type_of_node(access.expression);
-        let readonly_check_type = self.evaluate_type_for_assignability(obj_type);
+        let evaluated = self.evaluate_type_for_assignability(obj_type);
+        let readonly_check_type =
+            self.apparent_type_for_readonly_named_property(evaluated, &prop_name);
 
         if self.is_namespace_const_property(access.expression, &prop_name) {
             self.error_delete_readonly_property_at(target_idx);
@@ -534,6 +536,12 @@ impl<'a> CheckerState<'a> {
         // resolve it through the checker's TypeEnvironment to get concrete
         // property readonly flags.
         readonly_check_type = self.resolve_deferred_mapped_type(readonly_check_type);
+        // A generic type-parameter receiver carries its `readonly` modifiers on
+        // its constraint (apparent type); resolve to the constraint so a write
+        // to `t.a` where `T extends { readonly a }` reports TS2540, matching
+        // `tsc`'s `getApparentType`/`isReadonlySymbol`.
+        readonly_check_type =
+            self.apparent_type_for_readonly_named_property(readonly_check_type, &prop_name);
 
         // When the object type is `any` or `error` (e.g., unresolved module import
         // with TS2307), skip readonly checks entirely. TSC doesn't emit TS2540 for
@@ -1566,6 +1574,59 @@ impl<'a> CheckerState<'a> {
             resolved
         } else {
             type_id
+        }
+    }
+
+    /// Resolve a receiver type to the apparent type used to classify a readonly
+    /// *named-property* delete/assignment target.
+    ///
+    /// A generic type parameter carries its `readonly` modifiers on its
+    /// constraint (apparent type); `tsc` resolves the assigned/deleted property
+    /// symbol against `getApparentType`, so when the receiver is a type
+    /// parameter whose constraint declares `prop_name` as a *named* member,
+    /// resolve the constraint through the environment — which resolves the
+    /// interface / library `Lazy` `DefId`s the standalone solver cannot — and
+    /// classify against it. This is what makes `t.a` (with
+    /// `T extends { readonly a }`, `T extends RA`, `T extends Readonly<{ a }>`,
+    /// or `T extends RA & RB`) report TS2540 / TS2704 instead of falling through
+    /// to TS2322 / TS2790.
+    ///
+    /// The apparent type is adopted only when the resolved constraint exposes
+    /// `prop_name` as a named (non-index-signature) property, so an
+    /// index-signature-only constraint
+    /// (`T extends { readonly [k: string]: number }`) keeps `tsc`'s TS2339
+    /// "property does not exist on type 'T'" behavior for `t.k` rather than
+    /// gaining a spurious readonly diagnostic.
+    fn apparent_type_for_readonly_named_property(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+    ) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::common::type_param_info;
+
+        // `type_param_info` returns `None` for any non-type-parameter, so it also
+        // serves as the "is this a type parameter?" gate.
+        let Some(info) = type_param_info(self.ctx.types, type_id) else {
+            return type_id;
+        };
+        let Some(constraint) = info.constraint else {
+            return type_id;
+        };
+        // `evaluate_type_for_assignability` resolves the constraint's interface /
+        // library `Lazy` members to concrete shapes (the same resolution that
+        // makes a `declare const x: RA & RB` receiver classify correctly), which
+        // the standalone solver readonly query cannot do on its own.
+        let resolved = self.evaluate_type_for_assignability(constraint);
+        if resolved == type_id {
+            return type_id;
+        }
+        match self.resolve_property_access_with_env(resolved, prop_name) {
+            PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            } => resolved,
+            _ => type_id,
         }
     }
 
