@@ -67,18 +67,138 @@ pub(crate) fn property_is_readonly(
                 .any(|t| property_is_readonly(interner, *t, prop_name))
         }
         Some(TypeData::Intersection(types)) => {
-            // For intersections: property is readonly ONLY if it's readonly in ALL constituent types
-            // This allows assignment to `{ readonly a: number } & { a: number }` (mixed readonly/mutable)
             let types = interner.type_list(types);
-            types
-                .iter()
-                .all(|t| property_is_readonly(interner, *t, prop_name))
+            intersection_property_is_readonly(interner, &types, prop_name)
         }
         Some(TypeData::Mapped(mapped_id)) => {
             // Mapped types with explicit readonly modifier (e.g., Readonly<T>)
             // have ALL properties readonly.
             let mapped = interner.get_mapped(mapped_id);
             mapped.readonly_modifier == Some(MappedModifier::Add)
+        }
+        // A property reached through a generic type parameter is classified on
+        // the parameter's *apparent type* (its base constraint), mirroring
+        // `tsc`'s `getApparentType`/`isReadonlySymbol`: `delete`/assignment of
+        // `t.a` where `T extends { readonly a }` must see the constraint's
+        // `readonly` modifier. A bare type parameter leaves the modifier
+        // invisible, so resolve to the constraint and re-classify — but only
+        // when the constraint declares the property as a *named* member. A
+        // constraint exposing the property solely through an index signature
+        // (`T extends { readonly [k: string]: number }`) resolves no named
+        // symbol on the type parameter, so `tsc` reports TS2339 for `t.k`
+        // rather than a readonly diagnostic; keep that by not treating the
+        // index-signature match as a readonly named property here.
+        //
+        // Interface / library-alias constraints arrive as unresolved
+        // `Lazy(DefId)` that the standalone evaluator cannot resolve; those are
+        // resolved to a concrete apparent type by the checker (which owns the
+        // `DefId -> TypeId` environment) before this query runs.
+        Some(TypeData::TypeParameter(info)) => match info.constraint {
+            Some(constraint)
+                if constraint != type_id
+                    && type_declares_property(interner, constraint, prop_name) =>
+            {
+                property_is_readonly(interner, constraint, prop_name)
+            }
+            _ => false,
+        },
+        // A substitution `base & constraint` (from conditional-flow narrowing)
+        // observes the readonly modifier of either constituent, just like the
+        // base-constraint computation it mirrors (`getSubstitutionIntersection`).
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => intersection_property_is_readonly(interner, &[base_type, constraint], prop_name),
+        _ => false,
+    }
+}
+
+/// Classify a property reached through an *intersection* of constituents.
+///
+/// `tsc` synthesizes the intersection's property symbol from the constituents
+/// that actually declare it (`getPropertyOfUnionOrIntersectionType`): the
+/// property is readonly iff at least one constituent declares it and *every*
+/// declaring constituent declares it `readonly`. A constituent that does not
+/// declare the property — an unrelated member, or a type parameter whose
+/// apparent type lacks it — does not contribute. The earlier `all()` over *all*
+/// constituents wrongly treated a non-declaring member's `false` as "mutable",
+/// so e.g. `T & { readonly a }` (apparent `unknown & { readonly a }`) and
+/// `T extends RA & RB` (only `RA` declares `a`) lost the `readonly` modifier.
+fn intersection_property_is_readonly(
+    interner: &dyn TypeDatabase,
+    members: &[TypeId],
+    prop_name: &str,
+) -> bool {
+    let mut any_declared = false;
+    let mut all_readonly = true;
+    for &member in members {
+        if type_declares_property(interner, member, prop_name) {
+            any_declared = true;
+            if !property_is_readonly(interner, member, prop_name) {
+                all_readonly = false;
+            }
+        }
+    }
+    any_declared && all_readonly
+}
+
+/// Whether `type_id` declares a *named* member `prop_name`, resolving the same
+/// surface-preserving wrappers as [`property_is_readonly`] (interfaces/aliases,
+/// `readonly` wrappers, unions/intersections, and the apparent type of a
+/// generic type parameter). Index-signature-only matches are intentionally
+/// excluded: they synthesize no named symbol, so `tsc` reports them through the
+/// TS2542 index-signature path rather than the named-property TS2540/TS2704
+/// path that consults this classifier.
+fn type_declares_property(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::Lazy(_)) => {
+            let resolved = evaluate_type(interner, type_id);
+            resolved != type_id && type_declares_property(interner, resolved, prop_name)
+        }
+        Some(TypeData::ReadonlyType(inner)) => {
+            if let Some(TypeData::Array(_) | TypeData::Tuple(_)) = interner.lookup(inner)
+                && (is_numeric_index_name(prop_name) || prop_name == "length")
+            {
+                return true;
+            }
+            type_declares_property(interner, inner, prop_name)
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            let prop_atom = interner.intern_string(prop_name);
+            shape.properties.iter().any(|prop| prop.name == prop_atom)
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = interner.callable_shape(shape_id);
+            let prop_atom = interner.intern_string(prop_name);
+            shape.properties.iter().any(|prop| prop.name == prop_atom)
+        }
+        Some(TypeData::Union(types) | TypeData::Intersection(types)) => {
+            let types = interner.type_list(types);
+            types
+                .iter()
+                .any(|t| type_declares_property(interner, *t, prop_name))
+        }
+        // A homomorphic `+readonly` mapped type (e.g. `Readonly<T>`) maps over
+        // its source keys, so it declares the property `tsc` would readonly-flag.
+        Some(TypeData::Mapped(mapped_id)) => {
+            interner.get_mapped(mapped_id).readonly_modifier == Some(MappedModifier::Add)
+        }
+        Some(TypeData::TypeParameter(info)) => match info.constraint {
+            Some(constraint) if constraint != type_id => {
+                type_declares_property(interner, constraint, prop_name)
+            }
+            _ => false,
+        },
+        Some(TypeData::Substitution {
+            base_type,
+            constraint,
+        }) => {
+            type_declares_property(interner, base_type, prop_name)
+                || type_declares_property(interner, constraint, prop_name)
         }
         _ => false,
     }
