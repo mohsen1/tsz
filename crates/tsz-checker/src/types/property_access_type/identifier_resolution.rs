@@ -71,10 +71,31 @@ impl<'a> CheckerState<'a> {
         }
         let in_scope: rustc_hash::FxHashSet<TypeId> =
             self.ctx.type_parameter_scope.values().copied().collect();
-        crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
+        // The enclosing class's own type parameters stay abstract on a
+        // `this`-member read. Inside a nested closure the class's parameters are
+        // not re-registered in the `TypeId`-keyed scope above, so pin them by
+        // their declared NAME as well — otherwise the class's own `T` would be
+        // misread as a genuinely-omitted base argument and filled with its
+        // default (a false `TS2322` when the read is assigned back to `T`).
+        // Names not declared by the receiver class (genuine omitted base
+        // parameters) are still resolved to their `default → constraint →
+        // unknown`.
+        let preserve_names: rustc_hash::FxHashSet<tsz_common::Atom> = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|info| {
+                info.class_type_parameters
+                    .iter()
+                    .map(|param| param.name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        crate::query_boundaries::common::resolve_unbound_type_params_to_defaults_preserving_names(
             self.ctx.types,
             member_type,
             &in_scope,
+            &preserve_names,
         )
     }
 

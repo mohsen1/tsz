@@ -1193,6 +1193,36 @@ pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
     })
 }
 
+/// Like [`resolve_unbound_type_params_to_defaults`], but also preserves any free
+/// type parameter whose declared NAME is in `preserve_names`, regardless of its
+/// `TypeId` identity.
+///
+/// The enclosing generic context's own parameters are normally pinned by their
+/// `TypeId` in `in_scope`. Inside a nested closure, however, the enclosing
+/// class's checking context does not re-register the class's type parameters in
+/// the `TypeId`-keyed scope, so the class's own parameter (e.g. `T` of
+/// `Box<T>`) is absent from `in_scope` and would be misclassified as an omitted
+/// base argument and filled with its default — a false `TS2322` on a
+/// `this.member` read assigned back to `T`. Carrying the enclosing class's
+/// declared type-parameter name set lets such a parameter stay abstract by name
+/// even when its `TypeId` was re-minted across the closure boundary, while
+/// genuinely-omitted BASE parameters (names not declared by the receiver class)
+/// still resolve to their `default → constraint → unknown`.
+pub fn resolve_unbound_type_params_to_defaults_preserving_names<S, N>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+    preserve_names: &std::collections::HashSet<tsz_common::Atom, N>,
+) -> TypeId
+where
+    S: std::hash::BuildHasher,
+    N: std::hash::BuildHasher,
+{
+    resolve_type_params_to_defaults_core(db, member_type, |param_id, info| {
+        !in_scope.contains(&param_id) && !preserve_names.contains(&info.name)
+    })
+}
+
 /// Resolve the type parameters whose declared name is in `names` and appear
 /// free in `ty` to their `default → constraint → unknown`, matching tsc's
 /// instantiation of a *failed* generic call's result with default type

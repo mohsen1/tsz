@@ -211,3 +211,146 @@ function open(s: Sub<number>) { const n: number = s.unwrap(); }
 ",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Closure identity guards: a class's own *defaulted* type parameter must stay
+// abstract when a `this.member` read happens inside a nested `this`-capturing
+// closure. The class param is absent from the `TypeId`-keyed scope there, so it
+// is pinned by its declared NAME instead of being filled with its default.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn defaulted_class_param_preserved_in_this_capturing_arrow() {
+    // `T extends string = string`: `this.val` read inside the arrow and assigned
+    // back to `T` must keep `T`, not be filled to its `string` default.
+    assert_clean(
+        "
+class Box<T extends string = string> {
+  val!: T;
+  m() {
+    const f = () => { const x: T = this.val; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn defaulted_class_param_preserved_in_arrow_getter_read() {
+    // Same as above but the member is a getter; `this.g` inside the arrow stays
+    // the class parameter `K`.
+    assert_clean(
+        "
+class Crate<K extends string = string> {
+  private _g!: K;
+  get g(): K { return this._g; }
+  m() {
+    const f = () => { const x: K = this.g; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn defaulted_class_param_preserved_via_self_alias_in_arrow() {
+    // `const self = this; self.cell` inside the arrow also resolves through the
+    // class instance and must keep the class parameter `Acc`.
+    assert_clean(
+        "
+class Store<Acc extends string = string> {
+  cell!: Acc;
+  m() {
+    const f = () => { const self = this; const x: Acc = self.cell; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn defaulted_numeric_class_param_preserved_in_arrow() {
+    // A `number` constraint+default variant — the class parameter must still be
+    // preserved by name, not filled to its `number` default.
+    assert_clean(
+        "
+class Counter<N extends number = number> {
+  tally!: N;
+  m() {
+    const f = () => { const x: N = this.tally; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn class_param_without_default_unaffected_in_arrow() {
+    // No default on the class parameter: already clean before and after the fix
+    // (nothing to fill). The closure read still keeps `T`.
+    assert_clean(
+        "
+class Holder<T extends string> {
+  slot!: T;
+  m() {
+    const f = () => { const x: T = this.slot; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn defaulted_class_param_preserved_without_closure() {
+    // Plain method body (no closure): already clean, and remains clean — the
+    // method body keeps `T` in the `TypeId`-keyed scope.
+    assert_clean(
+        "
+class Vault<T extends string = string> {
+  item!: T;
+  m(): T { const x: T = this.item; return x; }
+}
+",
+    );
+}
+
+#[test]
+fn arrow_method_param_typed_by_class_param_unaffected() {
+    // The RHS is a method parameter `arg: T`, not a `this`-member read, so the
+    // omitted-base binding never runs; `T` is preserved as before.
+    assert_clean(
+        "
+class Pack<T extends string = string> {
+  m(arg: T) {
+    const f = () => { const x: T = arg; return x; };
+    return f();
+  }
+}
+",
+    );
+}
+
+#[test]
+fn omitted_base_param_still_fills_default_inside_closure() {
+    // Load-bearing #14523 negative control: `Sub extends Holder` omits the base
+    // argument, so the genuinely-omitted base parameter `V` (NOT a parameter of
+    // the receiver class `Sub`) must STILL bind to its `any` default even when
+    // the read happens inside a nested `this`-capturing closure. The name-pin
+    // only preserves the receiver class's OWN declared parameters.
+    assert_clean(
+        "
+class Holder<V = any> { slot!: V; }
+class Sub extends Holder {
+  read(k: string) {
+    const f = () => { return this.slot[k]; };
+    return f();
+  }
+}
+",
+    );
+}
