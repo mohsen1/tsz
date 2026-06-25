@@ -272,10 +272,12 @@ impl EnvironmentCapabilities {
 /// globals in tsc. They stay plain TS2304 when used as identifiers; module
 /// specifier diagnostics use [`is_known_node_module`] instead.
 pub(crate) fn is_known_node_global(name: &str) -> bool {
-    matches!(
-        name,
-        "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
-    )
+    // Mirror tsc's `getCannotFindNameDiagnosticForName` node case exactly:
+    // `process`, `require`, `Buffer`, `module`, `NodeJS`. Names like `exports`,
+    // `__filename`, and `__dirname` are CommonJS wrapper locals that tsc reports
+    // as plain TS2304 (they are not on the switch), so they must NOT be here or
+    // we emit a spurious "install @types/node" hint for them.
+    matches!(name, "process" | "require" | "Buffer" | "module" | "NodeJS")
 }
 
 /// Check if a module specifier is a known Node.js built-in module (TS2591).
@@ -384,97 +386,18 @@ fn is_node_scheme_only_builtin(name: &str) -> bool {
     matches!(name, "test" | "test/reporters" | "sea" | "sqlite")
 }
 
-/// Check if a name is a known DOM/ScriptHost global that requires 'dom' lib (TS2584).
+/// Check if a name is a known DOM global whose absence tsc reports with the
+/// "change your target library? Try changing the 'lib' compiler option to
+/// include 'dom'" hint (TS2584).
+///
+/// tsc does NOT suggest `dom` for every name that happens to live in the dom
+/// lib — `window`, `HTMLElement`, `fetch`, `setTimeout`, … all fall through to
+/// plain TS2304. The hint is gated to a fixed two-name set baked into
+/// `getCannotFindNameDiagnosticForName` (checker.ts): `document` and `console`.
+/// Mirror that exactly so we don't over-emit TS2584 on every front-end project
+/// compiled without the dom lib.
 pub(crate) fn is_known_dom_global(name: &str) -> bool {
-    matches!(
-        name,
-        "window"
-            | "document"
-            | "console"
-            | "setTimeout"
-            | "clearTimeout"
-            | "setInterval"
-            | "clearInterval"
-            | "requestAnimationFrame"
-            | "cancelAnimationFrame"
-            | "alert"
-            | "confirm"
-            | "prompt"
-            | "fetch"
-            | "navigator"
-            | "location"
-            | "localStorage"
-            | "sessionStorage"
-            | "XMLHttpRequest"
-            | "HTMLElement"
-            | "HTMLDivElement"
-            | "HTMLInputElement"
-            | "HTMLButtonElement"
-            | "HTMLFormElement"
-            | "HTMLImageElement"
-            | "HTMLAnchorElement"
-            | "HTMLTableElement"
-            | "HTMLCanvasElement"
-            | "HTMLVideoElement"
-            | "HTMLAudioElement"
-            | "HTMLSelectElement"
-            | "HTMLTextAreaElement"
-            | "Event"
-            | "MouseEvent"
-            | "KeyboardEvent"
-            | "TouchEvent"
-            | "FocusEvent"
-            | "CustomEvent"
-            | "EventTarget"
-            | "Node"
-            | "NodeList"
-            | "Element"
-            | "Document"
-            | "DocumentFragment"
-            | "MutationObserver"
-            | "IntersectionObserver"
-            | "ResizeObserver"
-            | "URL"
-            | "URLSearchParams"
-            | "AbortController"
-            | "AbortSignal"
-            | "FormData"
-            | "Headers"
-            | "Request"
-            | "Response"
-            | "Blob"
-            | "File"
-            | "FileReader"
-            | "FileList"
-            | "Worker"
-            | "ServiceWorker"
-            | "WebSocket"
-            | "Performance"
-            | "PerformanceObserver"
-            | "Crypto"
-            | "SubtleCrypto"
-            | "TextEncoder"
-            | "TextDecoder"
-            | "DOMParser"
-            | "Selection"
-            | "Range"
-            | "SVGElement"
-            | "CSSStyleDeclaration"
-            | "MediaQueryList"
-            | "CanvasRenderingContext2D"
-            | "WebGLRenderingContext"
-            | "AudioContext"
-            | "OfflineAudioContext"
-            | "BroadcastChannel"
-            | "MessageChannel"
-            | "MessagePort"
-            | "ReadableStream"
-            | "WritableStream"
-            | "TransformStream"
-            | "CompressionStream"
-            | "DecompressionStream"
-            | "StructuredSerializeOptions"
-    )
+    matches!(name, "document" | "console")
 }
 
 /// Check if a known environment value should be reported as plain TS2304 when
@@ -484,13 +407,19 @@ pub(crate) fn is_known_plain_missing_global_value(name: &str) -> bool {
 }
 
 /// Check if a name is a known jQuery global that requires @types/jquery (TS2581/TS2592).
+///
+/// tsc's `getCannotFindNameDiagnosticForName` only special-cases `$`; the bare
+/// `jQuery` identifier is reported as plain TS2304, so it must NOT be here.
 pub(crate) fn is_known_jquery_global(name: &str) -> bool {
-    matches!(name, "$" | "jQuery")
+    matches!(name, "$")
 }
 
 /// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2582/TS2593).
+///
+/// Mirrors tsc's `getCannotFindNameDiagnosticForName` test-runner case exactly:
+/// `beforeEach`, `describe`, `suite`, `it`, `test`.
 pub(crate) fn is_known_test_runner_global(name: &str) -> bool {
-    matches!(name, "describe" | "suite" | "it" | "test")
+    matches!(name, "beforeEach" | "describe" | "suite" | "it" | "test")
 }
 
 #[cfg(test)]
