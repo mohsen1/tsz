@@ -378,6 +378,14 @@ impl<'a> CheckerState<'a> {
             // see `recover_arena_collided_application_for_property_access`. Returns
             // `None` (and falls through) for every well-formed receiver.
             recovered
+        } else if let Some(materialized) =
+            self.materialize_alias_wrapped_interface_receiver(original_object_type)
+        {
+            // Recover a `type L<T> = Box<T>`-style receiver that forwards concrete
+            // arguments into a cross-file generic interface reached through a
+            // barrel re-export; the shared evaluator drops the interface's
+            // parameter substitution. Returns `None` for every other shape.
+            materialized
         } else {
             self.evaluate_application_type(original_object_type)
         };
