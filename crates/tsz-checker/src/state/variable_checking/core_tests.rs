@@ -1895,9 +1895,9 @@ mod catch_clause_scope_tests {
 
     #[test]
     fn genuine_var_shadow_still_reports() {
-        // Negative: a real `var` in a nested block shadowing an outer let must
-        // still emit TS2481 — the catch guard must not over-suppress.
-        let source = "function v() {\n  let y = 1;\n  { var y = 2; }\n  y;\n}";
+        // Negative: a real `var` in a nested block shadowing an outer block-scoped
+        // `let` must still emit TS2481 — the catch guard must not over-suppress.
+        let source = "{\n  let x;\n  {\n    var x = 1;\n  }\n}";
         let errors = check_and_collect(source, 2481);
         assert_eq!(errors.len(), 1, "expected 1 TS2481, got {errors:?}");
     }
