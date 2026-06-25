@@ -716,3 +716,169 @@ function f<T extends "a" | "b">(input: NoInfer<T>) {
         "Expected no TS2367 for switch on NoInfer<T> with case in constraint; got {codes:?}"
     );
 }
+
+// ── Enum vs literal/primitive overlap (value-based against non-enum operands) ──
+//
+// An enum overlaps another type through its member *values* when the other
+// operand is not itself an enum: a whole enum overlaps a primitive (`string`/
+// `number`) and a literal whose value matches a member, but not a literal whose
+// value matches no member. Two distinct enums stay nominal (handled elsewhere).
+// Binder names are varied so the rule is not name- or shape-specific.
+
+#[test]
+fn test_string_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+if (shade === "crimson") {}
+"#
+        ),
+        "Expected NO TS2367: \"crimson\" is a member value of the string enum"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_matching_member_literal_reversed_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Direction { North = "north", South = "south" }
+declare const heading: Direction;
+if ("south" === heading) {}
+"#
+        ),
+        "Expected NO TS2367 with the enum on the right-hand side"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+if (shade === "violet") {}
+"#
+        ),
+        "Expected TS2367: \"violet\" is not a member value of the enum"
+    );
+}
+
+#[test]
+fn test_const_string_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+const enum Mode { Read = "read", Write = "write" }
+declare const access: Mode;
+if (access === "read") {}
+"#
+        ),
+        "Expected NO TS2367: const enum compared with a matching member value"
+    );
+}
+
+#[test]
+fn test_const_string_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+const enum Mode { Read = "read", Write = "write" }
+declare const access: Mode;
+if (access === "delete") {}
+"#
+        ),
+        "Expected TS2367: const enum compared with a non-member value"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_string_primitive_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+declare const text: string;
+if (shade === text) {}
+"#
+        ),
+        "Expected NO TS2367: a string enum overlaps the string primitive"
+    );
+}
+
+#[test]
+fn test_numeric_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Level { Low = 1, High = 2 }
+declare const rank: Level;
+if (rank === 1) {}
+"#
+        ),
+        "Expected NO TS2367: 1 is a member value of the numeric enum"
+    );
+}
+
+#[test]
+fn test_numeric_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Level { Low = 1, High = 2 }
+declare const rank: Level;
+if (rank === 9) {}
+"#
+        ),
+        "Expected TS2367: 9 is not a member value of the numeric enum"
+    );
+}
+
+#[test]
+fn test_distinct_string_enums_keep_ts2367_despite_shared_value() {
+    // Nominal: two different enums do not overlap even when a member value
+    // coincides (both declare a "red" member).
+    assert!(
+        has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+enum Hue { Red = "red", Blue = "blue" }
+declare const c: Color;
+declare const h: Hue;
+if (c === h) {}
+"#
+        ),
+        "Expected TS2367: distinct enums are nominal even with a shared member value"
+    );
+}
+
+#[test]
+fn test_whole_enum_overlaps_own_member_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+declare const c: Color;
+if (c === Color.Red) {}
+"#
+        ),
+        "Expected NO TS2367: a whole enum overlaps one of its own members"
+    );
+}
+
+#[test]
+fn test_distinct_members_same_enum_keep_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+if (Color.Red === Color.Green) {}
+"#
+        ),
+        "Expected TS2367: distinct members of the same enum can never be equal"
+    );
+}

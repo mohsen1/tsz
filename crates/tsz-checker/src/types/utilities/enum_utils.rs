@@ -1138,6 +1138,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Enum overlap is value-based against a non-enum operand but nominal
+        // against another enum: a whole enum overlaps a primitive / matching-member
+        // literal, while two distinct enums stay non-overlapping (see
+        // `enum_value_overlap_rewrite`). A single enum member already unwraps to
+        // its literal in the fast path above; this covers the whole-enum operand.
+        if let Some(no_overlap) = self.enum_value_overlap_rewrite(effective_left, effective_right) {
+            return no_overlap;
+        }
+
         // Check union types: if any member of one union overlaps with the other, they overlap
         if let query::UnionMembersKind::Union(left_members) =
             query::classify_for_union_members(self.ctx.types, effective_left)
