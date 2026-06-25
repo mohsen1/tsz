@@ -370,12 +370,17 @@ impl ParserState {
 
     /// Parse union type: A | B | C
     pub(crate) fn parse_union_type(&mut self) -> NodeIndex {
+        // Forward any "required constituent" intent from the caller to the first
+        // constituent; a consumed leading `|` also makes that constituent required.
+        let required_first = self.require_type_constituent_once;
+        self.require_type_constituent_once = false;
         let start_pos = self.token_pos();
 
         // Handle optional leading | (e.g., type T = | A | B)
         let has_leading_bar = self.parse_optional(SyntaxKind::BarToken);
 
         // Parse first constituent
+        self.require_type_constituent_once = required_first || has_leading_bar;
         let first = self.parse_intersection_type();
 
         // Check for | to form union
@@ -386,6 +391,9 @@ impl ParserState {
         let mut types = vec![first];
 
         while self.parse_optional(SyntaxKind::BarToken) {
+            // A constituent after a consumed `|` is required: tsc emits TS1110 when
+            // it is missing (`A |;`, `A | number |;`).
+            self.require_type_constituent_once = true;
             types.push(self.parse_intersection_type());
         }
 
@@ -406,12 +414,17 @@ impl ParserState {
 
     /// Parse intersection type: A & B & C
     pub(crate) fn parse_intersection_type(&mut self) -> NodeIndex {
+        // Forward any "required constituent" intent from the caller to the first
+        // constituent; a consumed leading `&` also makes that constituent required.
+        let required_first = self.require_type_constituent_once;
+        self.require_type_constituent_once = false;
         let start_pos = self.token_pos();
 
         // Handle optional leading & (e.g., type T = & A & B)
         let has_leading_amp = self.parse_optional(SyntaxKind::AmpersandToken);
 
         // Parse first constituent
+        self.require_type_constituent_once = required_first || has_leading_amp;
         let first = self.parse_primary_type();
 
         let mut fallback_next_import_type_options = false;
@@ -432,6 +445,9 @@ impl ParserState {
 
         while self.parse_optional(SyntaxKind::AmpersandToken) {
             self.fallback_import_type_options_once = fallback_next_import_type_options;
+            // A constituent after a consumed `&` is required: tsc emits TS1110 when
+            // it is missing (`A &;`).
+            self.require_type_constituent_once = true;
             types.push(self.parse_primary_type());
             self.fallback_import_type_options_once = false;
             fallback_next_import_type_options = false;
@@ -450,6 +466,12 @@ impl ParserState {
 
     /// Parse primary type (keywords, references, parenthesized, tuples, arrays, function types)
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
+        // A *required* constituent (set by a union/intersection separator or a
+        // `keyof`/`unique`/`readonly` operator) must report TS1110 even before a
+        // type-terminator token. Consume the one-shot flag here so nested/optional
+        // primary types parsed below keep the default (suppressing) behavior.
+        let required_constituent = self.require_type_constituent_once;
+        self.require_type_constituent_once = false;
         let start_pos = self.token_pos();
 
         // Handle JSDoc-style leading `?` before a type (e.g., `?string`).
@@ -590,8 +612,15 @@ impl ParserState {
         // However, suppress the error for delimiter/terminator tokens that indicate a
         // *missing* type rather than an *incorrect* token used as a type. TSC silently
         // creates a missing node for these cases (e.g., `(a: ) =>`, `x: ;`).
+        //
+        // The suppression only applies when the type is genuinely *optional*. When the
+        // constituent is structurally required (after a consumed `|`/`&` separator or a
+        // `keyof`/`unique`/`readonly` operator), tsc parses it unconditionally and the
+        // missing node reports TS1110, so we must not suppress it. This mirrors tsc's
+        // `parseUnionOrIntersectionType`/`parseTypeOperator` reaching
+        // `parseTypeReference` → `Type_expected` for the absent constituent.
         if !self.can_token_start_type() {
-            if !self.is_type_terminator_token() {
+            if required_constituent || !self.is_type_terminator_token() {
                 self.error_type_expected();
             }
             // Return a synthetic identifier node to allow parsing to continue

@@ -766,6 +766,10 @@ impl<'a> CheckerState<'a> {
                         && let Some(operand_node) = self.ctx.arena.get(op.type_node)
                         && operand_node.kind != syntax_kind_ext::ARRAY_TYPE
                         && operand_node.kind != syntax_kind_ext::TUPLE_TYPE
+                        // Grammar check: tsc suppresses TS1354 file-wide when the source
+                        // file has parse diagnostics, so a missing/malformed operand
+                        // (already reporting TS1110) emits only the parser error.
+                        && !self.ctx.has_syntax_parse_errors
                     {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.ctx.error(

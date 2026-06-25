@@ -48,10 +48,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
                 // TS1354: 'readonly' type modifier is only permitted on array and tuple literal types.
+                // This is a grammar check; tsc's `grammarErrorOnFirstToken` suppresses it
+                // for the whole file when `hasParseDiagnostics(sourceFile)` is true, so a
+                // missing/malformed operand (which already produced a parse diagnostic such
+                // as TS1110) emits only the parser error.
                 if let Some(operand_node) = self.ctx.arena.get(type_op.type_node) {
                     let operand_kind = operand_node.kind;
                     if operand_kind != syntax_kind_ext::ARRAY_TYPE
                         && operand_kind != syntax_kind_ext::TUPLE_TYPE
+                        && !self.ctx.has_syntax_parse_errors
                     {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.ctx.error(

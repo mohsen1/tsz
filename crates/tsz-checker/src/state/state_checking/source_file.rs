@@ -792,6 +792,15 @@ impl CheckerState<'_> {
         use crate::diagnostics::diagnostic_messages;
         use crate::types_domain::unique_symbol_arena::unique_symbol_grammar_violation;
 
+        // tsc's `checkGrammarTypeOperatorNode` reports every `unique` grammar
+        // violation (TS1005/TS1330-1335) through `grammarErrorOnNode`, which is
+        // suppressed for the whole file when `hasParseDiagnostics(sourceFile)` is
+        // true. Mirror that: a malformed `unique` operand already produced a parse
+        // diagnostic (e.g. TS1110 `Type expected`), so no grammar error is added.
+        if self.ctx.has_syntax_parse_errors {
+            return;
+        }
+
         for i in 0..self.ctx.arena.len() {
             let idx = NodeIndex(i as u32);
             let Some(node) = self.ctx.arena.get(idx) else {

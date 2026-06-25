@@ -634,7 +634,8 @@ impl ParserState {
         let operator = self.token() as u16;
         self.parse_expected(SyntaxKind::KeyOfKeyword);
 
-        // Parse the type operand
+        // Parse the type operand. The operand is required: `keyof ;` reports TS1110.
+        self.require_type_constituent_once = true;
         let type_node = self.parse_primary_type();
 
         let end_pos = self.token_full_start();
@@ -656,7 +657,10 @@ impl ParserState {
         let operator = self.token() as u16;
         self.parse_expected(SyntaxKind::UniqueKeyword);
 
-        // Parse the type operand (unique symbol)
+        // Parse the type operand (unique symbol). The operand is required:
+        // `unique ;` reports TS1110 (not the TS1005 `'symbol' expected` grammar
+        // error, which tsc suppresses on a missing operand).
+        self.require_type_constituent_once = true;
         let type_node = self.parse_primary_type();
 
         let end_pos = self.token_full_start();
@@ -678,7 +682,10 @@ impl ParserState {
         let operator = self.token() as u16;
         self.parse_expected(SyntaxKind::ReadonlyKeyword);
 
-        // Parse the type operand
+        // Parse the type operand. The operand is required: `readonly ;` reports
+        // TS1110 (not the TS1354 grammar error, which tsc suppresses on a missing
+        // operand).
+        self.require_type_constituent_once = true;
         let type_node = self.parse_primary_type();
 
         let end_pos = self.token_full_start();

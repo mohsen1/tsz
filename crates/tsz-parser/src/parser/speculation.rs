@@ -39,6 +39,7 @@ pub(crate) struct ParserCheckpoint {
     scanner_diagnostics_high_water_mark: usize,
     deferred_module_close_braces: u32,
     abort_intersection_continuation: bool,
+    require_type_constituent_once: bool,
     fallback_import_type_options_once: bool,
     in_import_type_options_context: bool,
     import_attribute_tail_recovered: bool,
@@ -69,6 +70,7 @@ impl ParserState {
             scanner_diagnostics_high_water_mark: self.scanner_diagnostics_high_water_mark,
             deferred_module_close_braces: self.deferred_module_close_braces,
             abort_intersection_continuation: self.abort_intersection_continuation,
+            require_type_constituent_once: self.require_type_constituent_once,
             fallback_import_type_options_once: self.fallback_import_type_options_once,
             in_import_type_options_context: self.in_import_type_options_context,
             import_attribute_tail_recovered: self.import_attribute_tail_recovered,
@@ -101,6 +103,7 @@ impl ParserState {
             scanner_diagnostics_high_water_mark,
             deferred_module_close_braces,
             abort_intersection_continuation,
+            require_type_constituent_once,
             fallback_import_type_options_once,
             in_import_type_options_context,
             import_attribute_tail_recovered,
@@ -125,6 +128,7 @@ impl ParserState {
         self.scanner_diagnostics_high_water_mark = scanner_diagnostics_high_water_mark;
         self.deferred_module_close_braces = deferred_module_close_braces;
         self.abort_intersection_continuation = abort_intersection_continuation;
+        self.require_type_constituent_once = require_type_constituent_once;
         self.fallback_import_type_options_once = fallback_import_type_options_once;
         self.in_import_type_options_context = in_import_type_options_context;
         self.import_attribute_tail_recovered = import_attribute_tail_recovered;

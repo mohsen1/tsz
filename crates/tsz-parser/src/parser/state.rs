@@ -206,6 +206,14 @@ pub struct ParserState {
     /// stop consuming `&`-continued intersections so the tail falls back to
     /// statement-level recovery like TypeScript.
     pub(crate) abort_intersection_continuation: bool,
+    /// One-shot flag: the next `parse_primary_type` is a *structurally required*
+    /// type constituent (it follows a consumed `|`/`&` separator or a
+    /// `keyof`/`unique`/`readonly` type operator). When set and the constituent
+    /// is missing, `parse_primary_type` emits TS1110 `Type expected` even for a
+    /// type-terminator token, matching tsc's unconditional constituent parse.
+    /// The genuinely-optional first/top-level type position leaves this `false`,
+    /// preserving the terminator suppression for `let x: ;` and `f(a: )`.
+    pub(crate) require_type_constituent_once: bool,
     /// When statement-like recovery inside a type-member container should leave
     /// actual `}` tokens for statement-level TS1128 recovery, skip this many
     /// enclosing close-brace expectations.
@@ -410,6 +418,7 @@ impl ParserState {
             current_specifier_recovered_braced_unicode_escape_debris: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
+            require_type_constituent_once: false,
             deferred_type_member_close_braces: 0,
             fallback_import_type_options_once: false,
             pending_array_binding_tail_recovery: false,
@@ -470,6 +479,7 @@ impl ParserState {
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
+        self.require_type_constituent_once = false;
         self.fallback_import_type_options_once = false;
         self.pending_array_binding_tail_recovery = false;
         self.in_import_type_options_context = false;
