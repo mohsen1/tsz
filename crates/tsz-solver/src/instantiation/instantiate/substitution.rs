@@ -28,12 +28,19 @@ fn identity_for_same_decl_enabled() -> bool {
 /// over-unifies distinct declarations (the refuted reverse-lookup +9). Compares
 /// surface IGNORING `origin` (the only field that legitimately differs between
 /// the two mint sites).
+/// #14345 Candidate-A GAUGE: when `false`, the WAVE-2 surface fallback
+/// (`same_decl_param_identity`) is NEUTRALIZED so the construction-side stamp
+/// (stored def-param list carries `DeclScoped`) is measured IN ISOLATION — the
+/// primary `type_param(stored)==map id` check in `is_identity_for` must fire on
+/// its own. Set back to `true` to re-enable the surface fallback.
+const WAVE2_SURFACE_MATCH_ENABLED: bool = false;
+
 fn same_decl_param_identity(
     interner: &dyn TypeDatabase,
     param: TypeParamInfo,
     type_id: TypeId,
 ) -> bool {
-    if !identity_for_same_decl_enabled() {
+    if !WAVE2_SURFACE_MATCH_ENABLED || !identity_for_same_decl_enabled() {
         return false;
     }
     // Restrict to the exact two-mint-sites-of-ONE-declaration case: the stored

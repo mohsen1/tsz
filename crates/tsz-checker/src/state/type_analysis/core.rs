@@ -758,14 +758,22 @@ impl CheckerState<'_> {
                     origin: tsz_solver::TypeParamOrigin::User,
                 };
 
-                let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
+                // #14345 Candidate A: take the canonical id AND the stamped info
+                // the interner keyed on. Pushing the STAMPED info into the stored
+                // def-param list makes the stored list carry the EXACT
+                // `DeclScoped(file, name_node)` origin the lowered body refs hold,
+                // so the solver's `is_identity_for` primary check
+                // (`type_param(stored)==map id`) fires without the surface fallback.
+                // Flag-OFF, `stamped_info == info` (`User`) → stored list byte-parity.
+                let (constrained_type_id, stamped_info) =
+                    self.intern_type_param_for_decl_stamped(data.name, info);
                 if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
                     self.ctx
                         .type_parameter_scope
                         .insert(name.clone(), constrained_type_id);
                     changed = true;
                 }
-                next_params.push(info);
+                next_params.push(stamped_info);
             }
 
             params = next_params;
@@ -839,8 +847,24 @@ impl CheckerState<'_> {
     pub(crate) fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
-        mut info: tsz_solver::TypeParamInfo,
+        info: tsz_solver::TypeParamInfo,
     ) -> tsz_solver::TypeId {
+        self.intern_type_param_for_decl_stamped(name_node, info).0
+    }
+
+    /// Like [`Self::intern_type_param_for_decl`] but ALSO returns the
+    /// (possibly `DeclScoped`-stamped) `TypeParamInfo` that the canonical
+    /// `TypeId` was keyed on. #14345 Candidate A: callers that store the
+    /// def-param list (`push_type_parameters`) must push the STAMPED info so
+    /// the stored list and the lowered body refs share the SAME `DeclScoped`
+    /// origin — a separately-reconstructed stamp diverges (the WAVE-1b +5).
+    /// Flag-OFF the returned info is identical to the input (`User`), so the
+    /// stored list is byte-parity unchanged.
+    pub(crate) fn intern_type_param_for_decl_stamped(
+        &mut self,
+        name_node: tsz_parser::parser::NodeIndex,
+        mut info: tsz_solver::TypeParamInfo,
+    ) -> (tsz_solver::TypeId, tsz_solver::TypeParamInfo) {
         let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
 
         // #14345 WAVE-1: stamp the checker's def-type-param mint (site #2) with
@@ -860,7 +884,7 @@ impl CheckerState<'_> {
         // L1: per-context cache. `name_node` always belongs to `ctx.arena`,
         // so the arena-local key is unambiguous within one context.
         if let Some(&cached) = self.ctx.type_param_node_cache.get(&(name_node.0, info)) {
-            return cached;
+            return (cached, info);
         }
 
         let registered_def = self
@@ -897,7 +921,7 @@ impl CheckerState<'_> {
             .type_param_node_cache
             .insert((name_node.0, info), type_id);
 
-        type_id
+        (type_id, info)
     }
 
     pub(super) fn empty_type_literal_satisfies_optional_mapped_constraint(
