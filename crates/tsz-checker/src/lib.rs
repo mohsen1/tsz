@@ -163,6 +163,9 @@ mod class_implements_generic_override_variance_tests;
 #[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
 mod class_implements_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_member_circular_return_tests.rs"]
+mod class_member_circular_return_tests;
+#[cfg(test)]
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]

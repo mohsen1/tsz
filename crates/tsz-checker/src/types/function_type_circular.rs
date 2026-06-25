@@ -284,7 +284,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn collect_initializer_return_expressions_in_function_body(
+    pub(crate) fn collect_initializer_return_expressions_in_function_body(
         &self,
         body_idx: NodeIndex,
         return_exprs: &mut Vec<NodeIndex>,
@@ -1280,7 +1280,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn expression_is_void_prefix_unary(&self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn expression_is_void_prefix_unary(&self, expr_idx: NodeIndex) -> bool {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         self.ctx.arena.get(expr_idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
