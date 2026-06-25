@@ -371,12 +371,13 @@ impl<'a> CheckerState<'a> {
             let init_is_nullish = init_type == TypeId::NULL || init_type == TypeId::UNDEFINED;
             let nested_err =
                 declared_type != TypeId::ERROR && self.type_contains_error(declared_type);
+            let relation_target = self.class_property_init_relation_target(prop, declared_type);
             if declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
                 && (!nested_err || init_is_nullish)
                 && self.check_assignable_or_report_at(
                     init_type,
-                    declared_type,
+                    relation_target,
                     prop.initializer,
                     prop.name,
                 )
