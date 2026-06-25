@@ -1388,8 +1388,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // Check AST node kind to detect type parameters and literals (TS1337)
                     // before the resolved-type check. Type params like `T extends string`
                     // resolve to STRING but are still invalid as index sig param types.
-                    let is_generic_or_literal =
-                        self.is_type_param_or_literal_in_index_sig(param_data.type_annotation);
+                    //
+                    // The AST walk over-reports "generic" for an instantiated
+                    // generic-alias application (e.g. `Brand<string, 'event'>`);
+                    // drop the spurious TS1337 when the resolved key is a concrete
+                    // valid index key. See `resolved_index_key_is_concrete_valid`
+                    // for the full rationale.
+                    let is_generic_or_literal = self
+                        .is_type_param_or_literal_in_index_sig(param_data.type_annotation)
+                        && {
+                            let resolved_key = self.ctx.types.evaluate_type(key_type);
+                            !crate::query_boundaries::index_signature::resolved_index_key_is_concrete_valid(
+                                self.ctx.types.as_type_database(),
+                                resolved_key,
+                            )
+                        };
                     if is_generic_or_literal {
                         if let Some(pnode) = self.ctx.arena.get(param_idx) {
                             self.ctx.error(
