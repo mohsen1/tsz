@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
                     .collect()
             })
             .unwrap_or_default();
-        crate::query_boundaries::common::resolve_unbound_type_params_to_defaults_preserving_names(
+        crate::query_boundaries::type_parameter_identity::resolve_unbound_type_params_to_defaults_preserving_names(
             self.ctx.types,
             member_type,
             &in_scope,

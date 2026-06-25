@@ -63,3 +63,27 @@ pub(crate) fn substitute_reference_base_constraints(
 ) -> TypeId {
     tsz_solver::type_queries::substitute_reference_base_constraints(db, type_id)
 }
+
+/// Like [`super::common::resolve_unbound_type_params_to_defaults`] but
+/// additionally preserves any free type parameter whose declared name is in
+/// `preserve_names`. Used at the `this`-member property-access boundary to keep
+/// the enclosing class's own type parameters abstract even inside a nested
+/// closure where the `TypeId`-keyed scope no longer carries them.
+/// See [`tsz_solver::computation::resolve_unbound_type_params_to_defaults_preserving_names`].
+pub(crate) fn resolve_unbound_type_params_to_defaults_preserving_names<S, N>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+    preserve_names: &std::collections::HashSet<tsz_common::Atom, N>,
+) -> TypeId
+where
+    S: std::hash::BuildHasher,
+    N: std::hash::BuildHasher,
+{
+    tsz_solver::computation::resolve_unbound_type_params_to_defaults_preserving_names(
+        db,
+        member_type,
+        in_scope,
+        preserve_names,
+    )
+}
