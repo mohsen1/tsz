@@ -325,12 +325,20 @@ impl<'a> CheckerState<'a> {
                     )
                 } else {
                     // In free functions with an explicit `this: Class` parameter,
-                    // TypeScript allows protected access through contextual `this`.
+                    // TypeScript allows protected access through contextual `this`
+                    // whenever the `this` type is the declaring class or derives
+                    // from it (transitively), mirroring the `super.x` branch above.
+                    // Equality alone would wrongly reject an inherited protected
+                    // member reached through a subclass `this` type.
                     self.is_this_expression(object_expr)
                         && self
                             .resolve_class_for_access(object_expr, object_type)
                             .is_some_and(|(receiver_class_idx, _)| {
                                 receiver_class_idx == access_info.declaring_class_idx
+                                    || self.is_class_derived_from(
+                                        receiver_class_idx,
+                                        access_info.declaring_class_idx,
+                                    )
                             })
                 }
             }
