@@ -170,6 +170,19 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.isolated_modules || self.compiler_options.verbatim_module_syntax
     }
 
+    /// Check if the *raw* `isolatedModules` flag is set, excluding the value
+    /// implied by `verbatimModuleSyntax`.
+    ///
+    /// `isolated_modules` stores tsc's computed value (`isolatedModules ||
+    /// verbatimModuleSyntax`); a few checks need the raw flag tsc reads directly
+    /// — notably `checkConstEnumAccess`, where the access-site TS2748 fires on
+    /// raw `isolatedModules` while a verbatim-only import is reported at the
+    /// import statement instead.
+    pub const fn raw_isolated_modules(&self) -> bool {
+        self.compiler_options.isolated_modules
+            && !self.compiler_options.isolated_modules_from_verbatim
+    }
+
     /// Check if isolatedDeclarations is enabled.
     pub const fn isolated_declarations(&self) -> bool {
         self.compiler_options.isolated_declarations

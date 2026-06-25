@@ -8,10 +8,34 @@ use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_common::common::Visibility;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{AccessExprData, NodeAccess};
+use tsz_parser::parser::node::{AccessExprData, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Decide whether every declaration of `sym` is ambient when interpreted in the
+/// arena of the file that owns them. A const enum is ambient when it lives in a
+/// `.d.ts` file (everything there is implicitly ambient) or when each declaration
+/// carries the `declare` modifier / sits inside an ambient context.
+///
+/// `arena` must be the arena of the file that declares `sym`; the declaration
+/// indices in `sym.declarations` are only meaningful against that arena.
+pub(crate) fn declarations_are_ambient(arena: &NodeArena, sym: &tsz_binder::Symbol) -> bool {
+    // Everything inside a `.d.ts` is implicitly ambient, even without `declare`.
+    if arena
+        .source_files
+        .first()
+        .is_some_and(|sf| sf.is_declaration_file)
+    {
+        return true;
+    }
+    if sym.declarations.is_empty() {
+        return false;
+    }
+    sym.declarations
+        .iter()
+        .all(|&decl_idx| arena.is_in_ambient_context(decl_idx))
+}
 
 impl<'a> CheckerState<'a> {
     /// Handles import.meta property access.
@@ -1348,24 +1372,46 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if a const enum symbol is "ambient" — declared with `declare` keyword
-    /// or originating from a `.d.ts` file. Ambient const enums have no runtime
-    /// representation and cannot be accessed under `isolatedModules`.
-    pub(crate) fn is_const_enum_ambient(&self, sym: &tsz_binder::Symbol) -> bool {
-        // If the file itself is a .d.ts, everything in it is ambient.
-        if self.ctx.is_declaration_file() {
-            return true;
-        }
-        // Check if all declarations are in ambient context (e.g., `declare const enum`).
-        if sym.declarations.is_empty() {
-            return false;
-        }
-        for &decl_idx in &sym.declarations {
-            if !self.ctx.arena.is_in_ambient_context(decl_idx) {
-                return false;
-            }
-        }
-        true
+    /// Check if a const enum symbol is "ambient" — declared with the `declare`
+    /// keyword or originating from a `.d.ts` file. Ambient const enums have no
+    /// runtime representation and cannot be accessed under `isolatedModules` /
+    /// `verbatimModuleSyntax`.
+    ///
+    /// Ambient-ness is a property of where the const enum is *declared*, not
+    /// where it is accessed. For an imported const enum the declarations live in
+    /// another module's arena, so the `.d.ts` and ambient-context checks must run
+    /// against the *declaring* file, never the importing file (`self.ctx.arena`).
+    /// Using the importing file's arena would look up declaration indices that do
+    /// not exist there, silently report "not ambient", and drop the TS2748 gate
+    /// for every cross-file ambient const enum.
+    pub(crate) fn is_const_enum_ambient(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        sym: &tsz_binder::Symbol,
+    ) -> bool {
+        let arena = if sym.decl_file_idx != u32::MAX {
+            // Production driver path: the binder stamps every user symbol with the
+            // file index that declares it.
+            self.ctx.get_arena_for_file(sym.decl_file_idx)
+        } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index_stable(sym_id) {
+            self.ctx.get_arena_for_file(file_idx as u32)
+        } else {
+            self.ctx.arena
+        };
+        declarations_are_ambient(arena, sym)
+    }
+
+    /// Whether `sym_id` is declared in a file other than the one being checked,
+    /// i.e. it can only be named here through an import. Resolves cross-file
+    /// symbols and tolerates harnesses that have not stamped `decl_file_idx`.
+    pub(crate) fn symbol_is_imported(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        self.get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .map(|s| s.decl_file_idx)
+            .filter(|&f| f != u32::MAX)
+            .map(|f| f as usize)
+            .or_else(|| self.ctx.resolve_symbol_file_index_stable(sym_id))
+            .is_some_and(|f| f != self.ctx.current_file_idx)
     }
 
     /// Check if a node is in a type-only position (e.g., computed property name

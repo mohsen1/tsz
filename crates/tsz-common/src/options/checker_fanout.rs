@@ -26,8 +26,14 @@ pub const fn apply_checker_fanout(options: &mut CheckerOptions) {
     // `verbatimModuleSyntax` implies `isolatedModules`
     // (tsc `computedOptions.isolatedModules`:
     // `isolatedModules || verbatimModuleSyntax`).
-    if options.verbatim_module_syntax {
+    //
+    // Record when the implication is what turned `isolated_modules` on, so
+    // checks that need tsc's *raw* `isolatedModules` flag (e.g. the const-enum
+    // access-site TS2748) can recover it as
+    // `isolated_modules && !isolated_modules_from_verbatim`.
+    if options.verbatim_module_syntax && !options.isolated_modules {
         options.isolated_modules = true;
+        options.isolated_modules_from_verbatim = true;
     }
     // `esModuleInterop` implies `allowSyntheticDefaultImports` (tsz's
     // historical coupling; tsc <= 5.x derived `allowSyntheticDefaultImports`
