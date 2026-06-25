@@ -375,8 +375,9 @@ impl ParserState {
         // Handle optional leading | (e.g., type T = | A | B)
         let has_leading_bar = self.parse_optional(SyntaxKind::BarToken);
 
-        // Parse first constituent
-        let first = self.parse_intersection_type();
+        // Parse first constituent. A consumed leading `|` makes it required, so a
+        // missing constituent (`type T = |;`) surfaces TS1110.
+        let first = self.parse_intersection_type_required(has_leading_bar);
 
         // Check for | to form union
         if !has_leading_bar && !self.is_token(SyntaxKind::BarToken) {
@@ -385,8 +386,10 @@ impl ParserState {
 
         let mut types = vec![first];
 
+        // A consumed `|` always requires a following constituent; a trailing `|`
+        // (`type T = string |;`) is a missing required constituent -> TS1110.
         while self.parse_optional(SyntaxKind::BarToken) {
-            types.push(self.parse_intersection_type());
+            types.push(self.parse_intersection_type_required(true));
         }
 
         // Use token_full_start() (start of next un-consumed token's trivia) rather than
@@ -404,15 +407,19 @@ impl ParserState {
         )
     }
 
-    /// Parse intersection type: A & B & C
-    pub(crate) fn parse_intersection_type(&mut self) -> NodeIndex {
+    /// Parse intersection type: A & B & C, threading whether the *first*
+    /// constituent is required (set by the union parser when a `|`/leading-`|`
+    /// was consumed). A consumed `&` always makes its following constituent
+    /// required.
+    pub(crate) fn parse_intersection_type_required(&mut self, first_required: bool) -> NodeIndex {
         let start_pos = self.token_pos();
 
         // Handle optional leading & (e.g., type T = & A & B)
         let has_leading_amp = self.parse_optional(SyntaxKind::AmpersandToken);
 
-        // Parse first constituent
-        let first = self.parse_primary_type();
+        // Parse first constituent. It is required when the caller demands it
+        // (after a `|`) or when a leading `&` was just consumed (`type T = &;`).
+        let first = self.parse_primary_type_required(first_required || has_leading_amp);
 
         let mut fallback_next_import_type_options = false;
         if self.abort_intersection_continuation {
@@ -430,9 +437,11 @@ impl ParserState {
 
         let mut types = vec![first];
 
+        // A consumed `&` always requires a following constituent; a trailing `&`
+        // (`type T = string &;`) is a missing required constituent -> TS1110.
         while self.parse_optional(SyntaxKind::AmpersandToken) {
             self.fallback_import_type_options_once = fallback_next_import_type_options;
-            types.push(self.parse_primary_type());
+            types.push(self.parse_primary_type_required(true));
             self.fallback_import_type_options_once = false;
             fallback_next_import_type_options = false;
         }
@@ -449,7 +458,22 @@ impl ParserState {
     }
 
     /// Parse primary type (keywords, references, parenthesized, tuples, arrays, function types)
+    /// in an *optional* type position (the missing-type suppression for terminator
+    /// tokens applies, e.g. `let x: ;` and `f(a: )` reach an earlier guard).
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
+        self.parse_primary_type_required(false)
+    }
+
+    /// Parse primary type, threading whether this constituent is *required*.
+    ///
+    /// A constituent is required when the parser has just consumed a union/
+    /// intersection separator (`|`/`&`) or a type operator (`keyof`/`unique`/
+    /// `readonly`): in those positions tsc parses the constituent unconditionally
+    /// and `createMissingNode(Identifier, /*reportAtCurrentPosition*/ true,
+    /// Diagnostics.Type_expected)` fires TS1110 even when the next token is a
+    /// type terminator. The terminator-suppression below must therefore be
+    /// limited to genuinely-optional positions (`required == false`).
+    pub(crate) fn parse_primary_type_required(&mut self, required: bool) -> NodeIndex {
         let start_pos = self.token_pos();
 
         // Handle JSDoc-style leading `?` before a type (e.g., `?string`).
@@ -587,11 +611,13 @@ impl ParserState {
         }
 
         // If we encounter a token that can't start a type, emit TS1110 (Type expected).
-        // However, suppress the error for delimiter/terminator tokens that indicate a
-        // *missing* type rather than an *incorrect* token used as a type. TSC silently
-        // creates a missing node for these cases (e.g., `(a: ) =>`, `x: ;`).
+        // For genuinely-optional positions, suppress the error for delimiter/terminator
+        // tokens that indicate a *missing* type rather than an *incorrect* token used as
+        // a type (e.g. the first/optional type in `(a: ) =>`, `x: ;`). In a *required*
+        // constituent position (after a consumed `|`/`&`/`keyof`/`unique`/`readonly`),
+        // tsc still emits TS1110, so the terminator-suppression must not apply.
         if !self.can_token_start_type() {
-            if !self.is_type_terminator_token() {
+            if required || !self.is_type_terminator_token() {
                 self.error_type_expected();
             }
             // Return a synthetic identifier node to allow parsing to continue
@@ -1130,4 +1156,85 @@ impl ParserState {
     }
 
     // Parenthesized, tuple, literal, import, mapped, and type-argument parsing -> state_types_advanced.rs
+}
+
+#[cfg(test)]
+mod missing_required_constituent_tests {
+    use crate::parser::state::ParserState;
+    use tsz_common::diagnostics::diagnostic_codes;
+
+    /// Parse `source` as a full file and return the list of diagnostic codes.
+    fn codes(source: &str) -> Vec<u32> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        parser
+            .parse_diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .collect()
+    }
+
+    fn count_type_expected(source: &str) -> usize {
+        codes(source)
+            .iter()
+            .filter(|&&code| code == diagnostic_codes::TYPE_EXPECTED)
+            .count()
+    }
+
+    /// A consumed union/intersection separator or type operator with no following
+    /// constituent must surface TS1110, regardless of the (varied) binder name.
+    #[test]
+    fn missing_constituent_after_separator_or_operator_reports_ts1110() {
+        // Vary the leading type name so the rule is structural, not name-keyed.
+        for lhs in ["string", "number", "Foo", "ns.Bar"] {
+            assert_eq!(
+                count_type_expected(&format!("type T = {lhs} |;")),
+                1,
+                "trailing `|` after `{lhs}` should report exactly one TS1110"
+            );
+            assert_eq!(
+                count_type_expected(&format!("type T = {lhs} &;")),
+                1,
+                "trailing `&` after `{lhs}` should report exactly one TS1110"
+            );
+        }
+
+        // Chained separators anchor the error at the final missing constituent.
+        assert_eq!(count_type_expected("type T = string | number |;"), 1);
+        // A consumed leading `|`/`&` is also a required constituent.
+        assert_eq!(count_type_expected("type T = |;"), 1);
+        assert_eq!(count_type_expected("type T = &;"), 1);
+
+        // Required constituents reached through annotation/parameter positions.
+        assert_eq!(count_type_expected("let x: string |;"), 1);
+        assert_eq!(count_type_expected("function f(a: number |) {}"), 1);
+
+        // Type operators require an operand.
+        assert_eq!(count_type_expected("type U = keyof ;"), 1);
+        assert_eq!(count_type_expected("type U = unique ;"), 1);
+        assert_eq!(count_type_expected("type U = readonly ;"), 1);
+        assert_eq!(count_type_expected("type U = keyof number |;"), 1);
+    }
+
+    /// Well-formed unions/intersections and a leading `|`/`&` followed by a real
+    /// constituent must not regress into a spurious TS1110.
+    #[test]
+    fn well_formed_types_report_no_ts1110() {
+        for source in [
+            "type T = string | number;",
+            "type T = string & number;",
+            "type V = | string;",
+            "type V = | string | number;",
+            "type W = & Base;",
+            "type K = keyof number;",
+            "type R = readonly string[];",
+            "declare const s: unique symbol;",
+        ] {
+            assert_eq!(
+                count_type_expected(source),
+                0,
+                "`{source}` should not report TS1110"
+            );
+        }
+    }
 }

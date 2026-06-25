@@ -1410,6 +1410,15 @@ impl ParserState {
                             continue;
                         }
                     }
+                    if bytes[i] == b'\\' {
+                        // `\X` is one escape atom: the backslash escapes the
+                        // next byte. Skip both so an escaped backslash `\\`
+                        // cannot leave its second `\` to seed a phantom `\u{`
+                        // extended escape (e.g. `\\u{abc}` is a literal
+                        // backslash followed by literal `u{abc}`).
+                        i += 2;
+                        continue;
+                    }
                     i += 1;
                 }
                 errors
