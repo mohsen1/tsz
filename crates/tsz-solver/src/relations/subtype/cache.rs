@@ -270,6 +270,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                         // own decl id (registration-keyed-on-shape drift)
                                         bump(8); // reuse bin 8 as "surface-match-but-id-miss"
                                     }
+                                    // #14345 Stage-4 PROBE: does the missed pair's
+                                    // NAME appear at all among the active equiv-set
+                                    // endpoints? If yes → the active frame DOES rename
+                                    // this name (bin i, frame-reachable). If no → the
+                                    // active frame is a stale/nested scope that never
+                                    // saw this name (structurally unreachable here).
+                                    let name_in_active_frame =
+                                        self.type_param_equivalences.iter().any(|&(eq_a, eq_b)| {
+                                            let name_match = |id: TypeId| {
+                                                matches!(self.interner.lookup(id),
+                                                    Some(TypeData::TypeParameter(e))
+                                                        if e.name == si.name || e.name == ti.name)
+                                            };
+                                            name_match(eq_a) || name_match(eq_b)
+                                        });
+                                    if name_in_active_frame {
+                                        bump(10); // miss_name_in_active_frame (bin i, reachable)
+                                    } else {
+                                        bump(11); // miss_name_NOT_in_frame (unreachable here)
+                                    }
                                     // record the actual (file,node) tuples + name +
                                     // same-file flag for offline analysis.
                                     let name = self.interner.resolve_atom_ref(si.name).to_string();

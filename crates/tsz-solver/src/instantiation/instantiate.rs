@@ -50,7 +50,9 @@ pub mod stage2_probe {
     //  7 miss_samename_both_declscoped_samedecl,
     //  8 miss_samename_has_user_origin,
     //  9 miss_diffname]
-    pub static BINS: [AtomicU64; 10] = [
+    pub static BINS: [AtomicU64; 12] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
         AtomicU64::new(0),
         AtomicU64::new(0),
         AtomicU64::new(0),
@@ -117,6 +119,8 @@ pub mod stage2_probe {
             "miss_samename_both_declscoped_samedecl",
             "miss_samename_has_user_origin",
             "miss_diffname",
+            "miss_name_in_active_frame",
+            "miss_name_NOT_in_frame",
         ];
         let mut s = String::new();
         for (i, l) in labels.iter().enumerate() {
