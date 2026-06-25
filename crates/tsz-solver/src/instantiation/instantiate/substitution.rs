@@ -36,10 +36,20 @@ fn same_decl_param_identity(
     if !identity_for_same_decl_enabled() {
         return false;
     }
+    // Restrict to the exact two-mint-sites-of-ONE-declaration case: the stored
+    // def-list `param` is `User` (mint site #2) and the map's `type_id` is the
+    // `DeclScoped` body ref (mint site #1). This excludes `DeclScoped`<->`DeclScoped`
+    // same-surface pairs (two DISTINCT declarations alpha-renamed into one map),
+    // which are NOT the same param — matching those over-unifies (the +16).
+    use crate::types::TypeParamOrigin;
+    if !matches!(param.origin, TypeParamOrigin::User) {
+        return false;
+    }
     let Some(crate::types::TypeData::TypeParameter(mapped)) = interner.lookup(type_id) else {
         return false;
     };
-    mapped.name == param.name
+    matches!(mapped.origin, TypeParamOrigin::DeclScoped { .. })
+        && mapped.name == param.name
         && mapped.constraint == param.constraint
         && mapped.default == param.default
         && mapped.is_const == param.is_const
