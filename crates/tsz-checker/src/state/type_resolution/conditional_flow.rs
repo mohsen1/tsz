@@ -39,6 +39,19 @@ impl CheckerState<'_> {
         // `None` until a structured check operand matches (0 or 1 is the common
         // case, so avoid a heap `Vec`).
         let mut whole_constraint: Option<TypeId> = None;
+        // Naked-check-param channel: collect every enclosing true-branch
+        // `extends` constraint per narrowed type parameter as a FLAT
+        // intersection, then form a single substitution per parameter after the
+        // walk. Mirrors tsc's `getConditionalFlowTypeOfType`, which appends each
+        // implied constraint to one list and builds ONE
+        // `getSubstitutionType(type, getIntersectionType([...constraints, type]))`.
+        // Wrapping the prior substitution as the next intersection base inside
+        // the loop instead nests substitution types (`Sub(T, Sub(T, T & A) & B)`)
+        // that the subtype relation cannot see through, producing spurious
+        // `TS2344` for nested conditionals such as
+        // `T extends A ? Wrap<T extends B ? F<T> : never> : never`.
+        // Entries are `(type-param name, type-param id, accumulated extends)`.
+        let mut naked: Vec<(tsz_common::interner::Atom, TypeId, TypeId)> = Vec::new();
 
         let arg_actual = tsz_solver::type_queries::substitution_base_or_self(
             self.ctx.types.as_type_database(),
@@ -68,13 +81,13 @@ impl CheckerState<'_> {
                     && let Some(info) =
                         query_common::type_param_info(self.ctx.types.as_type_database(), type_param)
                 {
-                    let current = subst.get(info.name).unwrap_or(type_param);
                     let extends = self.get_type_from_type_node(cond.extends_type);
-                    let constraint = self.ctx.types.intersection2(current, extends);
-                    subst.insert(
-                        info.name,
-                        self.ctx.types.substitution(type_param, constraint),
-                    );
+                    if let Some(pos) = naked.iter().position(|(n, _, _)| *n == info.name) {
+                        let acc = self.ctx.types.intersection2(naked[pos].2, extends);
+                        naked[pos].2 = acc;
+                    } else {
+                        naked.push((info.name, type_param, extends));
+                    }
                 } else {
                     // Structured check operand: narrow the whole argument when it
                     // is the conditional's check operand (compared by actual type
@@ -99,6 +112,13 @@ impl CheckerState<'_> {
                 .arena
                 .get_extended(parent)
                 .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+
+        // Form one substitution per narrowed parameter from the flattened
+        // constraints: `Sub(T, T & extends1 & extends2 & …)`.
+        for (name, type_param, acc_extends) in naked {
+            let constraint = self.ctx.types.intersection2(type_param, acc_extends);
+            subst.insert(name, self.ctx.types.substitution(type_param, constraint));
         }
 
         if subst.is_empty() && whole_constraint.is_none() {

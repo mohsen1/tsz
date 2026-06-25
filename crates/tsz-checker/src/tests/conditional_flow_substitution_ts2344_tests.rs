@@ -114,6 +114,53 @@ fn inferred_tail_satisfies_tuple_rest_helper_constraint() {
     );
 }
 
+#[test]
+fn wrapped_nested_conditional_true_branch_narrows_through_alias_wrapper() {
+    // Regression for the ts-rest `ClientInferRequest` shape (#14337): the inner
+    // `T extends Mut` true branch is wrapped in a `Pretty<{...}>` alias inside an
+    // OUTER `T extends Route` conditional. The conditional-flow substitution must
+    // compose the implied constraints into ONE flat intersection
+    // (`Sub(T, T & Route & Mut)`); building a fresh substitution per conditional
+    // nests them (`Sub(T, Sub(T, T & Route) & Mut)`), which the subtype relation
+    // cannot see through, so the inner `Mut` narrowing is lost and `NeedMut<T>`
+    // wrongly reports TS2344. `Mut` is an intersection to mirror the row's
+    // deeply-aliased route type.
+    assert_no_2344!(
+        "type Base = { tag: 0 };\n\
+         type Mut = Base & { kind: 'm'; payload: unknown };\n\
+         type Route = Mut | (Base & { kind: 'q' });\n\
+         type Pretty<X> = { [K in keyof X]: X[K] } & {};\n\
+         type NeedMut<M extends Mut> = M['payload'];\n\
+         type Req<T extends Route> = T extends Route\n\
+           ? Pretty<{ body: T extends Mut ? NeedMut<T> : never }>\n\
+           : never;\n\
+         type C = Req<Mut>;\n\
+         export {};",
+        "wrapped NeedMut<T> inside an outer conditional must be clean."
+    );
+}
+
+#[test]
+fn wrapped_nested_conditional_incompatible_inner_constraint_still_emits_2344() {
+    // Same wrapper+outer-conditional shape as above, but the inner helper needs a
+    // constraint the inner narrowing does NOT supply (`Other`, disjoint from the
+    // inner `Mut` branch). Flattening must not over-accept: TS2344 still fires.
+    assert_2344!(
+        "type Base = { tag: 0 };\n\
+         type Mut = Base & { kind: 'm'; payload: unknown };\n\
+         type Other = { brand: 'x'; n: number };\n\
+         type Route = Mut | (Base & { kind: 'q' });\n\
+         type Pretty<X> = { [K in keyof X]: X[K] } & {};\n\
+         type NeedOther<O extends Other> = O['n'];\n\
+         type Req<T extends Route> = T extends Route\n\
+           ? Pretty<{ body: T extends Mut ? NeedOther<T> : never }>\n\
+           : never;\n\
+         type C = Req<Mut>;\n\
+         export {};",
+        "`NeedOther<T>` (needs `Other`, not supplied by the `Mut` narrowing) must still emit TS2344."
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Negative cases: the narrowing must not over-accept.
 // ---------------------------------------------------------------------------
