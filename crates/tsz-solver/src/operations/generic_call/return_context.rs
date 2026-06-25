@@ -428,21 +428,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some(target_members) =
             crate::type_queries::get_union_members(self.interner.as_type_database(), target)
         {
+            // Collect each non-nullish arm's contribution independently and
+            // union the per-type-parameter results. A contextual return type
+            // that is a union of structured shapes (e.g. `string[] | string[][]`
+            // matched against a return type `U[]`) constrains the type parameter
+            // to the union of what every arm implies (`string | string[]`), not
+            // just the first arm. tsc reaches the same result by unioning the
+            // equal-priority inference candidates each constituent produces;
+            // returning after the first contributing arm instead pinned `U` to
+            // one arm's element (`string`) and mis-typed the callback's
+            // contextual return (#14731).
             let before_len = substitution.len();
+            let mut merged: FxHashMap<tsz_common::Atom, Vec<TypeId>> = FxHashMap::default();
             for member in target_members
                 .into_iter()
                 .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
             {
+                // A fresh `visited` per arm keeps arms from masking each other's
+                // structural recursion; the outer set already guards re-entry on
+                // `(source, target)`.
+                let mut member_visited = FxHashSet::default();
+                let mut member_subst = TypeSubstitution::new();
                 self.collect_return_context_substitution(
                     source,
                     member,
                     tracked_type_params,
-                    substitution,
-                    visited,
+                    &mut member_subst,
+                    &mut member_visited,
                 );
-                if substitution.len() > before_len {
-                    return;
+                for (&name, &ty) in member_subst.map().iter() {
+                    let candidates = merged.entry(name).or_default();
+                    if !candidates.contains(&ty) {
+                        candidates.push(ty);
+                    }
                 }
+            }
+            for (name, candidates) in merged {
+                if substitution.get(name).is_some() {
+                    continue;
+                }
+                let unioned = if candidates.len() == 1 {
+                    candidates[0]
+                } else {
+                    self.interner.union(candidates)
+                };
+                substitution.insert(name, unioned);
+            }
+            if substitution.len() > before_len {
+                return;
             }
         }
 

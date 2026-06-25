@@ -1221,9 +1221,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // so structural decomposition can extract inference candidates.
                     member_visited.clear();
                     if self.type_contains_placeholder(source, var_map, &mut member_visited) {
-                        for &member in t_members.iter() {
-                            if !is_nullish(member) {
-                                self.constrain_types(ctx, var_map, source, member, priority);
+                        // When the source is array-like with a placeholder element
+                        // and every arm is array-like, the source's placeholder must
+                        // be bounded by the UNION of the arms' element types, not by
+                        // each arm separately. Constraining `R[]` against `string[]`
+                        // and `string[][]` independently records two upper bounds that
+                        // resolve via intersection (`R <: string & string[]`); but the
+                        // source can satisfy ANY arm, so the bound is the union
+                        // `R <: string | string[]`. This surfaced once a `U | U[]`
+                        // callback-return context was fed back as a concrete union of
+                        // arrays into a nested `.map` over `any[]` (#14731).
+                        member_visited.clear();
+                        let src_elem =
+                            self.array_like_element_for_constraint(source)
+                                .filter(|&src_elem| {
+                                    self.type_contains_placeholder(
+                                        src_elem,
+                                        var_map,
+                                        &mut member_visited,
+                                    )
+                                });
+                        let arm_elems = src_elem.and_then(|_| {
+                            t_members
+                                .iter()
+                                .copied()
+                                .filter(|&member| !is_nullish(member))
+                                .map(|member| self.array_like_element_for_constraint(member))
+                                .collect::<Option<Vec<TypeId>>>()
+                        });
+                        if let (Some(src_elem), Some(arm_elems)) = (src_elem, arm_elems) {
+                            // Record the union as a candidate (lower bound) for the
+                            // source element rather than an upper bound: it is a
+                            // contextual hint at this `priority` (`ReturnType`), so a
+                            // higher-priority `NakedTypeVariable` candidate from the
+                            // actual argument (e.g. the `.map` callback returning
+                            // `string[]`) must still win and pin `R = string[]`
+                            // (giving `string[][]`), not leave `R = string | string[]`.
+                            let unioned = self.interner.union(arm_elems);
+                            self.constrain_types(ctx, var_map, unioned, src_elem, priority);
+                        } else {
+                            for &member in t_members.iter() {
+                                if !is_nullish(member) {
+                                    self.constrain_types(ctx, var_map, source, member, priority);
+                                }
                             }
                         }
                     }
