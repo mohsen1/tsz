@@ -70,6 +70,22 @@ fn void_typeof_and_unary_emit_ts2869() {
     assert!(check("declare const n: number;\nconst d = (!n) ?? 1;\n").contains(&2869));
 }
 
+/// A `??` chain over never-nullish operands reports TS2869 once per `??`,
+/// every one anchored at the same leftmost token but spanning a successively
+/// wider left operand. tsc keeps each because it deduplicates on span length
+/// as well as start/code; the checker's dedup key must do the same instead of
+/// collapsing `1 ?? 2 ?? 3` to a single TS2869.
+///
+/// Witness (tsc 6.0): `1 ?? 2 ?? 3` → two TS2869 at one start.
+#[test]
+fn nested_never_nullish_chain_emits_one_ts2869_per_operator() {
+    assert_eq!(
+        count("const z = 1 ?? 2 ?? 3;\n", 2869),
+        2,
+        "two `??` over never-nullish operands must emit TS2869 twice",
+    );
+}
+
 // =========================================================================
 // Binary / conditional / comma / assignment classification
 // =========================================================================

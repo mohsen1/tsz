@@ -1481,15 +1481,17 @@ impl<'a> CheckerState<'a> {
                                     any_found = true;
                                 }
                                 PropertyAccessResult::PropertyNotFound { .. } => {
-                                    if crate::query_boundaries::common::is_empty_object_type(
-                                        self.ctx.types.as_type_database(),
-                                        member,
-                                    ) {
-                                        // Empty object member — contributes undefined.
+                                    // Empty `{}` or fresh object-literal members lacking the
+                                    // property contribute implicit `undefined` (tsc
+                                    // getTypeOfDestructuredProperty); named, call-return, and
+                                    // freshness-widened const-bound members lack FRESH and error.
+                                    use crate::query_boundaries::common;
+                                    let db = self.ctx.types.as_type_database();
+                                    if common::is_empty_object_type(db, member)
+                                        || common::is_fresh_object_type(db, member)
+                                    {
                                         member_types.push(TypeId::UNDEFINED);
                                     } else {
-                                        // Non-empty member missing the property —
-                                        // this is a real type error.
                                         non_empty_missing = true;
                                         break;
                                     }
