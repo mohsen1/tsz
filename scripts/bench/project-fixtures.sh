@@ -52,10 +52,7 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "valtio-project"
   "scule-project"
   "mitt-project"
-  "tslib-project"
-  "eventemitter3-project"
-  "yocto-queue-project"
-  "p-limit-project"
+  "change-case-project"
   "tiny-invariant-project"
   "ts-belt-project"
   "ts-extras-project"
@@ -358,17 +355,8 @@ tsz_project_fixture_sources() {
     mitt-project)
       printf 'mitt|%s|%s\n' "$MITT_REPO" "$MITT_REF"
       ;;
-    tslib-project)
-      printf 'tslib|%s|%s\n' "$TSLIB_REPO" "$TSLIB_REF"
-      ;;
-    eventemitter3-project)
-      printf 'eventemitter3|%s|%s\n' "$EVENTEMITTER3_REPO" "$EVENTEMITTER3_REF"
-      ;;
-    yocto-queue-project)
-      printf 'yocto-queue|%s|%s\n' "$YOCTO_QUEUE_REPO" "$YOCTO_QUEUE_REF"
-      ;;
-    p-limit-project)
-      printf 'p-limit|%s|%s\n' "$P_LIMIT_REPO" "$P_LIMIT_REF"
+    change-case-project)
+      printf 'change-case|%s|%s\n' "$CHANGE_CASE_REPO" "$CHANGE_CASE_REF"
       ;;
     tiny-invariant-project)
       printf 'tiny-invariant|%s|%s\n' "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF"
@@ -937,34 +925,15 @@ tsz_write_mitt_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 
-tsz_write_tslib_config() {
-  # tslib is zero-dependency; its `modules/index.d.ts` declares the TypeScript
-  # runtime helper signatures. The `modules/**` include checks only that
-  # declaration source. Clean green row (tsz/tsc both 0 errors).
-  tsz_write_basic_external_project_config "$1" "modules"
-}
-
-tsz_write_eventemitter3_config() {
-  # eventemitter3 is zero-dependency; its root `index.d.ts` declares the
-  # EventEmitter API. Test sources live under `test/` (excluded), so the `.`
-  # include checks only the library declaration. Clean green row.
-  tsz_write_basic_external_project_config "$1" "."
-}
-
-tsz_write_yocto_queue_config() {
-  # yocto-queue is zero-dependency; its root `index.d.ts` declares the queue
-  # API. The `index.test-d.ts` type-test sibling is excluded by the shared
-  # baseline (`**/*.test-d.ts`), so the `.` include checks only the library
-  # declaration. Clean green row.
-  tsz_write_basic_external_project_config "$1" "."
-}
-
-tsz_write_p_limit_config() {
-  # p-limit is zero-dependency; its root `index.d.ts` declares the concurrency
-  # limiter API. The `index.test-d.ts` type-test sibling is excluded by the
-  # shared baseline (`**/*.test-d.ts`), so the `.` include checks only the
-  # library declaration. Clean green row.
-  tsz_write_basic_external_project_config "$1" "."
+tsz_write_change_case_config() {
+  # change-case is zero-dependency; its `packages/change-case/src/index.ts` and
+  # `keys.ts` (~332 lines of real `.ts`) implement the string-casing helpers.
+  # The `*.spec.ts` vitest sources are excluded by the shared baseline, so the
+  # `packages/change-case/src/**` include checks only the library source under
+  # the standard es2022/esnext/bundler config (no allowImportingTsExtensions:
+  # the sources use extensionless sibling specifiers). Clean green row
+  # (tsz/tsc both 0 errors).
+  tsz_write_basic_external_project_config "$1" "packages/change-case/src"
 }
 
 tsz_write_tiny_invariant_config() {

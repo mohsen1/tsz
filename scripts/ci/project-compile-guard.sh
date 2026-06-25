@@ -1028,25 +1028,10 @@ run_project_row() {
       tsz_write_mitt_config "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/mitt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mitt/src"
       ;;
-    tslib-project)
-      ensure_git_fixture "tslib" "$TSLIB_REPO" "$TSLIB_REF" "$FIXTURE_ROOT/tslib"
-      tsz_write_tslib_config "$FIXTURE_ROOT/tslib/tsconfig.tsz-guard.json"
-      check_project "$name" "$FIXTURE_ROOT/tslib/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tslib/modules"
-      ;;
-    eventemitter3-project)
-      ensure_git_fixture "eventemitter3" "$EVENTEMITTER3_REPO" "$EVENTEMITTER3_REF" "$FIXTURE_ROOT/eventemitter3"
-      tsz_write_eventemitter3_config "$FIXTURE_ROOT/eventemitter3/tsconfig.tsz-guard.json"
-      check_project "$name" "$FIXTURE_ROOT/eventemitter3/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/eventemitter3"
-      ;;
-    yocto-queue-project)
-      ensure_git_fixture "yocto-queue" "$YOCTO_QUEUE_REPO" "$YOCTO_QUEUE_REF" "$FIXTURE_ROOT/yocto-queue"
-      tsz_write_yocto_queue_config "$FIXTURE_ROOT/yocto-queue/tsconfig.tsz-guard.json"
-      check_project "$name" "$FIXTURE_ROOT/yocto-queue/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/yocto-queue"
-      ;;
-    p-limit-project)
-      ensure_git_fixture "p-limit" "$P_LIMIT_REPO" "$P_LIMIT_REF" "$FIXTURE_ROOT/p-limit"
-      tsz_write_p_limit_config "$FIXTURE_ROOT/p-limit/tsconfig.tsz-guard.json"
-      check_project "$name" "$FIXTURE_ROOT/p-limit/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/p-limit"
+    change-case-project)
+      ensure_git_fixture "change-case" "$CHANGE_CASE_REPO" "$CHANGE_CASE_REF" "$FIXTURE_ROOT/change-case"
+      tsz_write_change_case_config "$FIXTURE_ROOT/change-case/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/change-case/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/change-case/packages/change-case/src"
       ;;
     tiny-invariant-project)
       ensure_git_fixture "tiny-invariant" "$TINY_INVARIANT_REPO" "$TINY_INVARIANT_REF" "$FIXTURE_ROOT/tiny-invariant"
