@@ -293,6 +293,7 @@ impl<'a> Printer<'a> {
             enum_namespace_export: None,
             namespace_export_inner: false,
             emitting_function_body_block: false,
+            force_function_body_multiline: false,
             emitting_concise_arrow_return_argument: false,
             pending_function_body_parameters: Vec::new(),
             current_new_target_substitution: None,
