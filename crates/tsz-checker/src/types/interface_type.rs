@@ -44,6 +44,28 @@ fn heritage_base_member_incorp_disabled() -> bool {
     })
 }
 
+/// Dormant flag (default-OFF), byte-parity-inert when off. When
+/// `TSZ_HERITAGE_MAPPED_BASE_INCORP=1`, an interface that extends a
+/// mapped-type / generic-application base (`Omit`/`Pick`/`Partial`/`Record`,
+/// etc.) attempts to flatten the base's members into the derived interface
+/// (Heritage-mode `merge_properties`) instead of wrapping the base opaquely
+/// in `intersection2`. The flatten is attempted ONLY when a *bounded*
+/// evaluation of the base yields a concrete object shape; a still-deferred or
+/// recursive (homomorphic self-referential) mapped base declines to extract a
+/// concrete shape and falls back to the legacy `intersection2` wrap, so the
+/// recursive/deferred protection is preserved exactly and the new arm is
+/// strictly net-additive (can only surface members the opaque wrap currently
+/// drops, never remove the deferral safety net).
+///
+/// Flipping ON is high-radius (heritage member-merge); the flip needs a CI
+/// conformance gauge. Until then the brick is dormant: flag-OFF keeps the
+/// existing `intersection2` behavior, byte-identical to today.
+fn heritage_mapped_base_incorp_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_HERITAGE_MAPPED_BASE_INCORP").is_ok_and(|v| v == "1"))
+}
+
 /// Deduplicate call signatures keeping the LAST occurrence of each unique
 /// signature. Two signatures are considered duplicates when they have identical
 /// parameter type lists and return types. This handles diamond inheritance:
@@ -1575,7 +1597,7 @@ impl<'a> CheckerState<'a> {
                 .is_some()
                     && derived != TypeId::ANY =>
             {
-                factory.intersection2(derived, base_resolved)
+                self.merge_mapped_or_application_base(derived, base_resolved, mode)
             }
             (_, InterfaceMergeKind::Other)
                 if crate::query_boundaries::common::is_generic_application(
@@ -1583,7 +1605,7 @@ impl<'a> CheckerState<'a> {
                     base_resolved,
                 ) && derived != TypeId::ANY =>
             {
-                factory.intersection2(derived, base_resolved)
+                self.merge_mapped_or_application_base(derived, base_resolved, mode)
             }
             // #14101 part-4: a base classified `Other` that nonetheless has an
             // extractable object shape (constrained type-parameter through its
@@ -1627,6 +1649,85 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => derived,
+        }
+    }
+
+    /// Merge a derived interface with a mapped-type / generic-application base
+    /// (e.g. `interface FetchOptions extends Omit<Base, K>`).
+    ///
+    /// Default behavior (and flag-OFF) wraps the base opaquely in
+    /// `intersection2(derived, base)`, which can drop inherited members when the
+    /// base's lazy reference is mid-cycle / cross-module-unresolved at merge time
+    /// (false `TS2339` on inherited members; witness: `ofetch`). When
+    /// `TSZ_HERITAGE_MAPPED_BASE_INCORP=1` and the merge is a Heritage merge, this
+    /// attempts a *bounded* evaluation of the base and, only if that yields a
+    /// concrete object shape for both sides, flattens the base's members into the
+    /// derived interface via Heritage-mode `merge_properties` (same machinery as
+    /// the #14101 part-4 incorporation). When no concrete shape is extractable
+    /// (still-deferred or recursive homomorphic mapped base), it falls back to the
+    /// legacy `intersection2` wrap, preserving the recursive/deferred protection
+    /// exactly. The new arm is net-additive: it can only surface members the
+    /// opaque wrap currently drops, never remove the deferral safety net.
+    fn merge_mapped_or_application_base(
+        &mut self,
+        derived: TypeId,
+        base_resolved: TypeId,
+        mode: InterfaceMergeMode,
+    ) -> TypeId {
+        use tsz_solver::ObjectShape;
+
+        // Dormant brick: flag-OFF is byte-identical to the legacy opaque wrap.
+        // Only flatten in Heritage merges (augmentation keeps the opaque wrap).
+        if !heritage_mapped_base_incorp_enabled() || mode != InterfaceMergeMode::Heritage {
+            return self
+                .ctx
+                .types
+                .factory()
+                .intersection2(derived, base_resolved);
+        }
+
+        // Bounded evaluation that force-resolves the base's lazy references on
+        // demand (the #14016 `force_def_on_miss` path), carrying its own
+        // `type_resolution_visiting` cycle guard and a bounded `maybe_grow`
+        // stack. When that cycle guard trips — as it does for a recursive
+        // homomorphic mapped base (e.g. `DeepPartial<T>`) — the evaluation
+        // returns the input unchanged (or a non-object), so the shape extraction
+        // below declines and we fall back to the opaque wrap. For a resolvable
+        // mapped/application base (e.g. `Omit<NativeReq, K>` whose inner lazy is
+        // not yet populated under use-first ordering) it collapses to the
+        // concrete object whose members we then flatten.
+        let evaluated_base = self.evaluate_type_with_resolution(base_resolved);
+
+        // Extract concrete object shapes for BOTH sides. `object_shape_for_type`
+        // only succeeds for already-concrete Object/ObjectWithIndex (or a
+        // constraint/substitution that resolves to one); a still-deferred mapped
+        // or generic application yields `None` and we fall back.
+        let derived_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, derived);
+        let base_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated_base);
+
+        match (derived_shape, base_shape) {
+            (Some(derived_shape), Some(base_shape)) => {
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
+                self.ctx.types.factory().object_with_index(ObjectShape {
+                    properties,
+                    string_index: derived_shape.string_index.or(base_shape.string_index),
+                    number_index: derived_shape.number_index.or(base_shape.number_index),
+                    symbol_index: derived_shape.symbol_index.or(base_shape.symbol_index),
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                })
+            }
+            // No concrete shape extractable (still-deferred / recursive
+            // homomorphic mapped base): preserve the legacy opaque wrap so the
+            // recursive/deferred protection is exactly retained.
+            _ => self
+                .ctx
+                .types
+                .factory()
+                .intersection2(derived, base_resolved),
         }
     }
 
