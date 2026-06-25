@@ -5,6 +5,46 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
+/// #14345 WAVE-2 flag (default-OFF, `TSZ_TYPEPARAM_DECL_IDENTITY`). The 48
+/// carrier-flag-ON regressions re-mint from a STORED def-param list that is
+/// `User`-origin (mint site #2, which can't be uniformly stamped — see the
+/// stored-list over-fire), while the substitution map holds the body refs'
+/// `DeclScoped` ids. `is_identity_for` then sees `type_param(stored_User_param)`
+/// != the map's `DeclScoped` id and wrongly concludes "not identity" → the
+/// substitution re-instantiates and the params diverge. This recognises them as
+/// the SAME declaration's param.
+fn identity_for_same_decl_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+}
+
+/// #14345 WAVE-2: is the substitution map's `type_id` the SAME declaration's
+/// type parameter as the stored `param`, just minted with a different origin
+/// (`DeclScoped` body ref vs `User` stored def-list)? Sound because the
+/// `TypeSubstitution` map holds exactly ONE declaration's params (keyed by
+/// name), so a same-NAME + same-surface (constraint/default/is_const) match
+/// within it IS the same parameter — unlike a GLOBAL surface match, which
+/// over-unifies distinct declarations (the refuted reverse-lookup +9). Compares
+/// surface IGNORING `origin` (the only field that legitimately differs between
+/// the two mint sites).
+fn same_decl_param_identity(
+    interner: &dyn TypeDatabase,
+    param: TypeParamInfo,
+    type_id: TypeId,
+) -> bool {
+    if !identity_for_same_decl_enabled() {
+        return false;
+    }
+    let Some(crate::types::TypeData::TypeParameter(mapped)) = interner.lookup(type_id) else {
+        return false;
+    };
+    mapped.name == param.name
+        && mapped.constraint == param.constraint
+        && mapped.default == param.default
+        && mapped.is_const == param.is_const
+}
+
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
 pub struct TypeSubstitution {
@@ -179,7 +219,10 @@ impl TypeSubstitution {
     ) -> bool {
         type_params.iter().all(|param| {
             match self.map.get(&param.name) {
-                Some(&type_id) => interner.type_param(*param) == type_id,
+                Some(&type_id) => {
+                    interner.type_param(*param) == type_id
+                        || same_decl_param_identity(interner, *param, type_id)
+                }
                 None => true, // unmapped params don't change anything
             }
         })
