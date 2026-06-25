@@ -348,9 +348,7 @@ impl<'a> Printer<'a> {
 
         match self.arena.get(left) {
             Some(left_node) => {
-                if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                {
+                if is_property_or_element_access(left_node) {
                     self.emit_logical_assignment_access(
                         left,
                         left_node,
@@ -397,6 +395,22 @@ impl<'a> Printer<'a> {
             self.emit_expression_for_logical_assignment(binary.right);
             self.write(")");
         }
+    }
+
+    /// Whether lowering a non-es2020 `??=` with target `left` consumes a hoisted
+    /// value temp. Only a property/element-access target does (its reference is
+    /// captured: `(_a = obj.p) !== null && ...`); a bare identifier/`this`/`super`
+    /// is lowered inline with no temp. Shares the `is_property_or_element_access`
+    /// dispatch with `emit_logical_assignment_expression` so the pre-count cannot
+    /// drift from emit and desync the shared temp counter from `tsc`.
+    pub(in crate::emitter) fn nullish_assignment_consumes_value_temp(
+        &self,
+        left: NodeIndex,
+    ) -> bool {
+        let left = self.unwrap_parenthesized_logical_assignment_left(left);
+        self.arena
+            .get(left)
+            .is_some_and(is_property_or_element_access)
     }
 
     fn unwrap_parenthesized_logical_assignment_left(&self, mut left: NodeIndex) -> NodeIndex {
@@ -907,6 +921,17 @@ impl<'a> Printer<'a> {
             _ => "=".to_string(),
         }
     }
+}
+
+/// Whether `node` is a property- or element-access expression — the two
+/// logical-assignment targets that capture their reference into a value temp
+/// during downlevel lowering. Single source of truth for the dispatch in
+/// `emit_logical_assignment_expression` and the `??=` value-temp pre-count.
+const fn is_property_or_element_access(node: &Node) -> bool {
+    matches!(
+        node.kind,
+        syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    )
 }
 
 /// Strip up to `count` leading space/tab characters from `s`.
