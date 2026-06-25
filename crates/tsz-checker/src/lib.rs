@@ -985,6 +985,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "../tests/increment_assignment_target_suppression_tests.rs"]
+mod increment_assignment_target_suppression_tests;
+#[cfg(test)]
 #[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
 mod index_signature_check_relation_routing_arch_tests;
 #[cfg(test)]

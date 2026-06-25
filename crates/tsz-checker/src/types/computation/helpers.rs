@@ -565,8 +565,6 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Get operand type for validation.
-                // TSC checks arithmetic type BEFORE lvalue — if the type check
-                // fails (TS2356), the lvalue check (TS2357) is skipped.
                 let operand_type = self.get_type_of_node(unary.operand);
 
                 // TS18046: ++/-- on unknown is not allowed (strictNullChecks only).
@@ -575,9 +573,23 @@ impl<'a> CheckerState<'a> {
                     return TypeId::NUMBER;
                 }
 
-                let mut arithmetic_ok = true;
+                // Assignment-target validity first. tsc evaluates the operand through
+                // `checkExpression`, which reports the const-variable (TS2588) and
+                // readonly-named-property (TS2540) errors and yields `errorType` for
+                // those targets — so the subsequent arithmetic-operand check (TS2356) is
+                // vacuously satisfied and therefore suppressed. A readonly *index
+                // signature* (TS2542) keeps the real element type, so it does NOT
+                // suppress TS2356 (tsc emits both, e.g. `ENUM1[undeclared]--`).
+                let is_const = self.check_const_assignment(unary.operand);
+                let target_is_error = is_const
+                    || self
+                        .check_readonly_assignment(unary.operand, idx)
+                        .suppresses_type_mismatch();
 
-                {
+                // checkNonNullType + checkArithmeticOperandType — skipped entirely when
+                // the operand already resolved to `errorType` above.
+                let mut ts2356_emitted = false;
+                if !target_is_error {
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
@@ -585,13 +597,15 @@ impl<'a> CheckerState<'a> {
                         let evaluated = self.evaluate_type_with_env(ty);
                         evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
                     });
-                    if self.ctx.strict_null_checks()
-                        && let Some(cause) = nullish_cause
+                    let nullish_fired = if self.ctx.strict_null_checks()
                         && nullish_can_flow_to_number
+                        && let Some(cause) = nullish_cause
                     {
-                        arithmetic_ok = false;
                         self.emit_nullish_operand_error(unary.operand, cause);
-                    }
+                        true
+                    } else {
+                        false
+                    };
 
                     // Evaluate the type to resolve Lazy(DefId) aliases before checking.
                     // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
@@ -605,8 +619,8 @@ impl<'a> CheckerState<'a> {
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
-                    if arithmetic_ok && !is_valid {
-                        arithmetic_ok = false;
+                    if !nullish_fired && !is_valid {
+                        ts2356_emitted = true;
                         // Emit TS2356 for invalid increment/decrement operand type
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.error_at_node(
@@ -640,29 +654,13 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                // Only check lvalue and assignment restrictions when arithmetic
-                // type is valid (matches TSC: TS2357 is skipped when TS2356 fires).
-                if arithmetic_ok {
-                    let emitted_lvalue = self.check_increment_decrement_operand(unary.operand);
-
-                    if !emitted_lvalue {
-                        // TS2588: Cannot assign to 'x' because it is a constant.
-                        let is_const = self.check_const_assignment(unary.operand);
-
-                        // TS2630: Cannot assign to 'x' because it is a function.
-                        self.check_function_assignment(unary.operand);
-
-                        // TS2540: Cannot assign to readonly property
-                        if !is_const {
-                            self.check_readonly_assignment(unary.operand, idx);
-                        }
-                    }
-                } else {
-                    // Even when arithmetic fails, check readonly (TS2540/TS2542).
-                    // tsc emits both TS2356 and TS2542 for e.g. `ENUM1[undeclared]--`
-                    // where the element access resolves through a readonly index
-                    // signature but the result type is not arithmetic.
-                    self.check_readonly_assignment(unary.operand, idx);
+                // Reference/lvalue check (TS2357 / TS2777). tsc runs
+                // `checkReferenceExpression` whenever the arithmetic operand is valid —
+                // including a const/readonly target (now `errorType`) and a
+                // nullable-but-numeric operand (the nullish diagnostic does not suppress
+                // it). Only a genuine TS2356 failure skips it.
+                if !ts2356_emitted {
+                    self.check_increment_decrement_operand(unary.operand);
                 }
 
                 result_type
