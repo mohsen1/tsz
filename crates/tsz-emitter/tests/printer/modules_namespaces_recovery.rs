@@ -877,8 +877,10 @@ fn test_lowered_static_block_uses_static_initializer_context() {
         output.contains("C.c = Reflect.get("),
         "Static field super access should use Reflect.get, got: {output}"
     );
+    // The lowered static-block IIFE body is synthesized, so tsc always prints it
+    // multi-line regardless of the single-line source braces.
     assert!(
-        output.contains("(() => { _a.c; Reflect.get(_b, \"a\", _a); })();"),
+        output.contains("(() => {\n    _a.c;\n    Reflect.get(_b, \"a\", _a);\n})();"),
         "Lowered static block should reuse static this/super aliases, got: {output}"
     );
 }
