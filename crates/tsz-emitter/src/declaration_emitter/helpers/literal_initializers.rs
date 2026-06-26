@@ -118,6 +118,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
         // Unwrap as/satisfies expressions
         let expr_node = self.arena.get(expr_idx)?;
+        // Look through parentheses so `("x" as const)` / `(alias)` reach the
+        // same as/satisfies/identifier unwrapping that the bare forms do.
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(expr_node)
+        {
+            return self.const_literal_initializer_text_deep_guarded(paren.expression, guard);
+        }
         if expr_node.kind == syntax_kind_ext::AS_EXPRESSION
             || expr_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
         {
@@ -129,19 +136,90 @@ impl<'a> DeclarationEmitter<'a> {
         // tsc behavior when a const variable references another const whose
         // literal value is known (e.g. `const a = "abc"; const b = a` ->
         // `declare const b = "abc"`).
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
-            if self.binder.is_some() {
-                let sym_id = self.value_reference_symbol(expr_idx)?;
-                let initializer = self.const_variable_initializer_for_symbol(sym_id)?;
-                return self.const_literal_initializer_text_deep_guarded(initializer, guard);
-            }
-
-            if let Some(initializer) = self.top_level_const_initializer_for_identifier(expr_idx) {
-                return self.const_literal_initializer_text_deep_guarded(initializer, guard);
-            }
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(initializer) = self.const_alias_initializer(expr_idx)
+        {
+            return self.const_literal_initializer_text_deep_guarded(initializer, guard);
         }
 
         None
+    }
+
+    /// Inline `= literal` text for a `const` declaration, but only when the
+    /// const's declared type is a *fresh* literal (tsc's
+    /// `isLiteralConstDeclaration` / `isFreshLiteralType`). A top-level type
+    /// assertion (`x as T` / `<T>x`, including `as const`, and including through
+    /// parentheses or a `const` alias) gives the declaration an asserted /
+    /// non-fresh declared type, which `tsc` prints as the `: T` annotation
+    /// instead of the inline initializer. A `satisfies` expression preserves the
+    /// operand's freshness, so it stays inline.
+    pub(in crate::declaration_emitter) fn const_inline_literal_initializer_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        if self.const_initializer_carries_type_assertion(expr_idx, 0) {
+            return None;
+        }
+        self.const_literal_initializer_text_deep(expr_idx)
+    }
+
+    /// True when the declared type of a `const`/`readonly` initializer comes
+    /// from a type assertion (`as T` / `<T>`, including `as const`) rather than
+    /// a fresh literal. Looks through parentheses, non-null `!`, and `const`
+    /// aliases (`const b = a` inherits `a`'s freshness); `satisfies` is
+    /// transparent for freshness and is looked through, not treated as an
+    /// assertion.
+    pub(in crate::declaration_emitter) fn const_initializer_carries_type_assertion(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        // On a pathologically deep wrapper/alias chain, assume no assertion so
+        // the caller falls back to its normal (inline-literal) handling rather
+        // than dropping a literal it could otherwise preserve.
+        if depth > 64 {
+            return false;
+        }
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::AS_EXPRESSION || k == syntax_kind_ext::TYPE_ASSERTION => {
+                true
+            }
+            k if k == syntax_kind_ext::SATISFIES_EXPRESSION => self
+                .arena
+                .get_type_assertion(node)
+                .is_some_and(|assertion| {
+                    self.const_initializer_carries_type_assertion(assertion.expression, depth + 1)
+                }),
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.const_initializer_carries_type_assertion(paren.expression, depth + 1)
+                })
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                self.arena.get_unary_expr_ex(node).is_some_and(|unary| {
+                    self.const_initializer_carries_type_assertion(unary.expression, depth + 1)
+                })
+            }
+            k if k == SyntaxKind::Identifier as u16 => self
+                .const_alias_initializer(expr_idx)
+                .is_some_and(|init| self.const_initializer_carries_type_assertion(init, depth + 1)),
+            _ => false,
+        }
+    }
+
+    /// The initializer of the `const` declaration `expr_idx` resolves to, if it
+    /// is a reference to a `const` binding (so freshness/assertion state can be
+    /// propagated through `const b = a` aliases).
+    fn const_alias_initializer(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        if self.binder.is_some() {
+            let sym_id = self.value_reference_symbol(expr_idx)?;
+            self.const_variable_initializer_for_symbol(sym_id)
+        } else {
+            self.top_level_const_initializer_for_identifier(expr_idx)
+        }
     }
 
     fn const_variable_initializer_for_symbol(&self, sym_id: SymbolId) -> Option<NodeIndex> {

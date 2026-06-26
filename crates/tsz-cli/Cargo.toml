@@ -116,6 +116,10 @@ name = "inferred_object_index_signature_dts_emit_tests"
 path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
 
 [[test]]
+name = "const_assertion_dts_emit_tests"
+path = "tests/const_assertion_dts_emit_tests.rs"
+
+[[test]]
 name = "inferred_const_literal_union_dts_emit_tests"
 path = "tests/inferred_const_literal_union_dts_emit_tests.rs"
 
