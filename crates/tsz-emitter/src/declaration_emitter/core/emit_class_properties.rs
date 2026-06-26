@@ -187,6 +187,19 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" | undefined");
             }
         } else if !is_private {
+            // tsc preserves the (non-fresh) literal type of a class field whose
+            // declared type *is* a literal: always for a `readonly` field, and
+            // for a *mutable* field when the initializer carries a top-level type
+            // assertion (`as const`, `<const>`, including through parentheses,
+            // non-null `!`, and `const` aliases). The assertion strips the
+            // literal's freshness so it does not widen (`mutable = "hi" as const`
+            // -> `mutable: "hi"`). A plain mutable literal (`x = "a"`) stays
+            // fresh and widens to the primitive, and `satisfies` keeps freshness,
+            // so neither carries an assertion here.
+            let preserve_literal_initializer = is_readonly
+                || (prop.initializer.is_some()
+                    && self.const_initializer_carries_type_assertion(prop.initializer, 0));
+
             // For a readonly property whose initializer is a simple enum-member
             // access (e.g. `readonly kind = E.A`), tsc uses the initializer form
             // in class declarations and a literal-typed annotation in object-
@@ -253,8 +266,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                // Readonly literal preservation (matches tsc `const`-like emit).
-                if is_readonly
+                // Literal preservation (matches tsc `const`-like emit): readonly
+                // fields, and mutable fields whose initializer carries an `as
+                // const`/`<const>` assertion (tracked by
+                // `preserve_literal_initializer`).
+                if preserve_literal_initializer
                     && !is_abstract
                     && !prop.question_token
                     && let Some(interner) = self.type_interner
@@ -262,7 +278,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(self.readonly_literal_separator_for(prop.initializer));
                     self.write(&Self::format_literal_initializer(&lit, interner));
-                } else if is_readonly
+                } else if preserve_literal_initializer
                     && !is_abstract
                     && !prop.question_token
                     && prop.initializer.is_some()
@@ -393,13 +409,14 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 }
-            } else if is_readonly
+            } else if preserve_literal_initializer
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
-                // Readonly literal preservation via initializer source text.
+                // Literal preservation via initializer source text (no computed
+                // type): readonly fields, and mutable `as const`/`<const>` fields.
                 self.write(self.readonly_literal_separator_for(prop.initializer));
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
