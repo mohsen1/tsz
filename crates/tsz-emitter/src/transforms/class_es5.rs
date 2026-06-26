@@ -730,7 +730,17 @@ impl<'a> ClassES5Emitter<'a> {
         override_name: Option<&str>,
         mut ir: IRNode,
     ) -> String {
-        if !self.externally_hoisted_decls.is_empty() {
+        // tsc hoists a class's private-field/method WeakMap/WeakSet storage out
+        // of the generated IIFE — `var _C_x;` before it and `_C_x = new WeakMap();`
+        // after it — whenever the class needs no class-value alias, i.e. it has no
+        // static private member. Classes WITH static private lowering keep their
+        // storage (and the `_a = C` class alias the static brand check depends on)
+        // inside the IIFE, also matching tsc. The CommonJS-export path requests the
+        // same lift through `externally_hoisted_decls`, which additionally relocates
+        // the `var` declaration to module scope.
+        if !self.externally_hoisted_decls.is_empty()
+            || !self.transformer.has_static_private_lowering()
+        {
             Self::lift_private_storage_from_iife_body(&mut ir);
         }
 
