@@ -291,6 +291,17 @@ impl<'a> CheckerState<'a> {
         Ok(current)
     }
     /// Parse a JSDoc-style `@type` expression into a concrete type.
+    ///
+    /// This is the *structural* step only: unions, intersections, arrays,
+    /// tuples, primitives, `function(...)`/arrow syntax, indexed access, etc. It
+    /// deliberately does **not** perform named-reference resolution — a bare
+    /// name such as a `@callback`, a sibling `@typedef`, or a class/interface
+    /// returns `None` here. Callers resolving a member/parameter/return type
+    /// expression must use [`Self::resolve_jsdoc_reference`] (the full resolver:
+    /// structural step → object-literal → name resolution); using this function
+    /// directly silently collapses named references to `any` (see issue
+    /// #14850). It is `pub(crate)` only so `resolve_jsdoc_reference` and the
+    /// recursive structural sub-parsers can call it.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
         // Skip union/intersection splitting for `function(...)` types, since the

@@ -568,9 +568,12 @@ impl<'a> CheckerState<'a> {
                     &sub_parent,
                     is_sub_array_object,
                 )
-                .or_else(|| self.jsdoc_type_from_expression(eff_type))
+                .or_else(|| self.resolve_jsdoc_reference(eff_type))
             } else {
-                self.jsdoc_type_from_expression(eff_type)
+                // Full resolver (see `jsdoc_type_from_expression` docs): a
+                // nested member with a named type must resolve, not collapse to
+                // `any` (#14850).
+                self.resolve_jsdoc_reference(eff_type)
             };
 
             if let Some(mut prop_type_id) = prop_type_id {
