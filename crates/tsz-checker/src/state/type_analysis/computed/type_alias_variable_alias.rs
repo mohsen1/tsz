@@ -251,6 +251,11 @@ impl<'a> CheckerState<'a> {
                     && !decl_has_parse_error;
                 let is_non_generic_mapped_cycle = params.is_empty()
                     && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
+                // A non-array tuple spread that re-enters the alias forces
+                // resolution and is circular (`type T = [number, ...T]`), unlike
+                // a plain element or an array spread (`...T[]`), which defer.
+                let is_tuple_self_spread_cycle = params.is_empty()
+                    && self.tuple_alias_body_forces_resolution_chain(sym_id, type_alias.type_node);
                 let is_jsx_runtime_bridge_alias = self
                     .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
@@ -266,7 +271,8 @@ impl<'a> CheckerState<'a> {
                     ) || self.ctx.circular_type_aliases.contains(&sym_id)
                         || (self.is_simple_type_reference(type_alias.type_node)
                             && self.is_cross_file_circular_alias(sym_id, alias_type))
-                        || is_non_generic_mapped_cycle);
+                        || is_non_generic_mapped_cycle
+                        || is_tuple_self_spread_cycle);
                 if is_circular && !self.has_parse_errors() {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
@@ -299,6 +305,7 @@ impl<'a> CheckerState<'a> {
                     // avoid SymbolId/arena collisions during driver-mode runs.
                     let body_is_deferred = self.alias_ast_is_deferred(sym_id)
                         && !is_non_generic_mapped_cycle
+                        && !is_tuple_self_spread_cycle
                         && !generic_self_circular;
                     if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;

@@ -590,6 +590,9 @@ path = "tests/jsx_import_source_namespace_tests.rs"
 name = "type_alias_namespace_merge_tests"
 path = "tests/type_alias_namespace_merge_tests.rs"
 [[test]]
+name = "tuple_spread_circular_alias_tests"
+path = "tests/tuple_spread_circular_alias_tests.rs"
+[[test]]
 name = "type_alias_typeof_circular_tests"
 path = "tests/type_alias_typeof_circular_tests.rs"
 [[test]]

@@ -57,6 +57,280 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// True when a type-alias body is a tuple whose self-reference forces
+    /// resolution of an on-resolution-chain alias, making the alias circularly
+    /// reference itself (TS2456).
+    ///
+    /// `tsc` defers tuple *element* resolution — `type T = [T]`, `type T = [T?]`,
+    /// and `type T = [number, T[]]` are all accepted — so a plain or optional
+    /// element never makes a tuple circular. A *spread* element is different:
+    /// splicing `...X` into the enclosing tuple forces `X` to be resolved to a
+    /// concrete tuple, and that forcing re-enters any alias `X` reaches. The
+    /// single exception is a spread whose operand is written directly as an
+    /// array type `...Y[]`: the array fast-path keeps `Y` deferred, so
+    /// `type T = [number, ...T[]]` stays acceptable.
+    ///
+    /// The walk runs over the body AST (never the possibly-collapsed body type)
+    /// and reports a hit when a non-array spread element forces resolution of an
+    /// alias in `symbol_resolution_set` (or `sym_id` itself). It deliberately
+    /// stops at generic instantiations (`Foo<...>`) and structural-deferral
+    /// wrappers, which create their own deferral boundary; those remain
+    /// (conservative) false negatives rather than risk a false positive.
+    pub(crate) fn tuple_alias_body_forces_resolution_chain(
+        &self,
+        sym_id: SymbolId,
+        body_node: NodeIndex,
+    ) -> bool {
+        let Some(tuple_idx) = self.unwrap_to_tuple_type(body_node) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(tuple_idx) else {
+            return false;
+        };
+        let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+            return false;
+        };
+        let mut visited = FxHashSet::default();
+        // Only spread elements force resolution; plain/optional elements defer.
+        tuple.elements.nodes.iter().any(|&element_idx| {
+            self.tuple_spread_element_operand(element_idx).is_some()
+                && self.forced_tuple_member_reaches_resolution_chain(
+                    sym_id,
+                    element_idx,
+                    &mut visited,
+                )
+        })
+    }
+
+    /// Unwrap parentheses and a `readonly` operator to reach a tuple type node.
+    fn unwrap_to_tuple_type(&self, type_node: NodeIndex) -> Option<NodeIndex> {
+        let inner = self.unwrap_parenthesized_type(type_node)?;
+        let node = self.ctx.arena.get(inner)?;
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return Some(inner);
+        }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && let Some(op) = self.ctx.arena.get_type_operator(node)
+            && op.operator == SyntaxKind::ReadonlyKeyword as u16
+        {
+            return self.unwrap_to_tuple_type(op.type_node);
+        }
+        None
+    }
+
+    /// The operand of a tuple spread element (`...X` rest type or a `...`-marked
+    /// named tuple member), or `None` for a plain/optional element.
+    fn tuple_spread_element_operand(&self, element_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(element_idx)?;
+        if node.kind == syntax_kind_ext::REST_TYPE {
+            return self.ctx.arena.get_wrapped_type(node).map(|w| w.type_node);
+        }
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && let Some(member) = self.ctx.arena.get_named_tuple_member(node)
+            && member.dot_dot_dot_token
+        {
+            return Some(member.type_node);
+        }
+        None
+    }
+
+    /// The underlying type node of a plain (non-spread) tuple member, unwrapping
+    /// an optional element or a named member.
+    fn tuple_plain_member_type(&self, element_idx: NodeIndex) -> Option<NodeIndex> {
+        let inner = self.unwrap_parenthesized_type(element_idx)?;
+        let node = self.ctx.arena.get(inner)?;
+        if node.kind == syntax_kind_ext::OPTIONAL_TYPE {
+            return self.ctx.arena.get_wrapped_type(node).map(|w| w.type_node);
+        }
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+            return self
+                .ctx
+                .arena
+                .get_named_tuple_member(node)
+                .map(|member| member.type_node);
+        }
+        Some(inner)
+    }
+
+    /// A tuple member encountered while a whole tuple is being forced (spliced).
+    /// A spread member re-enters the forcing walk and may follow an aliased
+    /// operand's body; a plain/optional member is forced without chasing an
+    /// off-chain alias into a structural body, matching `tsc`
+    /// (`type P = [...[Q]]; type Q = [P]` is accepted).
+    fn forced_tuple_member_reaches_resolution_chain(
+        &self,
+        sym_id: SymbolId,
+        element_idx: NodeIndex,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        if let Some(operand) = self.tuple_spread_element_operand(element_idx) {
+            // A directly-written array operand (`...Y[]`) keeps `Y` deferred.
+            if self.spread_operand_is_array(operand) {
+                return false;
+            }
+            return self.forced_position_reaches_resolution_chain(sym_id, operand, true, visited);
+        }
+        let Some(plain) = self.tuple_plain_member_type(element_idx) else {
+            return false;
+        };
+        self.forced_position_reaches_resolution_chain(sym_id, plain, false, visited)
+    }
+
+    /// True when `operand` (parenthesis-unwrapped) is written directly as an
+    /// array type `Y[]`, the one spread form `tsc` keeps deferred.
+    fn spread_operand_is_array(&self, operand: NodeIndex) -> bool {
+        self.unwrap_parenthesized_type(operand)
+            .and_then(|idx| self.ctx.arena.get(idx))
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_TYPE)
+    }
+
+    /// Walk a type node at a forcing position — a tuple spread operand, a
+    /// spliced tuple element, or a generic type argument — returning true when
+    /// it reaches an alias on the current resolution chain.
+    ///
+    /// Splicing/instantiation forces arrays, tuples, unions, intersections, type
+    /// operators, and generic type arguments, so the walk descends through them.
+    /// It stops at structural-deferral wrappers (object/function/constructor/
+    /// mapped/conditional types), which keep their members deferred.
+    /// `follow_alias_hops` distinguishes the two forcing flavors: a tuple spread
+    /// operand resolves an aliased operand's whole body
+    /// (`type T = [...M]; type M = [T]`), whereas a spliced element or a type
+    /// argument does not chase an off-chain alias into a structural body
+    /// (`type P = [...[Q]]; type Q = [P]` stays acceptable).
+    fn forced_position_reaches_resolution_chain(
+        &self,
+        sym_id: SymbolId,
+        type_idx: NodeIndex,
+        follow_alias_hops: bool,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(idx) = self.unwrap_parenthesized_type(type_idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let kind = node.kind;
+        if kind == syntax_kind_ext::ARRAY_TYPE {
+            return self
+                .ctx
+                .arena
+                .get_array_type(node)
+                .map(|array| array.element_type)
+                .is_some_and(|element| {
+                    self.forced_position_reaches_resolution_chain(
+                        sym_id,
+                        element,
+                        follow_alias_hops,
+                        visited,
+                    )
+                });
+        }
+        if kind == syntax_kind_ext::TYPE_OPERATOR {
+            return self.ctx.arena.get_type_operator(node).is_some_and(|op| {
+                self.forced_position_reaches_resolution_chain(
+                    sym_id,
+                    op.type_node,
+                    follow_alias_hops,
+                    visited,
+                )
+            });
+        }
+        if kind == syntax_kind_ext::TUPLE_TYPE {
+            let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+                return false;
+            };
+            return tuple.elements.nodes.iter().any(|&element| {
+                self.forced_tuple_member_reaches_resolution_chain(sym_id, element, visited)
+            });
+        }
+        if kind == syntax_kind_ext::UNION_TYPE || kind == syntax_kind_ext::INTERSECTION_TYPE {
+            return self.ctx.arena.get_children(idx).into_iter().any(|child| {
+                self.forced_position_reaches_resolution_chain(
+                    sym_id,
+                    child,
+                    follow_alias_hops,
+                    visited,
+                )
+            });
+        }
+        if kind == syntax_kind_ext::TYPE_REFERENCE || kind == SyntaxKind::Identifier as u16 {
+            return self.forced_reference_reaches_resolution_chain(
+                sym_id,
+                idx,
+                follow_alias_hops,
+                visited,
+            );
+        }
+        false
+    }
+
+    /// A type reference at a forcing position. A reference carrying type
+    /// arguments is a generic instantiation: its name is a new instantiation
+    /// boundary, but each argument is forced (without following an off-chain
+    /// alias hop). A bare reference is a hit when it names an on-chain alias, and
+    /// when `follow_alias_hops` it otherwise resolves an off-chain alias's body
+    /// once (cycle-guarded), since spreading an alias forces its declared type.
+    fn forced_reference_reaches_resolution_chain(
+        &self,
+        sym_id: SymbolId,
+        idx: NodeIndex,
+        follow_alias_hops: bool,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let name_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                return false;
+            };
+            if let Some(args) = type_ref.type_arguments.as_ref() {
+                return args.nodes.iter().any(|&arg| {
+                    self.forced_position_reaches_resolution_chain(sym_id, arg, false, visited)
+                });
+            }
+            type_ref.type_name
+        } else {
+            idx
+        };
+        let Some(raw) = self.resolve_type_symbol_for_lowering(name_idx) else {
+            return false;
+        };
+        let target = SymbolId(raw);
+        if self.symbol_is_resolution_chain_alias(sym_id, target) {
+            return true;
+        }
+        if !follow_alias_hops {
+            return false;
+        }
+        if self
+            .ctx
+            .binder
+            .get_symbol(target)
+            .is_none_or(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0)
+        {
+            return false;
+        }
+        if !visited.insert(target) {
+            return false;
+        }
+        let Some((_, body)) = self.type_alias_decl_parts(target) else {
+            return false;
+        };
+        self.forced_position_reaches_resolution_chain(sym_id, body, true, visited)
+    }
+
+    /// True when `target` is a type alias that is `sym_id` itself or otherwise
+    /// on the current resolution chain.
+    fn symbol_is_resolution_chain_alias(&self, sym_id: SymbolId, target: SymbolId) -> bool {
+        self.ctx
+            .binder
+            .get_symbol(target)
+            .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+            && (target == sym_id || self.ctx.symbol_resolution_set.contains(&target))
+    }
+
     /// `(has_type_parameters, body_node)` for `sym_id`'s type-alias
     /// declaration, if it is a type alias with a declaration node.
     fn type_alias_decl_parts(&self, sym_id: SymbolId) -> Option<(bool, NodeIndex)> {
@@ -1501,7 +1775,9 @@ impl<'a> CheckerState<'a> {
                             // but keep TS2456 for non-generic mapped-type key
                             // cycles like `type T = { [K in keyof T]: ... }`.
                             let body_is_deferred = self.alias_ast_is_deferred(sym_id)
-                                && !self.is_non_generic_mapped_type_circular(sym_id, ta.type_node);
+                                && !self.is_non_generic_mapped_type_circular(sym_id, ta.type_node)
+                                && !self
+                                    .tuple_alias_body_forces_resolution_chain(sym_id, ta.type_node);
                             let is_jsx_runtime_bridge_alias = self
                                 .is_jsx_import_source_runtime_bridge_alias(
                                     self.ctx.arena,
