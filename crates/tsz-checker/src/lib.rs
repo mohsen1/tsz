@@ -1375,6 +1375,9 @@ mod property_receiver_display_recursion_overflow_tests;
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/readonly_property_assignment_narrowing_tests.rs"]
+mod readonly_property_assignment_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/recursive_accumulator_depth_tests.rs"]
 mod recursive_accumulator_depth_tests;
 #[cfg(test)]
