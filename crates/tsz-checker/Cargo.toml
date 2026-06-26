@@ -845,6 +845,9 @@ path = "tests/ts1203_node_esm_tests.rs"
 name = "node_esm_default_import_export_equals_callable_tests"
 path = "tests/node_esm_default_import_export_equals_callable_tests.rs"
 [[test]]
+name = "export_equals_default_import_interop_ts1259_tests"
+path = "tests/export_equals_default_import_interop_ts1259_tests.rs"
+[[test]]
 name = "ts1254_ambient_const_tests"
 path = "tests/ts1254_ambient_const_tests.rs"
 [[test]]
