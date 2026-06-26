@@ -341,6 +341,31 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // `NoInfer<T>` is a transparent wrapper: it preserves the underlying
+        // value set, so it must be peeled before classifying type-parameter-ness
+        // and resolving apparent types. Otherwise a wrapped constrained
+        // parameter (e.g. `NoInfer<T extends 'a' | 'b'>`) is not recognized as
+        // type-parameter-like, its constraint is never consulted, and
+        // comparisons against a constraint member are wrongly rejected (false
+        // TS2678 on `case 'a'`, TS2365, and the TS2367 type-parameter
+        // delegation). tsc unwraps `NoInfer` before its `areTypesComparable`
+        // relation.
+        let mut source = source;
+        let mut target = target;
+        while let Some(inner) =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, source)
+        {
+            source = inner;
+        }
+        while let Some(inner) =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, target)
+        {
+            target = inner;
+        }
+        if source == target {
+            return true;
+        }
+
         // Resolve type parameters to their apparent types for comparison.
         // In tsc, `isTypeComparableTo` uses `getReducedApparentType` for TypeParam sources,
         // and has a carve-out when BOTH source and target are type parameters (only comparable

@@ -1054,6 +1054,26 @@ impl<'a> CheckerState<'a> {
         // bare-operand exemption is applied by `nullable_equality_operand`
         // at the TS2367 call sites.
 
+        // `NoInfer<T>` is a transparent wrapper for overlap: it preserves the
+        // underlying set of values, so the operands overlap exactly when their
+        // unwrapped forms do. Peel it first so a wrapped *constrained type
+        // parameter* still reaches the type-parameter-like delegation below.
+        // Without this, `NoInfer<T extends string | true>` compared to `true` is
+        // not recognized as type-parameter-like, skips the comparability
+        // delegation, and falls through to the concrete-shape checks that
+        // wrongly report no overlap (false TS2367) — while tsc accepts the
+        // comparison via `T`'s constraint.
+        let unwrapped_left =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, left);
+        let unwrapped_right =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, right);
+        if unwrapped_left.is_some() || unwrapped_right.is_some() {
+            return self.types_have_no_overlap(
+                unwrapped_left.unwrap_or(left),
+                unwrapped_right.unwrap_or(right),
+            );
+        }
+
         // Weak types (all-optional properties) overlap with anything.
         // tsc never emits TS2367 when comparing against weak types.
         if self.is_weak_type_for_overlap(left) || self.is_weak_type_for_overlap(right) {
