@@ -179,6 +179,95 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
     }
 
+    /// Resolve the symbol of the class that lexically encloses `start`, if any.
+    ///
+    /// Walks the parent chain until a class-like node is found, then resolves it
+    /// through [`Self::class_declaration_symbol`] so the result matches the
+    /// symbol identity used when building the instance type.
+    pub(super) fn node_enclosing_class_symbol(
+        &self,
+        start: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let mut current = start;
+        // Bounded walk; class nesting depth is small in practice.
+        for _ in 0..64 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.ctx.arena.get(current)?;
+            if node.is_class_like() {
+                return self.class_declaration_symbol(current);
+            }
+        }
+        None
+    }
+
+    /// Whether a fresh instance-type build for `class_sym` would re-enter the
+    /// in-flight resolution of one of its OWN arrow-/function-valued property
+    /// initializers (such a node is present on `node_resolution_stack` in an
+    /// enclosing frame).
+    ///
+    /// This is the precise shape behind the self-reference false-negative: a
+    /// property whose initializer is an arrow/function expression with a
+    /// return-type annotation that references the enclosing class. Typing that
+    /// initializer resolves the annotation, which (via return-type name
+    /// validation or constructor-type building) requests a fresh instance build
+    /// while the initializer node is still on the resolution stack. Building now
+    /// would type that member from its transient `ERROR` placeholder (the
+    /// `get_type_of_node` cycle guard), baking an unsound `ERROR`/`any` member
+    /// type into the cached instance.
+    ///
+    /// The condition is deliberately narrow — only property-initializer
+    /// arrow/function nodes count, not method bodies, type annotations, or other
+    /// in-class nodes — so it does not perturb ordinary class resolution that
+    /// legitimately re-enters a class type while some in-class node is on the
+    /// stack.
+    pub(super) fn class_build_reenters_in_flight_member(
+        &self,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx
+            .node_resolution_stack
+            .iter()
+            .any(|&node| self.is_in_flight_class_property_initializer(node, class_sym))
+    }
+
+    /// Whether `node` is an arrow/function-expression initializer of a property
+    /// member of `class_sym`.
+    fn is_in_flight_class_property_initializer(
+        &self,
+        node: NodeIndex,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node_data) = self.ctx.arena.get(node) else {
+            return false;
+        };
+        if node_data.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node_data.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(node) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        let is_property_initializer = self
+            .ctx
+            .arena
+            .get(parent)
+            .map(|p| p.kind == syntax_kind_ext::PROPERTY_DECLARATION)
+            .unwrap_or(false);
+        if !is_property_initializer {
+            return false;
+        }
+        self.node_enclosing_class_symbol(node) == Some(class_sym)
+    }
+
     /// Check if a method body syntactically returns only `this`.
     /// Returns true if every return statement in the body has `this` as
     /// its expression (or the body is an expression-bodied arrow returning `this`).
