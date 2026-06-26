@@ -131,6 +131,29 @@ pub(crate) fn decl_lazy_lib_disabled() -> bool {
     })
 }
 
+/// Opt-IN switch extending the #13933 lib-interface reference deferral from the
+/// single `resolve_named_type_reference` site to EVERY argument-less
+/// type-reference position resolved through `get_type_from_type_node` (variable
+/// annotations, type aliases, member annotations, …). Those positions currently
+/// flow through `lower_with_resolvers`, which force-materializes a referenced
+/// lib interface's full transitive closure at the reference site (measured: `let
+/// h: HTMLDivElement` interns ~4400 types over the `const c = 1` floor, while a
+/// deferred unused function-return reference interns ~1). When enabled, an
+/// eligible (force-eligible, non-generic, unaugmented, unshadowed) bare
+/// lib-interface reference defers to a `Lazy(DefId)` that resolves on demand via
+/// the #8638 single-member fast path / relation `resolve_lazy` — attacking the
+/// documented ~84% own-member-lowering + referenced-interface cascade. OFF by
+/// default so flag-off is byte-identical; `TSZ_LAZY_OWN_MEMBERS=1` enables A/B.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_own_members_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TSZ_LAZY_OWN_MEMBERS").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`
