@@ -11,13 +11,11 @@
 use super::shallow_subtype::ShallowReduceKind;
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
-    CallableShape, IntrinsicKind, LiteralValue, ObjectShape, PropertyInfo, TemplateLiteralId,
-    TypeData, TypeId, Visibility,
+    IntrinsicKind, LiteralValue, PropertyInfo, TemplateLiteralId, TypeData, TypeId, Visibility,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::sync::Arc;
 use tsz_common::interner::Atom;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -108,6 +106,26 @@ const fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
         LiteralValue::BigInt(_) => LiteralDomain::Bigint,
     }
 }
+
+/// A single occurrence of a property name within one member of an intersection,
+/// reduced to the fields the never-reduction conflict test reads.
+struct PropOccurrence {
+    type_id: TypeId,
+    optional: bool,
+    visibility: Visibility,
+}
+
+/// A literal-typed property occurrence, grouped by [`LiteralDomain`] for the
+/// value-set disjointness test.
+struct LiteralOccurrence {
+    kind: LiteralKind,
+    optional: bool,
+}
+
+/// Literal-typed occurrences of one property name, partitioned by domain. There
+/// are only four literal domains, so a linear-probed `SmallVec` of `(domain,
+/// group)` pairs is cheaper than a hash map.
+type LiteralOccurrencesByDomain = SmallVec<[(LiteralDomain, SmallVec<[LiteralOccurrence; 4]>); 4]>;
 
 impl TypeInterner {
     pub(crate) fn intersection_has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
@@ -590,21 +608,33 @@ impl TypeInterner {
     }
 
     pub(crate) fn intersection_has_disjoint_object_literals(&self, members: &[TypeId]) -> bool {
-        // Performance guard: skip O(N²) check for large intersections.
-        // The check detects { kind: "a" } & { kind: "b" } → never, but for very
-        // large type intersections (e.g., T extends A & B & C & ...), the O(N²)
-        // pairwise comparison is prohibitively expensive. Skip it and let the
-        // merged object handle any conflicts.
-        const MAX_DISJOINT_CHECK_SIZE: usize = 25;
-        if members.len() > MAX_DISJOINT_CHECK_SIZE {
-            return false;
-        }
-
-        // Collect property-bearing shapes from both Object AND Callable types.
-        // Callable types (e.g., { (x: string): number, a: "" }) have named properties
-        // that can conflict with Object type properties, reducing the intersection to never.
-        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::with_capacity(members.len());
-        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::with_capacity(members.len());
+        // A conflict that reduces an object intersection to `never` always surfaces
+        // through a property NAME shared by two members: a discriminant mismatch
+        // (`{ kind: "a" } & { kind: "b" }`), a private/public collision, or a
+        // cross-domain literal clash (`{ a: "" } & { a: number }`). So index every
+        // member's properties by name once — O(sum of property counts) — then run a
+        // bounded per-name conflict test.
+        //
+        // This replaces the previous O(N²) pairwise scan over whole shapes, which
+        // carried a hard `MAX_DISJOINT_CHECK_SIZE = 25` cap that silently dropped the
+        // reduction for larger intersections (e.g. a 26-member conflicting-discriminant
+        // chain, producing a false-positive `TS2322`). The per-name test runs in O(k)
+        // for the common single-literal discriminant shape, so the never-reduction
+        // stays correct for arbitrarily large intersections without quadratic cost.
+        //
+        // Property-bearing shapes come from both Object AND Callable types — a
+        // callable's named members (e.g. `{ (x: string): number; a: "" }`) can
+        // conflict with an object property of the same name.
+        let mut by_name: FxHashMap<Atom, SmallVec<[PropOccurrence; 4]>> = FxHashMap::default();
+        let mut ingest = |props: &[PropertyInfo]| {
+            for prop in props {
+                by_name.entry(prop.name).or_default().push(PropOccurrence {
+                    type_id: prop.type_id,
+                    optional: prop.optional,
+                    visibility: prop.visibility,
+                });
+            }
+        };
 
         for &member in members {
             if member.is_intrinsic() {
@@ -615,40 +645,157 @@ impl TypeInterner {
             };
             match key {
                 TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                    object_shapes.push(self.object_shape(shape_id));
+                    ingest(&self.object_shape(shape_id).properties);
                 }
                 TypeData::Callable(callable_id) => {
-                    let callable = self.callable_shape(callable_id);
-                    if !callable.properties.is_empty() {
-                        callable_shapes.push(callable);
-                    }
+                    ingest(&self.callable_shape(callable_id).properties);
                 }
                 _ => {}
             }
         }
 
-        let total = object_shapes.len() + callable_shapes.len();
-        if total < 2 {
+        by_name
+            .values()
+            .any(|occurrences| self.name_occurrences_disjoint(occurrences))
+    }
+
+    /// Returns true when the occurrences of a single property name across the
+    /// members of an intersection are mutually unsatisfiable, forcing the whole
+    /// intersection to `never`. Mirrors the per-pair predicate of the former
+    /// `object_literals_disjoint` scan, but as a set of existence tests over all
+    /// occurrences of the name (O(k) for the common single-literal case) rather
+    /// than an O(k²) pairwise comparison.
+    fn name_occurrences_disjoint(&self, occurrences: &[PropOccurrence]) -> bool {
+        if occurrences.len() < 2 {
             return false;
         }
 
-        // Build property slice references for pairwise comparison
-        let mut prop_slices: SmallVec<[&[PropertyInfo]; 8]> = SmallVec::new();
-        for obj in &object_shapes {
-            prop_slices.push(&obj.properties);
+        // Visibility: a `private` member's declaring-class identity cannot be
+        // satisfied by a public or protected member of the same name, so a private
+        // occurrence alongside any differently-visible occurrence reduces to `never`.
+        // Protected/public mixes stay on the merge path — they can still expose a
+        // public property.
+        let mut has_private = false;
+        let mut has_non_private = false;
+        for occ in occurrences {
+            if occ.visibility == Visibility::Private {
+                has_private = true;
+            } else {
+                has_non_private = true;
+            }
         }
-        for callable in &callable_shapes {
-            prop_slices.push(&callable.properties);
+        if has_private && has_non_private {
+            return true;
         }
 
-        for i in 0..prop_slices.len() {
-            for j in (i + 1)..prop_slices.len() {
-                if self.object_literals_disjoint(prop_slices[i], prop_slices[j]) {
-                    return true;
+        // Cross-domain: a literal occurrence whose primitive class differs from
+        // another occurrence's class is disjoint (e.g. `a: ""` (string) & `a: number`).
+        // As with the literal value-set check below, two *optional* occurrences only
+        // make the property itself `never`, so a conflicting pair needs at least one
+        // required side. A pair (literal `L` of class `C_L`, occurrence `X` of class
+        // `C_X != C_L`) is a not-both-optional conflict when either `L` is required
+        // (and any differing class exists) or some required occurrence has a class
+        // distinct from a literal's class.
+        let mut classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+        let mut literal_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+        let mut required_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+        let mut has_required_literal = false;
+        for occ in occurrences {
+            let Some(class) = self.primitive_class_for(occ.type_id) else {
+                continue;
+            };
+            if !classes.contains(&class) {
+                classes.push(class);
+            }
+            if !occ.optional && !required_classes.contains(&class) {
+                required_classes.push(class);
+            }
+            if self.is_literal(occ.type_id) {
+                if !literal_classes.contains(&class) {
+                    literal_classes.push(class);
+                }
+                has_required_literal |= !occ.optional;
+            }
+        }
+        let required_literal_cross = has_required_literal && classes.len() >= 2;
+        let literal_vs_required_cross = literal_classes
+            .iter()
+            .any(|lit| required_classes.iter().any(|req| req != lit));
+        if required_literal_cross || literal_vs_required_cross {
+            return true;
+        }
+
+        // Literal value-sets: group literal-typed occurrences by domain. A required
+        // occurrence whose value-set is disjoint from any other occurrence's forces
+        // `never`; two *optional* occurrences only make the property itself `never`,
+        // so a conflicting pair needs at least one required side.
+        let mut by_domain: LiteralOccurrencesByDomain = SmallVec::new();
+        let mut has_required_literal = false;
+        for occ in occurrences {
+            let Some(kind) = self.literal_kind_from_type(occ.type_id) else {
+                continue;
+            };
+            has_required_literal |= !occ.optional;
+            let domain = kind.domain();
+            let lit = LiteralOccurrence {
+                kind,
+                optional: occ.optional,
+            };
+            match by_domain.iter_mut().find(|(d, _)| *d == domain) {
+                Some((_, group)) => group.push(lit),
+                None => {
+                    let mut group = SmallVec::new();
+                    group.push(lit);
+                    by_domain.push((domain, group));
                 }
             }
         }
 
+        // Literals drawn from two different domains are mutually disjoint; if any of
+        // them is required the intersection is `never`.
+        if has_required_literal && by_domain.len() >= 2 {
+            return true;
+        }
+
+        by_domain
+            .iter()
+            .any(|(_, group)| Self::literal_group_has_disjoint_pair(group))
+    }
+
+    /// Within a single literal domain, returns true when some *required* occurrence's
+    /// value-set is disjoint from another occurrence's value-set. Single-literal
+    /// occurrences (the discriminant case) resolve in O(k); the union fallback is
+    /// pairwise but only runs for the rare property whose intersection members carry
+    /// union-literal types, where the group is small.
+    fn literal_group_has_disjoint_pair(group: &[LiteralOccurrence]) -> bool {
+        if group.len() < 2 {
+            return false;
+        }
+
+        if group
+            .iter()
+            .all(|occ| matches!(occ.kind, LiteralKind::Single(_)))
+        {
+            let mut distinct: FxHashSet<LiteralValue> = FxHashSet::default();
+            let mut has_required = false;
+            for occ in group {
+                if let LiteralKind::Single(value) = occ.kind {
+                    distinct.insert(value);
+                }
+                has_required |= !occ.optional;
+            }
+            return distinct.len() >= 2 && has_required;
+        }
+
+        for i in 0..group.len() {
+            for j in (i + 1)..group.len() {
+                if !(group[i].optional && group[j].optional)
+                    && group[i].kind.is_disjoint(&group[j].kind)
+                {
+                    return true;
+                }
+            }
+        }
         false
     }
 
@@ -709,64 +856,6 @@ impl TypeInterner {
             .any(|brands| all_brands.iter().all(|brand| brands.contains(brand)))
     }
 
-    fn object_literals_disjoint(&self, left: &[PropertyInfo], right: &[PropertyInfo]) -> bool {
-        let (small, large) = if left.len() <= right.len() {
-            (left, right)
-        } else {
-            (right, left)
-        };
-
-        for prop in small {
-            let Some(other) = Self::find_property(large, prop.name) else {
-                continue;
-            };
-
-            // Intersections cannot contain the same property as both private
-            // and non-private. TypeScript reduces these to never because a
-            // private member's declaring-class identity cannot be satisfied by
-            // a public or protected property with the same name. Protected
-            // members are intentionally left to the normal merge path because
-            // protected/public intersections can expose a public property.
-            if prop.visibility != other.visibility
-                && (prop.visibility == Visibility::Private
-                    || other.visibility == Visibility::Private)
-            {
-                return true;
-            }
-
-            // If BOTH are optional, the object intersection is NOT never
-            // (the property itself just becomes never).
-            if prop.optional && other.optional {
-                continue;
-            }
-
-            // Check literal kinds for disjointness (e.g., "a" & "b", "a" & ("b" | "c"))
-            if let Some(left_kind) = self.literal_kind_from_type(prop.type_id)
-                && let Some(right_kind) = self.literal_kind_from_type(other.type_id)
-                && left_kind.is_disjoint(&right_kind)
-            {
-                return true;
-            }
-
-            // Check cross-domain disjointness: literal vs incompatible primitive.
-            // e.g., a: "" (string literal) & a: number → disjoint (string ≠ number domain).
-            // Only fires when at least one side is a literal/unit type, matching tsc's
-            // discriminant-based intersection reduction.
-            if prop.type_id != other.type_id
-                && (self.is_literal(prop.type_id) || self.is_literal(other.type_id))
-                && let (Some(a_class), Some(b_class)) = (
-                    self.primitive_class_for(prop.type_id),
-                    self.primitive_class_for(other.type_id),
-                )
-                && a_class != b_class
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn literal_kind_from_type(&self, type_id: TypeId) -> Option<LiteralKind> {
         let key = self.lookup(type_id)?;
         match key {
@@ -797,13 +886,6 @@ impl TypeInterner {
 
     pub(super) fn literal_domain_from_type(&self, type_id: TypeId) -> Option<LiteralDomain> {
         self.literal_kind_from_type(type_id).map(|k| k.domain())
-    }
-
-    fn find_property(props: &[PropertyInfo], name: Atom) -> Option<&PropertyInfo> {
-        props
-            .binary_search_by(|prop| prop.name.cmp(&name))
-            .ok()
-            .map(|idx| &props[idx])
     }
 
     pub(crate) fn primitive_class_for(&self, type_id: TypeId) -> Option<PrimitiveClass> {
@@ -1518,453 +1600,8 @@ impl TypeInterner {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::TemplateSpan;
-
-    #[test]
-    fn shallow_subtype_skips_literal_to_template_literal_matching() {
-        let interner = TypeInterner::new();
-        let literal = interner.literal_string("foo-x");
-        let template = interner.template_literal(vec![
-            TemplateSpan::Text(interner.intern_string("foo-")),
-            TemplateSpan::Type(TypeId::STRING),
-        ]);
-
-        assert!(
-            !interner.is_subtype_shallow(literal, template),
-            "union normalization should not invoke full template-literal subtype matching"
-        );
-    }
-
-    #[test]
-    fn union_template_absorbs_matching_string_literal() {
-        let interner = TypeInterner::new();
-        let literal = interner.literal_string("foo-1");
-        let template = interner.template_literal(vec![
-            TemplateSpan::Text(interner.intern_string("foo-")),
-            TemplateSpan::Type(TypeId::NUMBER),
-        ]);
-
-        // `"foo-1" | `foo-${number}`` reduces to the template member.
-        assert_eq!(interner.union(vec![literal, template]), template);
-    }
-
-    #[test]
-    fn union_template_keeps_non_matching_string_literal() {
-        let interner = TypeInterner::new();
-        let literal = interner.literal_string("bar-1");
-        let template = interner.template_literal(vec![
-            TemplateSpan::Text(interner.intern_string("foo-")),
-            TemplateSpan::Type(TypeId::NUMBER),
-        ]);
-
-        let union = interner.union(vec![literal, template]);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a two-member union to survive normalization");
-        };
-        assert_eq!(interner.type_list(list_id).len(), 2);
-    }
-
-    #[test]
-    fn union_template_without_leading_text_absorbs_literal() {
-        let interner = TypeInterner::new();
-        let literal = interner.literal_string("12px");
-        let template = interner.template_literal(vec![
-            TemplateSpan::Type(TypeId::NUMBER),
-            TemplateSpan::Text(interner.intern_string("px")),
-        ]);
-
-        // No leading-text prefilter applies; the full shallow match still runs.
-        assert_eq!(interner.union(vec![literal, template]), template);
-    }
-
-    #[test]
-    fn union_string_placeholder_template_keeps_literals_shallow() {
-        let interner = TypeInterner::new();
-        // Mirrors the lib.dom `AutoFill` family shape: many plain literals next
-        // to `${string}`-placeholder templates. Shallow matching does not match
-        // `${string}` placeholders, so every member must survive.
-        let members = vec![
-            interner.literal_string("name"),
-            interner.literal_string("billing name"),
-            interner.template_literal(vec![
-                TemplateSpan::Text(interner.intern_string("section-")),
-                TemplateSpan::Type(TypeId::STRING),
-                TemplateSpan::Text(interner.intern_string(" name")),
-            ]),
-        ];
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected union to survive normalization");
-        };
-        assert_eq!(interner.type_list(list_id).len(), 3);
-    }
-
-    fn distinct_conditional(interner: &TypeInterner, n: u32) -> TypeId {
-        // A deferred, distributive conditional whose check type is unique per `n`
-        // so each interns to a separate `TypeData::Conditional`. This is the shape
-        // produced by distributing `Exclude`/`Extract` over a wide union before
-        // the conditionals resolve.
-        interner.conditional(crate::types::ConditionalType {
-            check_type: interner.literal_number(f64::from(n)),
-            extends_type: TypeId::STRING,
-            true_type: TypeId::NUMBER,
-            false_type: TypeId::BOOLEAN,
-            is_distributive: true,
-        })
-    }
-
-    #[test]
-    fn union_of_deferred_conditionals_all_survive_reduction() {
-        let interner = TypeInterner::new();
-        // The shallow subtype engine cannot relate two deferred conditionals, so a
-        // union of distinct unevaluated conditionals is irreducible: every member
-        // must survive. (The pairwise sweep over them is also skipped, but the
-        // perf counter is only wired under `TSZ_PERF_COUNTERS`, so the observable
-        // unit-test invariant is the surviving member set.)
-        const N: u32 = 64;
-        let members: Vec<TypeId> = (0..N).map(|i| distinct_conditional(&interner, i)).collect();
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a wide deferred-conditional union to survive normalization");
-        };
-        assert_eq!(interner.type_list(list_id).len(), N as usize);
-    }
-
-    #[test]
-    fn deferred_conditional_does_not_block_concrete_subtype_reduction() {
-        let interner = TypeInterner::new();
-        // A union mixing an inert deferred conditional with concrete members where
-        // one is a subtype of another (`"a"` <: `string`). The deferred member is
-        // inert and must be preserved, but it must NOT suppress the concrete
-        // reduction: `"a"` is absorbed into `string`, leaving `string` + the
-        // conditional. This is the JSX-props regression in miniature — folding the
-        // deferred member into a whole-union skip wrongly kept `"a"`.
-        let cond = distinct_conditional(&interner, 0);
-        let members = vec![interner.literal_string("a"), TypeId::STRING, cond];
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a mixed deferred/concrete union to survive normalization");
-        };
-        let list = interner.type_list(list_id);
-        assert_eq!(
-            list.len(),
-            2,
-            "concrete `\"a\" | string` must reduce to `string` beside the inert conditional"
-        );
-        assert!(
-            list.contains(&TypeId::STRING),
-            "widened `string` must survive"
-        );
-        assert!(
-            list.contains(&cond),
-            "inert deferred conditional must survive"
-        );
-        assert!(
-            !list.contains(&interner.literal_string("a")),
-            "literal `\"a\"` must be absorbed by `string`"
-        );
-    }
-
-    #[test]
-    fn cross_domain_primitive_and_literals_all_survive_reduction() {
-        let interner = TypeInterner::new();
-        // `number | "m0" | "m1" | ... | "mN-1"`: the primitive (`number`) does
-        // not absorb the string literals (different domain), and distinct string
-        // literals are mutually non-subtypes. The literal-vs-literal pairs are
-        // skipped by the structural-bucket gate (`may_relate(Literal, Literal)`
-        // is `false`), but the surviving member set must be identical to a full
-        // pairwise sweep: every member survives.
-        const N: usize = 50;
-        let mut members = vec![TypeId::NUMBER];
-        for i in 0..N {
-            members.push(interner.literal_string(&format!("m{i}")));
-        }
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a `number | <string literals>` union to survive");
-        };
-        let list = interner.type_list(list_id);
-        assert_eq!(
-            list.len(),
-            N + 1,
-            "no member of a cross-domain primitive + distinct-literals union reduces"
-        );
-        assert!(list.contains(&TypeId::NUMBER), "`number` must survive");
-    }
-
-    #[test]
-    fn same_domain_primitive_absorbs_all_literals_with_mask() {
-        let interner = TypeInterner::new();
-        // `string | "s0" | ... | "sN-1"` must still collapse to just `string`.
-        // Absorption runs before the pairwise sweep, so the structural-bucket
-        // gate never changes this outcome — guards against the skip leaking into
-        // the absorb path.
-        const N: usize = 50;
-        let mut members = vec![TypeId::STRING];
-        for i in 0..N {
-            members.push(interner.literal_string(&format!("s{i}")));
-        }
-        assert_eq!(
-            interner.union(members),
-            TypeId::STRING,
-            "widened `string` absorbs every string literal regardless of the literal mask"
-        );
-    }
-
-    #[test]
-    fn literal_mask_preserves_object_vs_literal_reduction() {
-        let interner = TypeInterner::new();
-        // A union mixing distinct string literals with two structurally-related
-        // objects where one reduces into the other. Literal-vs-literal pairs are
-        // skipped by the structural-bucket gate, but the object-vs-object
-        // reduction (`may_relate(Object, Object)` is `true`) must still fire:
-        // `{ a: 1 }` is absorbed by the wider `{ a: 1; b: 2 }`? No —
-        // width subtyping makes the *narrower-keyed* object the supertype, so
-        // `{ a: 1; b: 2 } <: { a: 1 }` and the wider one is removed. The literals
-        // are irreducible and all survive.
-        let obj_narrow = interner.object(vec![PropertyInfo::new(
-            interner.intern_string("a"),
-            interner.literal_number(1.0),
-        )]);
-        let obj_wide = interner.object(vec![
-            PropertyInfo::new(interner.intern_string("a"), interner.literal_number(1.0)),
-            PropertyInfo::new(interner.intern_string("b"), interner.literal_number(2.0)),
-        ]);
-        let members = vec![
-            interner.literal_string("x"),
-            interner.literal_string("y"),
-            obj_narrow,
-            obj_wide,
-        ];
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected the mixed literal/object union to survive as a union");
-        };
-        let list = interner.type_list(list_id);
-        // Two literals survive; the object pair reduces to a single member.
-        assert_eq!(
-            list.len(),
-            3,
-            "object-vs-object reduction must still fire beside skipped literal pairs"
-        );
-        assert!(list.contains(&interner.literal_string("x")));
-        assert!(list.contains(&interner.literal_string("y")));
-    }
-
-    fn distinct_keyof(interner: &TypeInterner, n: u32) -> TypeId {
-        // `keyof <unique literal>` — a distinct, unevaluated `TypeData::KeyOf`
-        // per `n`. This is the shape produced by distributing `keyof` over a
-        // wide union before the operands resolve.
-        interner.keyof(interner.literal_number(f64::from(n)))
-    }
-
-    #[test]
-    fn union_of_deferred_keyofs_all_survive_reduction() {
-        let interner = TypeInterner::new();
-        // The shallow subtype engine cannot relate two deferred `keyof`
-        // operations, so a union of distinct ones is irreducible: every member
-        // survives. Before widening the inert-deferred lift past
-        // `Conditional`/`IndexAccess`, this width drove the full N·(N−1)
-        // pairwise sweep (all `false`).
-        const N: u32 = 64;
-        let members: Vec<TypeId> = (0..N).map(|i| distinct_keyof(&interner, i)).collect();
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a wide deferred-keyof union to survive normalization");
-        };
-        assert_eq!(interner.type_list(list_id).len(), N as usize);
-    }
-
-    #[test]
-    fn deferred_keyof_does_not_block_concrete_subtype_reduction() {
-        let interner = TypeInterner::new();
-        // A union mixing an inert deferred `keyof` with concrete members where
-        // one is a subtype of another (`"a"` <: `string`). The deferred member
-        // is inert and must be preserved, but it must NOT suppress the concrete
-        // reduction: `"a"` is absorbed into `string`. This proves the widened
-        // lift reduces only the reducible remainder, exactly like the
-        // `Conditional` case.
-        let kof = distinct_keyof(&interner, 0);
-        let members = vec![interner.literal_string("a"), TypeId::STRING, kof];
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a mixed deferred/concrete union to survive normalization");
-        };
-        let list = interner.type_list(list_id);
-        assert_eq!(
-            list.len(),
-            2,
-            "concrete `\"a\" | string` must reduce to `string` beside the inert keyof"
-        );
-        assert!(
-            list.contains(&TypeId::STRING),
-            "widened `string` must survive"
-        );
-        assert!(list.contains(&kof), "inert deferred keyof must survive");
-        assert!(
-            !list.contains(&interner.literal_string("a")),
-            "literal `\"a\"` must be absorbed by `string`"
-        );
-    }
-
-    #[test]
-    fn widened_lift_preserves_concrete_result_beside_many_inert_members() {
-        // The lift partitions inert members aside, reduces only the remainder,
-        // then splices them back. The reduced *concrete* result must be exactly
-        // what the same concrete members produce on their own — independent of
-        // how many inert members are mixed in. Use a literal→primitive
-        // absorption (`"a" | "b" | string` → `string`), which is a genuine,
-        // deterministic reduction.
-        let interner = TypeInterner::new();
-        let a = interner.literal_string("a");
-        let b = interner.literal_string("b");
-
-        // Concrete-only baseline: collapses to `string`.
-        let baseline = interner.union(vec![a, b, TypeId::STRING]);
-        assert_eq!(
-            baseline,
-            TypeId::STRING,
-            "`\"a\" | \"b\" | string` is `string`"
-        );
-
-        // Same concrete members beside a wide band of inert deferred members of
-        // several families (keyof, conditional). The concrete part must still
-        // collapse to exactly `string`; every inert member must survive.
-        let mut inert: Vec<TypeId> = (0..40).map(|i| distinct_keyof(&interner, i)).collect();
-        inert.extend((0..40).map(|i| distinct_conditional(&interner, i)));
-        let mut members = vec![a, b, TypeId::STRING];
-        members.extend(inert.iter().copied());
-        let mixed = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(mixed) else {
-            panic!("expected `string | <inert band>` to survive as a union");
-        };
-        let list = interner.type_list(list_id);
-
-        assert_eq!(
-            list.len(),
-            inert.len() + 1,
-            "exactly the collapsed `string` plus every inert member remain"
-        );
-        assert!(
-            list.contains(&TypeId::STRING),
-            "collapsed `string` must survive"
-        );
-        for &m in &inert {
-            assert!(
-                list.contains(&m),
-                "every inert member must survive the lift"
-            );
-        }
-        assert!(!list.contains(&a), "`\"a\"` must be absorbed by `string`");
-        assert!(!list.contains(&b), "`\"b\"` must be absorbed by `string`");
-    }
-
-    fn obj_with_unique_prop(interner: &TypeInterner, i: usize) -> TypeId {
-        let name = interner.intern_string(&format!("p{i}"));
-        let val = interner.literal_number((1000 + i) as f64);
-        interner.object(vec![PropertyInfo::new(name, val)])
-    }
-
-    #[test]
-    fn structural_bucket_preserves_mixed_object_primitive_literal_union() {
-        // The large-row shape that reaches the O(N^2) pairwise sweep: a widened
-        // primitive (so the `all_non_reducible && !has_primitive` early return
-        // does not fire) beside distinct unique-prop objects and cross-domain
-        // literals. No member is a subtype of any other, so every member must
-        // survive — the structural-bucket skip must not drop any of them.
-        let interner = TypeInterner::new();
-        let mut members = vec![TypeId::BOOLEAN];
-        for i in 0..100 {
-            match i % 3 {
-                0 => members.push(obj_with_unique_prop(&interner, i)),
-                1 => members.push(interner.literal_number((7_000_000 + i) as f64)),
-                _ => members.push(interner.literal_string(&format!("s{i}"))),
-            }
-        }
-        let expected = members.len();
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected a wide mixed-kind union to survive normalization");
-        };
-        assert_eq!(
-            interner.type_list(list_id).len(),
-            expected,
-            "every disjoint mixed-kind member must survive the bucketed sweep"
-        );
-    }
-
-    #[test]
-    fn structural_bucket_still_reduces_object_subtype_in_wide_union() {
-        // A wide union (so it takes the >64 bucketed path) carrying a genuine
-        // object-vs-object reduction. The shallow object engine compares
-        // overlapping property types at depth 0, where the depth-limited
-        // recursion returns `false` for any *distinct* property type pair — so a
-        // real shallow reduction needs identical-typed overlapping properties.
-        // `{ a: 1, b: 2 }` <: `{ a: 1 }` by width subtyping (the wider-keyed
-        // source satisfies every property of the narrower target with an
-        // identical `a: 1`), so the *wider* object is the subtype and must be
-        // reduced away even surrounded by disjoint padding members; the narrower
-        // `{ a: 1 }` survives.
-        let interner = TypeInterner::new();
-        let a = interner.intern_string("a");
-        let b = interner.intern_string("b");
-        let one = interner.literal_number(1.0);
-        let narrow = interner.object(vec![PropertyInfo::new(a, one)]);
-        let wide = interner.object(vec![
-            PropertyInfo::new(a, one),
-            PropertyInfo::new(b, interner.literal_number(2.0)),
-        ]);
-
-        let mut members = vec![TypeId::BOOLEAN, narrow, wide];
-        // Disjoint padding to push the union onto the >64 bucketed path.
-        for i in 0..80 {
-            members.push(interner.literal_string(&format!("pad{i}")));
-        }
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected the padded union to survive normalization");
-        };
-        let list = interner.type_list(list_id);
-        assert!(
-            list.contains(&narrow),
-            "the narrower object `{{ a: 1 }}` must survive as the supertype"
-        );
-        assert!(
-            !list.contains(&wide),
-            "the wider object `{{ a: 1, b: 2 }}` is a width-subtype of `{{ a: 1 }}` \
-             and must be reduced away even on the bucketed >64 path"
-        );
-    }
-
-    #[test]
-    fn structural_bucket_skip_matches_unbucketed_reduction_small_partition() {
-        // Drive the <=64 quadratic partition path (via the `boolean` primitive
-        // keeping the early-return from firing) and assert the surviving set is
-        // exactly the disjoint members: the stack-allocated bucket precompute
-        // must not change reduction on the small path either.
-        let interner = TypeInterner::new();
-        let mut members = vec![TypeId::BOOLEAN];
-        for i in 0..40 {
-            if i % 2 == 0 {
-                members.push(obj_with_unique_prop(&interner, i));
-            } else {
-                members.push(interner.literal_number((9_000_000 + i) as f64));
-            }
-        }
-        let expected = members.len();
-        let union = interner.union(members);
-        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-            panic!("expected the small mixed union to survive normalization");
-        };
-        assert_eq!(
-            interner.type_list(list_id).len(),
-            expected,
-            "disjoint members must all survive the small bucketed partition path"
-        );
-    }
-}
+#[path = "normalize_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 mod application_order_tests;
