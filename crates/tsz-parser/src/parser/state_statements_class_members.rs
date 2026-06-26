@@ -837,8 +837,31 @@ impl ParserState {
     }
 
     /// Parse the body of an accessor (get or set).
-    /// Returns `NodeIndex::NONE` for ambient or abstract accessors with no body.
+    ///
+    /// A class accessor requires a `{` brace body. tsc reaches this through
+    /// `parseFunctionBlockOrSemicolon`, which (mirroring methods) parses an
+    /// optional semicolon when ASI applies and otherwise calls
+    /// `parseFunctionBlock` -> `parseExpected(OpenBraceToken)`. Two distinct
+    /// `tsc` mechanisms therefore report a missing brace body, and we replicate
+    /// both:
+    ///
+    /// 1. Signature followed by a non-`{`, non-semicolon token (`get x() return
+    ///    1`): the parser itself reports TS1005 `'{' expected` at that token via
+    ///    `parseExpected`, recovering with an empty block so the trailing tokens
+    ///    re-parse (surfacing TS1128). We delegate to [`parse_block`], which
+    ///    emits the same diagnostic and returns an empty block without consuming.
+    /// 2. Body-less signature where ASI applies (`get x();`, `get x()` before
+    ///    `}`/EOF/line break): the parser accepts it, then `checkGrammarAccessor`
+    ///    requires a brace body for any non-ambient, non-abstract accessor and
+    ///    reports TS1005 `'{' expected` at the last character of the signature.
+    ///
+    /// Ambient (`declare class`) and `abstract` accessors are legitimately
+    /// body-less and produce no brace diagnostic.
+    ///
+    /// Returns `NodeIndex::NONE` for a body-less accessor; otherwise the parsed
+    /// (possibly empty, recovered) block.
     fn parse_accessor_body(&mut self, modifiers: &Option<NodeList>) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
         // Clear static block flag - accessor creates a new function boundary
         let saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
@@ -846,24 +869,39 @@ impl ParserState {
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
-        } else {
-            let has_abstract = modifiers.as_ref().is_some_and(|mods| {
-                mods.nodes.iter().any(|&idx| {
-                    self.arena
-                        .nodes
-                        .get(idx.0 as usize)
-                        .is_some_and(|node| node.kind == SyntaxKind::AbstractKeyword as u16)
-                })
-            });
-
-            // tsc's parser accepts accessors without bodies even in non-abstract,
-            // non-ambient contexts — the grammar checker handles this later with
-            // TS2378/TS1049 ("A 'get' accessor must have a body"). We do NOT emit
-            // TS1005 here to match tsc's parser behavior and avoid false positives
-            // that would incorrectly suppress TS5107 deprecation diagnostics.
-            let _ = has_abstract;
+        } else if self.can_parse_semicolon() {
+            // Capture the accessor node end as `tsc` computes it: a trailing `;`
+            // is consumed into the node, otherwise the node ends at the `)` /
+            // return type (the start of the current token's leading trivia).
+            let node_end = if self.is_token(SyntaxKind::SemicolonToken) {
+                self.token_end()
+            } else {
+                self.token_full_start()
+            };
             self.parse_semicolon();
+
+            // Mechanism 2: a non-ambient, non-abstract accessor must have a brace
+            // body. Anchor TS1005 at the final character of the signature, length
+            // one, matching `checkGrammarAccessor`'s `accessor.end - 1` range.
+            // The cheap ambient flag short-circuits the modifier-list scan.
+            if !self.in_ambient_declaration()
+                && !self
+                    .arena
+                    .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+            {
+                self.parse_error_at(
+                    node_end.saturating_sub(1),
+                    1,
+                    "'{' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+            }
             NodeIndex::NONE
+        } else {
+            // Mechanism 1: delegate to `parse_block`, which reports TS1005
+            // `'{' expected` at the current (non-`{`) token and recovers with an
+            // empty block without consuming the following tokens.
+            self.parse_block()
         };
         self.pop_label_scope();
         self.context_flags = saved_flags;

@@ -518,3 +518,174 @@ fn class_body_var_fn_recovery_ignores_var_initializer_member() {
         "`var x = 1` recovers as a property, not the var-function shape"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Accessor missing brace-body recovery (#14838).
+//
+// A class accessor (`get`/`set`) requires a `{` body. `tsc` reports a missing
+// body two ways, both reproduced here:
+//   1. signature followed by a non-`{`, non-semicolon token -> the parser emits
+//      TS1005 `'{' expected` at that token (via `parseFunctionBlock`);
+//   2. a body-less signature where ASI applies -> `checkGrammarAccessor` emits
+//      TS1005 `'{' expected` at the last character of the signature, but only
+//      for non-ambient, non-abstract accessors.
+// Before the fix tsz emitted TS1005 `';' expected` (mechanism 1) or nothing
+// (mechanism 2). These tests pin the corrected code, message, and anchor and
+// vary binder names so no fix can key on a specific identifier.
+// ---------------------------------------------------------------------------
+
+/// Count diagnostics matching `code` with `message`.
+fn count_diag(parser: &crate::parser::ParserState, code: u32, message: &str) -> usize {
+    parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == code && d.message == message)
+        .count()
+}
+
+/// `true` when a diagnostic with `code`/`message` starts at byte `start`.
+fn has_diag_at(parser: &crate::parser::ParserState, code: u32, message: &str, start: u32) -> bool {
+    parser
+        .get_diagnostics()
+        .iter()
+        .any(|d| d.code == code && d.message == message && d.start == start)
+}
+
+#[test]
+fn accessor_nonsemicolon_body_emits_brace_expected_not_semicolon() {
+    // Mechanism 1: the signature is followed by a non-`{`, non-semicolon token;
+    // TS1005 `'{' expected` anchors at that token (the substring's first byte),
+    // never the body-less `';' expected`. Names/forms (get, set, static, return
+    // type, bare literal) are varied so no fix can key on an identifier.
+    let cases = [
+        ("class C { get x() return 1; }", "return"),
+        ("class Box { get value() return 1; }", "return"),
+        ("class C { static get x() return 1; }", "return"),
+        ("class C { get x(): number return 1; }", "return"),
+        ("class C { set x(v) this._x = v; }", "this"),
+        (
+            "class Widget { set label(next) this._label = next; }",
+            "this",
+        ),
+        ("class C { get x() 1 }", "1 }"),
+    ];
+    for (source, body_token) in cases {
+        let (parser, _root) = parse_source(source);
+        let anchor = source.find(body_token).unwrap() as u32;
+        assert!(
+            has_diag_at(&parser, diagnostic_codes::EXPECTED, "'{' expected.", anchor),
+            "expected TS1005 `'{{' expected` at the body token for {source:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+        assert_eq!(
+            count_diag(&parser, diagnostic_codes::EXPECTED, "';' expected."),
+            0,
+            "must not emit the body-less `';' expected` for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn accessor_bodyless_signature_emits_brace_expected_at_signature_end() {
+    // Mechanism 2: a body-less signature where ASI applies. TS1005 anchors at the
+    // last character of the signature — the `;` when present, otherwise the `)`.
+    let cases = [
+        ("class C { get x(); }", ";"),
+        ("class Pair { get first(); }", ";"),
+        ("class C { set x(v); }", ";"),
+        ("class C { get x() }", ")"),
+    ];
+    for (source, anchor_token) in cases {
+        let (parser, _root) = parse_source(source);
+        let anchor = source.find(anchor_token).unwrap() as u32;
+        assert!(
+            has_diag_at(&parser, diagnostic_codes::EXPECTED, "'{' expected.", anchor),
+            "expected TS1005 `'{{' expected` at the signature end for {source:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn accessor_with_brace_body_emits_no_brace_diagnostic() {
+    // Positive control: a real body produces no missing-brace diagnostic.
+    for source in [
+        "class C { get x() { return 1; } }",
+        "class C { set x(v) { this._x = v; } }",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert_eq!(
+            count_diag(&parser, diagnostic_codes::EXPECTED, "'{' expected."),
+            0,
+            "a brace body must not report a missing brace for {source:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn ambient_bodyless_accessor_emits_no_brace_diagnostic() {
+    // `declare class` accessors are legitimately body-less (mechanism 2 gated).
+    for source in [
+        "declare class C { get x(); }",
+        "declare class C { set x(v); }",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert_eq!(
+            count_diag(&parser, diagnostic_codes::EXPECTED, "'{' expected."),
+            0,
+            "ambient body-less accessor must not require a brace for {source:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn abstract_bodyless_accessor_emits_no_brace_diagnostic() {
+    // `abstract` accessors are legitimately body-less (mechanism 2 gated).
+    let source = "abstract class C { abstract get x(); }";
+    let (parser, _root) = parse_source(source);
+    assert_eq!(
+        count_diag(&parser, diagnostic_codes::EXPECTED, "'{' expected."),
+        0,
+        "abstract body-less accessor must not require a brace, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn ambient_accessor_nonsemicolon_body_still_emits_brace_expected() {
+    // Mechanism 1 is the parser's own `parseExpected` and fires in ambient too.
+    let source = "declare class C { get x() return 1 }";
+    let (parser, _root) = parse_source(source);
+    let anchor = source.find("return").unwrap() as u32;
+    assert!(
+        has_diag_at(&parser, diagnostic_codes::EXPECTED, "'{' expected.", anchor),
+        "ambient accessor with a non-semicolon body still requires a brace, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn method_missing_body_still_emits_or_expected_not_brace_only() {
+    // Regression guard: methods keep TS1144 `'{' or ';' expected` (a method may
+    // be a body-less overload signature; an accessor may not).
+    let source = "class C { m() return 1; }";
+    let (parser, _root) = parse_source(source);
+    let anchor = source.find("return").unwrap() as u32;
+    assert!(
+        has_diag_at(
+            &parser,
+            diagnostic_codes::OR_EXPECTED,
+            "'{' or ';' expected.",
+            anchor
+        ),
+        "method body recovery must stay TS1144, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert_eq!(
+        count_diag(&parser, diagnostic_codes::EXPECTED, "'{' expected."),
+        0,
+        "method recovery must not switch to the accessor-only `'{{' expected`"
+    );
+}
