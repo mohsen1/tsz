@@ -838,6 +838,10 @@ impl<'a> CheckerState<'a> {
             self.check_class_member(member_idx);
         }
 
+        // TS7023 / TS7024: un-annotated members whose inferred return type is
+        // circular through a `this.`/`Class.` self-invocation (issue #14805).
+        self.check_class_member_circular_returns(stmt_idx, &class.members.nodes);
+
         self.ctx.async_depth = saved_async_depth;
 
         // Check for duplicate member names (TS2300, TS2393)
@@ -1219,6 +1223,10 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.async_depth = saved_async_depth;
+
+        // TS7023 / TS7024: un-annotated members whose inferred return type is
+        // circular through a `this.`/`Class.` self-invocation (issue #14805).
+        self.check_class_member_circular_returns(class_idx, &class.members.nodes);
 
         // Check strict property initialization (TS2564) for class expressions
         // Class expressions should have the same property initialization checks as class declarations
