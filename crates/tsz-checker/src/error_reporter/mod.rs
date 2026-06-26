@@ -16,6 +16,7 @@ mod assignability_callable_suppression;
 mod assignability_contextual_display;
 mod assignability_enum_display;
 mod assignability_exact_optional;
+mod assignability_generic;
 mod assignability_helpers;
 mod assignability_keyof_alias_display;
 mod assignability_literal_display;
