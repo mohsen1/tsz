@@ -6,7 +6,9 @@
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId};
-use crate::visitor::{intrinsic_kind, literal_value, template_literal_id};
+use crate::visitor::{
+    intrinsic_kind, literal_value, template_literal_id, unwrap_readonly_or_noinfer,
+};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if two types have any overlap (non-empty intersection).
@@ -53,9 +55,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Resolve Lazy types before checking
-        let a_resolved = self.resolve_lazy_type(a);
-        let b_resolved = self.resolve_lazy_type(b);
+        // Resolve Lazy refs and look through wrappers that are transparent for
+        // overlap (`NoInfer<T>`, `readonly T`) before checking. None of these
+        // change the set of runtime values a type can hold, so for TS2367 they
+        // must defer to their inner type — in particular `NoInfer<T>` over a
+        // constrained type parameter must consult `T`'s constraint rather than
+        // being treated as an opaque non-overlapping type (issue #14738).
+        let a_resolved = self.strip_overlap_transparent_wrappers(a);
+        let b_resolved = self.strip_overlap_transparent_wrappers(b);
 
         // Special handling for TypeParameter and Infer
         if let Some(
@@ -243,6 +250,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (intersections, generics, etc.)
         // Better to miss some TS2367 errors than to emit them incorrectly
         true
+    }
+
+    /// Strip wrappers that are transparent for overlap (TS2367) purposes:
+    /// `Lazy` references, `NoInfer<T>`, and `readonly T`.
+    ///
+    /// None of these wrappers changes the set of runtime values a type can
+    /// hold, so for overlap detection they are looked through to their inner
+    /// type. The loop interleaves lazy resolution with wrapper unwrapping so a
+    /// chain such as `readonly NoInfer<SomeAlias>` (where `SomeAlias` is itself
+    /// a `Lazy` ref) is fully reduced to its structural core.
+    ///
+    /// Looking through `NoInfer<T>` is what lets the constraint-recursion below
+    /// fire for `NoInfer`-wrapped type parameters: `are_types_overlapping`
+    /// matches `TypeData::TypeParameter | TypeData::Infer` directly, so without
+    /// this unwrap a `NoInfer<T>` operand would fall through to the
+    /// intrinsic/subtype checks and be reported as non-overlapping (#14738).
+    fn strip_overlap_transparent_wrappers(&self, type_id: TypeId) -> TypeId {
+        let mut current = self.resolve_lazy_type(type_id);
+        // Bound the loop defensively; the wrapper depth of any real type is
+        // tiny, and a malformed self-referential alias must not spin forever.
+        for _ in 0..64 {
+            match unwrap_readonly_or_noinfer(self.interner, current) {
+                Some(inner) => current = self.resolve_lazy_type(inner),
+                None => break,
+            }
+        }
+        current
     }
 
     /// Check if one type is a subtype of the other without mutation.
