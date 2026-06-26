@@ -877,3 +877,322 @@ fn test_union_literal_reduce_identity_matches_regular_for_primitives() {
     assert_eq!(full_rev, literal_rev);
     assert_eq!(full, full_rev, "Union identity should be order-independent");
 }
+
+// =============================================================================
+// Large-intersection disjoint-object reduction (issue #14803)
+//
+// A conflicting-discriminant intersection must reduce to `never` regardless of
+// how many members it has. The previous implementation carried a hard
+// `MAX_DISJOINT_CHECK_SIZE = 25` cap that silently skipped the reduction past 25
+// members, producing a false-positive `TS2322` for 26+ member chains.
+// =============================================================================
+
+fn discriminant_object(
+    interner: &TypeInterner,
+    name: tsz_common::interner::Atom,
+    ty: TypeId,
+    optional: bool,
+    visibility: crate::Visibility,
+) -> TypeId {
+    interner.object(vec![PropertyInfo {
+        optional,
+        visibility,
+        ..PropertyInfo::new(name, ty)
+    }])
+}
+
+#[test]
+fn test_intersection_26_conflicting_number_discriminants_is_never() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    // { x: 0 } & { x: 1 } & ... & { x: 25 } — 26 members, one past the old cap.
+    let members: Vec<TypeId> = (0..26)
+        .map(|i| {
+            discriminant_object(
+                &interner,
+                x,
+                interner.literal_number(f64::from(i)),
+                false,
+                crate::Visibility::Public,
+            )
+        })
+        .collect();
+
+    let result = interner.intersection(members);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "26-member conflicting number discriminants should reduce to never"
+    );
+}
+
+#[test]
+fn test_intersection_100_conflicting_number_discriminants_is_never() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    let members: Vec<TypeId> = (0..100)
+        .map(|i| {
+            discriminant_object(
+                &interner,
+                x,
+                interner.literal_number(f64::from(i)),
+                false,
+                crate::Visibility::Public,
+            )
+        })
+        .collect();
+
+    let result = interner.intersection(members);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "100-member conflicting number discriminants should still reduce to never"
+    );
+}
+
+#[test]
+fn test_intersection_many_conflicting_string_discriminants_is_never() {
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+
+    // { kind: "k0" } & { kind: "k1" } & ... — 40 distinct string discriminants.
+    let members: Vec<TypeId> = (0..40)
+        .map(|i| {
+            discriminant_object(
+                &interner,
+                kind,
+                interner.literal_string(&format!("k{i}")),
+                false,
+                crate::Visibility::Public,
+            )
+        })
+        .collect();
+
+    let result = interner.intersection(members);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "40-member conflicting string discriminants should reduce to never"
+    );
+}
+
+#[test]
+fn test_intersection_many_cross_domain_literal_vs_primitive_is_never() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+
+    // 39 × { a: number } & 1 × { a: "tag" } — a string literal can never satisfy
+    // the `number` domain, so the intersection is never even past the old cap.
+    let mut members: Vec<TypeId> = (0..39)
+        .map(|_| {
+            discriminant_object(
+                &interner,
+                a,
+                TypeId::NUMBER,
+                false,
+                crate::Visibility::Public,
+            )
+        })
+        .collect();
+    members.push(discriminant_object(
+        &interner,
+        a,
+        interner.literal_string("tag"),
+        false,
+        crate::Visibility::Public,
+    ));
+
+    let result = interner.intersection(members);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "cross-domain literal-vs-primitive conflict should reduce to never at scale"
+    );
+}
+
+#[test]
+fn test_intersection_many_private_public_collision_is_never() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    // 15 private `x` and 15 public `x`: a private member cannot be satisfied by a
+    // public member of the same name, so the whole intersection is never.
+    let mut members: Vec<TypeId> = (0..15)
+        .map(|_| {
+            discriminant_object(
+                &interner,
+                x,
+                TypeId::STRING,
+                false,
+                crate::Visibility::Private,
+            )
+        })
+        .collect();
+    members.extend((0..15).map(|_| {
+        discriminant_object(
+            &interner,
+            x,
+            TypeId::STRING,
+            false,
+            crate::Visibility::Public,
+        )
+    }));
+
+    let result = interner.intersection(members);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "private/public collision should reduce to never at scale"
+    );
+}
+
+#[test]
+fn test_intersection_many_matching_discriminants_not_never() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    // 50 × { x: 0 } — all members agree, so the intersection is NOT never.
+    let zero = interner.literal_number(0.0);
+    let members: Vec<TypeId> = (0..50)
+        .map(|_| discriminant_object(&interner, x, zero, false, crate::Visibility::Public))
+        .collect();
+
+    let result = interner.intersection(members);
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "matching discriminants must not be over-reduced to never"
+    );
+}
+
+#[test]
+fn test_intersection_many_optional_conflicting_discriminants_not_never() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    // 50 × { x?: i } with distinct values but ALL optional: each pair is
+    // both-optional, so the property becomes never but the object does not.
+    let members: Vec<TypeId> = (0..50)
+        .map(|i| {
+            discriminant_object(
+                &interner,
+                x,
+                interner.literal_number(f64::from(i)),
+                true,
+                crate::Visibility::Public,
+            )
+        })
+        .collect();
+
+    let result = interner.intersection(members);
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "all-optional conflicting discriminants must not reduce the object to never"
+    );
+}
+
+#[test]
+fn test_intersection_both_optional_cross_domain_not_never() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+
+    // { a?: "" } & { a?: number }: both optional, so the property becomes never
+    // but the object does NOT — tsc keeps it as `{ a?: never }`, not `never`.
+    let lhs = discriminant_object(
+        &interner,
+        a,
+        interner.literal_string(""),
+        true,
+        crate::Visibility::Public,
+    );
+    let rhs = discriminant_object(
+        &interner,
+        a,
+        TypeId::NUMBER,
+        true,
+        crate::Visibility::Public,
+    );
+
+    assert_ne!(
+        interner.intersection2(lhs, rhs),
+        TypeId::NEVER,
+        "two optional cross-domain properties must not reduce the object to never"
+    );
+}
+
+#[test]
+fn test_intersection_required_optional_cross_domain_is_never() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+
+    // { a: "" } & { a?: number }: the required string-literal side makes the pair
+    // not-both-optional, so the cross-domain clash reduces the object to never.
+    let required_lit = discriminant_object(
+        &interner,
+        a,
+        interner.literal_string(""),
+        false,
+        crate::Visibility::Public,
+    );
+    let optional_num = discriminant_object(
+        &interner,
+        a,
+        TypeId::NUMBER,
+        true,
+        crate::Visibility::Public,
+    );
+
+    assert_eq!(
+        interner.intersection2(required_lit, optional_num),
+        TypeId::NEVER,
+        "a required literal clashing cross-domain with an optional primitive is never"
+    );
+
+    // Symmetric: optional literal & required primitive of a different class.
+    let optional_lit = discriminant_object(
+        &interner,
+        a,
+        interner.literal_string(""),
+        true,
+        crate::Visibility::Public,
+    );
+    let required_num = discriminant_object(
+        &interner,
+        a,
+        TypeId::NUMBER,
+        false,
+        crate::Visibility::Public,
+    );
+    assert_eq!(
+        interner.intersection2(optional_lit, required_num),
+        TypeId::NEVER,
+        "an optional literal clashing cross-domain with a required primitive is never"
+    );
+}
+
+#[test]
+fn test_intersection_all_optional_cross_domain_at_scale_not_never() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+
+    // 30 optional cross-domain occurrences: still not never, even past the old cap.
+    let members: Vec<TypeId> = (0..30)
+        .map(|i| {
+            let ty = if i % 2 == 0 {
+                interner.literal_string("s")
+            } else {
+                TypeId::NUMBER
+            };
+            discriminant_object(&interner, a, ty, true, crate::Visibility::Public)
+        })
+        .collect();
+
+    assert_ne!(
+        interner.intersection(members),
+        TypeId::NEVER,
+        "all-optional cross-domain occurrences must not reduce to never at scale"
+    );
+}
