@@ -495,6 +495,11 @@ impl Default for DefinitionStore {
 }
 
 impl DefinitionStore {
+    /// `decl_file_idx` carried by `tsz_binder` symbols that have no program
+    /// declaration file — every lib-binder (ambient) symbol. See
+    /// [`Self::def_is_non_program`].
+    pub const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
+
     /// Create a new definition store.
     pub fn new() -> Self {
         Self::with_capacities(0, 0)
@@ -1426,6 +1431,17 @@ impl DefinitionStore {
     /// definitions use the `u32::MAX` sentinel.
     pub fn get_file_id(&self, id: DefId) -> Option<u32> {
         self.definitions.get(&id).and_then(|r| r.file_id)
+    }
+
+    /// Whether `id` is a non-program (lib/ambient-binder) definition.
+    ///
+    /// `tsz_binder` symbols without a program declaration file — every
+    /// lib-binder symbol — carry [`Self::NON_PROGRAM_FILE_SENTINEL`]
+    /// (`u32::MAX`) as their `decl_file_idx`. This is the structural witness
+    /// that a def originates in a `lib.*.d.ts` (or other ambient) file rather
+    /// than user program source, independent of its name.
+    pub fn def_is_non_program(&self, id: DefId) -> bool {
+        self.get_file_id(id) == Some(Self::NON_PROGRAM_FILE_SENTINEL)
     }
 
     /// Add an export to an existing definition.

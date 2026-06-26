@@ -404,7 +404,30 @@ pub trait TypeResolver {
     /// relation layer (whether a deferred `unknown`-returning member relates as
     /// `unknown`). See issues #14595 / #13212.
     fn is_genuine_unknown_alias_body(&self, def_id: DefId, interner: &dyn TypeDatabase) -> bool {
-        self.get_def_raw_body(def_id, interner) == Some(TypeId::UNKNOWN)
+        if self.get_def_raw_body(def_id, interner) != Some(TypeId::UNKNOWN) {
+            return false;
+        }
+        // tsc's lib declares NO `type X = unknown` utility alias — every lib
+        // utility (`Omit`, `Pick`, `Exclude`, …) has a structural
+        // (mapped/conditional/`Pick`) body — so a non-program (lib/ambient-binder)
+        // def whose body currently reads `unknown` is always a not-yet-
+        // materialized registration-window placeholder, never a genuine `unknown`
+        // alias. Reducing `Omit<T, K>` to bare `unknown` because its body sentinel
+        // has not materialized in a multi-file run drops the picked properties
+        // (the ts-rest `params`/`body` TS2339 false positives, issue #14337).
+        // Exclude such defs structurally by file origin (NOT by name); a
+        // user-program `type C<T> = unknown` keeps a real program `file_id` and is
+        // unaffected.
+        !self.def_is_non_program(def_id)
+    }
+
+    /// Whether `def_id` originates in a non-program (lib/ambient-binder) file
+    /// rather than user program source. Default `false`; resolvers backed by a
+    /// `DefinitionStore` override this via the def's `file_id`. Used to keep a
+    /// lib utility's not-yet-materialized `unknown` body from being mistaken for
+    /// a genuine `unknown` alias (issue #14337).
+    fn def_is_non_program(&self, _def_id: DefId) -> bool {
+        false
     }
 }
 
@@ -449,6 +472,13 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         (**self).resolve_lazy(def_id, interner)
+    }
+
+    fn def_is_non_program(&self, def_id: DefId) -> bool {
+        // Forward so a `TypeEnvironment`'s store-backed file-origin check (lib
+        // placeholder vs genuine `unknown`, issue #14337) is not shadowed by the
+        // trait default when the evaluator holds `&R`.
+        (**self).def_is_non_program(def_id)
     }
 
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
@@ -1742,6 +1772,17 @@ impl TypeResolver for TypeEnvironment {
                     .or_else(|| store.get_body(real_def))
             })
     }
+
+    fn def_is_non_program(&self, def_id: DefId) -> bool {
+        // A def is non-program (lib/ambient) when the shared `DefinitionStore`
+        // records its `decl_file_idx` as the lib sentinel. Consulted by the
+        // default `is_genuine_unknown_alias_body` to keep a lib utility's
+        // not-yet-materialized `unknown` body from being mistaken for a genuine
+        // `unknown` alias (issue #14337).
+        self.definition_store
+            .as_ref()
+            .is_some_and(|store| store.def_is_non_program(def_id))
+    }
 }
 
 #[cfg(test)]
@@ -2391,6 +2432,61 @@ mod tests {
             store.get_body(shared_def),
             Some(TypeId(100)),
             "set_local_def_type must not write through to the shared DefinitionStore"
+        );
+    }
+
+    /// #14337: a lib/ambient utility alias (e.g. `Omit`) whose real
+    /// `Pick<…>` body has not yet materialized reads the `unknown` sentinel as
+    /// its registered body, exactly like a genuine `type C = unknown`. The
+    /// genuine-unknown classifier must NOT treat the lib placeholder as genuine
+    /// (which would reduce `Omit<T, K>` to bare `unknown`, dropping the picked
+    /// properties — the ts-rest `params`/`body` TS2339 false positives), while a
+    /// real user-program `type C = unknown` must still classify as genuine. The
+    /// discriminator is the def's file origin, NOT its name.
+    #[test]
+    fn lib_placeholder_unknown_alias_is_not_genuine_unknown_issue_14337() {
+        let interner = crate::construction::TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+
+        // Lib/ambient utility whose body sentinel is `unknown` (unmaterialized).
+        // The binder name is varied to confirm the rule is structural, not a
+        // name match.
+        let mut lib_info =
+            DefinitionInfo::type_alias(interner.intern_string("Strip"), vec![], TypeId::UNKNOWN);
+        lib_info.file_id = Some(DefinitionStore::NON_PROGRAM_FILE_SENTINEL);
+        let lib_def = store.register(lib_info);
+        store.set_body(lib_def, TypeId::UNKNOWN);
+
+        // User-program alias genuinely declared `type C = unknown`.
+        let mut user_info = DefinitionInfo::type_alias(
+            interner.intern_string("GenuineUnknown"),
+            vec![],
+            TypeId::UNKNOWN,
+        );
+        user_info.file_id = Some(0);
+        let user_def = store.register(user_info);
+        store.set_body(user_def, TypeId::UNKNOWN);
+
+        let mut env = TypeEnvironment::new();
+        env.set_definition_store(Arc::clone(&store));
+
+        assert!(
+            store.def_is_non_program(lib_def),
+            "lib def must be classified non-program by its file sentinel"
+        );
+        assert!(
+            !store.def_is_non_program(user_def),
+            "user-program def must NOT be non-program"
+        );
+
+        assert!(
+            !env.is_genuine_unknown_alias_body(lib_def, &interner),
+            "a lib utility's not-yet-materialized `unknown` body must NOT be a \
+             genuine `unknown` alias (#14337)"
+        );
+        assert!(
+            env.is_genuine_unknown_alias_body(user_def, &interner),
+            "a user-program `type C = unknown` must still be a genuine `unknown` alias"
         );
     }
 }
