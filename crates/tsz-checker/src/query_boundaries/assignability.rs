@@ -1690,40 +1690,15 @@ fn is_global_object_or_function_shape(
     db: &dyn TypeDatabase,
     shape: &tsz_solver::ObjectShape,
 ) -> bool {
-    static OBJECT_PROTO: &[&str] = &[
-        "constructor",
-        "toString",
-        "toLocaleString",
-        "valueOf",
-        "hasOwnProperty",
-        "isPrototypeOf",
-        "propertyIsEnumerable",
-    ];
-    static FUNCTION_PROTO: &[&str] = &[
-        "apply",
-        "call",
-        "bind",
-        "toString",
-        "length",
-        "arguments",
-        "caller",
-        "prototype",
-        "constructor",
-        "toLocaleString",
-        "valueOf",
-        "hasOwnProperty",
-        "isPrototypeOf",
-        "propertyIsEnumerable",
-    ];
-
-    if shape.properties.is_empty() {
-        return false;
-    }
-
-    shape.properties.iter().all(|prop| {
-        let name = db.resolve_atom_ref(prop.name);
-        OBJECT_PROTO.contains(&name.as_ref()) || FUNCTION_PROTO.contains(&name.as_ref())
-    })
+    // Delegate to the canonical shared sniff (issue #13090), which requires the
+    // *full* distinguishing member set under a property-count cap. The previous
+    // local copy instead asked whether *every* property name was drawn from a
+    // merged Object/Function prototype list — a subset test, so a user type
+    // whose sole property is a prototype-member name (`{ length: number }`,
+    // `{ toString: number }`) was misclassified as the global interface and had
+    // its fresh-literal excess-property check (TS2353) suppressed (#14849).
+    tsz_solver::type_queries::object_shape_matches_global_object_interface(db, shape)
+        || tsz_solver::type_queries::object_shape_matches_global_function_interface(db, shape)
 }
 
 /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) via the
