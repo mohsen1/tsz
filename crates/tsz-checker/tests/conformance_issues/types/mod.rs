@@ -18,6 +18,7 @@ mod interface_merge_alias_application_2322;
 mod membership_semantics;
 mod narrowing;
 mod noinfer_intersection_transparency_14499;
+mod nonnullable_empty_object_display_14834;
 mod optional_chain;
 mod predicate_alias_typeof_2677_2304;
 mod spread_param_constraint_2345;
