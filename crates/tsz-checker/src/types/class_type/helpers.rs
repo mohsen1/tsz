@@ -260,8 +260,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get(parent)
-            .map(|p| p.kind == syntax_kind_ext::PROPERTY_DECLARATION)
-            .unwrap_or(false);
+            .is_some_and(|p| p.kind == syntax_kind_ext::PROPERTY_DECLARATION);
         if !is_property_initializer {
             return false;
         }
