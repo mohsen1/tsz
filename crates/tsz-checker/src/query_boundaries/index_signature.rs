@@ -48,6 +48,29 @@ pub(crate) fn resolved_index_key_type_is_valid(db: &dyn TypeDatabase, type_id: T
     resolved_index_key_constituent_is_valid(db, type_id)
 }
 
+/// True when a *resolved* index-signature key type is a concrete index key:
+/// free of type parameters *and* structurally valid per
+/// [`resolved_index_key_type_is_valid`].
+///
+/// tsc decides TS1337 ("a literal type or generic type") from the resolved key
+/// type via `someType(isStringOrNumberLiteralOrUnique) || isGenericType(type)`,
+/// never the syntactic spelling. The checker's AST pre-pass
+/// (`is_type_param_or_literal_in_index_sig`) can over-report "generic" for a
+/// generic-alias *application* whose uninstantiated body mentions the alias's
+/// own bound type parameters — e.g. `Brand<string, 'event'>` with
+/// `type Brand<T, Tag> = T & { __tag: Tag }`, which instantiates to the
+/// concrete, valid key `string & { __tag: 'event' }`. This predicate lets the
+/// caller accept such an instantiated key while still emitting TS1337 for a
+/// genuinely generic key like `T & string` (which carries a free type
+/// parameter) or a literal key like `'a' | 'b'` (which is not a valid key).
+pub(crate) fn resolved_index_key_is_concrete_valid(
+    db: &dyn TypeDatabase,
+    resolved_key: TypeId,
+) -> bool {
+    !tsz_solver::type_queries::contains_free_type_parameters_db(db, resolved_key)
+        && resolved_index_key_type_is_valid(db, resolved_key)
+}
+
 /// Validity of a single (non-union) resolved constituent. The generic
 /// intersection case (`T & string`) is steered to TS1337 by the AST pre-check
 /// at the call sites before validity is consulted, so this mirrors tsc's

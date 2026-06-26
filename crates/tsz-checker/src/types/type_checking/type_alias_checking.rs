@@ -1291,9 +1291,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check AST to detect type parameters and literal types (TS1337).
-        let is_generic_or_literal =
-            self.is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation);
+        // Check AST to detect type parameters and literal types (TS1337). The
+        // AST walk over-reports "generic" for an instantiated generic-alias
+        // application (e.g. `Brand<string, 'event'>`); drop the spurious TS1337
+        // when the resolved key is a concrete valid index key. See
+        // `resolved_index_key_is_concrete_valid` for the full rationale.
+        let key_type = self.get_type_from_type_node_in_type_literal(param_data.type_annotation);
+        let is_generic_or_literal = self
+            .is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation)
+            && !self.resolved_index_key_is_concrete_valid(key_type);
         if is_generic_or_literal {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(

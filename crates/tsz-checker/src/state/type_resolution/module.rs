@@ -1134,12 +1134,19 @@ impl<'a> CheckerState<'a> {
             && !target_is_js_with_esm_syntax;
 
         if export_equals_provides_default {
-            // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
-            // Only emitted for export= modules when allowSyntheticDefaultImports is false.
+            // TS1259: "Module '{0}' can only be default-imported using the '{1}' flag"
+            // Only emitted for export= modules when neither esModuleInterop nor
+            // allowSyntheticDefaultImports is enabled. tsc chooses the suggested
+            // flag by module kind: `esModuleInterop` for CommonJS/AMD/UMD output
+            // (module < ES2015), `allowSyntheticDefaultImports` for ES2015+ — the
+            // same selection used for the namespace/named TS2497 elaboration above.
             if !self.ctx.allow_synthetic_default_imports() {
+                let display_name = self.imported_namespace_display_module_name(module_specifier);
+                let quoted_name = format!("\"{display_name}\"");
+                let flag_name = self.ctx.synthetic_default_import_flag_name();
                 let message = format_message(
                     diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
-                    &[module_specifier, "allowSyntheticDefaultImports"],
+                    &[&quoted_name, flag_name],
                 );
                 self.error(
                     start,

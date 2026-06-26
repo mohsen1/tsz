@@ -270,13 +270,7 @@ impl<'a> CheckerState<'a> {
             && self.export_equals_target_is_not_module_or_variable(table)
             && !named_imports_resolve_via_export_equals_target
         {
-            let flag_name = if (self.ctx.compiler_options.module as u32)
-                >= (tsz_common::ModuleKind::ES2015 as u32)
-            {
-                "allowSyntheticDefaultImports"
-            } else {
-                "esModuleInterop"
-            };
+            let flag_name = self.ctx.synthetic_default_import_flag_name();
             let message = format_message(
                     diagnostic_messages::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                     &[flag_name],
@@ -368,7 +362,40 @@ impl<'a> CheckerState<'a> {
             let is_source_file = self.is_source_file_import(module_name);
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
-            if exports_table.is_some() {
+            // A default import of an `export =` module binds a *synthetic* default
+            // that is only legal under esModuleInterop / allowSyntheticDefaultImports
+            // (tsc TS1259). `has_default_binding` treats `export =` as a default
+            // provider unconditionally (the fast path's resolve_export_from_table
+            // maps "default" -> the export= target), so without this branch the
+            // interop-gated TS1259 path is never reached for a plain default import.
+            // emit_no_default_export_error owns the full TS1259/TS1192 suppression
+            // matrix (node-module synthetic defaults, ESM-extension / js-with-esm
+            // targets); an `export =` module cannot also carry a real `default`
+            // export (TS2309), so delegating never masks a genuine default.
+            //
+            // Detect `export =` from the already-resolved target arena (resolved
+            // relative to the importing file) plus the binder export tables; the
+            // arena scan covers the common default-only import, whose full exports
+            // table is intentionally not built for performance. The cheap
+            // interop/system guards are checked first so that scan never runs on
+            // the common esModuleInterop-on path.
+            let export_equals_default_needs_interop = !self.ctx.allow_synthetic_default_imports()
+                && !uses_system_namespace_default
+                && (exports_table
+                    .as_ref()
+                    .is_some_and(|table| table.has("export="))
+                    || self.module_has_export_equals(module_name)
+                    || resolved_target.is_some_and(|target_idx| {
+                        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                        (0..arena.len()).any(|i| {
+                            arena
+                                .get(NodeIndex(i as u32))
+                                .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
+                        })
+                    }));
+            if export_equals_default_needs_interop {
+                self.emit_no_default_export_error(module_name, clause.name, is_source_file);
+            } else if exports_table.is_some() {
                 if !has_default_binding && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }

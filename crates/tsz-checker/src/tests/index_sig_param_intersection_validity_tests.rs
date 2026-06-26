@@ -206,3 +206,119 @@ type Bag<T extends string> = {
         "TS1337 expected for `string & T` (generic on right side): {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #14735: an index signature keyed by a *generic alias application* whose
+// instantiation is a concrete branded-string intersection (e.g.
+// `Brand<string, 'event'>` with `type Brand<T, Tag> = T & { __tag: Tag }`)
+// must NOT emit TS1337. tsc decides TS1337 from the resolved key type, not the
+// uninstantiated alias body; the resolved key here is the valid index key
+// `string & { __tag: 'event' }`. Witnessed in xstate `graph/types.ts`.
+// ---------------------------------------------------------------------------
+
+/// Interface index signature keyed by a generic branded-string alias
+/// application is clean (no TS1337, no TS1268).
+#[test]
+fn branded_string_alias_application_index_key_is_clean_interface() {
+    let codes = check_source_codes(
+        r#"
+type Brand<T, Tag extends string> = T & { __tag: Tag };
+type SerializedEvent = Brand<string, 'event'>;
+interface AdjacencyMap {
+    [key: SerializedEvent]: number;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1337),
+        "TS1337 must not fire for an instantiated branded-string index key: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1268),
+        "TS1268 must not fire for an instantiated branded-string index key: {codes:?}"
+    );
+}
+
+/// The same key spelled inline as a generic-alias application, and as an
+/// alias-of-an-alias, are both clean. Covers the type-literal/type-alias paths.
+#[test]
+fn branded_string_alias_application_index_key_is_clean_inline_and_aliased() {
+    let codes = check_source_codes(
+        r#"
+type Brand<T, Tag extends string> = T & { __tag: Tag };
+interface Inline { [key: Brand<string, 'event'>]: number }
+type Ser = Brand<string, 'event'>;
+type Ser2 = Ser;
+type ObjLit = { [key: Ser2]: number };
+"#,
+    );
+    assert!(
+        !codes.contains(&1337),
+        "TS1337 must not fire for inline/aliased branded-string index keys: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1268),
+        "TS1268 must not fire for inline/aliased branded-string index keys: {codes:?}"
+    );
+}
+
+/// Numeric and symbol brands resolve to `number & {..}` / `symbol & {..}`,
+/// which are also valid index keys. Binder names are varied to guard against
+/// any name-based fast path.
+#[test]
+fn branded_numeric_and_symbol_alias_application_index_keys_are_clean() {
+    let codes = check_source_codes(
+        r#"
+type Flavored<Base, K extends string> = Base & { readonly _kind: K };
+type RowId = Flavored<number, 'row'>;
+type ColId = Flavored<symbol, 'col'>;
+interface Grid {
+    [r: RowId]: number;
+}
+type ColMap = { [c: ColId]: string };
+"#,
+    );
+    assert!(
+        !codes.contains(&1337),
+        "TS1337 must not fire for numeric/symbol branded index keys: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1268),
+        "TS1268 must not fire for numeric/symbol branded index keys: {codes:?}"
+    );
+}
+
+/// A branded-string key reached through `keyof` (the `TypeNodeChecker` AST
+/// path in `type_node.rs`) is also clean.
+#[test]
+fn branded_string_alias_application_index_key_is_clean_via_keyof() {
+    let codes = check_source_codes(
+        r#"
+type Brand<T, Tag extends string> = T & { __tag: Tag };
+type SerializedEvent = Brand<string, 'event'>;
+type K = keyof { [key: SerializedEvent]: number };
+"#,
+    );
+    assert!(
+        !codes.contains(&1337),
+        "TS1337 must not fire for a branded-string index key under keyof: {codes:?}"
+    );
+}
+
+/// A generic alias application whose argument is itself a free type parameter
+/// (`Brand<X, 'g'>` for free `X`) is still generic and must keep TS1337.
+#[test]
+fn branded_alias_application_with_free_arg_emits_ts1337() {
+    let codes = check_source_codes(
+        r#"
+type Brand<T, Tag extends string> = T & { __tag: Tag };
+interface Box<X> {
+    [key: Brand<X, 'g'>]: number;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1337),
+        "TS1337 expected for `Brand<X, 'g'>` with a free type parameter: {codes:?}"
+    );
+}
