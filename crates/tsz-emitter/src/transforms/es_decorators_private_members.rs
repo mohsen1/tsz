@@ -23,7 +23,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-impl<'a> TC39DecoratorEmitter<'a> {
+impl TC39DecoratorEmitter<'_> {
     pub(super) fn emit_es_decorate_call(
         &self,
         member: &DecoratedMember,
