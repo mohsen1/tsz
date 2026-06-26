@@ -1001,7 +1001,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             object_shape_id(self.interner, target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
-            let t_shape = self.interner.object_shape(t_shape_id);
+            // Lazy heritage: pre-flatten the target's inherited members, memoized
+            // by `t_shape_id`, so `check_object_subtype` does not re-flatten the
+            // target on every check — that re-flatten is exponential inside a
+            // conditional / infer-pattern evaluation loop. No-op flag-off
+            // (`base_types` empty -> the interned shape is returned unchanged).
+            let t_shape = {
+                let raw = self.interner.object_shape(t_shape_id);
+                self.apparent_object_shape(&raw, Some(t_shape_id))
+            };
 
             // Symbol-level cycle detection for recursive interface/class types.
             // When both objects have symbols, check if we're already comparing objects
@@ -1048,7 +1056,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             object_with_index_shape_id(self.interner, target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
-            let t_shape = self.interner.object_shape(t_shape_id);
+            // Lazy heritage: pre-flatten the target (memoized by `t_shape_id`) so
+            // `check_object_subtype` does not re-flatten per check.
+            let t_shape = {
+                let raw = self.interner.object_shape(t_shape_id);
+                self.apparent_object_shape(&raw, Some(t_shape_id))
+            };
 
             // Symbol-level cycle detection for ObjectWithIndex types (class instances).
             // Class instance types are interned as ObjectWithIndex with a symbol. Without

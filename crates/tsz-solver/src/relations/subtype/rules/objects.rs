@@ -340,13 +340,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// **re-sorted by atom**: `check_object_subtype`'s member loop is an
     /// atom-sorted merge-join, so inherited props appended out of order would
     /// corrupt it. Per-base collection is memoized by `collect_properties_cached`.
-    fn apparent_object_shape<'s>(
-        &self,
-        shape: &'s ObjectShape,
-    ) -> std::borrow::Cow<'s, ObjectShape> {
+    pub(crate) fn apparent_object_shape(
+        &mut self,
+        shape: &ObjectShape,
+        shape_id: Option<ObjectShapeId>,
+    ) -> std::sync::Arc<ObjectShape> {
+        // Flattened model (and every non-heritage shape): no work. Return the
+        // already-interned `Arc` when the id is known (a cheap interner cache
+        // hit), else a one-off clone (rare synthetic-shape callers).
         if shape.base_types.is_empty() {
-            return std::borrow::Cow::Borrowed(shape);
+            return match shape_id {
+                Some(id) => self.interner.object_shape(id),
+                None => std::sync::Arc::new(shape.clone()),
+            };
         }
+        // Memo: re-flattening on every object subtype check is exponential inside
+        // a conditional / infer-pattern evaluation loop. Key by interned
+        // `ObjectShapeId` + resolver generation (the generation guards against a
+        // `Lazy` base resolving after a cached entry was built).
+        let generation = self.resolver.resolver_generation();
+        if let Some(id) = shape_id
+            && let Some((cached_generation, cached)) = self.apparent_shape_cache.get(&id)
+            && *cached_generation == generation
+        {
+            return cached.clone();
+        }
+        // Copy the borrowed inputs out so the cache insert below does not conflict
+        // with the immutable collector references.
+        let interner = self.interner;
+        let resolver = self.resolver;
+        let query_db = self.query_db;
         use crate::objects::{PropertyCollectionResult, collect_properties_cached};
         let mut properties = shape.properties.clone();
         let mut seen: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
@@ -360,7 +383,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 string_index: bsi,
                 number_index: bni,
                 symbol_index: bsy,
-            } = collect_properties_cached(base, self.interner, self.resolver, self.query_db)
+            } = collect_properties_cached(base, interner, resolver, query_db)
             {
                 for prop in base_props {
                     if seen.insert(prop.name) {
@@ -374,7 +397,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         // Atom-sort: the member loops below are an atom-sorted merge-join.
         properties.sort_by_key(|prop| prop.name);
-        std::borrow::Cow::Owned(ObjectShape {
+        let flat = std::sync::Arc::new(ObjectShape {
             flags: shape.flags,
             properties,
             string_index,
@@ -382,7 +405,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             symbol_index,
             symbol: shape.symbol,
             base_types: Vec::new(),
-        })
+        });
+        if let Some(id) = shape_id {
+            self.apparent_shape_cache
+                .insert(id, (generation, flat.clone()));
+        }
+        flat
     }
 
     pub(crate) fn check_object_subtype(
@@ -394,19 +422,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         // Lazy heritage: resolve each side's full inherited member surface before
-        // the own-only structural comparison below. A flattened (Owned) source
-        // drops its `source_shape_id` — the transient shape is not the interned
-        // own-only shape, so reusing that id would let `lookup_property`'s
-        // per-shape-id member cache serve stale own-only results. Inert flag-off
-        // (`base_types` empty -> `Cow::Borrowed`, no allocation, no re-sort).
-        let source_apparent = self.apparent_object_shape(source);
-        let source_shape_id = if matches!(source_apparent, std::borrow::Cow::Owned(_)) {
+        // the own-only structural comparison below. The SOURCE is memoized by its
+        // `source_shape_id` (and that id is then dropped — the flattened shape is
+        // not the interned own-only shape, so reusing the id would let
+        // `lookup_property`'s per-shape-id member cache serve stale own-only
+        // results). The TARGET has no shape id here, so it flattens un-memoized;
+        // the hot object-vs-object dispatch pre-flattens the target (memoized by
+        // its `t_shape_id`) so this is a no-op on that path, and only cold paths
+        // pay a per-call target flatten. Inert flag-off (`base_types` empty -> the
+        // interned/borrowed shape is returned unchanged).
+        let source_was_lazy = !source.base_types.is_empty();
+        let source_apparent = self.apparent_object_shape(source, source_shape_id);
+        let target_apparent = self.apparent_object_shape(target, None);
+        let source_shape_id = if source_was_lazy {
             None
         } else {
             source_shape_id
         };
         let source = source_apparent.as_ref();
-        let target_apparent = self.apparent_object_shape(target);
         let target = target_apparent.as_ref();
 
         // Prefer the caller-provided receiver (which preserves type arguments,

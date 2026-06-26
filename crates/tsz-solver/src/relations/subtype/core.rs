@@ -21,8 +21,8 @@ use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationCacheKey,
-    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo,
+    RelationCacheKey, SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -358,6 +358,16 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// needed and how it preserves byte-identical diagnostics; initialized per
     /// failure by [`Self::explain_failure`].
     pub(crate) explain_eval_fuel: Option<u32>,
+    /// Lazy-heritage (`TSZ_LAZY_HERITAGE`) apparent-shape memo. Maps an interned
+    /// `ObjectShapeId` carrying `base_types` to its flattened apparent shape (own
+    /// + inherited, atom-sorted), tagged with the resolver generation it was
+    /// computed under. Without it, `apparent_object_shape` re-flattens on EVERY
+    /// object subtype check; inside a conditional / infer-pattern evaluation loop
+    /// that is an exponential blow-up (the flattened model pays the flatten once,
+    /// at materialization). Checker-scoped (interner-bound, cleared by `reset`),
+    /// so no cross-compilation staleness. Stays empty under the flattened model
+    /// (`base_types` always empty -> never inserted).
+    pub(crate) apparent_shape_cache: FxHashMap<ObjectShapeId, (u64, Arc<ObjectShape>)>,
 }
 
 /// Operation-local cache statistics for [`SubtypeChecker`].
@@ -434,6 +444,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
+            apparent_shape_cache: FxHashMap::default(),
         }
     }
 }
@@ -487,6 +498,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
+            apparent_shape_cache: FxHashMap::default(),
         }
     }
 
@@ -629,6 +641,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.eval_cache.clear();
         self.maybe_keys.clear();
         self.local_relation_cache.clear();
+        self.apparent_shape_cache.clear();
         self.explain_eval_fuel = None;
     }
 
