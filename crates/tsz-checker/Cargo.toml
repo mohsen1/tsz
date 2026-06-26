@@ -428,6 +428,9 @@ path = "tests/await_call_identifier_diagnostics_tests.rs"
 name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
 [[test]]
+name = "await_structural_thenable_object_literal_tests"
+path = "tests/await_structural_thenable_object_literal_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
