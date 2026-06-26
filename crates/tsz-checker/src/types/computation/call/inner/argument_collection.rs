@@ -145,6 +145,11 @@ impl<'a> CheckerState<'a> {
                             &shape,
                             args,
                             contextual_type,
+                        )
+                        || self.suppress_generic_return_context_for_pinned_callback_return(
+                            &shape,
+                            args,
+                            contextual_type,
                         ));
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None

@@ -671,6 +671,123 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Suppress the contextual return type when a callback argument's return
+    /// type is FIXED by an explicit return-type annotation or an `as`/type
+    /// assertion in its concise body, and that return position pins one of the
+    /// call's return type parameters.
+    ///
+    /// `tsc` ranks inferences made from an argument above inferences made from
+    /// the contextual return type (`InferencePriority.ReturnType`). When a
+    /// generic call such as `xs.map((x): string | undefined => x)` is assigned
+    /// or returned directly into a narrower target (`string[]`), the callback's
+    /// explicit return annotation pins `U = string | undefined`; the contextual
+    /// `string[]` must NOT clamp `U` back down to `string`. Without this
+    /// suppression `tsz` lets the contextual return specialize the wrapped
+    /// return parameter, silently coercing the `(string | undefined)[]` result
+    /// to the `string[]` target and dropping the result-level relation — a
+    /// false negative for `TS2322` (#14823).
+    ///
+    /// Once the contextual return is suppressed, the call resolves `U` purely
+    /// from the callback's authoritative explicit return, and the normal
+    /// assignment/return relation reports any residual mismatch at the
+    /// assignment/return site, exactly as `tsc` does. The trigger is confined
+    /// to callbacks whose return type does not depend on the contextual type
+    /// (annotation or concise-body assertion); inferred-return callbacks keep
+    /// their existing contextual-typing behavior.
+    pub(crate) fn suppress_generic_return_context_for_pinned_callback_return(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        args: &[NodeIndex],
+        contextual_type: Option<TypeId>,
+    ) -> bool {
+        if contextual_type.is_none() {
+            return false;
+        }
+
+        let return_type_params =
+            self.collect_type_param_names_for_context_overlap(shape.return_type);
+        if return_type_params.is_empty() {
+            return false;
+        }
+
+        for (i, &arg_idx) in args.iter().enumerate() {
+            let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                shape
+                    .params
+                    .last()
+                    .and_then(|p| p.rest.then_some(p.type_id))
+            }) else {
+                break;
+            };
+
+            // Cheap syntactic gate first: every callback function reachable
+            // through this argument (including both branches of a conditional
+            // callback) must pin its return type explicitly. If any branch
+            // infers its return, the contextual return still legitimately
+            // informs that branch and must not be dropped. Rejecting here skips
+            // the expensive type-shape extraction below for every non-callback
+            // argument and every inferred-return callback (the common case).
+            let callbacks = self.callback_function_indices(arg_idx);
+            if callbacks.is_empty()
+                || !callbacks
+                    .iter()
+                    .all(|&cb| self.callback_return_is_explicitly_pinned(cb))
+            {
+                continue;
+            }
+
+            // The matching parameter must be a callback whose RETURN position
+            // mentions a return type parameter — that is the parameter the
+            // callback's explicit return type pins. A parameter that mentions
+            // the return type parameter only in argument position does not
+            // qualify (its inference is owned by argument typing, not by the
+            // callback's return annotation).
+            let Some(param_shape) = self.contextual_signature_after_evaluation(param_type) else {
+                continue;
+            };
+            let param_return_names =
+                self.collect_type_param_names_for_context_overlap(param_shape.return_type);
+            if param_return_names
+                .iter()
+                .any(|name| return_type_params.contains(name))
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns `true` when the callback function's return type is fixed
+    /// independently of the contextual type: it carries an explicit return-type
+    /// annotation, or it is an arrow with a concise body that is a type
+    /// assertion (`expr as T`, `<T>expr`, `expr satisfies T`). Block-bodied and
+    /// bare-expression arrows infer their return type and still consume the
+    /// contextual return type, so they are not "pinned".
+    fn callback_return_is_explicitly_pinned(&self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if func.type_annotation.is_some() {
+            return true;
+        }
+        if !func.equals_greater_than_token {
+            return false;
+        }
+        let body = self.ctx.arena.skip_parenthesized(func.body);
+        self.ctx.arena.get(body).is_some_and(|body_node| {
+            matches!(
+                body_node.kind,
+                syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+            )
+        })
+    }
+
     fn wrapped_return_context_has_stable_overlap_arg(
         &mut self,
         shape: &tsz_solver::FunctionShape,
