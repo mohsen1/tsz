@@ -250,8 +250,8 @@ impl<'a> CheckerState<'a> {
             if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                 if accessor.type_annotation.is_none() {
                     use crate::diagnostics::diagnostic_codes;
-                    let self_refs = self.collect_property_name_references(accessor.body, &name);
-                    if !self_refs.is_empty() {
+                    if self.object_literal_getter_has_self_reference(elem_idx, accessor.body, &name)
+                    {
                         self.error_at_node_msg(
                                     accessor.name,
                                     diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
