@@ -336,6 +336,14 @@ pub trait TypeDisplayProvenance {
         false
     }
 
+    /// Mark `type_id` as the synthetic `typeof globalThis` surface object.
+    fn mark_global_this_surface_display(&self, _type_id: TypeId) {}
+
+    /// Return whether `type_id` is the synthetic `typeof globalThis` surface.
+    fn is_global_this_surface_display(&self, _type_id: TypeId) -> bool {
+        false
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// The checker calls this from `get_type_from_union_type` so that the
@@ -1134,6 +1142,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn is_conditional_alias_base(&self, base: TypeId) -> bool {
         Self::is_conditional_alias_base(self, base)
+    }
+
+    fn mark_global_this_surface_display(&self, type_id: TypeId) {
+        Self::mark_global_this_surface_display(self, type_id);
+    }
+
+    fn is_global_this_surface_display(&self, type_id: TypeId) -> bool {
+        Self::is_global_this_surface_display(self, type_id)
     }
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

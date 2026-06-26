@@ -12,6 +12,15 @@ const LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT: u32 = 64;
 
 impl<'a> TypeFormatter<'a> {
     pub(super) fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
+        // The synthetic `typeof globalThis` surface object has no nominal symbol;
+        // render it with its source name instead of its full member body to match
+        // tsc (`typeof globalThis`). The surface is always built via
+        // `object_with_index`, so it is an `ObjectWithIndex`.
+        if matches!(key, TypeData::ObjectWithIndex(_))
+            && self.interner.is_global_this_surface_display(type_id)
+        {
+            return Cow::Borrowed("typeof globalThis");
+        }
         match key {
             TypeData::Intrinsic(kind) => Cow::Borrowed(intrinsic::format_intrinsic(*kind)),
             TypeData::Literal(lit) => self.format_literal(lit).into(),

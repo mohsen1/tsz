@@ -832,6 +832,14 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.is_conditional_alias_base(base)
     }
 
+    fn mark_global_this_surface_display(&self, type_id: TypeId) {
+        self.interner.mark_global_this_surface_display(type_id);
+    }
+
+    fn is_global_this_surface_display(&self, type_id: TypeId) -> bool {
+        self.interner.is_global_this_surface_display(type_id)
+    }
+
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .store_union_origin(union_type_id, origin_members);

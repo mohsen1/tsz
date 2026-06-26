@@ -155,6 +155,10 @@ impl<'a> CheckerContext<'a> {
             properties,
             ..ObjectShape::default()
         });
+        // Record the synthetic surface so diagnostics render it as
+        // `typeof globalThis` rather than its full member body.
+        self.types
+            .mark_global_this_surface_display(global_this_type);
         cache.global_this_type.set(Some(global_this_type));
         cache.global_this_type_in_progress.set(false);
         global_this_type

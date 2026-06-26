@@ -17,12 +17,20 @@
 //! element-access TS7053.
 
 use crate::test_utils::check_source_strict_codes as check_strict;
+use crate::test_utils::check_source_strict_messages as check_strict_messages;
 
 const TS2322: u32 = 2322; // Type X is not assignable to type Y.
+const TS2454: u32 = 2454; // Variable is used before being assigned.
 const TS7053: u32 = 7053; // Element implicitly has an 'any' type (no index sig).
 
 fn count(codes: &[u32], code: u32) -> usize {
     codes.iter().filter(|&&c| c == code).count()
+}
+
+fn message_for(msgs: &[(u32, String)], code: u32) -> Option<&str> {
+    msgs.iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, m)| m.as_str())
 }
 
 // ---------------------------------------------------------------------------
@@ -161,5 +169,139 @@ export function read(): unknown {
     assert!(
         codes.contains(&TS7053),
         "a block-scoped binding is not a globalThis member → TS7053: {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Part C — value-position reads of the self-referential globals.
+//
+// `window` / `self` are declared `Window & typeof globalThis`; `globalThis`
+// is the synthetic global object. tsz previously collapsed all three to `any`
+// in value position (the `Window & typeof globalThis` annotation short-circuit
+// and the `globalThis` not-found fallback), which poisoned member reads and
+// `(typeof window)[K]` indexed accesses. They must now resolve to their
+// concrete lib types. Globals are declared in-source so the assertions do not
+// depend on which `lib` files the harness loads, and the binder names are the
+// real lib names because the recovery keys on the global-object identity, not
+// on an arbitrary user name.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn global_this_value_read_resolves_to_surface_not_any() {
+    // tsc types a value read of `globalThis` as `typeof globalThis`, not `any`.
+    let msgs = check_strict_messages(
+        r#"
+const g = globalThis;
+const bad: never = g;
+"#,
+    );
+    let msg = message_for(&msgs, TS2322).unwrap_or("<no TS2322>");
+    assert!(
+        msg.contains("typeof globalThis"),
+        "globalThis value must render as `typeof globalThis`, not `any`: {msgs:?}"
+    );
+    assert!(
+        !msg.contains("'any'"),
+        "globalThis value must not collapse to `any`: {msgs:?}"
+    );
+}
+
+#[test]
+fn window_value_read_resolves_to_intersection_not_any() {
+    let msgs = check_strict_messages(
+        r#"
+interface Window { readonly origin: string }
+declare var window: Window & typeof globalThis;
+const w = window;
+const bad: never = w;
+"#,
+    );
+    let msg = message_for(&msgs, TS2322).unwrap_or("<no TS2322>");
+    assert!(
+        msg.contains("Window & typeof globalThis"),
+        "window value must render as `Window & typeof globalThis`, not `any`: {msgs:?}"
+    );
+}
+
+#[test]
+fn window_member_read_resolves_concretely_not_any() {
+    // The member type flows from the materialized `Window` half of the
+    // intersection (`origin: string`) rather than collapsing to `any`.
+    let msgs = check_strict_messages(
+        r#"
+interface Window { readonly origin: string }
+declare var window: Window & typeof globalThis;
+const w = window;
+const bad: never = w.origin;
+"#,
+    );
+    let msg = message_for(&msgs, TS2322).unwrap_or("<no TS2322>");
+    assert!(
+        msg.contains("'string'"),
+        "`window.origin` must resolve to `string`, not `any`: {msgs:?}"
+    );
+}
+
+#[test]
+fn self_value_read_resolves_to_intersection_not_any() {
+    // `self` is declared identically to `window`; both must resolve.
+    let msgs = check_strict_messages(
+        r#"
+interface Window { readonly origin: string }
+declare var self: Window & typeof globalThis;
+const s = self;
+const bad: never = s;
+"#,
+    );
+    let msg = message_for(&msgs, TS2322).unwrap_or("<no TS2322>");
+    assert!(
+        msg.contains("Window & typeof globalThis"),
+        "self value must render as `Window & typeof globalThis`, not `any`: {msgs:?}"
+    );
+}
+
+#[test]
+fn typeof_window_indexed_access_does_not_reintroduce_ts2454() {
+    // `(typeof window)['opt']` must evaluate against the resolved `Window`
+    // interface so the declared `… | undefined` is visible to the
+    // definite-assignment analysis; collapsing the receiver to `any` hid the
+    // `undefined` member and re-introduced a spurious TS2454.
+    let codes = check_strict(
+        r#"
+interface Window { opt?: { connect(): void } }
+declare var window: Window & typeof globalThis;
+function f() {
+  let x: (typeof window)['opt'] | false;
+  try { x = (true as boolean) && window.opt; } catch {}
+  if (!x) return;
+  return x;
+}
+"#,
+    );
+    assert_eq!(
+        count(&codes, TS2454),
+        0,
+        "`(typeof window)['opt']` must not re-introduce TS2454: {codes:?}"
+    );
+}
+
+#[test]
+fn ordinary_interface_typed_global_is_unaffected() {
+    // Negative control: a plain interface-typed global (the shape of
+    // `document`/`navigator`) must keep resolving to its own type, proving the
+    // recovery is scoped to the `Window & typeof globalThis` / `globalThis`
+    // self-referential shapes and not a blanket global override.
+    let msgs = check_strict_messages(
+        r#"
+interface Doc { readonly url: string }
+declare var document: Doc;
+const d = document;
+const bad: never = d;
+"#,
+    );
+    let msg = message_for(&msgs, TS2322).unwrap_or("<no TS2322>");
+    assert!(
+        msg.contains("'Doc'"),
+        "an ordinary interface-typed global must keep its own type: {msgs:?}"
     );
 }
