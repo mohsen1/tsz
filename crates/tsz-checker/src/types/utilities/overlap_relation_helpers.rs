@@ -38,6 +38,43 @@ impl<'a> CheckerState<'a> {
         (left_to_right, right_to_left)
     }
 
+    /// Rewrite an enum operand to its member-value domain for TS2367 overlap,
+    /// but only when the *other* operand is not itself an enum.
+    ///
+    /// tsc relates an enum to a primitive/literal through its member *values*:
+    /// `Color === "red"` overlaps because `"red"` is a member value, while
+    /// `Color === "blue"` reports TS2367. It treats two distinct enums as
+    /// nominal, though — `Color === Hue` reports TS2367 even when both declare a
+    /// `"red"` member — and the nominal enum-vs-enum cases are already handled by
+    /// the assignability fallback. A *single* enum member already unwraps to its
+    /// literal in `classify_simple_overlap_type` (so `Color.Red === "red"` is
+    /// correct); this covers the whole-enum (member-union) operand the same way,
+    /// fixing the string/const-enum-vs-matching-member-literal false positive.
+    ///
+    /// Returns `Some(no_overlap)` when a value-based rewrite applies (recursing
+    /// through `types_have_no_overlap`), or `None` to fall through to the nominal
+    /// assignability path.
+    pub(super) fn enum_value_overlap_rewrite(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> Option<bool> {
+        use crate::query_boundaries::flow_analysis::enum_member_domain;
+
+        // `enum_member_domain` returns the enum's member-value union for an enum
+        // type and the type unchanged otherwise, so `domain != ty` is exactly
+        // "ty is an enum". Rewrite only when one side is an enum and the other is
+        // not; that asymmetry also guarantees the recursion makes progress.
+        let left_domain = enum_member_domain(self.ctx.types, left);
+        let right_domain = enum_member_domain(self.ctx.types, right);
+        let left_is_enum = left_domain != left;
+        let right_is_enum = right_domain != right;
+        if left_is_enum == right_is_enum {
+            return None;
+        }
+        Some(self.types_have_no_overlap(left_domain, right_domain))
+    }
+
     /// Check if any pair of signatures (one from each side) is related in a
     /// single direction across all shared-arity params and the return type.
     /// Generic signatures (with non-empty `type_params`) are always treated as
