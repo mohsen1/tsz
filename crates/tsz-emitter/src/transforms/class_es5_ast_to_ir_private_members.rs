@@ -26,7 +26,7 @@ fn accessor_slot(instance_brand: Option<&str>, func_var: &str) -> PrivateMemberS
     }
 }
 
-impl<'a> AstToIr<'a> {
+impl AstToIr<'_> {
     /// Provide private field, accessor, and method storage maps so that
     /// `this.#x` references inside member bodies lower to
     /// `__classPrivateFieldGet/Set` calls.
