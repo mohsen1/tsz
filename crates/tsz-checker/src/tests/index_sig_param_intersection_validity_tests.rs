@@ -322,3 +322,45 @@ interface Box<X> {
         "TS1337 expected for `Brand<X, 'g'>` with a free type parameter: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #14735 adjacent coverage: sites/keys not exercised above. Binder names are
+// varied to guard against any name-keyed fast path.
+// ---------------------------------------------------------------------------
+
+/// A branded-string alias application used as an index key in an *inline type
+/// literal in a function-parameter position* (and in a bare type-literal alias)
+/// is clean — neither TS1337 nor TS1268. Covers the type-literal grammar path
+/// in addition to the interface/alias sites above.
+#[test]
+fn branded_key_in_function_parameter_type_literal_is_clean() {
+    let codes = check_source_codes(
+        r#"
+type Stamp<Base, Marker> = Base & { __kind: Marker };
+type EventKey = Stamp<string, 'evt'>;
+declare function take(x: { [k: EventKey]: number }): void;
+type LitForm = { [k: EventKey]: number };
+"#,
+    );
+    assert!(
+        !codes.contains(&1337) && !codes.contains(&1268),
+        "a branded index key in a function-parameter type literal must be clean: {codes:?}"
+    );
+}
+
+/// Negative parity: the fix must not over-accept. A bare type parameter and a
+/// literal union are still generic/literal index keys (TS1337).
+#[test]
+fn bare_type_param_and_literal_union_index_keys_still_emit_ts1337() {
+    let bare = check_source_codes(r#"interface G<K> { [k: K]: number }"#);
+    assert!(
+        bare.contains(&1337),
+        "bare type parameter key must still emit TS1337: {bare:?}"
+    );
+
+    let lit = check_source_codes(r#"interface L { [k: 'a' | 'b']: number }"#);
+    assert!(
+        lit.contains(&1337),
+        "literal-union key must still emit TS1337: {lit:?}"
+    );
+}
