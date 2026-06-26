@@ -18,6 +18,25 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+/// #14345 HKT-Application unknown-drop flag (default-OFF, reuses
+/// `TSZ_TYPEPARAM_DECL_IDENTITY`). When OFF the `target_contains_untracked`
+/// relaxation below is never applied, so the return-context substitution is
+/// byte-identical to pre-#14345. Under the construction stamp a generic call's
+/// own type param (e.g. `Functor.map<A, B>`'s `B`, placeholder-renamed) and the
+/// OUTER-scope param it should bind to (e.g. the `B` of an enclosing
+/// `flap<F>(): <A>(a) => <B>(...) => HKT<F, B>`) intern to DISTINCT `DeclScoped`
+/// ids, so the call return `HKT<F, B_call>` and the contextual `HKT<F, B_outer>`
+/// are distinct Applications whose arg-by-arg match reaches `B_call` (a tracked
+/// placeholder) vs `B_outer` (a bare outer param). Flag-OFF those two `B`s are
+/// the SAME structural id, so the call return == the contextual type and the
+/// substitution binds `B` trivially; flag-ON the bind is blocked by the
+/// untracked-target guard and `B_call` collapses to `unknown` (`HKT<F, unknown>`).
+fn hkt_application_unknown_drop_fix_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+}
+
 #[inline]
 fn with_return_context_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     let mut visited = RETURN_CONTEXT_VISITED_POOL
@@ -366,6 +385,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
+        // #14345 (flag-ON only): a target that is a BARE outer-scope `DeclScoped`
+        // type parameter is a legitimate contextual binding, not nested-signature
+        // contamination. The `target_contains_untracked` guard keys on the
+        // tracked set (the call's placeholder-renamed param names), so an
+        // outer-scope param like the `B` of an enclosing `flap` reads as
+        // "untracked" and is rejected — leaving the call's own `B` (`source`, a
+        // tracked placeholder) with no binding, so it collapses to `unknown`
+        // inside the HKT Application (`HKT<F, unknown>`). Binding the placeholder
+        // to that single bare outer param recovers the flag-OFF identity (where
+        // both `B`s share one structural id and the bind is trivial) without
+        // relating distinct decls: it is a direct 1:1 param-to-param binding with
+        // no surrounding structure to contaminate. Restricted to a BARE target
+        // param so structured targets (Applications/unions that could carry a
+        // genuine nested-signature contaminant) keep the original guard.
+        let target_is_bare_outer_param = hkt_application_unknown_drop_fix_enabled()
+            && matches!(
+                self.interner.lookup(target),
+                Some(TypeData::TypeParameter(t)) if !tracked_type_params.contains(&t.name)
+            );
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
@@ -374,7 +412,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Don't insert if target contains untracked type parameters from
             // nested generic signatures (e.g., Promise.catch's TResult parameter
             // when matching through .then()). These would contaminate inference.
-            && !self.target_contains_untracked_type_params(target, tracked_type_params)
+            // A bare outer-scope param target is exempt (flag-ON): it is the
+            // contextual binding itself, not a nested contaminant.
+            && (target_is_bare_outer_param
+                || !self.target_contains_untracked_type_params(target, tracked_type_params))
             // Don't insert if target contains OTHER tracked type parameters.
             // This prevents incorrect mappings when both TResult1 and TResult2
             // from a source union would be mapped to the same target that
