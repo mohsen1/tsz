@@ -184,6 +184,23 @@ impl<'a> CheckerState<'a> {
         self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, true)
     }
 
+    /// Whether a `const`/`let`/`var` initializer that is a function /
+    /// function-expression / arrow carries an EXPLICIT return-type annotation.
+    /// Such a function has a known return type, so a recursive self-reference is
+    /// not an implicit-`any` return circularity and must not trigger TS7023 —
+    /// mirroring `tsc` and the existing exemption for annotated function
+    /// declarations (`function f(): number { return f(); }` is already clean).
+    pub(crate) fn function_like_initializer_has_explicit_return_annotation(
+        &self,
+        init_idx: NodeIndex,
+    ) -> bool {
+        self.ctx
+            .arena
+            .get(init_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+            .is_some_and(|func| func.type_annotation.is_some())
+    }
+
     pub(crate) fn function_like_initializer_has_wrapped_self_call_in_return_expression(
         &self,
         init_idx: NodeIndex,

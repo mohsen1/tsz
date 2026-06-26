@@ -1144,7 +1144,11 @@ impl<'a> CheckerState<'a> {
                         var_decl.initializer,
                         sym_id,
                     );
-                if has_wrapped_self_call {
+                if has_wrapped_self_call
+                    && !self.function_like_initializer_has_explicit_return_annotation(
+                        var_decl.initializer,
+                    )
+                {
                     final_type = TypeId::ANY;
                     if let Some(ref name) = var_name {
                         use crate::diagnostics::diagnostic_codes;
@@ -1206,12 +1210,19 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref name) = var_name {
                         use crate::diagnostics::diagnostic_codes;
                         if is_deferred_initializer {
-                            // TS7023: Function/arrow initializer with circular return type.
-                            self.error_at_node_msg(
-                                var_decl.name,
-                                diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                                &[name],
-                            );
+                            // TS7023: Function/arrow initializer with circular return type —
+                            // but only when it has no explicit return-type annotation. An
+                            // annotated arrow/function expression has a known return type, so
+                            // tsc reports nothing (mirrors annotated function declarations).
+                            if !self.function_like_initializer_has_explicit_return_annotation(
+                                var_decl.initializer,
+                            ) {
+                                self.error_at_node_msg(
+                                    var_decl.name,
+                                    diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                    &[name],
+                                );
+                            }
                         } else {
                             // TS7022: Structural circularity in initializer.
                             self.error_at_node_msg(
