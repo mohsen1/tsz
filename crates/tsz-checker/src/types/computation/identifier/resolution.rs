@@ -142,6 +142,17 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_symbol(sym_id);
         }
 
+        // The ambient `globalThis` value has no `declare var` declaration; it is
+        // the synthetic global-object reference. tsc types a value read of it as
+        // `typeof globalThis` (a concrete object whose members are the in-scope
+        // globals), not `any`. Resolving it to the surface keeps member reads
+        // (`globalThis.X`) and `(typeof globalThis)['X']` indexed accesses from
+        // collapsing to `any`. Guarded by `is_global_this_expression` so a
+        // same-file local named `globalThis` keeps its own binding.
+        if name == "globalThis" && self.is_global_this_expression(idx) {
+            return self.ctx.global_this_surface_type();
+        }
+
         self.emit_global_not_found_error(idx, name)
     }
 
