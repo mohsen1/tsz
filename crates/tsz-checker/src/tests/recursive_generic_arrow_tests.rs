@@ -174,6 +174,45 @@ export const loop = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Explicit return-type annotation exempts a self-referential arrow / function
+// expression from the recursive-implicit-any check (TS7023). tsc reports
+// nothing because the return type is known. (fp-ts Field.ts gcd helper.)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn annotated_recursive_const_arrow_no_ts7023() {
+    // Explicit `: number` return annotation => the return type is known, so the
+    // self-reference is not an implicit-any circularity.
+    assert_no_ts7023(
+        r#"
+const f = (x: number, y: number): number => (y === 0 ? x : f(y, x % y));
+"#,
+    );
+}
+
+#[test]
+fn annotated_recursive_named_function_expression_no_ts7023() {
+    // Same rule for a named function-expression initializer (renamed binders).
+    assert_no_ts7023(
+        r#"
+const k = function kk(n: number): number { return n <= 0 ? 0 : kk(n - 1); };
+"#,
+    );
+}
+
+#[test]
+fn unannotated_recursive_const_arrow_still_ts7023() {
+    // No return annotation + genuine self-reference => the implicit return type is
+    // circular; TS7023 must still fire (the exemption is precise, not a blanket pass).
+    assert_diagnostic(
+        r#"
+const g = (x: number, y: number) => (y === 0 ? x : g(y, x % y));
+"#,
+        7023,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Negative: unrelated error should still be caught
 // ---------------------------------------------------------------------------
 
