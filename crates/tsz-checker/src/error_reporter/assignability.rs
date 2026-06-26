@@ -1,8 +1,8 @@
 //! Type assignability error reporting (TS2322 and related).
 
 use crate::diagnostics::{
-    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
-    format_message,
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability_literal_display::display_has_boolean_member_literal_assignability;
 use crate::error_reporter::fingerprint_policy::{
@@ -414,6 +414,100 @@ impl<'a> CheckerState<'a> {
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
+    /// Report a fresh-object **union** source whose excess belongs to tsc's
+    /// single-`TS2322` shape.
+    ///
+    /// When a fresh object literal flows through `?:`/`??`/`||`/return and the
+    /// assignment source stays a union of distinct members (e.g.
+    /// `cond ? { a: 1, b: 2 } : { a: 3 }` → `{ … } | { … }`), tsc reports ONE
+    /// `TS2322` — `Type '<union>' is not assignable to type '<target>'.` — with
+    /// the first offending member's excess-property message attached as a nested
+    /// elaboration, anchored at the excess property. (When the branches widen to
+    /// one shape the conditional collapses to a single object type,
+    /// `union_members` is `None`, and the caller keeps the standalone `TS2353`.)
+    ///
+    /// `display_anchor_idx` selects the source/target display; `walk_start_idx`
+    /// is the wrapper expression to descend for branch literals. Returns `true`
+    /// when it emitted the union `TS2322` (the caller must then stop).
+    pub(crate) fn report_fresh_object_union_excess(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        display_anchor_idx: NodeIndex,
+        walk_start_idx: NodeIndex,
+    ) -> bool {
+        if crate::query_boundaries::diagnostics::union_members(self.ctx.types, source).is_none() {
+            return false;
+        }
+        // Run the canonical per-literal excess detector on the branch literals
+        // reachable through the wrapper, stopping at the first offending member
+        // (tsc reports only the first). The detector keys off the literal AST
+        // node, so it still surfaces excess after contextual typing has stripped
+        // freshness from the cached branch type — which a freshness-gated type
+        // relation would miss.
+        let diags_before = self.ctx.diagnostics.len();
+        for obj_idx in self.collect_rhs_object_literals(walk_start_idx) {
+            let literal_type = self.get_type_of_node(obj_idx);
+            self.check_object_literal_excess_properties(literal_type, target, obj_idx);
+            if self.ctx.diagnostics.len() > diags_before {
+                break;
+            }
+        }
+        if self.ctx.diagnostics.len() == diags_before {
+            return false;
+        }
+        // Refold the offending member's excess diagnostic into tsc's single union
+        // shape: the same property-anchored excess message becomes a nested
+        // elaboration beneath a `Type '<union>' is not assignable to type '<T>'.`
+        // head. Only a plain excess emit (TS2353/TS2561) refolds; anything else
+        // is left as the caller emitted it.
+        let captured = self.ctx.diagnostics.split_off(diags_before);
+        let head = &captured[0];
+        if !matches!(
+            head.code,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+        ) {
+            self.ctx.diagnostics.extend(captured);
+            return false;
+        }
+        let (source_str, target_str) = self.format_top_level_assignability_message_types_at(
+            source,
+            target,
+            display_anchor_idx,
+        );
+        let main_message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            head.file.clone(),
+            head.start,
+            head.length,
+            main_message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        diag.push_elaboration(head.message_text.clone(), head.code, 0);
+        // Preserve any deeper chain the excess diagnostic already carried (nested
+        // excess produces its own related-information trail).
+        for related in &head.related_information {
+            diag.push_elaboration_at(
+                related.file.clone(),
+                related.start,
+                related.length,
+                related.message_text.clone(),
+                related.code,
+                u32::from(related.depth).saturating_add(1),
+            );
+        }
+        // The excess diagnostic was removed from the buffer; rebuild the auxiliary
+        // dedup index so its recorded excess-property position no longer suppresses
+        // the overlapping TS2322 we are about to push.
+        self.ctx.rebuild_diagnostic_aux_indices();
+        self.ctx.push_diagnostic(diag);
+        true
+    }
+
     /// Internal helper that reports a detailed assignability failure using an
     /// already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
@@ -652,6 +746,17 @@ impl<'a> CheckerState<'a> {
                     } else {
                         anchor_idx
                     };
+                    // A fresh object literal flowing through `?:`/`??`/`||`/return
+                    // is a union for differing branches (tsc folds the excess into a
+                    // single TS2322) but collapses to one object type for branches
+                    // that widen alike (tsc keeps the standalone TS2353). The helper
+                    // emits the union shape and returns `true`; otherwise the
+                    // per-branch walk below emits the property-anchored TS2353. See
+                    // `report_fresh_object_union_excess`.
+                    if self.report_fresh_object_union_excess(source, target, anchor_idx, start_idx)
+                    {
+                        return;
+                    }
                     let diags_before = self.ctx.diagnostics.len();
                     for obj_idx in self.collect_rhs_object_literals(start_idx) {
                         let literal_type = self.get_type_of_node(obj_idx);

@@ -17,6 +17,27 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+/// Like [`get_diagnostics`], but flattens each diagnostic's related-information
+/// (elaboration) messages into the text. A fresh-literal excess that flows
+/// through `?:`/`??` and yields a union surfaces as a single TS2322 whose excess
+/// message is a nested elaboration (#14832), so the property name lives in the
+/// related information rather than the head message.
+fn get_diagnostics_with_elaboration(source: &str) -> Vec<(u32, String)> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| {
+            let mut text = d.message_text.clone();
+            for related in &d.related_information {
+                text.push('\n');
+                text.push_str(&related.message_text);
+            }
+            (d.code, text)
+        })
+        .collect()
+}
+
 #[test]
 fn record_number_rejects_non_numeric_object_literal_key() {
     let source = r#"
@@ -1560,39 +1581,54 @@ const sc: StringContainer = {
 
 #[test]
 fn ternary_branch_object_literal_reports_excess_property() {
-    let diags = get_diagnostics(
+    // When the branches differ so the conditional source stays a union, tsc
+    // reports a single TS2322 over the union with the excess message as a nested
+    // elaboration — not a per-branch TS2353 (#14832).
+    let diags = get_diagnostics_with_elaboration(
         r#"
 interface I { a: number }
 declare const cond: boolean;
 const v: I = cond ? { a: 1, b: 2 } : { a: 3 };
 "#,
     );
-    let excess: Vec<_> = diags
+    let union_excess: Vec<_> = diags
         .iter()
-        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'b'"))
+        .filter(|d| d.0 == 2322 && d.1.contains("'b'"))
         .collect();
+    assert_eq!(
+        union_excess.len(),
+        1,
+        "Expected one TS2322 over the union with a nested 'b' excess elaboration, got: {diags:?}",
+    );
     assert!(
-        !excess.is_empty(),
-        "Expected excess-property diagnostic for 'b' in a ternary branch, got: {diags:?}",
+        diags.iter().all(|d| d.0 != 2353),
+        "Expected no standalone per-branch TS2353 for the union conditional, got: {diags:?}",
     );
 }
 
 #[test]
 fn nullish_coalescing_right_object_literal_reports_excess_property() {
-    let diags = get_diagnostics(
+    // `d ?? { … }` with a non-literal left operand keeps the result a union
+    // (`I | { … }`), so tsc reports one TS2322 with a nested excess elaboration.
+    let diags = get_diagnostics_with_elaboration(
         r#"
 interface I { a: number }
 declare const d: I | undefined;
 const v: I = d ?? { a: 1, b: 2 };
 "#,
     );
-    let excess: Vec<_> = diags
+    let union_excess: Vec<_> = diags
         .iter()
-        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'b'"))
+        .filter(|d| d.0 == 2322 && d.1.contains("'b'"))
         .collect();
+    assert_eq!(
+        union_excess.len(),
+        1,
+        "Expected one TS2322 over `I | {{ … }}` with a nested 'b' excess elaboration, got: {diags:?}",
+    );
     assert!(
-        !excess.is_empty(),
-        "Expected excess-property diagnostic for 'b' on the right of `??`, got: {diags:?}",
+        diags.iter().all(|d| d.0 != 2353),
+        "Expected no standalone TS2353 on the right of `??`, got: {diags:?}",
     );
 }
 
@@ -1615,41 +1651,50 @@ const v: I = (0 as any) + { a: 1, b: 2 };
 
 #[test]
 fn ternary_branch_excess_property_uses_renamed_property() {
-    // Test matrix item: the rule applies regardless of property spelling.
-    let diags = get_diagnostics(
+    // Test matrix item: the rule applies regardless of property spelling. The
+    // branches differ, so the union TS2322 carries the excess elaboration.
+    let diags = get_diagnostics_with_elaboration(
         r#"
 interface MyShape { name: string }
 declare const cond: boolean;
 const v: MyShape = cond ? { name: "a", age: 30 } : { name: "b" };
 "#,
     );
-    let excess: Vec<_> = diags
+    let union_excess: Vec<_> = diags
         .iter()
-        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'age'"))
+        .filter(|d| d.0 == 2322 && d.1.contains("'age'"))
         .collect();
+    assert_eq!(
+        union_excess.len(),
+        1,
+        "Expected one TS2322 with a nested 'age' excess elaboration, got: {diags:?}",
+    );
     assert!(
-        !excess.is_empty(),
-        "Expected excess-property diagnostic for 'age' in a renamed-property ternary, got: {diags:?}",
+        diags.iter().all(|d| d.0 != 2353),
+        "Expected no standalone TS2353 for the renamed-property union conditional, got: {diags:?}",
     );
 }
 
 #[test]
 fn ternary_branch_nested_object_literal_reports_inner_excess_property() {
-    // Test matrix item: nested literal in a branch must still be checked.
-    let diags = get_diagnostics(
+    // Test matrix item: nested literal in a branch must still be checked. The
+    // union conditional reports a single TS2322 whose elaboration carries the
+    // inner excess (#14832).
+    let diags = get_diagnostics_with_elaboration(
         r#"
 interface I { a: { b: number } }
 declare const c: boolean;
 const v: I = c ? { a: { b: 1, c: 2 } } : { a: { b: 2 } };
 "#,
     );
-    let excess: Vec<_> = diags
+    let union_excess: Vec<_> = diags
         .iter()
-        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'c'"))
+        .filter(|d| d.0 == 2322 && d.1.contains("'c'"))
         .collect();
-    assert!(
-        !excess.is_empty(),
-        "Expected excess-property diagnostic for inner 'c' in a nested ternary literal, got: {diags:?}",
+    assert_eq!(
+        union_excess.len(),
+        1,
+        "Expected one TS2322 with a nested inner-'c' excess elaboration, got: {diags:?}",
     );
 }
 
@@ -1668,6 +1713,63 @@ const v: I = cond ? { a: 1 } : { a: 2 };
     assert!(
         diags.iter().all(|d| d.0 != 2353 && d.0 != 2322),
         "Did not expect any excess-property diagnostic for a clean ternary, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_uniform_excess_branches_report_single_ts2353() {
+    // Control for #14832: when both branches widen to the SAME shape (here both
+    // `{ a: number; z: number; }`), the conditional source collapses to a single
+    // object type — not a union — so tsc reports ONE standalone TS2353, exactly
+    // as for a direct object literal. No TS2322 union wrapper is produced.
+    let diags = get_diagnostics_with_elaboration(
+        r#"
+interface I { a: number }
+declare const cond: boolean;
+const v: I = cond ? { a: 1, z: 2 } : { a: 1, z: 3 };
+"#,
+    );
+    let ts2353: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2353 && d.1.contains("'z'"))
+        .collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one standalone TS2353 for the collapsed uniform-excess conditional, got: {diags:?}",
+    );
+    assert!(
+        diags.iter().all(|d| d.0 != 2322),
+        "Did not expect a union TS2322 when the branches collapse to one shape, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_differing_excess_branches_report_single_union_ts2322() {
+    // #14832: when BOTH branches carry excess but the excess properties differ
+    // (`a2` vs `b`), the source stays a union and tsc reports a SINGLE TS2322
+    // over the union — not two per-branch TS2353. The elaboration names the
+    // first offending member's excess property.
+    let diags = get_diagnostics_with_elaboration(
+        r#"
+interface I { a: number }
+declare const cond: boolean;
+const v: I = cond ? { a: 1, a2: 2 } : { a: 3, b: 4 };
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.0 == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one union TS2322 for differing-excess branches, got: {diags:?}",
+    );
+    assert!(
+        ts2322[0].1.contains("'a2'"),
+        "Expected the union TS2322 elaboration to name the first member's excess 'a2', got: {diags:?}",
+    );
+    assert!(
+        diags.iter().all(|d| d.0 != 2353),
+        "Expected no per-branch TS2353 for differing-excess union branches, got: {diags:?}",
     );
 }
 
