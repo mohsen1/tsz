@@ -920,6 +920,29 @@ impl<'a> CheckerState<'a> {
         Some(self.simple_overlap_types_overlap(left_simple, right_simple))
     }
 
+    /// Whole-comparison TS2367 predicate for an equality operator: the operands
+    /// have no overlap *and* neither is a bare `null`/`undefined` operand.
+    ///
+    /// Use this instead of a raw `types_have_no_overlap` at equality sites. The
+    /// bare-operand exemption mirrors tsc's `isTypeEqualityComparableTo`, whose
+    /// `target.flags & TypeFlags.Nullable` term suppresses TS2367 whenever a
+    /// *whole operand* of `==`/`!=`/`===`/`!==` is the bare `null`/`undefined`
+    /// intrinsic (`undefined === x`). It is applied here, once at the comparison
+    /// — not inside the overlap relation — so a *union* that merely contains
+    /// `null`/`undefined` (`null | undefined`, `1 | undefined`) is not exempt and
+    /// its overlap is decided structurally by `types_have_no_overlap`.
+    pub(crate) fn equality_operands_have_no_overlap(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        let is_bare_nullable = |t: TypeId| t == TypeId::NULL || t == TypeId::UNDEFINED;
+        if is_bare_nullable(left) || is_bare_nullable(right) {
+            return false;
+        }
+        self.types_have_no_overlap(left, right)
+    }
+
     /// Check if two types have no overlap (for TS2367 validation).
     /// Returns true if the types can never be equal in a comparison.
     pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
@@ -1014,16 +1037,22 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // null/undefined are always comparable with any type (TSC's "comparable relation").
-        // Even with strictNullChecks enabled, `null === x` and `undefined === x` should
-        // never trigger TS2367.
-        if left == TypeId::NULL
-            || left == TypeId::UNDEFINED
-            || right == TypeId::NULL
-            || right == TypeId::UNDEFINED
-        {
-            return false;
-        }
+        // `null`/`undefined` are *not* given a blanket "overlaps everything" pass
+        // here. tsc's whole-operand exemption for a bare `null`/`undefined`
+        // operand lives in `isTypeEqualityComparableTo` (the `target.flags &
+        // Nullable` term), applied once at the equality-comparison site, *not*
+        // inside the comparable/overlap relation. Modelling it here would also
+        // exempt `null`/`undefined` reached as a *union member* during the
+        // recursion below (e.g. `(1 | undefined) === "x"`), which `tsc` reports
+        // as TS2367 because the non-nullish part `1` has no overlap with `"x"`.
+        //
+        // So inside this routine `null`/`undefined` are genuine types: they
+        // overlap `any`/`unknown` (handled above), themselves (the same-type
+        // check below), and — through the assignability fallback — every type
+        // under non-`strictNullChecks` (matching tsc's comparable relation),
+        // but not a disjoint non-nullish type under `strictNullChecks`. The
+        // bare-operand exemption is applied by `nullable_equality_operand`
+        // at the TS2367 call sites.
 
         // Weak types (all-optional properties) overlap with anything.
         // tsc never emits TS2367 when comparing against weak types.
