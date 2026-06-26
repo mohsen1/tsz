@@ -712,6 +712,30 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         {
             return Some(value_ty);
         }
+        // `typeof <class>` is the class's CONSTRUCTOR (value-space) type, which
+        // is the class def's *body*, shared program-wide through the
+        // `DefinitionStore`. For a class declared in another file `resolve_ref`
+        // (the per-checker `symbol_types` cache) is unreliable here: it is empty
+        // when the class is reached purely through an import, and it can hold the
+        // INSTANCE type once the #10661 cross-file instance publication has
+        // populated it. Either way, trusting it inverts constructor and instance
+        // for a property typed `typeof ImportedClass` — a false TS2322 rejecting
+        // the constructor value and a missing TS2739/TS2741 accepting an instance
+        // value (kysely #10663 `typeof` family; the residual inverse of the
+        // #10661 instance-resolution fix). So consult the constructor body
+        // directly for a class symbol before trusting `resolve_ref`.
+        let sym_id = tsz_binder::SymbolId(symbol.0);
+        if let Some(def_id) = self.get_existing_def_id(sym_id)
+            && matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))
+            && let Some(body) = self.definition_store.get_body(def_id)
+            // A self-referential `Lazy(class_def)` body (the class is still
+            // resolving) would route back through `resolve_lazy` (instance)
+            // downstream; skip it and let `resolve_ref` handle the in-flight case.
+            && crate::query_boundaries::common::lazy_def_id(self.types, body) != Some(def_id)
+        {
+            return Some(body);
+        }
+
         self.resolve_ref(symbol, interner)
     }
 
