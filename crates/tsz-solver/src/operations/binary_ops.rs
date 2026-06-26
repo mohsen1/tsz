@@ -1351,6 +1351,21 @@ impl<'a> BinaryOpEvaluator<'a> {
         visitor.visit_type(self.interner, type_id)
     }
 
+    /// Strict boolean-like test mirroring tsc's `type.flags & BooleanLike`:
+    /// `boolean` and the boolean literals `true`/`false` only — NOT `any`
+    /// (which tsc classifies as `AnyOrUnknown`, never `BooleanLike`).
+    ///
+    /// This is what gates the TS2447 "operator is not allowed for boolean types"
+    /// suggestion: `boolean & any` must report the per-operand TS2362, not the
+    /// boolean-operator suggestion, so the gate cannot treat `any` as boolean.
+    pub fn is_boolean_like_strict(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::BOOLEAN {
+            return true;
+        }
+        let mut visitor = BooleanLikeVisitor { _db: self.interner };
+        visitor.visit_type(self.interner, type_id)
+    }
+
     /// Check if a type is a valid operand for string concatenation.
     /// Valid operands are: string, number, boolean, bigint, null, undefined, void, any.
     fn is_valid_string_concat_operand(&self, type_id: TypeId) -> bool {
