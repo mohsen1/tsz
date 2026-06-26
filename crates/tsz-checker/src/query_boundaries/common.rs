@@ -1187,6 +1187,29 @@ pub(crate) fn get_merged_object_shape_for_type(
         }
     }
 
+    // Lazy heritage (`TSZ_LAZY_HERITAGE`): include members inherited through
+    // `base_types`. Own and intersection members already collected above win —
+    // heritage SHADOWS, it does not intersect — so a base only contributes names
+    // not yet present. Recursing through this same helper walks each base's own
+    // bases, so one pass resolves the whole inherited surface (heritage is a
+    // DAG, bounded by the producer's `heritage_merge_depth` guard). `base_types`
+    // is empty under the flattened model, so this is inert (byte-identical)
+    // there. This is the boundary counterpart to the solver's
+    // `collect_target_properties` / `collect_properties` base-walk, so the
+    // checker's excess-property "known member" set matches the solver's.
+    for &base in &base_shape.base_types {
+        if let Some(base_merged) = get_merged_object_shape_for_type(db, base) {
+            for prop in base_merged.properties.iter() {
+                if !merged_props.iter().any(|p| p.name == prop.name) {
+                    merged_props.push(prop.clone());
+                }
+            }
+            has_string_index = has_string_index || base_merged.string_index.is_some();
+            has_number_index = has_number_index || base_merged.number_index.is_some();
+            has_symbol_index = has_symbol_index || base_merged.symbol_index.is_some();
+        }
+    }
+
     // Sort properties by declaration order for consistent results
     merged_props.sort_by_key(|p| p.declaration_order);
 
