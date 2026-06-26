@@ -643,6 +643,9 @@ mod using_binding_pattern_diagnostics_tests;
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]
+#[path = "tests/window_self_globalthis_resolution_tests.rs"]
+mod window_self_globalthis_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/yield_star_return_type_tests.rs"]
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.

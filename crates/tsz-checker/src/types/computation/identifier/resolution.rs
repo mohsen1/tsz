@@ -286,11 +286,14 @@ impl<'a> CheckerState<'a> {
         //
         // `globalThis` is the exception: it is the ambient global-object
         // reference, in scope under every `lib`/`target` (tsc never reports it
-        // as missing), so it keeps the `any` fallback rather than gaining a
-        // spurious TS2304.
-        if name == "globalThis"
-            || (first_char.is_uppercase() && !self.is_known_global_value_name(name))
-        {
+        // as missing). In value position it resolves to the synthetic
+        // `typeof globalThis` surface — the same concrete object the `typeof`
+        // type query produces — so a value read (`const g = globalThis`) and
+        // its member/indexed access match tsc instead of collapsing to `any`.
+        if name == "globalThis" {
+            return self.get_global_this_type(idx);
+        }
+        if first_char.is_uppercase() && !self.is_known_global_value_name(name) {
             return TypeId::ANY;
         }
 

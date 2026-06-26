@@ -17,6 +17,9 @@ impl<'a> TypeFormatter<'a> {
             TypeData::Literal(lit) => self.format_literal(lit).into(),
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                if shape.flags.contains(ObjectFlags::GLOBAL_THIS_SURFACE) {
+                    return Cow::Borrowed("typeof globalThis");
+                }
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
@@ -33,6 +36,9 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                if shape.flags.contains(ObjectFlags::GLOBAL_THIS_SURFACE) {
+                    return Cow::Borrowed("typeof globalThis");
+                }
                 if let Some(record_display) = self.format_in_operator_record(&shape) {
                     return record_display.into();
                 }

@@ -26,7 +26,7 @@
 //! `import type { GLOBAL_TSR } from './constants'`).
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_multi_file, check_multi_file_with_libs, load_lib_files};
+use crate::test_utils::{check_multi_file, check_multi_file_with_libs_stamped, load_lib_files};
 use tsz_common::common::ModuleKind;
 
 const TS2339: u32 = 2339; // Property does not exist.
@@ -125,18 +125,27 @@ const n: string = f.$_TSR!.x
 
 #[test]
 fn declare_global_window_computed_key_resolves_through_globalthis() {
-    // End-to-end witness: a `declare global { interface Window { [K]?: T } }`
-    // augmentation keyed by a type-only-imported `const` must be found when
-    // accessing the member on the lib's `window` (`Window & typeof globalThis`).
+    // A `declare global { interface Window { [K]?: T } }` augmentation keyed by a
+    // `const` must be found when accessing the member on the lib's `window`
+    // (whose type is `Window & typeof globalThis`). Reading `window` now resolves
+    // its real intersection type instead of `any` (see #14742), so the
+    // augmentation must be consulted through the `Window` arm.
+    //
+    // The cross-file (`import type { K } from './c'`) form of this exact witness
+    // (tanstack-router) needs the full driver's cross-file resolution ordering to
+    // fold the computed key, which the unit harness does not replicate; it is
+    // verified end-to-end via the CLI. Here the `const` is same-file so the test
+    // exercises the window-surface augmentation path faithfully. The stamped
+    // helper is required because the `typeof globalThis` surface keys member
+    // provenance off `decl_file_idx`.
     let libs = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     if libs.iter().all(|l| l.file_name != "dom.d.ts") {
         // DOM lib not present in this checkout: the core fix is still covered by
         // the no-lib tests above; skip the end-to-end variant rather than fail.
         return;
     }
-    let constants = "export const GLOBAL_TSR = '$_TSR'\n";
     let main = r#"
-import type { GLOBAL_TSR } from './constants'
+const GLOBAL_TSR = '$_TSR'
 declare global {
   interface Window {
     [GLOBAL_TSR]?: { x: number }
@@ -145,12 +154,8 @@ declare global {
 const n: string = window.$_TSR!.x
 export {}
 "#;
-    let diags = check_multi_file_with_libs(
-        &[("main.ts", main), ("constants.ts", constants)],
-        "main.ts",
-        strict(),
-        &libs,
-    );
+    let diags =
+        check_multi_file_with_libs_stamped(&[("main.ts", main)], "main.ts", strict(), &libs);
     assert_eq!(
         count(&diags, TS2339),
         0,
@@ -169,6 +174,7 @@ export {}
 fn declare_global_window_direct_string_literal_key_resolves() {
     // The direct string-literal form of the same augmentation member
     // (`['$_TSR']`) must also resolve through the merged-interface lowering.
+    // Stamped helper required: see the computed-key sibling test above.
     let libs = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     if libs.iter().all(|l| l.file_name != "dom.d.ts") {
         return;
@@ -182,7 +188,8 @@ declare global {
 const n: string = window.$_TSR!.x
 export {}
 "#;
-    let diags = check_multi_file_with_libs(&[("main.ts", main)], "main.ts", strict(), &libs);
+    let diags =
+        check_multi_file_with_libs_stamped(&[("main.ts", main)], "main.ts", strict(), &libs);
     assert_eq!(
         count(&diags, TS2339),
         0,

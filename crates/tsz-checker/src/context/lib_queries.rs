@@ -153,6 +153,7 @@ impl<'a> CheckerContext<'a> {
 
         let global_this_type = self.types.factory().object_with_index(ObjectShape {
             properties,
+            flags: tsz_solver::ObjectFlags::GLOBAL_THIS_SURFACE,
             ..ObjectShape::default()
         });
         cache.global_this_type.set(Some(global_this_type));

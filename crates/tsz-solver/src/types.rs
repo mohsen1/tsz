@@ -1330,6 +1330,16 @@ bitflags::bitflags! {
         /// from `Partial<Record<symbol, V>>`). The symbol mirror of
         /// [`Self::STRING_INDEX_OPTIONAL`].
         const SYMBOL_INDEX_OPTIONAL = 1 << 12;
+
+        /// This object is the materialized `typeof globalThis` surface: a
+        /// concrete object whose properties are the in-scope value globals.
+        /// Structurally it behaves like its property set (relations ignore this
+        /// flag), but diagnostics must print it as `typeof globalThis` rather
+        /// than expanding the hundreds of global members. The flag makes the
+        /// surface a distinct interned `TypeId` so the formatter can recover the
+        /// `typeof globalThis` display even when the surface appears as a member
+        /// of an intersection such as `Window & typeof globalThis`.
+        const GLOBAL_THIS_SURFACE = 1 << 13;
     }
 }
 
