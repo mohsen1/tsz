@@ -97,8 +97,13 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let assertion = self.arena.get_type_assertion(node)?;
-            let asserted_type = self.arena.get(assertion.type_node)?;
-            if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {
+            // A const assertion (`as const`, `<const>`) does not name a printable
+            // asserted type; its declared type is the literal-preserving inferred
+            // type, recovered by the literal/inferred branches downstream. Use the
+            // shared structural predicate so both the `ConstKeyword` (`as const`)
+            // and the angle-bracket `<const>` (parsed as a `const` type reference)
+            // forms are recognised, not just the former.
+            if self.type_assertion_is_const(assertion.type_node) {
                 return None;
             }
             if let Some(alias_text) =

@@ -920,6 +920,29 @@ impl<'a> CheckerState<'a> {
         Some(self.simple_overlap_types_overlap(left_simple, right_simple))
     }
 
+    /// Whole-comparison TS2367 predicate for an equality operator: the operands
+    /// have no overlap *and* neither is a bare `null`/`undefined` operand.
+    ///
+    /// Use this instead of a raw `types_have_no_overlap` at equality sites. The
+    /// bare-operand exemption mirrors tsc's `isTypeEqualityComparableTo`, whose
+    /// `target.flags & TypeFlags.Nullable` term suppresses TS2367 whenever a
+    /// *whole operand* of `==`/`!=`/`===`/`!==` is the bare `null`/`undefined`
+    /// intrinsic (`undefined === x`). It is applied here, once at the comparison
+    /// — not inside the overlap relation — so a *union* that merely contains
+    /// `null`/`undefined` (`null | undefined`, `1 | undefined`) is not exempt and
+    /// its overlap is decided structurally by `types_have_no_overlap`.
+    pub(crate) fn equality_operands_have_no_overlap(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        let is_bare_nullable = |t: TypeId| t == TypeId::NULL || t == TypeId::UNDEFINED;
+        if is_bare_nullable(left) || is_bare_nullable(right) {
+            return false;
+        }
+        self.types_have_no_overlap(left, right)
+    }
+
     /// Check if two types have no overlap (for TS2367 validation).
     /// Returns true if the types can never be equal in a comparison.
     pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
@@ -1014,15 +1037,41 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // null/undefined are always comparable with any type (TSC's "comparable relation").
-        // Even with strictNullChecks enabled, `null === x` and `undefined === x` should
-        // never trigger TS2367.
-        if left == TypeId::NULL
-            || left == TypeId::UNDEFINED
-            || right == TypeId::NULL
-            || right == TypeId::UNDEFINED
-        {
-            return false;
+        // `null`/`undefined` are *not* given a blanket "overlaps everything" pass
+        // here. tsc's whole-operand exemption for a bare `null`/`undefined`
+        // operand lives in `isTypeEqualityComparableTo` (the `target.flags &
+        // Nullable` term), applied once at the equality-comparison site, *not*
+        // inside the comparable/overlap relation. Modelling it here would also
+        // exempt `null`/`undefined` reached as a *union member* during the
+        // recursion below (e.g. `(1 | undefined) === "x"`), which `tsc` reports
+        // as TS2367 because the non-nullish part `1` has no overlap with `"x"`.
+        //
+        // So inside this routine `null`/`undefined` are genuine types: they
+        // overlap `any`/`unknown` (handled above), themselves (the same-type
+        // check below), and — through the assignability fallback — every type
+        // under non-`strictNullChecks` (matching tsc's comparable relation),
+        // but not a disjoint non-nullish type under `strictNullChecks`. The
+        // bare-operand exemption is applied by `nullable_equality_operand`
+        // at the TS2367 call sites.
+
+        // `NoInfer<T>` is a transparent wrapper for overlap: it preserves the
+        // underlying set of values, so the operands overlap exactly when their
+        // unwrapped forms do. Peel it first so a wrapped *constrained type
+        // parameter* still reaches the type-parameter-like delegation below.
+        // Without this, `NoInfer<T extends string | true>` compared to `true` is
+        // not recognized as type-parameter-like, skips the comparability
+        // delegation, and falls through to the concrete-shape checks that
+        // wrongly report no overlap (false TS2367) — while tsc accepts the
+        // comparison via `T`'s constraint.
+        let unwrapped_left =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, left);
+        let unwrapped_right =
+            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, right);
+        if unwrapped_left.is_some() || unwrapped_right.is_some() {
+            return self.types_have_no_overlap(
+                unwrapped_left.unwrap_or(left),
+                unwrapped_right.unwrap_or(right),
+            );
         }
 
         // Weak types (all-optional properties) overlap with anything.
@@ -1061,6 +1110,20 @@ impl<'a> CheckerState<'a> {
         let apparent_right = self.conditional_overlap_apparent_type(right);
         if apparent_left != left || apparent_right != right {
             return self.types_have_no_overlap(apparent_left, apparent_right);
+        }
+
+        // An enum operand overlaps a *non-enum* operand exactly when one of its
+        // member values does, so relate it through its member-value union
+        // (`Color` vs `"red"` → `"red" | "blue"` vs `"red"` → overlap). Without
+        // this, a string enum reaches the assignability fall-through below where
+        // a string literal is never assignable to the nominal enum, producing a
+        // false TS2367. Enum-vs-enum stays nominal (the helper returns `None`).
+        if let Some((l, r)) = crate::query_boundaries::enum_analysis::enum_comparison_operands(
+            self.ctx.types,
+            left,
+            right,
+        ) {
+            return self.types_have_no_overlap(l, r);
         }
 
         // For type parameters, delegate to the comparability check which correctly handles:
@@ -1136,6 +1199,15 @@ impl<'a> CheckerState<'a> {
                 effective_right,
                 self.ctx.strict_null_checks(),
             );
+        }
+
+        // Enum overlap is value-based against a non-enum operand but nominal
+        // against another enum: a whole enum overlaps a primitive / matching-member
+        // literal, while two distinct enums stay non-overlapping (see
+        // `enum_value_overlap_rewrite`). A single enum member already unwraps to
+        // its literal in the fast path above; this covers the whole-enum operand.
+        if let Some(no_overlap) = self.enum_value_overlap_rewrite(effective_left, effective_right) {
+            return no_overlap;
         }
 
         // Check union types: if any member of one union overlaps with the other, they overlap
@@ -1794,159 +1866,6 @@ impl<'a> CheckerState<'a> {
             return current_type;
         }
         prev_type
-    }
-
-    // =========================================================================
-    // Property Readonly Helper Functions
-    // =========================================================================
-
-    /// Check if a class property is readonly.
-    ///
-    /// Looks up the class by name, finds the property member declaration,
-    /// and checks if it has a readonly modifier.
-    pub(crate) fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
-        let Some(class_sym_id) = self.get_symbol_by_name(class_name) else {
-            return false;
-        };
-        let Some(class_sym) = self.ctx.binder.get_symbol(class_sym_id) else {
-            return false;
-        };
-        if class_sym.value_declaration.is_none() {
-            return false;
-        }
-        let Some(class_node) = self.ctx.arena.get(class_sym.value_declaration) else {
-            return false;
-        };
-        let Some(class_data) = self.ctx.arena.get_class(class_node) else {
-            return false;
-        };
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node) {
-                let member_name = self.get_identifier_text_from_idx(prop_decl.name);
-                if member_name.as_deref() == Some(prop_name) {
-                    return self.has_readonly_modifier(&prop_decl.modifiers)
-                        || self.jsdoc_has_readonly_tag(member_idx);
-                }
-            }
-        }
-        false
-    }
-
-    /// Check if an interface property is readonly by looking up the interface declaration in the AST.
-    ///
-    /// Given a type name (e.g., "I"), finds the interface declaration and checks
-    /// if the named property has a readonly modifier.
-    pub(crate) fn is_interface_property_readonly(&self, type_name: &str, prop_name: &str) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
-
-        let Some(sym_id) = self.get_symbol_by_name(type_name) else {
-            return false;
-        };
-        let Some(sym) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        // Check all declarations (interfaces can be merged)
-        for &decl_idx in &sym.declarations {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(iface_data) = self.ctx.arena.get_interface(decl_node) else {
-                continue;
-            };
-            for &member_idx in &iface_data.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != PROPERTY_SIGNATURE {
-                    continue;
-                }
-                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                    continue;
-                };
-                let member_name = self.get_identifier_text_from_idx(sig.name);
-                if member_name.as_deref() == Some(prop_name) {
-                    return self.has_readonly_modifier(&sig.modifiers);
-                }
-            }
-        }
-        false
-    }
-
-    /// Get the declared type name from a variable expression.
-    ///
-    /// For `declare const obj: I`, given the expression node for `obj`,
-    /// returns "I" (the type reference name from the variable's type annotation).
-    pub(crate) fn get_declared_type_name_from_expression(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let node = self.ctx.arena.get(expr_idx)?;
-
-        // Must be an identifier
-        self.ctx.arena.get_identifier(node)?;
-
-        // Resolve the variable's symbol
-        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
-        let sym = self.ctx.binder.get_symbol(sym_id)?;
-
-        // Get the variable's declaration
-        if sym.value_declaration.is_none() {
-            return None;
-        }
-        let decl_node = self.ctx.arena.get(sym.value_declaration)?;
-        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-
-        // Get the type annotation
-        if var_decl.type_annotation.is_none() {
-            return None;
-        }
-        let type_node = self.ctx.arena.get(var_decl.type_annotation)?;
-
-        // If it's a type reference, get the name
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
-            return self.get_identifier_text_from_idx(type_ref.type_name);
-        }
-
-        None
-    }
-
-    /// Check if a property of a type is readonly.
-    ///
-    /// Delegates to the solver's comprehensive implementation which handles:
-    /// - `ReadonlyType` wrappers (readonly arrays/tuples)
-    /// - Object types with readonly properties
-    /// - `ObjectWithIndex` types (readonly index signatures)
-    /// - Union types (readonly if ANY member has readonly property)
-    /// - Intersection types (readonly ONLY if ALL members have readonly property)
-    pub(crate) fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {
-        self.ctx.types.is_property_readonly(type_id, prop_name)
-    }
-
-    /// Get the class name from a variable declaration.
-    ///
-    /// Returns the class name if the variable is initialized with a class expression.
-    pub(crate) fn get_class_name_from_var_decl(&self, decl_idx: NodeIndex) -> Option<String> {
-        let var_decl = self.ctx.arena.get_variable_declaration_at(decl_idx)?;
-
-        if var_decl.initializer.is_none() {
-            return None;
-        }
-
-        let init_node = self.ctx.arena.get(var_decl.initializer)?;
-        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
-            return None;
-        }
-
-        let class = self.ctx.arena.get_class(init_node)?;
-        if class.name.is_none() {
-            return None;
-        }
-
-        let ident = self.ctx.arena.get_identifier_at(class.name)?;
-        Some(ident.escaped_text.clone())
     }
 
     // ============================================================================

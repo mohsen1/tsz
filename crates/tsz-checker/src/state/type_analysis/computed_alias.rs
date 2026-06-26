@@ -751,6 +751,62 @@ impl CheckerState<'_> {
         (!prefixes.is_empty()).then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
     }
 
+    /// Resolve and register the *body* of a standard-library generic type
+    /// alias referenced inside a cross-arena / declaration-file alias body.
+    ///
+    /// The eager declaration-file lowering records only the referenced alias's
+    /// `DefId`; it never materializes the lib utility's body the way the in-file
+    /// (`.ts`) reference path does through
+    /// [`Self::ensure_def_ready_for_lowering`]. For a lib *conditional* utility
+    /// (`Parameters`, `ReturnType`, `ConstructorParameters`, …) the bodyless
+    /// def then resolves to the `unknown` placeholder, so an indexed access into
+    /// the utility result (`type R = Parameters<F>[0]`) stays deferred and a
+    /// value of that type wrongly reports "has no call signatures" (false
+    /// `TS2349`, #14729). Priming the body here — while computing the
+    /// *referencing* alias, never the utility itself, so it cannot re-enter the
+    /// utility's own in-progress resolution — makes the cross-arena route
+    /// register the identical lib body the in-file route does.
+    ///
+    /// Restricted to actual/cloned-lib type aliases (a user/local type that
+    /// shadows a lib name keeps the normal path) and skipped once a usable body
+    /// is already registered, so the resolution runs at most once per def.
+    ///
+    /// The caller gates this to names that appear as the *object-type of an
+    /// indexed access* (`Parameters<F>[0]`): only that shape exhibits the
+    /// #14729 false `TS2349`. A bare lib-utility application that is not indexed
+    /// (`type Path<T> = Extract<keyof T, string>`) is left on the normal
+    /// deferred path; priming it eagerly could perturb the utility's
+    /// instantiation in unrelated alias bodies (regressed the `nextjs-fresh-app`
+    /// project row).
+    fn prime_actual_lib_type_alias_body(&mut self, name: &str) {
+        if self.ctx.lib_contexts.is_empty() || self.ctx.file_local_type_shadow_for_lib_name(name) {
+            return;
+        }
+        let Some(def_id) = self.resolve_actual_lib_name_to_def_id_for_lowering(name) else {
+            return;
+        };
+        // Only type aliases carry a conditional/utility body that the bare-DefId
+        // lowering leaves unresolved; interfaces and classes materialize eagerly
+        // or take the lib-interface paths. The `DefId`-keyed kind is an O(1)
+        // store read — no cross-file symbol resolution (and its binder scan).
+        if self.ctx.definition_store.get_kind(def_id) != Some(tsz_solver::def::DefKind::TypeAlias) {
+            return;
+        }
+        // Already has a real (non-placeholder) body? Nothing to do — a usable
+        // body means a prior resolution already published the utility.
+        let existing = self.ctx.definition_store.get_body(def_id);
+        let has_usable_body = existing.is_some_and(|body| {
+            body != TypeId::UNKNOWN
+                && body != TypeId::ERROR
+                && crate::query_boundaries::common::lazy_def_id(self.ctx.types, body)
+                    != Some(def_id)
+        });
+        if has_usable_body {
+            return;
+        }
+        let _ = self.resolve_lib_type_by_name(name);
+    }
+
     /// Walk the type alias body in a cross-arena and prime lib type params
     /// for any `TYPE_REFERENCE` nodes that lack explicit type arguments.
     /// This ensures that generic lib types with all-default type params
@@ -763,6 +819,15 @@ impl CheckerState<'_> {
     ) {
         let mut stack = vec![root];
         let mut names_to_prime = Vec::new();
+        // Names that appear as the immediate object-type of an indexed-access
+        // type (`Parameters<F>[0]`, `ReturnType<G>["fn"]`). Only these need the
+        // lib-utility *body* primed: the #14729 false `TS2349` arises because the
+        // bodyless cross-arena def resolves to the `unknown` placeholder and the
+        // *index into it* stays deferred. A bare lib-utility application that is
+        // not indexed (`type Path<T> = Extract<keyof T, string>`) does not need —
+        // and must not get — the body primed here, since priming it can perturb
+        // the utility's instantiation in unrelated alias bodies.
+        let mut indexed_object_names: Vec<String> = Vec::new();
 
         while let Some(node_idx) = stack.pop() {
             let Some(node) = decl_arena.get(node_idx) else {
@@ -787,11 +852,26 @@ impl CheckerState<'_> {
                 }
             }
 
+            if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && let Some(indexed) = decl_arena.get_indexed_access_type(node)
+                && let Some(object_node) = decl_arena.get(indexed.object_type)
+                && object_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(object_ref) = decl_arena.get_type_ref(object_node)
+                && let Some(object_name_node) = decl_arena.get(object_ref.type_name)
+                && object_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(object_ident) = decl_arena.get_identifier(object_name_node)
+            {
+                indexed_object_names.push(object_ident.escaped_text.clone());
+            }
+
             stack.extend(decl_arena.get_children(node_idx));
         }
 
         for name in names_to_prime {
             self.prime_lib_type_params(&name);
+            if indexed_object_names.iter().any(|n| n == &name) {
+                self.prime_actual_lib_type_alias_body(&name);
+            }
             let lib_binders = self.get_lib_binders();
             let decl_binder = self
                 .ctx

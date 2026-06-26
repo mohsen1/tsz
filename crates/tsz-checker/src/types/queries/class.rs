@@ -667,19 +667,53 @@ impl<'a> CheckerState<'a> {
         refs
     }
 
-    /// Collect property-access occurrences whose property name matches `name`.
+    /// Whether an object-literal get-accessor body contains an *indirect
+    /// self-reference* through a property access, the signal for TS7023.
     ///
-    /// This is used for accessor recursion detection (TS7023). It intentionally
-    /// ignores bare identifiers so captured outer variables like `return x` in
-    /// `get x() { ... }` are not treated as self-recursive references.
-    pub(crate) fn collect_property_name_references(
+    /// A `<receiver>.<name>` access (where `<name>` is the accessor's own name)
+    /// is a self-reference only when `<receiver>` evaluates to the object
+    /// literal currently under construction: the synthetic `this`, the variable
+    /// the literal initializes, or a transparent wrapper / index / conditional
+    /// of those. `tsc` resolves the receiver's actual member symbol, so a
+    /// `.<name>` access on an *unrelated* receiver (`ctx.path`, `mgr.clients`)
+    /// reads a different member's symbol and is not circular — it must not
+    /// trigger TS7023. A bare property-*name* match is not a sufficient signal;
+    /// this mirrors the `this`-receiver gate used for object-literal
+    /// method-call cycles (`object_literal_circularity.rs`).
+    pub(crate) fn object_literal_getter_has_self_reference(
         &self,
-        init_idx: NodeIndex,
+        accessor_idx: NodeIndex,
+        body_idx: NodeIndex,
         name: &str,
-    ) -> Vec<NodeIndex> {
-        let mut refs = Vec::new();
-        self.collect_property_name_references_recursive(init_idx, name, &mut refs);
-        refs
+    ) -> bool {
+        let binding_sym = self.object_literal_initializer_binding_symbol(accessor_idx);
+        self.getter_self_reference_in_subtree(body_idx, name, binding_sym)
+    }
+
+    /// Symbol of the variable an object-literal accessor's enclosing object
+    /// literal initializes (`const o = { get x() {…} }` → the symbol of `o`),
+    /// or `None` when the literal is not a direct variable initializer. Used to
+    /// recognize `o.x` inside `o`'s own getter as a genuine self-reference,
+    /// exactly as `this.x` is.
+    fn object_literal_initializer_binding_symbol(
+        &self,
+        accessor_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let obj_idx = self.ctx.arena.get_extended(accessor_idx)?.parent;
+        let obj_node = self.ctx.arena.get(obj_idx)?;
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let var_idx = self.ctx.arena.get_extended(obj_idx)?.parent;
+        let var_node = self.ctx.arena.get(var_idx)?;
+        if var_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(var_node)?;
+        if var_decl.initializer != obj_idx {
+            return None;
+        }
+        self.ctx.binder.get_node_symbol(var_decl.name)
     }
 
     /// Recursive helper for `collect_self_references`.
@@ -735,18 +769,21 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Recursive helper for `collect_property_name_references`.
-    fn collect_property_name_references_recursive(
+    /// Recursive helper for `object_literal_getter_has_self_reference`: does any
+    /// `<receiver>.<name>` access in `node_idx`'s subtree have a receiver that
+    /// denotes the object under construction? Recursion stops at nested
+    /// function/class scopes, which rebind both `this` and the enclosing name.
+    fn getter_self_reference_in_subtree(
         &self,
         node_idx: NodeIndex,
         name: &str,
-        refs: &mut Vec<NodeIndex>,
-    ) {
+        binding_sym: Option<tsz_binder::SymbolId>,
+    ) -> bool {
         if node_idx.is_none() {
-            return;
+            return false;
         }
         let Some(node) = self.ctx.arena.get(node_idx) else {
-            return;
+            return false;
         };
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -754,22 +791,83 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text == name
+            && self.receiver_denotes_object_under_construction(access.expression, binding_sym)
         {
-            refs.push(access.name_or_argument);
+            return true;
         }
 
         match node.kind {
             syntax_kind_ext::FUNCTION_EXPRESSION
             | syntax_kind_ext::ARROW_FUNCTION
             | syntax_kind_ext::CLASS_EXPRESSION => {
-                return;
+                return false;
             }
             _ => {}
         }
 
-        let children = self.ctx.arena.get_children(node_idx);
-        for child_idx in children {
-            self.collect_property_name_references_recursive(child_idx, name, refs);
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.getter_self_reference_in_subtree(child_idx, name, binding_sym))
+    }
+
+    /// Whether a property-access receiver expression evaluates to the object
+    /// literal currently under construction. True for the synthetic `this`, an
+    /// identifier resolving to the literal's own initializer binding, and any
+    /// transparent wrapper (parens / `as` / `!` / `satisfies` / comma),
+    /// array-literal index (`[this][0]`), element access, or conditional branch
+    /// that flows one of those outward. False for an unrelated receiver
+    /// (`ctx`, `mgr`, `g.sub`) or a call result (`foo(this)`), which `tsc`
+    /// resolves to a different type whose `.<name>` member is not the accessor.
+    fn receiver_denotes_object_under_construction(
+        &self,
+        receiver_idx: NodeIndex,
+        binding_sym: Option<tsz_binder::SymbolId>,
+    ) -> bool {
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_idx);
+        let Some(node) = self.ctx.arena.get(receiver_idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return binding_sym
+                .is_some_and(|sym| self.resolve_identifier_symbol(receiver_idx) == Some(sym));
+        }
+        match node.kind {
+            // `[this][0]`: the indexed result is one of the array's elements.
+            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.ctx.arena.get_literal_expr(node).is_some_and(|arr| {
+                    arr.elements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|el| self.receiver_denotes_object_under_construction(el, binding_sym))
+                })
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.ctx.arena.get_access_expr(node).is_some_and(|access| {
+                    self.receiver_denotes_object_under_construction(access.expression, binding_sym)
+                })
+            }
+            syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .ctx
+                .arena
+                .get_conditional_expr(node)
+                .is_some_and(|cond| {
+                    self.receiver_denotes_object_under_construction(cond.when_true, binding_sym)
+                        || self.receiver_denotes_object_under_construction(
+                            cond.when_false,
+                            binding_sym,
+                        )
+                }),
+            _ => false,
         }
     }
 

@@ -9,7 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape};
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -840,11 +840,10 @@ impl<'a> CheckerState<'a> {
             properties.push(prop);
         }
 
-        self.ctx.types.factory().object_with_index(ObjectShape {
-            properties,
-            flags: tsz_solver::ObjectFlags::GLOBAL_THIS_SURFACE,
-            ..ObjectShape::default()
-        })
+        self.ctx
+            .types
+            .factory()
+            .global_this_surface_object(properties)
     }
 
     fn is_global_this_surface_candidate(&self, name: &str) -> bool {

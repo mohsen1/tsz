@@ -73,6 +73,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Separator for a preserved `readonly` literal value. tsc emits the inline
+    /// `= literal` form only for a *fresh* literal (`readonly x = "a"`); when the
+    /// initializer carries a type assertion (`readonly x = "a" as const`) the
+    /// declared type is asserted / non-fresh and tsc prints the `: T`
+    /// annotation instead. The recovered literal text is reused verbatim as the
+    /// annotation: a `const`-asserted primitive's declared type *is* that
+    /// literal (`"a" as const` -> `: "a"`). Widening casts (`x as number`,
+    /// `x as 1 | 2`) never reach this path — they are emitted from the asserted
+    /// type node earlier via `explicit_asserted_type_text`, so only the
+    /// literal-preserving `as const` case lands here.
+    fn readonly_literal_separator_for(&self, initializer: NodeIndex) -> &'static str {
+        if initializer.is_some() && self.const_initializer_carries_type_assertion(initializer, 0) {
+            ": "
+        } else {
+            self.readonly_literal_value_separator()
+        }
+    }
+
     pub(in crate::declaration_emitter) fn emit_property_declaration(
         &mut self,
         prop_idx: NodeIndex,
@@ -169,6 +187,19 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" | undefined");
             }
         } else if !is_private {
+            // tsc preserves the (non-fresh) literal type of a class field whose
+            // declared type *is* a literal: always for a `readonly` field, and
+            // for a *mutable* field when the initializer carries a top-level type
+            // assertion (`as const`, `<const>`, including through parentheses,
+            // non-null `!`, and `const` aliases). The assertion strips the
+            // literal's freshness so it does not widen (`mutable = "hi" as const`
+            // -> `mutable: "hi"`). A plain mutable literal (`x = "a"`) stays
+            // fresh and widens to the primitive, and `satisfies` keeps freshness,
+            // so neither carries an assertion here.
+            let preserve_literal_initializer = is_readonly
+                || (prop.initializer.is_some()
+                    && self.const_initializer_carries_type_assertion(prop.initializer, 0));
+
             // For a readonly property whose initializer is a simple enum-member
             // access (e.g. `readonly kind = E.A`), tsc uses the initializer form
             // in class declarations and a literal-typed annotation in object-
@@ -235,16 +266,19 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                // Readonly literal preservation (matches tsc `const`-like emit).
-                if is_readonly
+                // Literal preservation (matches tsc `const`-like emit): readonly
+                // fields, and mutable fields whose initializer carries an `as
+                // const`/`<const>` assertion (tracked by
+                // `preserve_literal_initializer`).
+                if preserve_literal_initializer
                     && !is_abstract
                     && !prop.question_token
                     && let Some(interner) = self.type_interner
                     && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(self.readonly_literal_value_separator());
+                    self.write(self.readonly_literal_separator_for(prop.initializer));
                     self.write(&Self::format_literal_initializer(&lit, interner));
-                } else if is_readonly
+                } else if preserve_literal_initializer
                     && !is_abstract
                     && !prop.question_token
                     && prop.initializer.is_some()
@@ -253,7 +287,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     // Type system widened the literal (e.g. `false` → `boolean`);
                     // recover the original from the initializer source text.
-                    self.write(self.readonly_literal_value_separator());
+                    self.write(self.readonly_literal_separator_for(prop.initializer));
                     self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
@@ -375,14 +409,15 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 }
-            } else if is_readonly
+            } else if preserve_literal_initializer
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
-                // Readonly literal preservation via initializer source text.
-                self.write(self.readonly_literal_value_separator());
+                // Literal preservation via initializer source text (no computed
+                // type): readonly fields, and mutable `as const`/`<const>` fields.
+                self.write(self.readonly_literal_separator_for(prop.initializer));
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)

@@ -644,7 +644,12 @@ fn test_simple_object_epc_uses_boundary_classification() {
     );
 }
 
-/// The boundary must own the canonical `is_global_object_or_function_shape` logic.
+/// The boundary must own the `is_global_object_or_function_shape` entry point
+/// and delegate the actual recognition to the canonical `global_interfaces`
+/// sniff rather than maintaining its own divergent prototype-member name list.
+/// (A subset check over a hand-rolled name list misclassified user types such
+/// as `{ length: number }` / `{ toString: number }` as the global interface —
+/// see #14849 and the unifying `global_interfaces` module from #13090.)
 #[test]
 fn test_boundary_owns_global_object_function_shape_check() {
     let source = fs::read_to_string("src/query_boundaries/assignability.rs")
@@ -655,12 +660,19 @@ fn test_boundary_owns_global_object_function_shape_check() {
         "assignability.rs boundary must own is_global_object_or_function_shape"
     );
     assert!(
-        source.contains("OBJECT_PROTO"),
-        "boundary must contain the canonical Object.prototype property list"
+        source.contains("object_shape_matches_global_object_interface"),
+        "boundary must delegate Object recognition to the canonical \
+         global_interfaces sniff (no local prototype-name list)"
     );
     assert!(
-        source.contains("FUNCTION_PROTO"),
-        "boundary must contain the canonical Function.prototype property list"
+        source.contains("object_shape_matches_global_function_interface"),
+        "boundary must delegate Function recognition to the canonical \
+         global_interfaces sniff (no local prototype-name list)"
+    );
+    assert!(
+        !source.contains("OBJECT_PROTO") && !source.contains("FUNCTION_PROTO"),
+        "boundary must not reintroduce a hand-rolled prototype-member name list; \
+         the subset check it enabled misclassified user types (#14849)"
     );
 }
 

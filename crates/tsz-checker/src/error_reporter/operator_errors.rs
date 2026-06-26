@@ -542,6 +542,136 @@ impl<'a> CheckerState<'a> {
         fallback
     }
 
+    /// Emit TS2362/TS2363 for each invalid operand of an arithmetic
+    /// (`- * / % **`) or bitwise (`& | ^ << >> >>>`) operator.
+    ///
+    /// This mirrors `tsc`'s `checkArithmeticOperandType`, which is invoked once
+    /// per operand and is *independent of the other operand*: tsc validates each
+    /// side by assignability to `number | bigint` (after `checkNonNullType`,
+    /// which strips `null`/`undefined` and turns an unknown-under-strict-null
+    /// operand into `error`). Numeric values — `number`, numeric enums, `bigint`
+    /// — and the wildcards `any`/`unknown`/`error`/`never` are valid; `string`,
+    /// `boolean`, object, `symbol`, `void`, string literals and *string* enums
+    /// are not.
+    ///
+    /// tsz previously only ran this check when one operand was already `any`/
+    /// `error`, and additionally treated every enum (including string enums) as
+    /// valid, so it silently accepted e.g. `stringEnum - number`, `string &
+    /// never`, and `unknown - string` (where the unknown side short-circuited
+    /// before the other side was checked). Running the check here, once, for
+    /// every operand pair restores parity with tsc.
+    ///
+    /// When both operands are boolean-like and the operator is `& | ^`, tsc
+    /// reports TS2447 instead (handled on the `emit_binary_operator_error`
+    /// path), so this skips those.
+    ///
+    /// `+` is intentionally excluded: it is string concatenation when either
+    /// side is string-like and otherwise reports the whole-expression TS2365,
+    /// never the per-operand TS2362/TS2363.
+    ///
+    /// This runs *before* the operator-specific handling (and so before the
+    /// null/undefined TS18050 and unknown TS18046 operand errors are emitted),
+    /// which is sound because a pure `null`/`undefined` operand is suppressed
+    /// here directly via the `strictNullChecks` state rather than via an
+    /// already-emitted flag.
+    pub(crate) fn emit_arithmetic_operand_errors(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+        op: &str,
+    ) {
+        if self.has_parse_errors() {
+            return;
+        }
+        debug_assert!(
+            matches!(
+                op,
+                "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+            ),
+            "emit_arithmetic_operand_errors called with non-arithmetic operator {op}"
+        );
+
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+
+        // Hot-path fast-out: when both operands are already valid arithmetic
+        // operands (the overwhelmingly common `number - number` etc.), neither
+        // side can error, so skip the conditional/mapped evaluation and
+        // nullish-split below. Resolving the operands cannot turn a valid type
+        // invalid, so this is behavior-preserving.
+        if evaluator.is_arithmetic_operand(left_type) && evaluator.is_arithmetic_operand(right_type)
+        {
+            return;
+        }
+
+        // `& | ^` with two boolean operands is reported as TS2447 ("operator is
+        // not allowed for boolean types"), not as a per-operand TS2362/TS2363.
+        // Use the strict boolean test: tsc gates TS2447 on `flags & BooleanLike`,
+        // so `boolean & any` falls through to the per-operand TS2362 instead.
+        if matches!(op, "&" | "|" | "^")
+            && evaluator.is_boolean_like_strict(left_type)
+            && evaluator.is_boolean_like_strict(right_type)
+        {
+            return;
+        }
+
+        // Resolve conditional/mapped operands and detect each side's validity the
+        // same way the `emit_binary_operator_error` mismatch path does, so the two
+        // entry points stay in lockstep.
+        let eval_left = self.evaluate_type_for_binary_ops(left_type);
+        let eval_right = self.evaluate_type_for_binary_ops(right_type);
+        let snc_off = !self.ctx.compiler_options.strict_null_checks;
+
+        let (left_non_null, left_cause) = self.split_nullish_type(eval_left);
+        let (right_non_null, right_cause) = self.split_nullish_type(eval_right);
+        let left_has_nullish = left_cause.is_some();
+        let right_has_nullish = right_cause.is_some();
+        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+
+        let left_is_valid_arithmetic = evaluator.is_arithmetic_operand(eval_left)
+            || (snc_off && (eval_left == TypeId::NULL || eval_left == TypeId::UNDEFINED));
+        let right_is_valid_arithmetic = evaluator.is_arithmetic_operand(eval_right)
+            || (snc_off && (eval_right == TypeId::NULL || eval_right == TypeId::UNDEFINED));
+        let left_non_null_is_valid_arithmetic =
+            left_non_null.is_some_and(|t| evaluator.is_arithmetic_operand(t));
+        let right_non_null_is_valid_arithmetic =
+            right_non_null.is_some_and(|t| evaluator.is_arithmetic_operand(t));
+
+        // Every operator this method handles is in the TS18050-emitting family,
+        // so under `strictNullChecks` a pure `null`/`undefined` operand is
+        // reported by `checkNonNullType` (TS18047/TS18048) and stripped to the
+        // bottom type before the operand check — no TS2362/TS2363. A nullish
+        // *union* (e.g. `number | null`) is suppressed only when its non-null
+        // remainder is itself a valid arithmetic operand.
+        let strict_null = self.ctx.compiler_options.strict_null_checks;
+        if !(left_is_valid_arithmetic
+            || (left_has_nullish && left_non_null_is_valid_arithmetic)
+            || (strict_null && left_is_nullish))
+        {
+            self.emit_render_request(
+                left_idx,
+                DiagnosticRenderRequest::simple_msg(
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                    &[],
+                ),
+            );
+        }
+        if !(right_is_valid_arithmetic
+            || (right_has_nullish && right_non_null_is_valid_arithmetic)
+            || (strict_null && right_is_nullish))
+        {
+            self.emit_render_request(
+                right_idx,
+                DiagnosticRenderRequest::simple_msg(
+                    diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                    &[],
+                ),
+            );
+        }
+    }
+
     /// Emit errors for binary operator type mismatches.
     /// TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
     pub(crate) fn emit_binary_operator_error(
@@ -898,43 +1028,26 @@ impl<'a> CheckerState<'a> {
         }
 
         if requires_numeric_operands {
-            // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
-            // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
-            // tsc suppresses TS2362/TS2363 when TS18050 was already emitted for the operand.
-            let mut emitted_specific_error = emitted_nullish_error;
-            let mut emitted_operand_error = false;
-            if !(left_is_valid_arithmetic
+            // The per-operand TS2362/TS2363 errors are emitted up-front by
+            // `emit_arithmetic_operand_errors` (tsc's `checkArithmeticOperandType`,
+            // run once per operand independently of the other and of this
+            // evaluator-driven mismatch path). Here we only re-derive operand
+            // validity to decide whether the whole-expression TS2365 ("operator
+            // cannot be applied to types") is *additionally* warranted — i.e. the
+            // mixed number/bigint case, where tsc reports both the per-operand
+            // error and TS2365.
+            let left_operand_invalid = !(left_is_valid_arithmetic
                 || (left_has_nullish
                     && left_non_null_is_valid_arithmetic
                     && should_emit_nullish_error)
-                || (emitted_nullish_error && left_is_nullish))
-            {
-                self.emit_render_request(
-                    left_idx,
-                    DiagnosticRenderRequest::simple_msg(
-                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        &[],
-                    ),
-                );
-                emitted_specific_error = true;
-                emitted_operand_error = true;
-            }
-            if !(right_is_valid_arithmetic
+                || (emitted_nullish_error && left_is_nullish));
+            let right_operand_invalid = !(right_is_valid_arithmetic
                 || (right_has_nullish
                     && right_non_null_is_valid_arithmetic
                     && should_emit_nullish_error)
-                || (emitted_nullish_error && right_is_nullish))
-            {
-                self.emit_render_request(
-                    right_idx,
-                    DiagnosticRenderRequest::simple_msg(
-                        diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        &[],
-                    ),
-                );
-                emitted_specific_error = true;
-                emitted_operand_error = true;
-            }
+                || (emitted_nullish_error && right_is_nullish));
+            let emitted_operand_error = left_operand_invalid || right_operand_invalid;
+            let emitted_specific_error = emitted_nullish_error || emitted_operand_error;
             // If both operands are valid arithmetic types but the operation still failed
             // (e.g., mixing number and bigint), emit TS2365. tsc also emits TS2365
             // when a bigint-capable operation has one invalid side (`"x" & 1n`,

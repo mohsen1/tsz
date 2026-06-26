@@ -44,7 +44,7 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Whether the class has any static private member (field, method, or
     /// accessor). Such members force a class-value alias and route private
     /// storage through the IIFE-local `var _a; ...` block.
-    pub(super) fn has_static_private_lowering(&self) -> bool {
+    pub(in crate::transforms) fn has_static_private_lowering(&self) -> bool {
         self.private_fields.iter().any(|field| field.is_static)
             || self.private_methods.iter().any(|method| method.is_static)
             || self

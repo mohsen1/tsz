@@ -428,6 +428,15 @@ pub struct TypeInterner {
     /// surface. Keep this small provenance bit so application-preferring alias
     /// storage can avoid repainting an already-recorded branch intersection.
     pub(super) conditional_alias_bases: DashMap<TypeId, (), FxBuildHasher>,
+    /// Synthetic `typeof globalThis` surface object types.
+    ///
+    /// The checker materializes `typeof globalThis` as a concrete object whose
+    /// properties are the in-scope value globals. That object has no nominal
+    /// symbol, so the formatter would otherwise print its full (900+ member)
+    /// body. tsc renders it as `typeof globalThis`; recording the synthetic
+    /// surface here lets the printer reproduce that name. Display-only — it does
+    /// not affect identity or semantics.
+    pub(super) global_this_surface_display: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -642,6 +651,7 @@ impl TypeInterner {
             merged_intersection_origin: DashMap::with_hasher(FxBuildHasher),
             application_eval_origin: DashMap::with_hasher(FxBuildHasher),
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
+            global_this_surface_display: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             tuple_too_large: AtomicBool::new(false),

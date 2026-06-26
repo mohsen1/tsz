@@ -1,6 +1,7 @@
 //! Diagnostic filtering and rollback helpers for speculative call checking.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::FullSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     rest_array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
@@ -23,6 +24,14 @@ fn callback_mismatch_memo_disabled() -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn snapshot_overload_retry_state(&mut self) -> FullSnapshot {
+        self.ctx.snapshot_full()
+    }
+
+    pub(super) fn rollback_overload_retry_state(&mut self, snap: &FullSnapshot) {
+        self.ctx.rollback_full(snap);
+    }
+
     pub(crate) const fn should_preserve_speculative_call_diagnostic(
         diag: &crate::diagnostics::Diagnostic,
     ) -> bool {

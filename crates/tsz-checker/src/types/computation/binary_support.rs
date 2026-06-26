@@ -853,14 +853,50 @@ impl CheckerState<'_> {
             }
         }
 
+        // A union belongs to a primitive family when all of its non-`null`/
+        // `undefined` constituents share one family (`1 | 2`, `"a" | undefined`).
+        // `null`/`undefined` members are ignored — they ride along unwidened in
+        // tsc's display (`number | undefined`) — but a union of *only*
+        // `null`/`undefined`, an empty union, or a union spanning multiple
+        // families has no single family. This mirrors tsc widening
+        // `(1 | undefined) === "x"` operands to `number | undefined` / `string`
+        // while leaving `(1 | undefined) === 2` (same family) as literals.
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            let mut common: Option<TypeId> = None;
+            for &member in &members {
+                if member == TypeId::NULL || member == TypeId::UNDEFINED {
+                    continue;
+                }
+                let family = self.get_primitive_family(member);
+                if family == TypeId::ERROR {
+                    return TypeId::ERROR;
+                }
+                match common {
+                    None => common = Some(family),
+                    Some(existing) if existing == family => {}
+                    Some(_) => return TypeId::ERROR,
+                }
+            }
+            return common.unwrap_or(TypeId::ERROR);
+        }
+
         TypeId::ERROR // Non-primitive types
     }
 
-    /// Widen types for TS2367 display when they are from different primitive families.
+    /// Widen operands for TS2367 display.
     ///
-    /// tsc's rule: when comparing types from different primitive families (e.g., string vs number),
-    /// both types are widened to their base primitives in the error message. For same-family
-    /// comparisons (e.g., `"foo"` vs `"bar"`), literal types are preserved.
+    /// tsc preserves literal types in the message only when both operands belong
+    /// to the *same* single primitive family (`"foo"` vs `"bar"` → `"foo"` /
+    /// `"bar"`; `1 | undefined` vs `2` → `1 | undefined` / `2`). Otherwise it
+    /// shows each operand widened to its base type via `getBaseTypeOfLiteralType`
+    /// — distributing over unions and leaving non-literals (objects,
+    /// `null`/`undefined`) unchanged: `1 | 2` vs `"x"` → `number` / `string`;
+    /// `1 | undefined` vs `"x"` → `number | undefined` / `string`; `{ a }` vs
+    /// `"x"` → `{ a }` / `string`. A `null`/`undefined`-only or mixed-family
+    /// operand has no family (`ERROR`), so it never matches the other side and
+    /// the pair is widened.
     pub(super) fn widen_for_ts2367_cross_family_display(
         &self,
         left: TypeId,
@@ -869,18 +905,15 @@ impl CheckerState<'_> {
         let left_family = self.get_primitive_family(left);
         let right_family = self.get_primitive_family(right);
 
-        // Both are primitives, but from different families → widen both
-        if left_family != TypeId::ERROR
-            && right_family != TypeId::ERROR
-            && left_family != right_family
-        {
+        if left_family != TypeId::ERROR && left_family == right_family {
+            // Same single primitive family: preserve literal types.
+            (left, right)
+        } else {
+            // Differing or absent family: widen both to their base types.
             (
                 crate::query_boundaries::common::widen_literal_type(self.ctx.types, left),
                 crate::query_boundaries::common::widen_literal_type(self.ctx.types, right),
             )
-        } else {
-            // Same family (or non-primitives): preserve literal types
-            (left, right)
         }
     }
 

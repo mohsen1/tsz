@@ -726,6 +726,42 @@ mod tests {
         assert!(contains_infer_types(&interner, wrapper));
     }
 
+    /// `contains_free_infer_types` must not treat an `infer` declared inside a
+    /// conditional's `extends` clause as a live inference variable: it is bound
+    /// by that conditional and is part of a stable deferred type (e.g. the
+    /// declared return type of a method). Counting it made `Box<string>`
+    /// (whose method `m` returns `U extends Promise<infer V> ? …`) look like it
+    /// held a transient inference placeholder, suppressing real `TS2322`/`TS2345`
+    /// diagnostics. A bare/root `infer` stays free.
+    #[test]
+    fn free_infer_policy_skips_conditional_bound_infer() {
+        use crate::types::ConditionalType;
+        let interner = TypeInterner::new();
+        let v_name = interner.intern_string("V");
+        let t_name = interner.intern_string("T");
+        let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+
+        // `T extends infer V ? 1 : 2` — `infer V` is bound by the conditional.
+        let cond = interner.conditional(ConditionalType {
+            check_type: t_param,
+            extends_type: infer_v,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::NUMBER,
+            is_distributive: false,
+        });
+        let wrapper = interner.readonly_type(cond);
+
+        assert!(
+            !contains_free_infer_types(&interner, wrapper),
+            "an `infer` bound by a conditional must not count as a free infer"
+        );
+        // The generic deep walk still sees the structural `infer` node.
+        assert!(contains_infer_types(&interner, wrapper));
+        // A bare `infer` is still free.
+        assert!(contains_free_infer_types(&interner, infer_v));
+    }
+
     /// Free-type-parameter checks skip the bodies of generic signatures (their
     /// parameters are bound), but still see free parameters in non-generic
     /// signature bodies.
@@ -744,5 +780,44 @@ mod tests {
 
         let plain_fn = interner.function(crate::types::FunctionShape::new(vec![], t_param));
         assert!(contains_free_type_parameters(&interner, plain_fn));
+    }
+
+    /// Free-`infer` checks must skip the bodies of generic signatures: an
+    /// `infer V` inside a generic method's conditional return type (e.g.
+    /// `m<U>(): U extends … ? X : Y`) is a definitional binder scoped to that
+    /// signature/conditional, not a live transient inference placeholder. An
+    /// object type that merely contains such a method must not be classified as
+    /// carrying a free `infer`, or assignability diagnostics get wrongly
+    /// suppressed (issue #14784). A non-generic signature body still exposes it.
+    #[test]
+    fn free_infer_policy_skips_generic_signature_bodies() {
+        let interner = TypeInterner::new();
+        let u_name = interner.intern_string("U");
+        let v_name = interner.intern_string("V");
+        let u_param = interner.type_param(TypeParamInfo::simple(u_name));
+        let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+        // `U extends infer V ? U : U` — a deferred conditional whose `extends`
+        // declares `infer V`.
+        let cond = interner.conditional(crate::types::ConditionalType {
+            check_type: u_param,
+            extends_type: infer_v,
+            true_type: u_param,
+            false_type: u_param,
+            is_distributive: false,
+        });
+
+        // A *generic* signature binds both its own `U` and the conditional's
+        // `infer V`; the free-infer walk treats the whole body as bound.
+        let generic_fn = interner.function(crate::types::FunctionShape {
+            type_params: vec![TypeParamInfo::simple(u_name)],
+            ..crate::types::FunctionShape::new(vec![], cond)
+        });
+        assert!(!contains_free_infer_types(&interner, generic_fn));
+        // The structural `infer` is still observable to the un-scoped walk.
+        assert!(contains_infer_types(&interner, generic_fn));
+
+        // A non-generic signature body still exposes the conditional's `infer`.
+        let plain_fn = interner.function(crate::types::FunctionShape::new(vec![], cond));
+        assert!(contains_free_infer_types(&interner, plain_fn));
     }
 }

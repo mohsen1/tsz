@@ -21,13 +21,48 @@ impl<'a> PropertyAccessEvaluator<'a> {
         index: &IndexSignature,
         prop_atom: Atom,
     ) -> bool {
-        if matches!(index.key_type, TypeId::STRING | TypeId::SYMBOL) {
+        // A `symbol`-keyed index signature never accepts a string/number-literal
+        // property name. Historically a `[k: symbol]: V` signature was encoded in
+        // the `string_index` slot with `key_type == SYMBOL`; treating that as a
+        // catch-all string index silently typed `x["foo"]` / `x[1]` as `V`
+        // instead of producing TS7053. Unique-symbol property names are routed
+        // away from this helper earlier via the `__unique_` guard, so reaching
+        // here with a symbol index always means a non-matching key.
+        if index.key_type == TypeId::SYMBOL {
+            return false;
+        }
+
+        if index.key_type == TypeId::STRING {
             return true;
         }
 
         let prop_type = self.interner().literal_string_atom(prop_atom);
         let mut checker = SubtypeChecker::new(self.interner());
         checker.is_subtype_of(prop_type, index.key_type)
+    }
+
+    /// Whether an index signature stored in the `string_index` slot should
+    /// resolve `prop_atom`, used by the generic-instantiation (`Application`)
+    /// property paths that do not perform key-type subtype gating.
+    ///
+    /// Unlike [`Self::string_index_signature_accepts_property`], this only
+    /// excludes the `symbol`-keyed leak: a `[k: symbol]: V` signature (which
+    /// may live in the `string_index` slot under the legacy encoding) must not
+    /// satisfy a string/number-literal key, but still resolves an internal
+    /// `__unique_`-named symbol property. Genuine `string`/template-literal
+    /// indexes resolve every property name, preserving prior behavior.
+    pub(crate) fn string_index_signature_resolves_property(
+        &self,
+        index: &IndexSignature,
+        prop_atom: Atom,
+    ) -> bool {
+        if index.key_type == TypeId::SYMBOL {
+            return self
+                .interner()
+                .resolve_atom_ref(prop_atom)
+                .starts_with("__unique_");
+        }
+        true
     }
 
     /// True when `prop_atom` names an ES `#private` field that must not be
@@ -221,9 +256,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check string index signature.
         // Symbol-keyed properties (internal "__unique_N" names) must NOT
         // fall through to string index signatures — tsc treats symbol keys
-        // as distinct from string keys for index signature purposes.
+        // as distinct from string keys for index signature purposes. Use the
+        // `string_index_signature()` accessor so a `[k: symbol]: V` signature
+        // (which may live in the `string_index` slot under the legacy encoding)
+        // is not consulted for a string/number-literal key; otherwise
+        // `x["foo"]` on a symbol-only-index type would silently resolve to `V`
+        // instead of producing TS7053.
         if !prop_name.starts_with("__unique_")
-            && let Some(ref idx) = shape.string_index
+            && let Some(idx) = shape.string_index_signature()
             && self.string_index_signature_accepts_property(idx, prop_atom)
         {
             return Some(self.index_signature_result_with_nuia_write_type(idx.value_type));

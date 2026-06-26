@@ -89,6 +89,37 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Self-reference deferral (cache-miss only): a *fresh* instance-type
+        // build for this class has been requested. If it was triggered from
+        // within the resolution of one of this class's OWN arrow/function-valued
+        // property initializers — that node is still in flight on
+        // `node_resolution_stack` in an enclosing frame, e.g. an arrow-property
+        // whose return annotation references the enclosing class
+        // (`m = (): C => ...`), reached through return-type name validation or
+        // constructor-type building — then
+        // building now would re-enter that member and read its transient
+        // `ERROR` placeholder from the `get_type_of_node` cycle guard, baking an
+        // unsound `ERROR`/`any` member type into the cached instance (the bug
+        // behind silent assignability false-negatives on such properties).
+        // Mirror `tsc`, which represents `C` inside `C`'s own member signatures
+        // as a deferred reference rather than its resolved members: return a
+        // valid instance type from an outer, already-completed build when one
+        // exists, otherwise a lazy self-reference — WITHOUT caching, so the real
+        // instance is still built later, once the member is no longer in flight.
+        // A build already in the resolution set is the in-progress self-build,
+        // handled by the cache/`ERROR` paths above.
+        if let Some(sym_id) = current_sym
+            && !is_in_resolution_set
+            && self.class_build_reenters_in_flight_member(sym_id)
+        {
+            if let Some(existing) = self.ctx.symbol_instance_types.get(&sym_id)
+                && !existing.is_any_unknown_or_error()
+            {
+                return existing;
+            }
+            return self.ctx.create_lazy_type_ref(sym_id);
+        }
+
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();
         let result = self.get_class_instance_type_inner(

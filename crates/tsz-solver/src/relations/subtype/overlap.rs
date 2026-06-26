@@ -64,6 +64,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let a_resolved = self.strip_overlap_transparent_wrappers(a);
         let b_resolved = self.strip_overlap_transparent_wrappers(b);
 
+        // `NoInfer<T>` is a transparent wrapper for overlap: it preserves the
+        // underlying set of values, so `NoInfer<T>` overlaps `x` exactly when
+        // `T` does. Peel it and recurse so a wrapped *constrained type
+        // parameter* still consults its constraint in the arm below. Without
+        // this, `NoInfer<T extends string | true>` compared to `true` never
+        // reaches the TypeParameter arm (the wrapper is neither a TypeParameter
+        // nor an intrinsic), falls through to the subtype/intrinsic checks with
+        // no constraint visible, and is wrongly rejected with TS2367 — while tsc
+        // accepts it because the constraint overlaps the literal. `NoInfer` is
+        // already treated as kind-transparent during traversal (see `visitor.rs`).
+        if let Some(a_inner) = crate::visitor::no_infer_inner_type(self.interner, a_resolved) {
+            return self.are_types_overlapping(a_inner, b_resolved);
+        }
+        if let Some(b_inner) = crate::visitor::no_infer_inner_type(self.interner, b_resolved) {
+            return self.are_types_overlapping(a_resolved, b_inner);
+        }
+
         // Special handling for TypeParameter and Infer
         if let Some(
             crate::types::TypeData::TypeParameter(info) | crate::types::TypeData::Infer(info),

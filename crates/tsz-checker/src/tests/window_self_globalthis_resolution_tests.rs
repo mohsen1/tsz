@@ -86,8 +86,7 @@ export {};
     assert_eq!(
         count(&diags, TS2322),
         2,
-        "an `any` collapse would drop both assignments: {:?}",
-        diags
+        "an `any` collapse would drop both assignments: {diags:?}"
     );
     assert!(
         messages(&diags, TS2322)
@@ -190,8 +189,7 @@ function f() {
     assert_eq!(
         count(&diags, TS2454),
         0,
-        "definite-assignment must see the declared `undefined` through `(typeof X)['opt']`: {:?}",
-        diags
+        "definite-assignment must see the declared `undefined` through `(typeof X)['opt']`: {diags:?}"
     );
 }
 

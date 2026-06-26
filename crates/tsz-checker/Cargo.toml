@@ -36,8 +36,14 @@ stacker = "0.1.23"
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
+name = "enum_literal_comparison_overlap_tests"
+path = "tests/enum_literal_comparison_overlap_tests.rs"
+[[test]]
 name = "cannot_find_name_lib_hint_parity_tests"
 path = "tests/cannot_find_name_lib_hint_parity_tests.rs"
+[[test]]
+name = "arithmetic_operand_validity_tests"
+path = "tests/arithmetic_operand_validity_tests.rs"
 [[test]]
 name = "generic_interface_target_property_elaboration_tests"
 path = "tests/generic_interface_target_property_elaboration_tests.rs"
@@ -593,6 +599,9 @@ path = "tests/jsx_import_source_namespace_tests.rs"
 name = "type_alias_namespace_merge_tests"
 path = "tests/type_alias_namespace_merge_tests.rs"
 [[test]]
+name = "tuple_spread_circular_alias_tests"
+path = "tests/tuple_spread_circular_alias_tests.rs"
+[[test]]
 name = "type_alias_typeof_circular_tests"
 path = "tests/type_alias_typeof_circular_tests.rs"
 [[test]]
@@ -713,6 +722,9 @@ path = "tests/reserved_await_multiple_ts1262_tests.rs"
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
 [[test]]
+name = "interface_extends_generic_deferred_base_ts2312_tests"
+path = "tests/interface_extends_generic_deferred_base_ts2312_tests.rs"
+[[test]]
 name = "ts2430_tests"
 path = "tests/ts2430_tests.rs"
 [[test]]
@@ -766,6 +778,9 @@ path = "tests/accessor_assignment_read_surface_tests.rs"
 [[test]]
 name = "inferred_getter_return_property_access_tests"
 path = "tests/inferred_getter_return_property_access_tests.rs"
+[[test]]
+name = "object_literal_getter_self_reference_ts7023_tests"
+path = "tests/object_literal_getter_self_reference_ts7023_tests.rs"
 [[test]]
 name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"

@@ -716,3 +716,258 @@ function f<T extends "a" | "b">(input: NoInfer<T>) {
         "Expected no TS2367 for switch on NoInfer<T> with case in constraint; got {codes:?}"
     );
 }
+
+// ── Enum vs literal/primitive overlap (value-based against non-enum operands) ──
+//
+// An enum overlaps another type through its member *values* when the other
+// operand is not itself an enum: a whole enum overlaps a primitive (`string`/
+// `number`) and a literal whose value matches a member, but not a literal whose
+// value matches no member. Two distinct enums stay nominal (handled elsewhere).
+// Binder names are varied so the rule is not name- or shape-specific.
+
+#[test]
+fn test_string_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+if (shade === "crimson") {}
+"#
+        ),
+        "Expected NO TS2367: \"crimson\" is a member value of the string enum"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_matching_member_literal_reversed_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Direction { North = "north", South = "south" }
+declare const heading: Direction;
+if ("south" === heading) {}
+"#
+        ),
+        "Expected NO TS2367 with the enum on the right-hand side"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+if (shade === "violet") {}
+"#
+        ),
+        "Expected TS2367: \"violet\" is not a member value of the enum"
+    );
+}
+
+// ── `null`/`undefined` union members (tsc `isTypeEqualityComparableTo`) ───────
+//
+// A `null`/`undefined` member of a union must not grant the union blanket
+// overlap with everything: `tsc` decides overlap on the non-nullish part and
+// exempts a comparison only when a *whole operand* is the bare `null`/
+// `undefined` intrinsic (the `target.flags & Nullable` term). Binder names are
+// varied so the rule is structural, not name-driven.
+
+#[test]
+fn test_undefined_union_vs_disjoint_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+declare const shade: 1 | undefined;
+if (shade === "x") {}
+"#
+        ),
+        "Expected TS2367: the non-nullish part `1` has no overlap with \"x\""
+    );
+    // Different binder/literal families, both operand orders.
+    assert!(
+        has_ts2367(r#"declare const rank: number | undefined; if (rank === "lo") {}"#),
+        "Expected TS2367 for number|undefined === string literal"
+    );
+    assert!(
+        has_ts2367(r#"declare const heading: "n" | undefined; if ("s" === heading) {}"#),
+        "Expected TS2367 for string literal === string-union|undefined (reversed)"
+    );
+}
+
+#[test]
+fn test_const_string_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+const enum Mode { Read = "read", Write = "write" }
+declare const access: Mode;
+if (access === "read") {}
+"#
+        ),
+        "Expected NO TS2367: const enum compared with a matching member value"
+    );
+}
+
+#[test]
+fn test_const_string_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+const enum Mode { Read = "read", Write = "write" }
+declare const access: Mode;
+if (access === "delete") {}
+"#
+        ),
+        "Expected TS2367: const enum compared with a non-member value"
+    );
+}
+
+#[test]
+fn test_string_enum_vs_string_primitive_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Palette { Crimson = "crimson", Jade = "jade" }
+declare const shade: Palette;
+declare const text: string;
+if (shade === text) {}
+"#
+        ),
+        "Expected NO TS2367: a string enum overlaps the string primitive"
+    );
+}
+
+#[test]
+fn test_numeric_enum_vs_matching_member_literal_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Level { Low = 1, High = 2 }
+declare const rank: Level;
+if (rank === 1) {}
+"#
+        ),
+        "Expected NO TS2367: 1 is a member value of the numeric enum"
+    );
+}
+
+#[test]
+fn test_numeric_enum_vs_non_member_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Level { Low = 1, High = 2 }
+declare const rank: Level;
+if (rank === 9) {}
+"#
+        ),
+        "Expected TS2367: 9 is not a member value of the numeric enum"
+    );
+}
+
+#[test]
+fn test_distinct_string_enums_keep_ts2367_despite_shared_value() {
+    // Nominal: two different enums do not overlap even when a member value
+    // coincides (both declare a "red" member).
+    assert!(
+        has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+enum Hue { Red = "red", Blue = "blue" }
+declare const c: Color;
+declare const h: Hue;
+if (c === h) {}
+"#
+        ),
+        "Expected TS2367: distinct enums are nominal even with a shared member value"
+    );
+}
+
+#[test]
+fn test_whole_enum_overlaps_own_member_no_ts2367() {
+    assert!(
+        !has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+declare const c: Color;
+if (c === Color.Red) {}
+"#
+        ),
+        "Expected NO TS2367: a whole enum overlaps one of its own members"
+    );
+}
+
+#[test]
+fn test_distinct_members_same_enum_keep_ts2367() {
+    assert!(
+        has_ts2367(
+            r#"
+enum Color { Red = "red", Green = "green" }
+if (Color.Red === Color.Green) {}
+"#
+        ),
+        "Expected TS2367: distinct members of the same enum can never be equal"
+    );
+}
+
+#[test]
+fn test_null_union_vs_disjoint_literal_keeps_ts2367() {
+    assert!(
+        has_ts2367(r#"declare const access: 1 | null; if (access === "x") {}"#),
+        "Expected TS2367: `null` member does not grant overlap with \"x\""
+    );
+    assert!(
+        has_ts2367(r#"declare const grade: 1 | null | undefined; if (grade === "x") {}"#),
+        "Expected TS2367 for 1|null|undefined === string literal"
+    );
+}
+
+#[test]
+fn test_nullish_only_union_vs_literal_keeps_ts2367() {
+    // `null | undefined` is a union, not the bare nullable intrinsic, so it is
+    // not exempt: tsc reports TS2367 against a disjoint literal.
+    assert!(
+        has_ts2367(r#"declare const slot: null | undefined; if (slot === "x") {}"#),
+        "Expected TS2367 for null|undefined === string literal"
+    );
+}
+
+#[test]
+fn test_bare_nullable_operand_is_exempt() {
+    // A whole bare `undefined`/`null` operand is always equality-comparable.
+    assert!(
+        !has_ts2367(r#"declare const probe: undefined; if (probe === "x") {}"#),
+        "Expected NO TS2367: bare `undefined` operand is exempt"
+    );
+    assert!(
+        !has_ts2367(r#"declare const beacon: null; if (beacon === 42) {}"#),
+        "Expected NO TS2367: bare `null` operand is exempt"
+    );
+    assert!(
+        !has_ts2367(r#"declare const tag: 1 | undefined; if (undefined === tag) {}"#),
+        "Expected NO TS2367: bare `undefined` operand exempt against a union"
+    );
+}
+
+#[test]
+fn test_undefined_union_real_overlap_no_ts2367() {
+    // Shared non-nullish member → genuine overlap.
+    assert!(
+        !has_ts2367(r#"declare const code: 1 | undefined; if (code === 1) {}"#),
+        "Expected NO TS2367: `1` overlaps `1 | undefined`"
+    );
+    // Two unions overlapping only on `undefined` still overlap.
+    assert!(
+        !has_ts2367(
+            r#"
+declare const lhs: 1 | undefined;
+declare const rhs: 2 | undefined;
+if (lhs === rhs) {}
+"#
+        ),
+        "Expected NO TS2367: both operands share the `undefined` member"
+    );
+}

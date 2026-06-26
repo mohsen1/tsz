@@ -687,7 +687,12 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_downlevel_iteration(self.downlevel_iteration)
             .with_module_kind(self.module_kind)
             .with_target_es5(self.target_es5)
-            .with_private_field_maps(&self.private_fields, &self.private_accessors);
+            .with_private_member_maps(
+                &self.private_fields,
+                &self.private_accessors,
+                &self.private_methods,
+                self.private_instances_weakset_name.as_deref(),
+            );
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);
         }

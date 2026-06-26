@@ -621,3 +621,103 @@ class Conf {
         "auto-accessor storage must not trail after the static field.\nOutput:\n{output}"
     );
 }
+
+// Rule: at `--target es5`, a class with private storage but NO static private
+// member needs no class-value alias, so tsc hoists `var _C_x;` before the class
+// IIFE and runs `_C_x = new WeakMap();` after it (issue #14767). This applies to
+// every non-CommonJS class shape (plain script, ESM, non-exported); the CommonJS
+// export path already drove the same lift. Classes WITH a static private member
+// keep storage inside the IIFE alongside the `_a = C` alias.
+
+#[test]
+fn es5_instance_private_field_storage_hoists_around_iife() {
+    // The reported repro: a single instance private field.
+    let source = r#"
+class C {
+  #x = 1;
+  read() { return this.#x; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+    assert!(
+        output.contains("var _C_x;\nvar C = /** @class */"),
+        "WeakMap decl must be hoisted immediately before the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_C_x = new WeakMap();"),
+        "WeakMap init must run immediately after the IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_instance_private_field_storage_hoists_with_renamed_binders() {
+    // Same rule, different class/field spellings: the lift is structural, not
+    // keyed on the reported `C`/`#x` names.
+    let source = r#"
+class Widget {
+  #value = 1;
+  peek() { return this.#value; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+    assert!(
+        output.contains("var _Widget_value;\nvar Widget = /** @class */"),
+        "renamed WeakMap decl must hoist before the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_Widget_value = new WeakMap();"),
+        "renamed WeakMap init must run after the IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_instance_private_method_weakset_hoists_around_iife() {
+    // A private instance method adds a `_C_instances = new WeakSet()` brand and a
+    // `_C_m = function ...` slot. With no static private member they hoist out of
+    // the IIFE together with the field WeakMap, matching tsc.
+    let source = r#"
+class C {
+  #x = 1;
+  #m() { return this.#x; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+    assert!(
+        output.contains("var _C_instances, _C_x, _C_m;\nvar C = /** @class */"),
+        "instance method storage bundle must hoist before the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "}());\n_C_x = new WeakMap(), _C_instances = new WeakSet(), _C_m = function _C_m()"
+        ),
+        "instance method storage inits must run after the IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_static_private_member_keeps_storage_inside_iife() {
+    // Counter-case: a static private member forces the `_a = C` class alias, so
+    // tsc keeps the whole storage bundle inside the IIFE. The lift must NOT fire.
+    let source = r#"
+class C {
+  static #s = 1;
+  read() { return C.#s; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+    let iife = output
+        .find("var C = /** @class */")
+        .expect("expected ES5 class IIFE");
+    let ret = output.find("return C;").expect("expected IIFE return");
+    let storage = output
+        .find("var _a, _C_s;")
+        .expect("expected in-IIFE storage decl");
+    assert!(
+        iife < storage && storage < ret,
+        "static private storage must stay inside the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a, _C_s;\nvar C ="),
+        "static private storage must not be hoisted before the IIFE.\nOutput:\n{output}"
+    );
+}

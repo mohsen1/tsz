@@ -716,8 +716,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         self.add_undefined_if_unchecked(idx.value_type),
                     );
                 }
-                // Check string index signature (for static index signatures on class constructors)
-                if let Some(ref idx) = shape.string_index {
+                // Check string index signature (for static index signatures on class constructors).
+                // A `symbol`-keyed index (which may live in the `string_index`
+                // slot under the legacy encoding) must not satisfy a non-symbol
+                // property name — otherwise indexing a symbol-only-index callable
+                // by a string key would resolve to the value type instead of
+                // producing a TS7053 implicit-any element access.
+                if let Some(ref idx) = shape.string_index
+                    && self.string_index_signature_resolves_property(idx, prop_atom)
+                {
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(idx.value_type),
                     );

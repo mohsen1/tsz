@@ -139,6 +139,9 @@ mod async_imported_promise_tests;
 #[path = "tests/await_alias_union_distribution_tests.rs"]
 mod await_alias_union_distribution_tests;
 #[cfg(test)]
+#[path = "tests/await_structural_thenable_tests.rs"]
+mod await_structural_thenable_tests;
+#[cfg(test)]
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
@@ -373,6 +376,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lazy_lib_fuel_determinism_tests.rs"]
+mod lazy_lib_fuel_determinism_tests;
+#[cfg(test)]
 #[path = "tests/lazy_lib_heritage_guard_tests.rs"]
 mod lazy_lib_heritage_guard_tests;
 #[cfg(test)]
@@ -408,6 +414,9 @@ mod no_filename_based_behavior_tests;
 #[cfg(test)]
 #[path = "tests/no_index_element_implicit_any_tests.rs"]
 mod no_index_element_implicit_any_tests;
+#[cfg(test)]
+#[path = "../tests/noinfer_comparability_overlap_tests.rs"]
+mod noinfer_comparability_overlap_tests;
 #[cfg(test)]
 #[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
 mod nuia_any_index_emits_ts2322_tests;
@@ -450,6 +459,9 @@ mod return_alias_unknown_eval_assignability_tests;
 #[cfg(test)]
 #[path = "tests/return_relation_routing_arch_tests.rs"]
 mod return_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/spread_array_rest_param_inference_tests.rs"]
+mod spread_array_rest_param_inference_tests;
 #[cfg(test)]
 #[path = "../tests/spread_rest_diagnostics_tests.rs"]
 mod spread_rest_diagnostics_tests;
@@ -1428,6 +1440,12 @@ mod satisfies_callback_return_widening_tests;
 #[cfg(test)]
 #[path = "tests/satisfies_relation_routing_arch_tests.rs"]
 mod satisfies_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/self_referential_arrow_property_soundness_tests.rs"]
+mod self_referential_arrow_property_soundness_tests;
+#[cfg(test)]
+#[path = "tests/self_referential_conditional_infer_soundness_tests.rs"]
+mod self_referential_conditional_infer_soundness_tests;
 #[cfg(test)]
 #[path = "tests/shadowed_type_param_identity_tests.rs"]
 mod shadowed_type_param_identity_tests;

@@ -3,6 +3,7 @@
 
 mod class_recovery;
 mod enum_namespace_access;
+mod exported_value_decl;
 pub(crate) mod helpers;
 mod identifier_resolution;
 mod imported_array_to_enum;

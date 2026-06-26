@@ -1289,7 +1289,7 @@ impl<'a> CheckerState<'a> {
         let params_inner = after_open[..close_idx].trim();
         let after_close = after_open[close_idx + 1..].trim();
         let return_type = if let Some(rest) = after_close.strip_prefix(':') {
-            self.jsdoc_type_from_expression(rest.trim())
+            self.resolve_jsdoc_reference(rest.trim())
                 .unwrap_or(TypeId::VOID)
         } else {
             TypeId::VOID
@@ -1306,9 +1306,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (None, p)
                 };
-                let p_type = self
-                    .jsdoc_type_from_expression(t_str)
-                    .unwrap_or(TypeId::ANY);
+                let p_type = self.resolve_jsdoc_reference(t_str).unwrap_or(TypeId::ANY);
                 let atom = name.map(|n| self.ctx.types.intern_string(n));
                 params.push(ParamInfo {
                     name: atom,
@@ -1369,7 +1367,7 @@ impl<'a> CheckerState<'a> {
         // Return type follows ':'
         let return_type = if let Some(rest) = after_close.strip_prefix(':') {
             let return_type_str = rest.trim();
-            self.jsdoc_type_from_expression(return_type_str)
+            self.resolve_jsdoc_reference(return_type_str)
                 .unwrap_or(TypeId::VOID)
         } else {
             TypeId::VOID
@@ -1387,9 +1385,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (None, p)
                 };
-                let p_type = self
-                    .jsdoc_type_from_expression(t_str)
-                    .unwrap_or(TypeId::ANY);
+                let p_type = self.resolve_jsdoc_reference(t_str).unwrap_or(TypeId::ANY);
                 let atom = name.map(|n| self.ctx.types.intern_string(n));
                 params.push(ParamInfo {
                     name: atom,
@@ -1739,10 +1735,10 @@ impl<'a> CheckerState<'a> {
                         &param.name,
                         is_array_object_base,
                     )
-                    .or_else(|| self.jsdoc_type_from_expression(effective_expr))
+                    .or_else(|| self.resolve_jsdoc_reference(effective_expr))
                     .unwrap_or(TypeId::ANY)
                 } else {
-                    self.jsdoc_type_from_expression(effective_expr)
+                    self.resolve_jsdoc_reference(effective_expr)
                         .unwrap_or(TypeId::ANY)
                 };
 
@@ -1768,7 +1764,7 @@ impl<'a> CheckerState<'a> {
         let return_type = if let Some((is_asserts, param_name, type_str)) = cb.predicate {
             let pred_type = type_str
                 .as_deref()
-                .and_then(|s| self.jsdoc_type_from_expression(s));
+                .and_then(|s| self.resolve_jsdoc_reference(s));
             let target = if param_name == "this" {
                 TypePredicateTarget::This
             } else {
@@ -1797,14 +1793,11 @@ impl<'a> CheckerState<'a> {
             }
         } else if let Some(ref ret_expr) = cb.return_type {
             let ret_expr = ret_expr.trim();
-            self.jsdoc_type_from_expression(ret_expr)
-                .or_else(|| {
-                    if ret_expr.starts_with('{') && ret_expr.ends_with('}') {
-                        self.parse_jsdoc_object_literal_type(ret_expr)
-                    } else {
-                        None
-                    }
-                })
+            // Full resolver: it already covers the structural step *and*
+            // top-level object literals (the previous `.or_else` fallback) plus
+            // named-reference resolution, so a named return type resolves
+            // instead of collapsing to `any` (#14850).
+            self.resolve_jsdoc_reference(ret_expr)
                 .unwrap_or(TypeId::ANY)
         } else {
             TypeId::VOID
@@ -1850,7 +1843,9 @@ impl<'a> CheckerState<'a> {
             let mut prop_type = if prop.type_expr.trim().is_empty() {
                 TypeId::ANY
             } else {
-                self.jsdoc_type_from_expression(&prop.type_expr)
+                // Full resolver (see `jsdoc_type_from_expression` docs): a named
+                // `@property` type must resolve, not collapse to `any` (#14850).
+                self.resolve_jsdoc_reference(&prop.type_expr)
                     .unwrap_or(TypeId::ANY)
             };
             let effective_expr = prop.type_expr.trim_end_matches('=').trim();

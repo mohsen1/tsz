@@ -1376,3 +1376,268 @@ fn all_keys_keyed_mapped_indexed_by_symbol_is_valid() {
         "all-keys mapped indexed by symbol must be accepted, got {codes:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #14796: indexing a *symbol-only* index-signature type by a string or
+// number *literal* key must NOT resolve through the symbol index signature.
+//
+// Structural rule: when the receiver's only index signature is `[k: symbol]: V`
+// and the key expression is a string/number literal (or otherwise non-`symbol`)
+// property name, tsc treats the access as an implicit-`any` element access and
+// reports TS7053 (the symbol index is not a string/number index). tsz was
+// silently resolving `x["foo"]` / `x[1]` to `V` because property resolution
+// fell through the `string_index` slot, which historically also stored the
+// `symbol` index. The fix routes the literal-key lookup through
+// `string_index_signature()` (which excludes a `symbol`-keyed signature) and
+// makes `string_index_signature_accepts_property` reject `symbol` keys.
+// ---------------------------------------------------------------------------
+
+const TS7053: u32 = diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN;
+
+#[test]
+fn symbol_only_index_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const so: { [k: symbol]: number };
+const v = so["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string-literal key on a symbol-only index must report TS7053, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_only_index_number_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const so: { [k: symbol]: number };
+const w = so[1];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "number-literal key on a symbol-only index must report TS7053, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_only_index_interface_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+interface SymBag { [k: symbol]: number; }
+declare const b: SymBag;
+const v = b["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string-literal key on a symbol-only interface index must report TS7053, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_only_index_class_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+class C { [k: symbol]: number; }
+declare const c: C;
+const cv = c["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string-literal key on a symbol-only class index must report TS7053, got {codes:?}",
+    );
+}
+
+// Renamed binder name and key spelling — proves the rule is structural, not
+// keyed on the identifier `so`/`k`/`foo`.
+#[test]
+fn symbol_only_index_string_literal_access_reports_ts7053_renamed() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const registry: { [entry: symbol]: boolean };
+const hit = registry["lookup"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "renamed symbol-only index must still report TS7053 for a string key, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_only_index_intersection_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const x: { [k: symbol]: number } & { name: string };
+const a = x["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string key with no named member on a symbol-index intersection must report TS7053, got {codes:?}",
+    );
+}
+
+// Control: the named half of the intersection still resolves cleanly.
+#[test]
+fn symbol_only_index_intersection_named_member_access_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const x: { [k: symbol]: number } & { name: string };
+const n: string = x["name"];
+"#,
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "a named member on a symbol-index intersection must resolve without TS7053, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "x[\"name\"] must type as string, got {codes:?}",
+    );
+}
+
+// Control: a symbol-typed (wide) key access stays clean — the symbol index
+// applies. Mirrors the issue's `so[s]` control.
+#[test]
+fn symbol_only_index_wide_symbol_key_access_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const so: { [k: symbol]: number };
+declare const s: symbol;
+const ok: number = so[s];
+"#,
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "wide-symbol key on a symbol index must resolve cleanly, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "so[s] must type as the symbol-index value, got {codes:?}",
+    );
+}
+
+// Control: when BOTH a string and a symbol index are present, a string-literal
+// key must resolve through the string index (not be rejected).
+#[test]
+fn string_and_symbol_index_string_literal_access_uses_string_index() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const m: { [k: string]: number; [k: symbol]: string };
+const v: number = m["foo"];
+"#,
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "a string key on a string+symbol index must resolve through the string index, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "m[\"foo\"] must type as the string-index value (number), got {codes:?}",
+    );
+}
+
+// Control: a string-only index still resolves a string-literal key cleanly —
+// the fix must not over-reject genuine string index access.
+#[test]
+fn string_only_index_string_literal_access_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const so: { [k: string]: number };
+const v: number = so["foo"];
+"#,
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "string-only index must resolve a string-literal key cleanly, got {codes:?}",
+    );
+}
+
+// Generic adjacent case: a type parameter constrained to a symbol-only index
+// indexed by a string literal must report TS7053 (the constraint resolves to a
+// symbol-only index, which does not cover a string key).
+#[test]
+fn symbol_only_index_generic_constraint_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+function read<T extends { [k: symbol]: number }>(x: T) {
+    return x["foo"];
+}
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string-literal key on a symbol-only-constrained type parameter must report TS7053, got {codes:?}",
+    );
+}
+
+// Generic instantiation adjacent case: `Record<symbol, V>` indexed by a string
+// literal flows through the Application property-resolution path, which must
+// also exclude the symbol index for a non-symbol key.
+#[test]
+fn record_symbol_key_string_literal_access_reports_ts7053() {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    if libs.is_empty() {
+        return;
+    }
+    let diags = check_source_with_libs(
+        r#"
+declare const r: Record<symbol, number>;
+const v = r["foo"];
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&TS7053),
+        "Record<symbol, V> indexed by a string literal must report TS7053, got {codes:?}",
+    );
+}
+
+// Callable adjacent case: a callable/function type that carries only a symbol
+// index signature, indexed by a string literal, flows through the Callable
+// property-resolution path, which must also exclude the symbol index.
+#[test]
+fn symbol_only_index_callable_string_literal_access_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const f: { (): void; [k: symbol]: number };
+const v = f["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "string-literal key on a symbol-only-index callable must report TS7053, got {codes:?}",
+    );
+}
+
+// Type-reveal witness from the issue: assigning the result to an incompatible
+// annotation must NOT surface a TS2322 (which would prove the access wrongly
+// resolved to `number`); the access is an implicit-any TS7053 instead.
+#[test]
+fn symbol_only_index_string_literal_access_does_not_leak_value_type() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const so: { [k: symbol]: number };
+const x: { reveal: true } = so["foo"];
+"#,
+    );
+    assert!(
+        codes.contains(&TS7053),
+        "the type-reveal witness must report TS7053, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "so[\"foo\"] must be implicit-any (not number), so no TS2322 should fire, got {codes:?}",
+    );
+}

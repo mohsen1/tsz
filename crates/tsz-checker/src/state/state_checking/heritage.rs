@@ -852,10 +852,26 @@ impl<'a> CheckerState<'a> {
                                                     &enclosing_type_params,
                                                 )
                                             });
-                                        if class_query::is_generic_mapped_type(
-                                            self.ctx.types,
-                                            symbol_type,
-                                        ) && args_reference_enclosing_type_param
+                                        // tsc's `isValidBaseType` rejects any generic
+                                        // deferred alias body that lacks the `Object`
+                                        // flag — a generic mapped type, a conditional
+                                        // (`T extends X ? A : B`), an indexed access
+                                        // (`T[keyof T]`), `keyof`, a union, etc. When
+                                        // such an alias is applied to the enclosing
+                                        // interface's own type parameters the base stays
+                                        // deferred and `instantiated_type` erases to
+                                        // `Error`/`Any`, so classify it from the
+                                        // un-instantiated alias body. A body that *is* a
+                                        // valid base (object/intersection of objects)
+                                        // never trips this, so an unrelated resolution
+                                        // failure is not masked as TS2312.
+                                        let body_is_invalid_base =
+                                            !crate::query_boundaries::class::is_valid_interface_base_type(
+                                                self.ctx.types,
+                                                symbol_type,
+                                            );
+                                        if body_is_invalid_base
+                                            && args_reference_enclosing_type_param
                                         {
                                             use crate::diagnostics::{
                                                 diagnostic_codes, diagnostic_messages,

@@ -252,6 +252,18 @@ impl TypeInterner {
         self.conditional_alias_bases.contains_key(&base)
     }
 
+    /// Record that `type_id` is the synthetic `typeof globalThis` surface object
+    /// so the formatter renders it as `typeof globalThis` rather than its full
+    /// member body. Display-only provenance.
+    pub fn mark_global_this_surface_display(&self, type_id: TypeId) {
+        self.global_this_surface_display.insert(type_id, ());
+    }
+
+    /// Whether `type_id` is a recorded synthetic `typeof globalThis` surface.
+    pub fn is_global_this_surface_display(&self, type_id: TypeId) -> bool {
+        self.global_this_surface_display.contains_key(&type_id)
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// Mirrors tsc's `UnionType.origin` mechanism: when `T | null` is built and
