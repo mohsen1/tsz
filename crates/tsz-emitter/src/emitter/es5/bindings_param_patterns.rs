@@ -10,8 +10,38 @@ use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
-        self.emit_param_binding_prologue(transforms);
-        self.emit_rest_param_prologue(transforms);
+        // `tsc` routes the *entire* parameter prologue through the ES2018
+        // object-rest transform whenever any parameter binding contains an
+        // object rest. That transform runs as an outer pass, so the inner
+        // ES2015 transform inserts the rest-parameter `arguments`-copy loop
+        // *before* the object-rest path's binding/default declarations. Without
+        // an object rest the ES2015 transform owns the whole prologue and emits
+        // the binding/default declarations *before* the copy loop. Mirror that
+        // ordering split so a mixed `{ a, ...rest }, ...args` signature matches.
+        if self.param_plan_contains_object_rest(transforms) {
+            self.emit_rest_param_prologue(transforms);
+            self.emit_param_binding_prologue(transforms);
+        } else {
+            self.emit_param_binding_prologue(transforms);
+            self.emit_rest_param_prologue(transforms);
+        }
+    }
+
+    /// Whether any non-rest parameter destructures through an object rest, which
+    /// moves the whole leading-parameter prologue onto `tsc`'s ES2018 transform
+    /// path (so it lands after the rest-parameter copy loop). The rest
+    /// parameter's *own* binding is excluded: its destructuring is already
+    /// emitted after the copy loop inside `emit_rest_param_prologue`, so an
+    /// object rest there does not reorder the leading parameters (`tsc` keeps
+    /// `[a, b], ...{ c, ...r }` in source order). The decision is purely
+    /// structural — the shape of the binding patterns — with no identifier or
+    /// text inspection.
+    fn param_plan_contains_object_rest(&self, transforms: &ParamTransformPlan) -> bool {
+        transforms
+            .params
+            .iter()
+            .filter_map(|param| param.pattern)
+            .any(|pattern| self.binding_target_contains_object_rest(pattern))
     }
 
     pub(in crate::emitter) fn emit_param_binding_prologue(
@@ -125,6 +155,65 @@ impl<'a> Printer<'a> {
     /// helper below ES2018 and forces the legacy lowering path.
     fn pattern_eligible_for_native_param_prologue(&self, pattern: NodeIndex) -> bool {
         !self.ctx.target_es5 && !self.binding_target_contains_object_rest(pattern)
+    }
+
+    /// True when every transformed parameter is destructured purely through an
+    /// object-rest (`__rest`) lowering — no `...args` rest parameter and no
+    /// top-level parameter default.
+    ///
+    /// `tsc` lowers a parameter binding pattern that contains an object rest
+    /// through the ES2018 transform, whose injected prologue statements are
+    /// *not* marked `startOnNewLine`. So when the source function body is on a
+    /// single line, `tsc` keeps it single-line and writes the preamble inline
+    /// (`function f(_a) { var a = _a.a, rest = __rest(_a, ["a"]); return rest; }`).
+    /// Simple/array binding patterns and default-valued parameters instead go
+    /// through the ES2015 transform, whose statements *are* `startOnNewLine`,
+    /// forcing the body multi-line. Mixing the two (any non-object-rest
+    /// transformed parameter, any `...args`, any top-level default) reintroduces
+    /// a `startOnNewLine` statement and so must stay multi-line.
+    pub(in crate::emitter) fn param_prologue_is_object_rest_only(
+        &self,
+        transforms: &ParamTransformPlan,
+    ) -> bool {
+        transforms.rest.is_none()
+            && !transforms.params.is_empty()
+            && transforms.params.iter().all(|param| {
+                param.initializer.is_none()
+                    && param
+                        .pattern
+                        .is_some_and(|pattern| self.binding_target_contains_object_rest(pattern))
+            })
+    }
+
+    /// Emit the object-rest parameter prologue inline (no line breaks) for a
+    /// single-line function body. Each parameter contributes one combined
+    /// `var <assignments>;` statement; multiple object-rest parameters are
+    /// separated by a single space, mirroring `tsc`
+    /// (`var a = _a.a, r1 = __rest(_a, ["a"]); var c = _b.c, r2 = __rest(_b, ["c"]);`).
+    ///
+    /// Returns whether anything was written so the caller can place the single
+    /// separating space before the first body statement. Only valid when
+    /// [`Self::param_prologue_is_object_rest_only`] holds for `transforms`.
+    pub(in crate::emitter) fn emit_param_prologue_inline_es5(
+        &mut self,
+        transforms: &ParamTransformPlan,
+    ) -> bool {
+        let mut wrote_any = false;
+        for param in &transforms.params {
+            let Some(pattern) = param.pattern else {
+                continue;
+            };
+            if wrote_any {
+                self.write(" ");
+            }
+            let mut started = false;
+            self.emit_param_binding_assignments(pattern, &param.name, &mut started);
+            if started {
+                self.write(";");
+                wrote_any = true;
+            }
+        }
+        wrote_any
     }
 
     fn emit_native_param_binding_prologue(

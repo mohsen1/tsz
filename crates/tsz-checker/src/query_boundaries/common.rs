@@ -318,6 +318,12 @@ pub(crate) fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::is_empty_object_type(db, type_id)
 }
 
+/// True for the wide, non-nullable primitive intrinsics (`string`, `number`,
+/// `boolean`, `bigint`, `symbol`) — the ones whose `T & {}` brand is identity.
+pub(crate) fn is_widening_primitive_intrinsic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_widening_primitive_intrinsic(db, type_id)
+}
+
 /// True when a type would render with a user-visible name (interface, class,
 /// type alias, type parameter, application, lazy ref, intrinsic, etc.). False
 /// for anonymous structural shapes like `{ p: number; q: string; }`. Used by

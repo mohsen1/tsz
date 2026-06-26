@@ -22,9 +22,31 @@ impl CheckerState<'_> {
                 self.get_type_from_type_node(arg_idx)
             })
             .collect();
+        // Pad the supplied arguments with each omitted trailing parameter's
+        // resolved default (declaration order, so a later default may reference an
+        // earlier parameter), matching how tsc fills defaults before instantiating.
+        // Without this, a constraint that references an omitted SIBLING parameter —
+        // e.g. `K extends S extends 'wide' ? ... : keyof O` where `S` is defaulted —
+        // keeps the sibling free, so the conditional never reduces and the check is
+        // silently skipped (#14754). `fill_application_defaults` returns the supplied
+        // args verbatim when nothing is omitted, so the all-supplied path is
+        // unchanged. The loop below still iterates the SUPPLIED args, so diagnostics
+        // stay on explicitly-written positions.
+        // Only the under-supplied case allocates a padded vector; when every
+        // parameter has an explicit argument `full_type_args` borrows `type_args`.
+        let padded_type_args = (type_args.len() < type_params.len())
+            .then(|| {
+                crate::query_boundaries::type_defaults::fill_application_defaults(
+                    self.ctx.types.as_type_database(),
+                    &type_args,
+                    type_params,
+                )
+            })
+            .flatten();
+        let full_type_args: &[TypeId] = padded_type_args.as_deref().unwrap_or(&type_args);
         let type_arg_substitutions = type_params
             .iter()
-            .zip(type_args.iter())
+            .zip(full_type_args.iter())
             .map(|(param, &arg)| (param.name, arg))
             .collect::<Vec<_>>();
 
@@ -41,7 +63,7 @@ impl CheckerState<'_> {
         // and therefore every diagnostic — is unchanged. (#13250)
         let type_arg_subst = {
             let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
-            for (param, &arg) in type_params.iter().zip(type_args.iter()) {
+            for (param, &arg) in type_params.iter().zip(full_type_args.iter()) {
                 subst.insert(param.name, arg);
             }
             subst
@@ -311,7 +333,7 @@ impl CheckerState<'_> {
                         type_arg,
                         arg_idx,
                         type_params,
-                        &type_args,
+                        full_type_args,
                         constraint,
                     )
                 {
@@ -543,7 +565,7 @@ impl CheckerState<'_> {
                         base,
                         constraint,
                         type_params,
-                        &type_args,
+                        full_type_args,
                     )
                 {
                     continue;
@@ -627,7 +649,7 @@ impl CheckerState<'_> {
                                             .instantiate_constraint_for_type_args(
                                                 constraint_resolved,
                                                 type_params,
-                                                &type_args,
+                                                full_type_args,
                                             );
                                         if self
                                             .conditional_true_type_parameter_base_satisfies_constraint(
@@ -677,23 +699,11 @@ impl CheckerState<'_> {
                                             .unwrap_or(TypeId::UNKNOWN);
 
                                             // Instantiate for accurate error messages.
-                                            let mut subst =
-                                                crate::query_boundaries::common::TypeSubstitution::new(
-                                                );
-                                            for (j, p) in type_params.iter().enumerate() {
-                                                if let Some(&arg) = type_args.get(j) {
-                                                    subst.insert(p.name, arg);
-                                                }
-                                            }
-                                            let inst_constraint = if subst.is_empty() {
-                                                constraint_resolved
-                                            } else {
-                                                crate::query_boundaries::common::instantiate_type(
-                                                    self.ctx.types,
+                                            let inst_constraint = self
+                                                .instantiate_constraint_with_subst(
                                                     constraint_resolved,
-                                                    &subst,
-                                                )
-                                            };
+                                                    &type_arg_subst,
+                                                );
 
                                             // Concrete constraints are checked here too:
                                             // `unknown` infer bases fail constraints like `string`.
@@ -797,23 +807,11 @@ impl CheckerState<'_> {
                                         // extends type does NOT satisfy the constraint. tsc
                                         // reports TS2344 in this case. Instantiate constraint
                                         // with type args for accurate error messages.
-                                        let mut subst =
-                                            crate::query_boundaries::common::TypeSubstitution::new(
-                                            );
-                                        for (j, p) in type_params.iter().enumerate() {
-                                            if let Some(&arg) = type_args.get(j) {
-                                                subst.insert(p.name, arg);
-                                            }
-                                        }
-                                        let inst_constraint = if subst.is_empty() {
-                                            constraint_resolved
-                                        } else {
-                                            crate::query_boundaries::common::instantiate_type(
-                                                self.ctx.types,
+                                        let inst_constraint = self
+                                            .instantiate_constraint_with_subst(
                                                 constraint_resolved,
-                                                &subst,
-                                            )
-                                        };
+                                                &type_arg_subst,
+                                            );
                                         if let Some(&arg_idx) = type_args_list.nodes.get(i)
                                             && !self
                                                 .type_argument_is_narrowed_by_conditional_true_branch(
@@ -1196,22 +1194,8 @@ impl CheckerState<'_> {
                                 && query::is_infer_type(db, cond_true)
                             {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
-                                let mut subst =
-                                    crate::query_boundaries::common::TypeSubstitution::new();
-                                for (j, p) in type_params.iter().enumerate() {
-                                    if let Some(&arg) = type_args.get(j) {
-                                        subst.insert(p.name, arg);
-                                    }
-                                }
-                                let inst_constraint = if subst.is_empty() {
-                                    constraint_resolved
-                                } else {
-                                    crate::query_boundaries::common::instantiate_type(
-                                        self.ctx.types,
-                                        constraint_resolved,
-                                        &subst,
-                                    )
-                                };
+                                let inst_constraint = self
+                                    .instantiate_constraint_with_subst(constraint_resolved, &type_arg_subst);
                                 let infer_base =
                                     query::get_type_parameter_constraint(db, cond_true)
                                         .unwrap_or(TypeId::UNKNOWN);
@@ -1362,7 +1346,7 @@ impl CheckerState<'_> {
                             type_arg,
                             constraint,
                             type_params,
-                            &type_args,
+                            full_type_args,
                         )
                     {
                         continue;
@@ -1483,22 +1467,10 @@ impl CheckerState<'_> {
                             }
 
                             let constraint_resolved = self.resolve_lazy_type(constraint);
-                            let mut subst =
-                                crate::query_boundaries::common::TypeSubstitution::new();
-                            for (j, p) in type_params.iter().enumerate() {
-                                if let Some(&arg) = type_args.get(j) {
-                                    subst.insert(p.name, arg);
-                                }
-                            }
-                            let inst_constraint = if subst.is_empty() {
-                                constraint_resolved
-                            } else {
-                                crate::query_boundaries::common::instantiate_type(
-                                    self.ctx.types,
-                                    constraint_resolved,
-                                    &subst,
-                                )
-                            };
+                            let inst_constraint = self.instantiate_constraint_with_subst(
+                                constraint_resolved,
+                                &type_arg_subst,
+                            );
                             // Skip trivial constraints (unknown/any) and bare type
                             // parameter constraints (deferred to instantiation).
                             let is_checkable = inst_constraint != TypeId::UNKNOWN
@@ -1715,7 +1687,7 @@ impl CheckerState<'_> {
 
                 let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
-                    if let Some(&arg) = type_args.get(j) {
+                    if let Some(&arg) = full_type_args.get(j) {
                         let evaluated_arg = self.evaluate_type_with_env(arg);
                         subst.insert(p.name, evaluated_arg);
                     }
@@ -1731,7 +1703,10 @@ impl CheckerState<'_> {
                 };
                 let mut display_subst = query_common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
-                    if let Some(&arg) = type_args.get(j) {
+                    if let Some(&arg) = full_type_args.get(j) {
+                        // Supplied positions keep their written reference form; an
+                        // omitted (defaulted) sibling has no argument node, so its
+                        // resolved default type is rendered directly.
                         let arg_node = type_args_list.nodes.get(j).copied();
                         display_subst.insert(p.name, self.type_arg_reference_form(arg, arg_node));
                     }

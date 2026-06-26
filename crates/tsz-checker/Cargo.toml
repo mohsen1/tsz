@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "sibling_defaulted_conditional_constraint_tests"
+path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
+[[test]]
 name = "cannot_find_name_lib_hint_parity_tests"
 path = "tests/cannot_find_name_lib_hint_parity_tests.rs"
 [[test]]
@@ -62,6 +65,9 @@ path = "tests/object_literal_unique_symbol_member_tests.rs"
 [[test]]
 name = "unique_symbol_grammar_tests"
 path = "tests/unique_symbol_grammar_tests.rs"
+[[test]]
+name = "type_operator_missing_operand_recovery_tests"
+path = "tests/type_operator_missing_operand_recovery_tests.rs"
 [[test]]
 name = "top_level_await_grammar_diagnostics_tests"
 path = "tests/top_level_await_grammar_diagnostics_tests.rs"
@@ -421,6 +427,9 @@ path = "tests/await_call_identifier_diagnostics_tests.rs"
 [[test]]
 name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
+[[test]]
+name = "await_structural_thenable_object_literal_tests"
+path = "tests/await_structural_thenable_object_literal_tests.rs"
 [[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
@@ -838,6 +847,9 @@ path = "tests/ts1203_node_esm_tests.rs"
 [[test]]
 name = "node_esm_default_import_export_equals_callable_tests"
 path = "tests/node_esm_default_import_export_equals_callable_tests.rs"
+[[test]]
+name = "export_equals_default_import_interop_ts1259_tests"
+path = "tests/export_equals_default_import_interop_ts1259_tests.rs"
 [[test]]
 name = "ts1254_ambient_const_tests"
 path = "tests/ts1254_ambient_const_tests.rs"
