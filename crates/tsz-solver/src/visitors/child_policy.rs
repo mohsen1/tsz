@@ -151,10 +151,25 @@ impl ChildPolicy {
     /// that merely *contains* such a method (e.g. a self-referential class
     /// `Box<T>` whose branch re-includes `m`) would be classified as carrying a
     /// live inference placeholder, wrongly suppressing real `TS2322`/`TS2345`.
+    ///
+    /// `deferred_operations: false` extends the same reasoning to the operands of
+    /// deferred type-level operations. A `TypeData::Infer` node is only ever
+    /// *declared* in a conditional's `extends` clause (`T extends Foo<infer V> ?
+    /// …`), so every `Infer` reachable through a conditional/mapped/indexed/keyof
+    /// operand is bound by that operation — it is part of a stable deferred type
+    /// (for example the declared return type of a method or arrow-typed property),
+    /// not a transient inference placeholder leaked mid-call. Descending into
+    /// those operands made `contains_free_infer_types` report a class instance
+    /// like `Container<string>` as holding a free `infer` merely because the class
+    /// declares such a member, which then suppressed the real `TS2322`/`TS2345`
+    /// for assigning it to a different instantiation of the same constructor
+    /// (issue #14784). A genuinely free (root or directly-structural) `Infer` is
+    /// still a leaf match and stays detected.
     pub const FREE_INFER: Self = Self {
         type_param_constraint: false,
         type_param_default: false,
         skip_generic_signature_bodies: true,
+        deferred_operations: false,
         ..Self::CONTENT_PREDICATE
     };
 

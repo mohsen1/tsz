@@ -726,6 +726,42 @@ mod tests {
         assert!(contains_infer_types(&interner, wrapper));
     }
 
+    /// `contains_free_infer_types` must not treat an `infer` declared inside a
+    /// conditional's `extends` clause as a live inference variable: it is bound
+    /// by that conditional and is part of a stable deferred type (e.g. the
+    /// declared return type of a method). Counting it made `Box<string>`
+    /// (whose method `m` returns `U extends Promise<infer V> ? …`) look like it
+    /// held a transient inference placeholder, suppressing real `TS2322`/`TS2345`
+    /// diagnostics. A bare/root `infer` stays free.
+    #[test]
+    fn free_infer_policy_skips_conditional_bound_infer() {
+        use crate::types::ConditionalType;
+        let interner = TypeInterner::new();
+        let v_name = interner.intern_string("V");
+        let t_name = interner.intern_string("T");
+        let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+
+        // `T extends infer V ? 1 : 2` — `infer V` is bound by the conditional.
+        let cond = interner.conditional(ConditionalType {
+            check_type: t_param,
+            extends_type: infer_v,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::NUMBER,
+            is_distributive: false,
+        });
+        let wrapper = interner.readonly_type(cond);
+
+        assert!(
+            !contains_free_infer_types(&interner, wrapper),
+            "an `infer` bound by a conditional must not count as a free infer"
+        );
+        // The generic deep walk still sees the structural `infer` node.
+        assert!(contains_infer_types(&interner, wrapper));
+        // A bare `infer` is still free.
+        assert!(contains_free_infer_types(&interner, infer_v));
+    }
+
     /// Free-type-parameter checks skip the bodies of generic signatures (their
     /// parameters are bound), but still see free parameters in non-generic
     /// signature bodies.

@@ -1205,6 +1205,50 @@ function f3<Q extends (arg: any) => any>(x: Q): InferBecauseWhyNot<Q> {
     );
 }
 
+/// A generic method whose conditional return type contains an `infer` and
+/// references the enclosing generic class as a branch is left as an unreduced,
+/// concrete-check deferred conditional after the call (`U` inferred to
+/// `string`). The dangling `infer` must not silence the real mismatch when the
+/// result is assigned to a *different* instantiation of the same constructor:
+/// `Container<string>` is not assignable to `Container<number>` (issue #14784).
+///
+/// Binder names are deliberately non-`Box` and the method/parameter names vary
+/// so the fix cannot be a name-driven special case.
+#[test]
+fn generic_method_conditional_infer_return_reports_same_constructor_mismatch() {
+    let diagnostics = diagnostics_for(
+        r#"
+class Container<Held> {
+    stored!: Held;
+    wrap<Produced>(make: (h: Held) => Produced):
+        Produced extends Promise<infer Awaited> ? Container<never> : Container<Produced> {
+        return null as any;
+    }
+}
+declare const numbers: Container<number>;
+const produced = numbers.wrap(h => h.toString());   // Produced = string
+const reused: Container<number> = produced;          // TS2322: string vs number
+const asString: string = produced;                   // TS2322: Container<string> vs string
+"#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text.contains("Container<string>")
+                && d.message_text.contains("Container<number>")),
+        "expected TS2322 for assigning Container<string> to Container<number>, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|d| d.message_text.contains("'string'")),
+        "expected TS2322 for assigning Container<string> to string, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn generic_call_with_this_indexed_conditional_parameter_reports_ts2345() {
     let diagnostics = diagnostics_for(
