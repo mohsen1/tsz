@@ -301,3 +301,72 @@ fn class_readonly_fresh_literal_stays_inline() {
     assert!(dts.contains("readonly p = \"plain\";"), "{dts}");
     assert!(dts.contains("q: string;"), "{dts}");
 }
+
+// =============================================================================
+// A *mutable* class field with a const assertion: the assertion strips the
+// literal's freshness, so the field's declared type is the literal (it does not
+// widen). tsc emits the `: T` literal annotation, identical to the readonly
+// case. A plain mutable literal still widens, and `satisfies` keeps freshness.
+// =============================================================================
+
+#[test]
+fn class_field_as_const_emits_literal_annotation() {
+    // A mutable field with a primitive `as const`/`<const>` initializer keeps the
+    // literal type; a widening cast uses the asserted type; `satisfies` and plain
+    // literals stay inline / widen as before.
+    let dts = dts_or_skip!(
+        "class_mut_as_const",
+        "export class Box {\n    mutStr = \"hi\" as const;\n    mutNum = 5 as const;\n    mutBool = true as const;\n    mutNeg = -5 as const;\n    mutBig = 10n as const;\n    mutAngle = <const>\"ang\";\n    mutParen = (\"hi\" as const);\n    mutWiden = 5 as number;\n    mutSatisfies = \"ok\" satisfies string;\n    mutPlain = \"lit\";\n    readonly roStr = \"hi\" as const;\n}\n"
+    );
+    assert!(dts.contains("mutStr: \"hi\";"), "{dts}");
+    assert!(dts.contains("mutNum: 5;"), "{dts}");
+    assert!(dts.contains("mutBool: true;"), "{dts}");
+    assert!(dts.contains("mutNeg: -5;"), "{dts}");
+    assert!(dts.contains("mutBig: 10n;"), "{dts}");
+    assert!(dts.contains("mutAngle: \"ang\";"), "{dts}");
+    assert!(dts.contains("mutParen: \"hi\";"), "{dts}");
+    assert!(dts.contains("mutWiden: number;"), "{dts}");
+    assert!(dts.contains("mutSatisfies: string;"), "{dts}");
+    assert!(dts.contains("mutPlain: string;"), "{dts}");
+    assert!(dts.contains("readonly roStr: \"hi\";"), "{dts}");
+}
+
+#[test]
+fn class_field_object_array_as_const_keep_inferred_form() {
+    // Object/array `as const` on a *mutable* field go through the inferred-type
+    // path (`{ readonly ... }` / `readonly [...]`), exactly like readonly fields;
+    // the mutable-literal generalisation must not regress them.
+    let dts = dts_or_skip!(
+        "class_mut_obj_arr",
+        "export class C {\n    mutObj = { x: 1 } as const;\n    mutArr = [1, 2] as const;\n}\n"
+    );
+    assert!(dts.contains("readonly x: 1;"), "{dts}");
+    assert!(dts.contains("mutArr: readonly [1, 2];"), "{dts}");
+}
+
+// =============================================================================
+// An explicit type annotation always wins over the initializer's assertion.
+// =============================================================================
+
+#[test]
+fn explicit_annotation_wins_over_const_assertion() {
+    let dts = dts_or_skip!(
+        "explicit_annotation",
+        "export const total: number = 5 as const;\n"
+    );
+    assert!(dts.contains("export declare const total: number;"), "{dts}");
+}
+
+// =============================================================================
+// An exported generic identity call preserves the `as const` argument literal
+// in the inferred result type.
+// =============================================================================
+
+#[test]
+fn exported_generic_call_of_as_const_arg_keeps_literal() {
+    let dts = dts_or_skip!(
+        "generic_call_as_const",
+        "export function id<T>(value: T) {\n    return value;\n}\nexport const got = id(\"ok\" as const);\n"
+    );
+    assert!(dts.contains("export declare const got: \"ok\";"), "{dts}");
+}
