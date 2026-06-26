@@ -1640,6 +1640,7 @@ impl TypeInterner {
         // Sort by property name for consistent hashing
         properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
+            base_types: Vec::new(),
             flags,
             properties,
             string_index: None,
@@ -1667,6 +1668,7 @@ impl TypeInterner {
         // Sort by property name for consistent hashing
         properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
+            base_types: Vec::new(),
             flags,
             properties,
             string_index: None,

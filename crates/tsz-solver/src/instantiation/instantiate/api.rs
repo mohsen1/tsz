@@ -420,6 +420,7 @@ fn alpha_canonicalize_type(
             }
 
             let shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: shape.flags,
                 properties,
                 string_index,
@@ -682,6 +683,7 @@ fn restore_alpha_type(
                 return Some(type_id);
             }
             let shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: shape.flags,
                 properties,
                 string_index,

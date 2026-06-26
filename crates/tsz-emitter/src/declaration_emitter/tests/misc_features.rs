@@ -1552,6 +1552,7 @@ fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),

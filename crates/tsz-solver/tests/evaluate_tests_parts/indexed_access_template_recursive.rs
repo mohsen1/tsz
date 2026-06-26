@@ -629,6 +629,7 @@ fn test_indexed_access_string_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -654,6 +655,7 @@ fn test_indexed_access_number_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -679,6 +681,7 @@ fn test_indexed_access_property_overrides_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

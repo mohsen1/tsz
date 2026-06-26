@@ -429,6 +429,20 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     let shape = self.interner.object_shape(shape_id);
                     self.merge_shape(&shape);
+                    // Lazy heritage (`TSZ_LAZY_HERITAGE`): inherited members live
+                    // in `base_types` rather than flattened into `properties`.
+                    // Walk each base and add its members with OVERRIDE semantics
+                    // (own / earlier-base members win; a base only fills names not
+                    // already present) — heritage SHADOWS, it does not intersect
+                    // like `merge_shape`. `base_types` is empty for every shape
+                    // outside the lazy-heritage model, so this is inert (and
+                    // byte-identical) in the flattened model.
+                    if !shape.base_types.is_empty() {
+                        let bases = shape.base_types.clone();
+                        for base in bases {
+                            self.merge_base_members(base);
+                        }
+                    }
                 }
                 Some(TypeData::Mapped(mapped_id)) => {
                     // A deferred mapped type whose key constraint references
@@ -602,6 +616,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         }
 
         let shape = ObjectShape {
+            base_types: Vec::new(),
             flags: crate::types::ObjectFlags::empty(),
             properties,
             string_index: None,
@@ -797,6 +812,52 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         merge(&mut self.string_index, shape.string_index.as_ref());
         merge(&mut self.number_index, shape.number_index.as_ref());
         merge(&mut self.symbol_index, shape.symbol_index.as_ref());
+    }
+
+    /// Merge a lazy-heritage base's full member surface into this collection with
+    /// HERITAGE OVERRIDE semantics — the dual of [`Self::merge_shape`]'s
+    /// intersection: members already present (own members, or an earlier base)
+    /// win, and a base contributes only names not yet seen. The base's own
+    /// members AND its transitive bases are gathered by recursing through
+    /// [`collect_properties_cached`] (which itself walks the base's `base_types`
+    /// and resolves a `Lazy(DefId)` base on demand), so one call resolves the
+    /// base's entire inherited surface; the shared collector stack owns
+    /// cycle/partial-closure truncation. Index signatures are inherited only
+    /// where this collection lacks the corresponding slot.
+    fn merge_base_members(&mut self, base: TypeId) {
+        // Copy the borrowed inputs out so the `&mut self` field mutations below
+        // do not conflict with the immutable collector references.
+        let interner = self.interner;
+        let resolver = self.resolver;
+        let query_db = self.query_db;
+        let PropertyCollectionResult::Properties {
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+        } = collect_properties_cached(base, interner, resolver, query_db)
+        else {
+            // `Any` / `NonObject` bases contribute no structural members here.
+            return;
+        };
+        for prop in properties {
+            // Override: own / earlier-base members win.
+            if !self.prop_index.contains_key(&prop.name) {
+                let new_idx = self.properties.len();
+                self.prop_index.insert(prop.name, new_idx);
+                self.properties.push(prop);
+            }
+        }
+        // Inherit an index signature only when the derived surface lacks it.
+        if self.string_index.is_none() {
+            self.string_index = string_index;
+        }
+        if self.number_index.is_none() {
+            self.number_index = number_index;
+        }
+        if self.symbol_index.is_none() {
+            self.symbol_index = symbol_index;
+        }
     }
 }
 

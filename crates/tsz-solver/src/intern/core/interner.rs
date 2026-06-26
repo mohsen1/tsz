@@ -1059,6 +1059,7 @@ impl TypeInterner {
             static EMPTY_SHAPE: OnceLock<Arc<ObjectShape>> = OnceLock::new();
             Arc::clone(EMPTY_SHAPE.get_or_init(|| {
                 Arc::new(ObjectShape {
+                    base_types: Vec::new(),
                     flags: ObjectFlags::empty(),
                     properties: Vec::new(),
                     string_index: None,

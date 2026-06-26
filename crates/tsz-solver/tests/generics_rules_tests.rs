@@ -67,6 +67,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1453,6 +1454,7 @@ fn test_t_subtype_of_partial_t_with_constraint() {
 
     // Create a constraint type (e.g., { [key: string]: number })
     let constraint_obj = interner.object_with_index(crate::ObjectShape {
+        base_types: Vec::new(),
         flags: Default::default(),
         properties: vec![],
         string_index: Some(crate::IndexSignature {

@@ -109,6 +109,24 @@ pub(crate) fn on_demand_forcing_disabled() -> bool {
     })
 }
 
+/// Opt-IN switch for the lazy-heritage `ObjectShape::base_types` model: when set,
+/// `interface Derived extends Base` records the (instantiated) base `TypeId` in
+/// the derived `ObjectShape`'s `base_types` — inherited members resolve per-member
+/// on demand by walking those bases in `collect_properties` — instead of eagerly
+/// flattening the base's whole heritage closure into `properties`. This dissolves
+/// the full-closure materialization (and the `REFS_RESOLUTION_FUEL` cap bounding
+/// it). OFF by default during migration so the flattened model stays the shipping
+/// behavior and flag-off is byte-identical; `TSZ_LAZY_HERITAGE=1` enables the new
+/// model for A/B verification.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_heritage_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED
+        .get_or_init(|| std::env::var("TSZ_LAZY_HERITAGE").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// Kill-switch for the type-position lazy lib-interface lowering (#13933): when
 /// a bare (no-type-argument) type reference resolves to a force-eligible
 /// non-generic lib interface, the resolver returns a `Lazy(DefId)` instead of

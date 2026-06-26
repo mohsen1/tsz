@@ -1191,6 +1191,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1270,6 +1271,7 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1553,6 +1555,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
     // { [s: string]: T }
     let s_name = interner.intern_string("s");
     let str_index_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1568,6 +1571,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
     // Simulate ArrayLike<T>: { readonly length: number; readonly [n: number]: T }
     let n_name = interner.intern_string("n");
     let array_like_t = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1762,6 +1766,7 @@ fn test_any_arg_index_sig_t_infers_unknown() {
         origin: crate::types::TypeParamOrigin::User,
     }));
     let param_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

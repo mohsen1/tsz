@@ -634,6 +634,7 @@ fn test_recursive_type_json_value() {
 
     // Create { [key: string]: JsonValue } index signature object
     let json_object = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -719,6 +720,7 @@ fn test_recursive_type_dom_node() {
 
     // Create Record<string, string> for attributes
     let attrs_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

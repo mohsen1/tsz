@@ -579,6 +579,7 @@ fn test_object_shape_extractors() {
     assert!(object_with_index_shape_id(&interner, obj).is_none());
 
     let obj_with_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

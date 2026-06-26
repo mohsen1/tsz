@@ -694,6 +694,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         param_name: None,
     };
     let with_props = db.object_with_index(crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![
             PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
             PropertyInfo::new(db.intern_string("b"), TypeId::NUMBER),
@@ -705,6 +706,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         flags: Default::default(),
     });
     let index_only = db.object_with_index(crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: None,
         number_index: Some(index_sig),
@@ -985,6 +987,7 @@ fn format_object_with_string_index_signature() {
     let mut fmt = TypeFormatter::new(&db);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: Some(crate::types::IndexSignature {
             key_type: TypeId::STRING,
@@ -1011,6 +1014,7 @@ fn format_object_with_index_hides_duplicate_internal_default_alias() {
     let mut fmt = TypeFormatter::new(&db);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![
             PropertyInfo::new(db.intern_string("default"), TypeId::NUMBER),
             PropertyInfo::new(db.intern_string("_default"), TypeId::NUMBER),
@@ -1049,6 +1053,7 @@ fn format_object_with_number_index_signature() {
     let mut fmt = TypeFormatter::new(&db);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: None,
         number_index: Some(crate::types::IndexSignature {
@@ -1075,6 +1080,7 @@ fn format_object_with_readonly_number_index_signature() {
     let mut fmt = TypeFormatter::new(&db);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: None,
         number_index: Some(crate::types::IndexSignature {
@@ -1101,6 +1107,7 @@ fn format_object_with_readonly_string_index_signature() {
     let mut fmt = TypeFormatter::new(&db);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: Some(crate::types::IndexSignature {
             key_type: TypeId::STRING,
@@ -1130,6 +1137,7 @@ fn format_object_with_symbol_index_signature() {
     // The printer must display `symbol` (not `string`) as the key type.
     for param_name in [None, Some("key"), Some("sym")] {
         let shape = crate::types::ObjectShape {
+            base_types: Vec::new(),
             properties: vec![],
             string_index: Some(crate::types::IndexSignature {
                 key_type: TypeId::SYMBOL,
@@ -1174,6 +1182,7 @@ fn format_object_with_index_many_properties_truncated() {
     props.push(tail);
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: props,
         string_index: None,
         number_index: Some(crate::types::IndexSignature {
@@ -1220,6 +1229,7 @@ fn format_object_with_index_truncation_skips_omitted_property_formatting() {
         .collect();
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: props,
         string_index: None,
         number_index: Some(crate::types::IndexSignature {
@@ -1270,6 +1280,7 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
     props.push(PropertyInfo::new(db.intern_string("flat"), TypeId::NUMBER));
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: props,
         string_index: None,
         number_index: Some(crate::types::IndexSignature {
@@ -1307,6 +1318,7 @@ fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
     // The `key_type` field stores TypeId::SYMBOL; the formatter must use it
     // rather than hardcoding "string" based on the storage slot name.
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: Some(crate::types::IndexSignature {
             key_type: TypeId::SYMBOL,
@@ -1350,6 +1362,7 @@ fn format_array_like_object_with_index_expands_to_locale_string_overload_display
     unscopables.readonly = true;
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties: vec![
             PropertyInfo::new(db.intern_string("toString"), method),
             PropertyInfo::new(db.intern_string("toLocaleString"), method),
@@ -1402,6 +1415,7 @@ fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() 
     properties.push(PropertyInfo::new(db.intern_string("reduceRight"), method));
 
     let shape = crate::types::ObjectShape {
+        base_types: Vec::new(),
         properties,
         string_index: None,
         number_index: Some(crate::types::IndexSignature {

@@ -111,6 +111,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
             });
         }
 
+        // Lazy heritage (`TSZ_LAZY_HERITAGE`): an inherited member is resolved
+        // per-name through `base_types` (own members already checked above). This
+        // is the find-member fast path — it resolves only the requested member by
+        // walking bases, never materializing the full inherited surface. An
+        // inherited NAMED member shadows the derived's own index signatures and
+        // Object.prototype apparent members, so the walk runs before both. A
+        // `Lazy` / `Application` base resolves through the recursive entry.
+        // `base_types` is empty outside the lazy-heritage model, so this is inert
+        // (byte-identical) under the flattened model.
+        for &base in &shape.base_types {
+            let inherited = self.resolve_property_access_inner(base, prop_atom);
+            if !matches!(inherited, PropertyAccessResult::PropertyNotFound { .. }) {
+                return Some(inherited);
+            }
+        }
+
         // Miss path: resolve the string form once for the leaf checks below.
         let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
         let prop_name = prop_name_arc.as_ref();
@@ -192,6 +208,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 write_type: write,
                 from_index_signature: false,
             });
+        }
+
+        // Lazy heritage (`TSZ_LAZY_HERITAGE`): an inherited member is resolved
+        // per-name through `base_types` (own members already checked above). This
+        // is the find-member fast path — it resolves only the requested member by
+        // walking bases, never materializing the full inherited surface. An
+        // inherited NAMED member shadows the derived's own index signatures and
+        // Object.prototype apparent members, so the walk runs before both. A
+        // `Lazy` / `Application` base resolves through the recursive entry.
+        // `base_types` is empty outside the lazy-heritage model, so this is inert
+        // (byte-identical) under the flattened model.
+        for &base in &shape.base_types {
+            let inherited = self.resolve_property_access_inner(base, prop_atom);
+            if !matches!(inherited, PropertyAccessResult::PropertyNotFound { .. }) {
+                return Some(inherited);
+            }
         }
 
         // Miss path: resolve the string form once for the leaf checks below.

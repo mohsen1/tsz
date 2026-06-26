@@ -169,6 +169,7 @@ fn class_decl_object_returns_object_shape() {
 fn class_decl_object_with_index_returns_object_shape_via_shared_arm() {
     let interner = TypeInterner::new();
     let owi = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -656,6 +657,7 @@ fn base_instance_merge_object_returns_object_shape() {
 fn base_instance_merge_object_with_index_shares_object_arm() {
     let interner = TypeInterner::new();
     let owi = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {

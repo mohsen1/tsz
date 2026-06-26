@@ -993,6 +993,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 flags |= ObjectFlags::SYMBOL_INDEX_OPTIONAL;
             }
             self.interner().object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags,
                 properties,
                 string_index,

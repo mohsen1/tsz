@@ -282,6 +282,7 @@ impl<'a> InferSubstitutor<'a> {
                 });
                 if changed {
                     self.interner.object_with_index(ObjectShape {
+                        base_types: Vec::new(),
                         flags: shape.flags,
                         properties,
                         string_index,

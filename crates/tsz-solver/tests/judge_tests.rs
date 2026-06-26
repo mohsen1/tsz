@@ -1500,6 +1500,7 @@ fn test_get_property_string_index_signature() {
     let judge = setup.judge();
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1663,6 +1664,7 @@ fn test_object_with_string_index_is_subtype() {
 
     // { [key: string]: number } should accept any object with compatible properties
     let indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1711,6 +1713,7 @@ fn test_function_is_not_subtype_of_number_index_target() {
     });
 
     let number_indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

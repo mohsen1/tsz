@@ -58,6 +58,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let value_type = mapped.template;
             let readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
             return Some(self.interner.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: Vec::new(),
                 string_index: Some(IndexSignature {

@@ -177,6 +177,10 @@ impl PartialEq for ObjectShape {
             number_index,
             symbol_index,
             symbol,
+            // Identity-bearing: heritage bases distinguish two shapes with
+            // identical own members but different `extends` lists. Empty for
+            // every non-lazy-heritage shape, so flag-off interning is unchanged.
+            base_types,
         } = self;
         *flags == other.flags
             && *properties == other.properties
@@ -189,6 +193,7 @@ impl PartialEq for ObjectShape {
             && index_signature_display_eq(number_index, &other.number_index)
             && index_signature_display_eq(symbol_index, &other.symbol_index)
             && *symbol == other.symbol
+            && *base_types == other.base_types
     }
 }
 
@@ -205,6 +210,7 @@ impl std::hash::Hash for ObjectShape {
             number_index,
             symbol_index,
             symbol,
+            base_types,
         } = self;
         flags.hash(state);
         properties.hash(state);
@@ -217,6 +223,9 @@ impl std::hash::Hash for ObjectShape {
         hash_index_signature_display(number_index, state);
         hash_index_signature_display(symbol_index, state);
         symbol.hash(state);
+        // Empty for non-lazy-heritage shapes -> contributes nothing -> flag-off
+        // hashes are byte-identical to pre-base_types.
+        base_types.hash(state);
     }
 }
 

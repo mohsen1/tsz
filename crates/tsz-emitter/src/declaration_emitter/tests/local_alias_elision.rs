@@ -168,6 +168,7 @@ fn property_named_like_alias_is_untouched() {
     let app = interner.application(interner.lazy(def_id), vec![TypeId::NUMBER]);
     let prop_name = interner.intern_string("Wrapped");
     let object = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::new(prop_name, app)],
         string_index: None,
@@ -196,6 +197,7 @@ fn bare_reference_to_collected_alias_prints_elided_any() {
     let app = interner.application(interner.lazy(def_id), vec![TypeId::NUMBER]);
     let prop_name = interner.intern_string("inner");
     let object = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::new(prop_name, interner.lazy(def_id))],
         string_index: None,

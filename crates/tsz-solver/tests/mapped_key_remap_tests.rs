@@ -1072,6 +1072,7 @@ fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
     let interner = TypeInterner::new();
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -1122,6 +1123,7 @@ fn test_keyof_string_indexed_object_preserves_unique_symbol_property() {
     let sym_ref = crate::SymbolRef(77);
     let sym_name = interner.intern_string("__unique_77");
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),
@@ -1168,6 +1170,7 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
     let sym_ref = crate::SymbolRef(91);
     let sym_name = interner.intern_string("__unique_91");
     let concrete_source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),

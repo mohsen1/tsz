@@ -134,6 +134,7 @@ fn test_explain_object_to_tuple_missing_property() {
     let prop0 = PropertyInfo::new(interner.intern_string("0"), TypeId::STRING);
     let prop1 = PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER);
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         properties: vec![prop0, prop1],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,

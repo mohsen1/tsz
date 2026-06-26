@@ -231,6 +231,7 @@ fn test_interface_with_string_index() {
     let interner = TypeInterner::new();
 
     let interface = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -260,6 +261,7 @@ fn test_interface_with_number_index() {
     let interner = TypeInterner::new();
 
     let interface = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

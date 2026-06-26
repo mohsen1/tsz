@@ -839,6 +839,7 @@ fn test_keyof_union_index_signature_contravariant() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -852,6 +853,7 @@ fn test_keyof_union_index_signature_contravariant() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -878,6 +880,7 @@ fn test_keyof_union_string_index_and_literal_narrows() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1181,6 +1184,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
     });
 
     let number_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1194,6 +1198,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

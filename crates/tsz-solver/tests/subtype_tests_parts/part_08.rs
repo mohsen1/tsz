@@ -203,6 +203,7 @@ fn test_interface_vs_type_alias_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let interface_i = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -217,6 +218,7 @@ fn test_interface_vs_type_alias_index_signature() {
     });
 
     let type_t = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1570,6 +1572,7 @@ fn test_index_signature_string_to_string() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1584,6 +1587,7 @@ fn test_index_signature_string_to_string() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1607,6 +1611,7 @@ fn test_index_signature_number_to_number() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1621,6 +1626,7 @@ fn test_index_signature_number_to_number() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1649,6 +1655,7 @@ fn test_index_signature_covariant_value_type() {
     ]);
 
     let obj_specific = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1663,6 +1670,7 @@ fn test_index_signature_covariant_value_type() {
     });
 
     let obj_general = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1687,6 +1695,7 @@ fn test_index_signature_both_string_and_number() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_both = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1706,6 +1715,7 @@ fn test_index_signature_both_string_and_number() {
     });
 
     let obj_string_only = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1731,6 +1741,7 @@ fn test_index_signature_number_subtype_of_string() {
     let _checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1760,6 +1771,7 @@ fn test_index_signature_intersection_combines() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1774,6 +1786,7 @@ fn test_index_signature_intersection_combines() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

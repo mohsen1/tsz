@@ -1191,6 +1191,7 @@ pub(crate) fn get_merged_object_shape_for_type(
     merged_props.sort_by_key(|p| p.declaration_order);
 
     Some(ObjectShape {
+        base_types: Vec::new(),
         flags: base_shape.flags,
         properties: merged_props,
         string_index: if has_string_index {

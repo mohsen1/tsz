@@ -446,6 +446,7 @@ type Bar = Foo & {
     let interner = TypeInterner::new();
     let bar_def = tsz_solver::DefId(94_501);
     let foo_surface = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -454,6 +455,7 @@ type Bar = Foo & {
         symbol: None,
     });
     let bar_surface = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -541,6 +543,7 @@ type Bar = {
     let unrelated_def = tsz_solver::DefId(94_500);
     let bar_def = tsz_solver::DefId(94_501);
     let shared_surface = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,

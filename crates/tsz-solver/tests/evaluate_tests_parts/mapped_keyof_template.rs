@@ -247,6 +247,7 @@ fn test_keyof_intersection_both_index_signatures() {
     let interner = TypeInterner::new();
 
     let string_indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -261,6 +262,7 @@ fn test_keyof_intersection_both_index_signatures() {
     });
 
     let number_indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -288,6 +290,7 @@ fn test_keyof_union_index_and_literal() {
     let interner = TypeInterner::new();
 
     let string_indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

@@ -1370,6 +1370,20 @@ pub struct ObjectShape {
     pub symbol_index: Option<IndexSignature>,
     /// Nominal identity for class instance types (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
+    /// Lazy heritage bases (`interface Derived extends Base, ...`). EMPTY for
+    /// every shape except an interface materialized under the lazy-heritage
+    /// model (`TSZ_LAZY_HERITAGE`): rather than flattening a base's members into
+    /// `properties`, the base's `TypeId` is recorded here and inherited members
+    /// are resolved on demand by walking `base_types` in property collection
+    /// (own members override base members by name). A base entry may be an
+    /// `Object`/`ObjectWithIndex` (resolved base), an `Application` (instantiated
+    /// generic base `Base<Args>`), or a `Lazy(DefId)` (demand-driven, unresolved
+    /// base) — so it is a `TypeId`, not a raw `ObjectShapeId`. This makes a
+    /// derived shape own-members-only and shared bases interned once, dissolving
+    /// the eager full-closure flatten (and the `REFS_RESOLUTION_FUEL` cap that
+    /// bounded it). Identity-bearing: two shapes with identical own members but
+    /// different bases are distinct types (see `shape_identity.rs`).
+    pub base_types: Vec<TypeId>,
 }
 
 impl ObjectShape {

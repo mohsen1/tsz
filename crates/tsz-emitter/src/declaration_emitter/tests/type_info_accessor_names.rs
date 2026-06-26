@@ -24,6 +24,7 @@ function makeThing() {
     let mut other = PropertyInfo::new(interner.intern_string("other"), TypeId::STRING);
     other.write_type = TypeId::NUMBER;
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![value, other],
         string_index: None,

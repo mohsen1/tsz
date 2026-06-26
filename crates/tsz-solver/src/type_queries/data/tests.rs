@@ -562,6 +562,7 @@ fn test_get_object_symbol() {
 
     // Object with symbol — use object_with_index to comply with intern quarantine
     let obj_with_sym = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),

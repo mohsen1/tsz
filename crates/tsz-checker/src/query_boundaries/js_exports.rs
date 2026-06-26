@@ -198,6 +198,7 @@ impl JsExportSurface {
             Self::normalize_property_declaration_order(&mut merged_props);
 
             let merged_shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: shape.flags,
                 properties: merged_props,
                 string_index: shape.string_index,

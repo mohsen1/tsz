@@ -275,6 +275,7 @@ fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
     let key_name = interner.intern_string("dynamic");
 
     let record_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -1709,6 +1710,7 @@ fn test_narrow_by_typeof_object_with_index_signature() {
     let interner = TypeInterner::new();
 
     let record_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {

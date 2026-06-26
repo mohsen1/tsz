@@ -1137,6 +1137,7 @@ export default new Enhanced();
 
     let interner = TypeInterner::new();
     let c_instance = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         properties: Vec::new(),
         string_index: None,
         number_index: None,
@@ -1241,6 +1242,7 @@ const value = new Mixed();
 
     let interner = TypeInterner::new();
     let instance = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         properties: Vec::new(),
         string_index: None,
         number_index: None,
@@ -1338,6 +1340,7 @@ export const o = (p1: typeof nImported, p2: typeof nNotImported, p3: typeof nPri
 
     let interner = TypeInterner::new();
     let return_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING),

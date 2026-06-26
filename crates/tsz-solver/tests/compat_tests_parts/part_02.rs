@@ -633,6 +633,7 @@ fn test_compiler_options_independent_toggles() {
 
     // Toggle no_unchecked_indexed_access
     let indexed = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

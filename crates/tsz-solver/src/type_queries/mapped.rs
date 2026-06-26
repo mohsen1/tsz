@@ -1076,6 +1076,7 @@ pub fn evaluate_identity_mapped_passthrough(
         if arg == TypeId::ANY {
             use crate::types::{IndexSignature, ObjectShape};
             return Some(db.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: crate::types::ObjectFlags::empty(),
                 properties: vec![],
                 string_index: Some(IndexSignature {

@@ -1323,6 +1323,7 @@ fn canonicalize_object_with_index_signature() {
 
     use crate::types::{IndexSignature, ObjectShape};
     let shape = ObjectShape {
+        base_types: Vec::new(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2140,6 +2141,7 @@ fn canonicalize_index_signature_key_name_alpha_equivalent() {
     // `{ [<key>: string]: number }` — only the cosmetic key name varies.
     let make = |key_name: &str| {
         interner.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             properties: vec![],
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,
@@ -2173,6 +2175,7 @@ fn canonicalize_index_signature_readonly_and_value_stay_distinct() {
 
     let make = |value: TypeId, readonly: bool| {
         interner.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             properties: vec![],
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,

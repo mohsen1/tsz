@@ -619,6 +619,7 @@ fn async_iterable_object_with_index_returns_object_shape() {
     // ObjectWithIndex shares the Object arm. Use a property with an
     // index-signature-shaped object_with_index call.
     let shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(
             interner.intern_string("next"),

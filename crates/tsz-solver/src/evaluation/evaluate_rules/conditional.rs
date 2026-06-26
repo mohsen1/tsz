@@ -132,6 +132,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if with_index {
             self.interner().object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags,
                 properties,
                 string_index,

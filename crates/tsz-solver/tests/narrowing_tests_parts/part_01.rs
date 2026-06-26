@@ -485,6 +485,7 @@ fn array_isarray_substitutes_only_nonarray_any_compat_member() {
     let interner = TypeInterner::new();
     let mutable_numbers = interner.array(TypeId::NUMBER);
     let any_string_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {

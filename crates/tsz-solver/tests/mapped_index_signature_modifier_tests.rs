@@ -36,6 +36,7 @@ fn index_object(
         (Some(index), None)
     };
     interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index,

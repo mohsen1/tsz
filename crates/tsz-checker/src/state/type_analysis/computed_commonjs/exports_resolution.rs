@@ -778,6 +778,7 @@ impl<'a> CheckerState<'a> {
                 || shape.symbol_index.is_some()
             {
                 return self.ctx.types.factory().object_with_index(ObjectShape {
+                    base_types: Vec::new(),
                     flags: shape.flags,
                     properties: merged_props,
                     string_index: shape.string_index,

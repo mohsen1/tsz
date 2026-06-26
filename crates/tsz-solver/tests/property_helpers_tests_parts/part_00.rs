@@ -626,6 +626,7 @@ fn test_string_index_signature_access() {
 
     // { [key: string]: number }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -664,6 +665,7 @@ fn test_number_index_signature_with_numeric_key() {
 
     // { [key: number]: string }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
@@ -695,6 +697,7 @@ fn test_explicit_property_takes_precedence_over_index_signature() {
     let x = interner.intern_string("x");
     // { x: boolean, [key: string]: number }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(x, TypeId::BOOLEAN)],
         string_index: Some(IndexSignature {
@@ -737,6 +740,7 @@ fn test_index_signature_with_no_unchecked_indexed_access() {
 
     // { [key: string]: number }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -1344,6 +1348,7 @@ fn test_object_with_both_index_signatures() {
 
     // { [key: string]: string, [key: number]: number }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
@@ -1584,6 +1589,7 @@ fn test_readonly_index_signature_access() {
 
     // { readonly [key: string]: number }
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {

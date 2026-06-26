@@ -910,6 +910,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number }.
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -959,6 +960,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number }.
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1008,6 +1010,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number } (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1057,6 +1060,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | number (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1101,6 +1105,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number.
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1145,6 +1150,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number } (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1194,6 +1200,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

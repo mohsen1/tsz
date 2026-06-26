@@ -963,6 +963,7 @@ impl<'a> TypeInstantiator<'a> {
                     || instantiated_symbol_idx.is_some()
                 {
                     let result = self.interner.object_with_index(ObjectShape {
+                        base_types: Vec::new(),
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),

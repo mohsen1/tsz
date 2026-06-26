@@ -78,6 +78,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(shape) = object_shape_for_type(self.ctx.types, instantiated)
             {
                 Some(self.ctx.types.factory().object_with_index(ObjectShape {
+                    base_types: Vec::new(),
                     flags: shape.flags,
                     properties: shape.properties.clone(),
                     string_index: shape.string_index,

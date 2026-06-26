@@ -493,6 +493,7 @@ fn test_class_with_string_index() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(crate::types::ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),

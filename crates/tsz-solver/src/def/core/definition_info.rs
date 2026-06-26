@@ -43,6 +43,7 @@ impl DefinitionInfo {
         properties: Vec<PropertyInfo>,
     ) -> Self {
         let shape = ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties,
             string_index: None,
@@ -81,6 +82,7 @@ impl DefinitionInfo {
         static_properties: Vec<PropertyInfo>,
     ) -> Self {
         let instance_shape = ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: instance_properties,
             string_index: None,
@@ -89,6 +91,7 @@ impl DefinitionInfo {
             symbol: None,
         };
         let static_shape = ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: static_properties,
             string_index: None,

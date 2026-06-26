@@ -316,6 +316,7 @@ impl Projector<'_> {
         // Index signatures are left as-is: their value is both read and written
         // through one handle, so a covariant-only rewrite would be unsound.
         Some(ObjectShape {
+            base_types: Vec::new(),
             flags: shape.flags,
             properties,
             string_index: shape.string_index,

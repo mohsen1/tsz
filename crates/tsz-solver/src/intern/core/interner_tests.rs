@@ -338,6 +338,7 @@ mod shape_identity {
 
     fn shape_with_string_index(interner: &TypeInterner, param_name: Option<&str>) -> ObjectShape {
         ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(string_index_sig(interner, param_name)),

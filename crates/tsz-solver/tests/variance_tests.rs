@@ -860,6 +860,7 @@ fn test_variance_object_index_signature() {
     let t_param = intern_type_param(&interner, "T");
 
     let obj = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

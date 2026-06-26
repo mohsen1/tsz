@@ -1360,6 +1360,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 || symbol_index.is_some() =>
             {
                 let target_shape = crate::types::ObjectShape {
+                    base_types: Vec::new(),
                     flags: crate::types::ObjectFlags::empty(),
                     properties,
                     string_index,

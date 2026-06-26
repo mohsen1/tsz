@@ -685,6 +685,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
         // Create new object shape with canonicalized types but preserved metadata
         let new_shape = crate::types::ObjectShape {
+            base_types: Vec::new(),
             flags: shape.flags,
             properties: new_props,
             string_index: new_string_index,

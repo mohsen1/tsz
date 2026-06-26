@@ -452,6 +452,7 @@ impl<'a> TypeLowering<'a> {
                 return TypeId::ERROR;
             }
             return self.interner.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,

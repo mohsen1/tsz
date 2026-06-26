@@ -118,6 +118,7 @@ const obj = {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![],
         string_index: None,
@@ -190,6 +191,7 @@ const obj = {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![],
         string_index: None,
@@ -257,6 +259,7 @@ const obj = {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![],
         string_index: None,
@@ -370,6 +373,7 @@ export const Baa = {
     let banana_type = interner.literal_string("banana");
     let banana_atom = interner.intern_string("banana");
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::new(banana_atom, TypeId::NUMBER)],
         string_index: None,
@@ -787,6 +791,7 @@ var e = new E(1);
 
     let interner = TypeInterner::new();
     let c_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
@@ -795,6 +800,7 @@ var e = new E(1);
         symbol: Some(c_sym),
     });
     let d_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
@@ -803,6 +809,7 @@ var e = new E(1);
         symbol: Some(d_sym),
     });
     let e_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,

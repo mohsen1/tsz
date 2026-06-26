@@ -1742,6 +1742,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .map(|id| self.interner.object_shape(id))
             .unwrap_or_else(|| {
                 ObjectShape {
+                    base_types: Vec::new(),
                     flags: ObjectFlags::empty(),
                     properties: source.to_vec(),
                     string_index: None,

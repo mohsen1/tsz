@@ -290,6 +290,7 @@ fn synthesized_index_signature_uses_solver_key_and_value_types() {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -326,6 +327,7 @@ fn synthesized_string_index_signature_uses_key_param_name_and_readonly() {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -362,6 +364,7 @@ fn synthesized_index_signature_absent_without_solver_index_info() {
 
     let interner = TypeInterner::new();
     let object_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,

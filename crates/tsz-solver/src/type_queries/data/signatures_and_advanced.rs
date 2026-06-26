@@ -883,6 +883,7 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
                 });
                 if changed {
                     db.object_with_index(crate::types::ObjectShape {
+                        base_types: Vec::new(),
                         flags: shape.flags,
                         properties,
                         string_index,

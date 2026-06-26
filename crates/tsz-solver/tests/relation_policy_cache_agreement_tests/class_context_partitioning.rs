@@ -33,6 +33,7 @@ fn nominal_vs_index_pair(
         Some(source_symbol),
     );
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

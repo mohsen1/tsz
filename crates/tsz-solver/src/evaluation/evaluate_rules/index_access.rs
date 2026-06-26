@@ -689,6 +689,7 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                 let merged =
                     if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
                         let shape = ObjectShape {
+                            base_types: Vec::new(),
                             flags: crate::types::ObjectFlags::empty(),
                             properties,
                             string_index,

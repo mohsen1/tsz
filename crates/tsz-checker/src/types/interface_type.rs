@@ -826,6 +826,21 @@ impl<'a> CheckerState<'a> {
             .first()
             .and_then(|&decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
 
+        // Lazy-heritage producer (`TSZ_LAZY_HERITAGE`): when enabled and the
+        // derived interface is a plain object shape, record each `extends`
+        // base's instantiated `TypeId` in `lazy_bases` (attached to the shape's
+        // `base_types` after the walk) instead of eagerly folding the base's
+        // members into `derived_type`. Inherited members then resolve per-member
+        // on demand in `collect_properties`. Callable interfaces keep their
+        // signatures in `CallableShape` (which has no `base_types` slot), so they
+        // fall through to the flattening merge; flag-off is byte-identical.
+        let lazy_heritage = crate::state_checking::lazy_lib_member::lazy_heritage_enabled()
+            && matches!(
+                self.ctx.types.lookup(derived_type),
+                Some(tsz_solver::TypeData::Object(_) | tsz_solver::TypeData::ObjectWithIndex(_))
+            );
+        let mut lazy_bases: Vec<TypeId> = Vec::new();
+
         for &decl_idx in declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -1233,13 +1248,32 @@ impl<'a> CheckerState<'a> {
                             &type_args,
                             current_sym,
                         );
-                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                        if lazy_heritage {
+                            lazy_bases.push(base_type);
+                        } else {
+                            derived_type =
+                                self.merge_interface_types_heritage(derived_type, base_type);
+                        }
                         continue;
                     }
 
-                    derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                    if lazy_heritage {
+                        lazy_bases.push(base_type);
+                    } else {
+                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                    }
                 }
             }
+        }
+
+        // Attach the accumulated lazy-heritage bases to the derived object shape
+        // (variant-preserving). Inherited members now resolve on demand through
+        // `collect_properties`' base-walk rather than being flattened in here.
+        if lazy_heritage && !lazy_bases.is_empty() {
+            derived_type = self
+                .ctx
+                .types
+                .with_object_base_types(derived_type, lazy_bases);
         }
 
         if pushed_derived {

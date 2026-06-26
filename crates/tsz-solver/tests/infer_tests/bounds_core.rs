@@ -1091,6 +1091,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1105,6 +1106,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
     });
 
     let lower = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1134,6 +1136,7 @@ fn test_resolve_bounds_string_index_property_mismatch() {
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1172,6 +1175,7 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1209,6 +1213,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1223,6 +1228,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
     });
 
     let lower = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1258,6 +1264,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1272,6 +1279,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
     });
 
     let lower = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1301,6 +1309,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1315,6 +1324,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
     });
 
     let lower = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1339,6 +1349,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
     let name_zero = interner.intern_string("0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1353,6 +1364,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1384,6 +1396,7 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
     let name_zero = interner.intern_string("0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1421,6 +1434,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1435,6 +1449,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1470,6 +1485,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1484,6 +1500,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

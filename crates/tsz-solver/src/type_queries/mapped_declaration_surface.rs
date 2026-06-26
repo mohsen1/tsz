@@ -165,6 +165,7 @@ fn mapped_surface_with_optional_undefined_inner(
     if changed {
         if with_index {
             db.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: shape.flags,
                 properties,
                 string_index: shape.string_index,

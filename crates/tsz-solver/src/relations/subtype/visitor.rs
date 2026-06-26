@@ -432,6 +432,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                             || symbol_index.is_some()
                         {
                             self.checker.interner.object_with_index(ObjectShape {
+                                base_types: Vec::new(),
                                 flags: ObjectFlags::empty(),
                                 properties,
                                 string_index,
@@ -878,6 +879,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .callable_shape(CallableShapeId(shape_id));
             let t_shape = self.checker.interner.object_shape(t_shape_id);
             let s_shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,
@@ -902,6 +904,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .callable_shape(CallableShapeId(shape_id));
             let t_shape = self.checker.interner.object_shape(t_shape_id);
             let s_shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,

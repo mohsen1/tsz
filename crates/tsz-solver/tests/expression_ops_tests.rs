@@ -204,6 +204,7 @@ fn test_conditional_fresh_object_literals_get_complementary_optional_properties(
 
 fn string_index_record(interner: &TypeInterner, value: TypeId) -> TypeId {
     interner.object_with_index(crate::types::ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(crate::types::IndexSignature {

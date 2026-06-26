@@ -427,6 +427,7 @@ pub(crate) fn substitute_exact_type_db(
             });
             if changed {
                 db.object_with_index(ObjectShape {
+                    base_types: Vec::new(),
                     flags: shape.flags,
                     properties,
                     string_index,

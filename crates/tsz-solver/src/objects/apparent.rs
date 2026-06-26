@@ -591,6 +591,7 @@ pub fn apparent_primitive_shape(
     });
 
     ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties,
         string_index: None,

@@ -794,6 +794,36 @@ pub trait TypeDatabase:
         self.object_fresh(widened_properties)
     }
     fn object_with_index(&self, shape: ObjectShape) -> TypeId;
+    /// Re-intern `original` (an `Object` / `ObjectWithIndex`) with its heritage
+    /// `base_types` replaced by `base_types`, PRESERVING the `Object` vs
+    /// `ObjectWithIndex` variant; returns `original` unchanged for any other
+    /// type. The lazy-heritage producer uses this to attach a derived
+    /// interface's instantiated `extends` bases to its own shape without
+    /// flattening the bases' members (see `ObjectShape::base_types`). A default
+    /// method composed from the existing trait surface, so no implementor needs
+    /// to change. `object_with_index` interns + sorts the shape idempotently (an
+    /// already-formed interface shape is already sorted with declaration order
+    /// assigned), then we select the original variant.
+    fn with_object_base_types(&self, original: TypeId, base_types: Vec<TypeId>) -> TypeId {
+        match self.lookup(original) {
+            Some(TypeData::Object(shape_id)) => {
+                let mut shape = (*self.object_shape(shape_id)).clone();
+                shape.base_types = base_types;
+                match self.lookup(self.object_with_index(shape)) {
+                    // `object_with_index` always yields `ObjectWithIndex`; map it
+                    // back to the `Object` variant to match `original`.
+                    Some(TypeData::ObjectWithIndex(new_id)) => self.object_type_from_shape(new_id),
+                    _ => original,
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let mut shape = (*self.object_shape(shape_id)).clone();
+                shape.base_types = base_types;
+                self.object_with_index(shape)
+            }
+            _ => original,
+        }
+    }
     fn function(&self, shape: FunctionShape) -> TypeId;
     fn callable(&self, shape: CallableShape) -> TypeId;
     fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId;

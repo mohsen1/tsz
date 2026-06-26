@@ -207,6 +207,7 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
     let data_testid = interner.intern_string("data-testid");
     let data_dyn = interner.intern_string("data-dyn");
     let param_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![
             PropertyInfo::new(data_testid, TypeId::ANY),

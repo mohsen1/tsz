@@ -1687,6 +1687,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let mut props = callable.properties.clone();
                 props.sort_by_key(|a| a.name);
                 Some(ObjectShape {
+                    base_types: Vec::new(),
                     flags: ObjectFlags::empty(),
                     properties: props,
                     string_index: callable.string_index,
@@ -1977,6 +1978,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // name (`Atom`), matching the callable-shape path above.
         properties.sort_by_key(|p| p.name);
         ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties,
             string_index: None,

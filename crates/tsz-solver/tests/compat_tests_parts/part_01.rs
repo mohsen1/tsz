@@ -716,6 +716,7 @@ fn test_apparent_string_number_index_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -738,6 +739,7 @@ fn test_apparent_string_rejects_string_index_signature() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -857,6 +859,7 @@ fn test_optional_property_rejects_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -884,6 +887,7 @@ fn test_template_literal_index_signature_tracks_excess_properties() {
     let allowed_suffix =
         interner.union2(interner.literal_string("A"), interner.literal_string("B"));
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -978,6 +982,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1293,6 +1298,7 @@ fn test_keyof_union_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1306,6 +1312,7 @@ fn test_keyof_union_index_signature_assignable() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1445,6 +1452,7 @@ fn test_weak_type_with_index_signature_not_weak() {
 
     // Target with optional property + index signature - NOT weak
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

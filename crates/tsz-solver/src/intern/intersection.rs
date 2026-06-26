@@ -1029,6 +1029,7 @@ impl TypeInterner {
 
         let intern_shape = |this: &Self, flags: ObjectFlags, properties: Vec<PropertyInfo>| {
             let shape_id = this.intern_object_shape(ObjectShape {
+                base_types: Vec::new(),
                 flags,
                 properties,
                 string_index: merged_string_index,

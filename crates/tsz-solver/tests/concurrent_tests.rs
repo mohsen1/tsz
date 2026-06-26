@@ -220,6 +220,7 @@ fn test_concurrent_property_map_building() {
         .collect();
 
     let shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

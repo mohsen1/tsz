@@ -775,6 +775,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             use crate::types::{IndexSignature, ObjectShape};
             let result = self.interner.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: crate::types::ObjectFlags::empty(),
                 properties: vec![],
                 string_index: Some(IndexSignature {

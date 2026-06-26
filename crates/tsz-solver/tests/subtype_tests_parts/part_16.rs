@@ -21,6 +21,7 @@ fn test_string_index_sig_mismatch_carries_nested_property_reason() {
     )]);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -34,6 +35,7 @@ fn test_string_index_sig_mismatch_carries_nested_property_reason() {
         }),
     });
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -85,6 +87,7 @@ fn test_string_index_sig_mismatch_nested_reason_is_name_independent() {
     )]);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -98,6 +101,7 @@ fn test_string_index_sig_mismatch_nested_reason_is_name_independent() {
         }),
     });
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -144,6 +148,7 @@ fn test_number_index_sig_mismatch_carries_nested_property_reason() {
     )]);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -157,6 +162,7 @@ fn test_number_index_sig_mismatch_carries_nested_property_reason() {
         string_index: None,
     });
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -200,6 +206,7 @@ fn test_index_sig_mismatch_primitive_value_type_carries_intrinsic_nested_reason(
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -213,6 +220,7 @@ fn test_index_sig_mismatch_primitive_value_type_carries_intrinsic_nested_reason(
         }),
     });
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -260,6 +268,7 @@ fn test_missing_property_in_index_sig_target_returns_missing_property_directly()
     ]);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -273,6 +282,7 @@ fn test_missing_property_in_index_sig_target_returns_missing_property_directly()
         }),
     });
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

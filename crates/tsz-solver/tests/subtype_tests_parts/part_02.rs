@@ -4,6 +4,7 @@ fn test_object_with_index_property_mismatch_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -21,6 +22,7 @@ fn test_object_with_index_property_mismatch_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -43,6 +45,7 @@ fn test_object_with_index_property_mismatch_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -60,6 +63,7 @@ fn test_object_with_index_property_mismatch_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -82,6 +86,7 @@ fn test_object_with_index_satisfies_named_property_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -110,6 +115,7 @@ fn test_object_with_index_named_property_mismatch_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -142,6 +148,7 @@ fn test_object_to_indexed_property_mismatch_string_index() {
     )]);
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -164,6 +171,7 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -378,6 +386,7 @@ fn test_object_with_index_noncanonical_numeric_property_fails() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -405,6 +414,7 @@ fn test_object_with_index_readonly_index_to_mutable_property_fails() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

@@ -1082,6 +1082,7 @@ fn object_property_order_independence() {
 fn object_with_index_signature() {
     let i = TypeInterner::new();
     let shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo::new(i.intern_string("x"), TypeId::NUMBER)],
         string_index: Some(IndexSignature {

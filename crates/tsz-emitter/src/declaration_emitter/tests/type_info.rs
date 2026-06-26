@@ -73,6 +73,7 @@ export function middle() {
     accessor.declaration_order = 1;
 
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![accessor],
         string_index: None,
@@ -123,6 +124,7 @@ fn test_structural_setter_only_property_uses_write_type() {
     setter_only.write_type = TypeId::NUMBER;
 
     let point_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![setter_only],
         string_index: None,
@@ -157,6 +159,7 @@ fn test_structural_authored_split_accessor_uses_get_set() {
     accessor.declaration_order = 1;
 
     let point_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![accessor],
         string_index: None,
@@ -302,6 +305,7 @@ export function wrapClass(param: any) {
     foo.declaration_order = 1;
 
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![foo],
         string_index: None,
@@ -364,6 +368,7 @@ export class Derived extends mixin(Base) {}
 
     let interner = TypeInterner::new();
     let mixed_base_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -421,6 +426,7 @@ export default class extends getGreeterBase() {}
 
     let interner = TypeInterner::new();
     let greeter_ctor_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -911,6 +917,7 @@ fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection()
 
     let void_method = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::method(mixin_method, void_method)],
         string_index: Some(IndexSignature {
@@ -1177,6 +1184,7 @@ namespace Test {
 
     let interner = TypeInterner::new();
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,
@@ -1267,6 +1275,7 @@ export class A {
     duplicate_property.declaration_order = 2;
 
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![method, duplicate_property],
         string_index: None,
@@ -1335,6 +1344,7 @@ export class A {
     method.declaration_order = 1;
 
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![method],
         string_index: None,
@@ -1378,6 +1388,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
         )),
     ]);
     let instance_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -1392,6 +1403,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
     });
 
     let static_true_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::new(
             interner.intern_string("static"),
@@ -1403,6 +1415,7 @@ fn test_synthesized_computed_method_index_signatures_widen_nested_literal_return
         symbol: None,
     });
     let static_string_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::new(
             interner.intern_string("static"),
@@ -1506,6 +1519,7 @@ const Value = class {
         construct_signatures: vec![CallSignature::new(
             Vec::new(),
             interner.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::default(),
                 properties: Vec::new(),
                 string_index: None,
@@ -1627,6 +1641,7 @@ export namespace C {
     let b_def = tsz_solver::DefId(9202);
     let app_type = interner.application(interner.lazy(a_def), vec![interner.lazy(b_def)]);
     let evaluated_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: Vec::new(),
         string_index: None,

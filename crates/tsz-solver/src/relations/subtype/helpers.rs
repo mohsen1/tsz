@@ -182,6 +182,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 symbol_index,
             } => {
                 let shape = ObjectShape {
+                    base_types: Vec::new(),
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index,

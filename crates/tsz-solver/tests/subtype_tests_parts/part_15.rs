@@ -216,6 +216,7 @@ fn test_enum_namespace_satisfies_string_index_target() {
 
     // Target: { [x: string]: number }
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -259,6 +260,7 @@ fn test_enum_namespace_rejects_incompatible_string_index() {
 
     // Target: { [x: string]: number } — string property B is incompatible
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -295,6 +297,7 @@ fn test_regular_named_object_still_rejects_number_index() {
     );
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

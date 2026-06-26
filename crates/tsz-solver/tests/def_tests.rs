@@ -601,6 +601,7 @@ fn test_find_def_by_shape_via_register() {
 
     // Build the same shape for lookup.
     let lookup_shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: props,
         string_index: None,
@@ -624,6 +625,7 @@ fn test_find_def_by_shape_no_match() {
 
     // Type aliases have no instance_shape, so lookup should return None.
     let empty_shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
@@ -668,6 +670,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
 
     let z_name = interner.intern_string("z");
     let shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: z_name,
@@ -711,6 +714,7 @@ fn test_find_def_by_shape_cleared() {
     store.register(info);
 
     let empty_shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
@@ -876,6 +880,7 @@ fn test_invalidate_file_cleans_shape_index() {
     let store = DefinitionStore::new();
 
     let empty_shape = ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,

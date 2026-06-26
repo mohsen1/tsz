@@ -220,6 +220,7 @@ mod tests {
             TemplateSpan::Type(TypeId::STRING),
         ]);
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -245,6 +246,7 @@ mod tests {
 
     fn plain_string_index_object(db: &TypeInterner, value_type: TypeId) -> TypeId {
         db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -303,6 +305,7 @@ mod tests {
     fn numeric_index_signature_takes_precedence_over_string() {
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -332,6 +335,7 @@ mod tests {
         // `E = { [k: number]: boolean }`; `E[5]` -> boolean control.
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: None,
@@ -355,6 +359,7 @@ mod tests {
         // Negative control: no string or number index signature.
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: None,
@@ -379,6 +384,7 @@ mod tests {
             TemplateSpan::Type(TypeId::STRING),
         ]);
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -414,6 +420,7 @@ mod tests {
         for value_type in [TypeId::STRING, TypeId::BOOLEAN, TypeId::NUMBER] {
             let db = TypeInterner::new();
             let object = db.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: Vec::new(),
                 string_index: None,
@@ -453,6 +460,7 @@ mod tests {
         // key.
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -481,6 +489,7 @@ mod tests {
         // `IndexAccess` rather than collapsed to a concrete value type.
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: None,
@@ -504,6 +513,7 @@ mod tests {
         // value type; it stays a deferred `IndexAccess`.
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: None,
@@ -542,6 +552,7 @@ mod tests {
         let db = TypeInterner::new();
         let key = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {
@@ -588,6 +599,7 @@ mod tests {
     fn symbol_only_index_rejects_string_key() {
         let db = TypeInterner::new();
         let object = db.object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(IndexSignature {

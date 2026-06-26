@@ -1201,6 +1201,7 @@ fn test_number_index_signature_numeric_property() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1234,6 +1235,7 @@ fn test_number_index_signature_type_mismatch() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1265,6 +1267,7 @@ fn test_anonymous_number_index_signature_vacuously_compatible_with_no_numeric_ke
     )]);
 
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1297,6 +1300,7 @@ fn test_named_object_without_number_index_does_not_satisfy_number_index_target()
     );
 
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1369,6 +1373,7 @@ fn test_number_index_signature_method_bivariant_property() {
     )]);
 
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1418,6 +1423,7 @@ fn test_named_class_not_assignable_to_string_indexed_without_explicit_index_sig(
     );
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1455,6 +1461,7 @@ fn test_namespace_object_can_satisfy_string_index_structurally() {
     );
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1524,6 +1531,7 @@ fn test_string_index_signature_method_bivariant_property() {
     )]);
 
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1558,6 +1566,7 @@ fn test_number_index_signature_multiple_numeric_props() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1591,6 +1600,7 @@ fn test_number_and_string_index_signatures() {
 
     // { [x: number]: string; [y: string]: string }
     let target_shape = ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1620,6 +1630,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1639,6 +1650,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1666,6 +1678,7 @@ fn test_readonly_index_signature_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let readonly_source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1680,6 +1693,7 @@ fn test_readonly_index_signature_subtyping() {
     });
 
     let mutable_target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1694,6 +1708,7 @@ fn test_readonly_index_signature_subtyping() {
     });
 
     let readonly_target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1724,6 +1739,7 @@ fn test_readonly_property_with_mutable_index_signature() {
     )]);
 
     let mutable_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1738,6 +1754,7 @@ fn test_readonly_property_with_mutable_index_signature() {
     });
 
     let readonly_index = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1764,6 +1781,7 @@ fn test_object_with_index_properties_match_target_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1786,6 +1804,7 @@ fn test_object_with_index_properties_match_target_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

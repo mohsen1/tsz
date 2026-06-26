@@ -520,6 +520,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ObjectFlags::empty()
             };
             self.interner.object_with_index(ObjectShape {
+                base_types: Vec::new(),
                 flags,
                 properties: reverse_properties,
                 string_index: reverse_string_index,
@@ -1244,6 +1245,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if any_reversed {
                     if reverse_string_index.is_some() || reverse_number_index.is_some() {
                         return Some(self.interner.object_with_index(ObjectShape {
+                            base_types: Vec::new(),
                             flags: crate::types::ObjectFlags::empty(),
                             properties: reverse_properties,
                             string_index: reverse_string_index,

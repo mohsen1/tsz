@@ -783,6 +783,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.factory().object_with_index(ObjectShape {
+            base_types: Vec::new(),
             flags: shape.flags,
             properties,
             string_index: shape.string_index,

@@ -1255,6 +1255,7 @@ impl<'a> CheckerState<'a> {
                     crate::interface_type::InterfaceMergeMode::Declaration,
                 );
                 factory.object_with_index(ObjectShape {
+                    base_types: Vec::new(),
                     flags: base_shape.flags,
                     properties: merged_properties,
                     string_index: base_shape.string_index,

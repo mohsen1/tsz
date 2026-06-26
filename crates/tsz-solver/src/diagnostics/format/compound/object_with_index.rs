@@ -175,6 +175,7 @@ mod tests {
         ));
 
         let shape = crate::types::ObjectShape {
+            base_types: Vec::new(),
             properties: vec![
                 PropertyInfo::new(db.intern_string("includes"), includes),
                 PropertyInfo::new(db.intern_string("toString"), method),
@@ -244,6 +245,7 @@ mod tests {
         });
 
         let shape = crate::types::ObjectShape {
+            base_types: Vec::new(),
             properties,
             string_index: None,
             number_index: Some(crate::types::IndexSignature {

@@ -9,6 +9,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
     let name = interner.intern_string("01");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -23,6 +24,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -62,6 +64,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
     let name = interner.intern_string("1e-7");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -76,6 +79,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -122,6 +126,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
     let name = interner.intern_string("Infinity");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -136,6 +141,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -182,6 +188,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
     let name = interner.intern_string("NaN");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -196,6 +203,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -242,6 +250,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
     let name = interner.intern_string("-Infinity");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -256,6 +265,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -302,6 +312,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
     let name = interner.intern_string("-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -316,6 +327,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -355,6 +367,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
     let name = interner.intern_string("-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -401,6 +414,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
     let name = interner.intern_string("0.000001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -415,6 +429,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -461,6 +476,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
     let name = interner.intern_string("1e+21");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -475,6 +491,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -521,6 +538,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
     let name = interner.intern_string("1e+021");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -535,6 +553,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -574,6 +593,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
     let name = interner.intern_string("1E+21");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -588,6 +608,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -627,6 +648,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
     let name = interner.intern_string("1E21");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -641,6 +663,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -680,6 +703,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
     let name = interner.intern_string("1E+0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -694,6 +718,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -733,6 +758,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
     let name = interner.intern_string("1E+00");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -747,6 +773,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -786,6 +813,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
     let name = interner.intern_string("1E0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -800,6 +828,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -839,6 +868,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
     let name = interner.intern_string("1E-0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -853,6 +883,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -892,6 +923,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
     let name = interner.intern_string("1eE1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -906,6 +938,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -945,6 +978,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
     let name = interner.intern_string("1Ee+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -959,6 +993,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -998,6 +1033,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
     let name = interner.intern_string("1eE");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1012,6 +1048,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1051,6 +1088,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
     let name = interner.intern_string("1E01");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1065,6 +1103,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1104,6 +1143,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
     let name = interner.intern_string("1eE++1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1118,6 +1158,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1157,6 +1198,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
     let name = interner.intern_string("1eE+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1171,6 +1213,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1210,6 +1253,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
     let name = interner.intern_string("1Ee--1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1224,6 +1268,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1263,6 +1308,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
     let name = interner.intern_string("1Ee+-1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1277,6 +1323,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1316,6 +1363,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
     let name = interner.intern_string("1Ee-+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1330,6 +1378,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1369,6 +1418,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
     let name = interner.intern_string("1Ee+");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1383,6 +1433,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1422,6 +1473,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
     let name = interner.intern_string("1Ee-");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1436,6 +1488,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1475,6 +1528,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
     let name = interner.intern_string("1Ee--");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1489,6 +1543,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1528,6 +1583,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
     let name = interner.intern_string("1Ee+0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1542,6 +1598,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1581,6 +1638,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
     let name = interner.intern_string("1Ee0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1595,6 +1653,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1634,6 +1693,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
     let name = interner.intern_string("1Ee01");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1648,6 +1708,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1687,6 +1748,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
     let name = interner.intern_string("1Ee-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1701,6 +1763,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1740,6 +1803,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
     let name = interner.intern_string("1Ee+0");
 
     let upper_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -1754,6 +1818,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         symbol_index: None,
         symbol: None,
         flags: ObjectFlags::empty(),

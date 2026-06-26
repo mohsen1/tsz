@@ -945,6 +945,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
         PropertyInfo::readonly(interner.intern_string("[Symbol.unscopables]"), TypeId::ANY);
 
     let array_base = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER),

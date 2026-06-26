@@ -1528,6 +1528,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             let source_shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: source_props,
                 string_index: None,
@@ -1536,6 +1537,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 symbol: None,
             };
             let target_shape = ObjectShape {
+                base_types: Vec::new(),
                 flags: ObjectFlags::empty(),
                 properties: target_props,
                 string_index: t_callable.string_index,
@@ -1833,6 +1835,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_props.sort_by_key(|a| a.name);
         // Create temporary ObjectShape instances for the property check
         let source_shape = ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: source_props,
             string_index: source.string_index,
@@ -1841,6 +1844,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             symbol: source.symbol,
         };
         let target_shape = ObjectShape {
+            base_types: Vec::new(),
             flags: ObjectFlags::empty(),
             properties: target_props,
             string_index: target.string_index,

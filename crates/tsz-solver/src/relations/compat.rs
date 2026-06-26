@@ -1075,6 +1075,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 for prop_info in &shape.properties {
                     properties.insert(prop_info.name);
                 }
+                // Lazy heritage: an inherited member is a "known" property too, so
+                // walk `base_types` (empty under the flattened model). Without this
+                // the excess-property check flags inherited names (e.g. an
+                // `interface Endpoint extends EventSource`'s `addEventListener`) as
+                // excess — a false TS2353.
+                for base in shape.base_types.clone() {
+                    properties.extend(self.collect_target_properties(base));
+                }
             }
             Some(TypeData::Conditional(cond_id)) => {
                 // For unresolved conditional types (e.g. T extends U ? X : Y where T

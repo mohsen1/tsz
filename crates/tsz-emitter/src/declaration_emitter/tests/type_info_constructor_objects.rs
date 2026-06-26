@@ -289,6 +289,7 @@ fn build_abstract_constructor_with_index_sig(
     let x = interner.intern_string("x");
     let void_fn = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
     let instance_shape = interner.object_with_index(ObjectShape {
+        base_types: Vec::new(),
         flags: ObjectFlags::default(),
         properties: vec![PropertyInfo::method(method, void_fn)],
         string_index: Some(IndexSignature {
