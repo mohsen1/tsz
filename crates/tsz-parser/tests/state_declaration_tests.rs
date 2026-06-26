@@ -1648,3 +1648,149 @@ fn parse_dotted_interface_name_recovers_trailing_statements() {
     // `interface Bar.Baz { }`: dot at offset 13, `Baz` at offset 14.
     assert_dotted_interface_recovery("interface Bar.Baz { }\n", 13, 14);
 }
+
+// ---------------------------------------------------------------------------
+// TS1491: '{0}' modifier cannot appear on a 'using' declaration.
+//
+// `using` / `await using` declarations permit no modifiers. tsc reports the
+// first modifier in source order via `checkGrammarModifiers` and stops, so a
+// statement carrying several modifiers yields exactly one TS1491.
+// ---------------------------------------------------------------------------
+
+/// Collect `(code, start, message)` for every parse diagnostic.
+fn collect_using_modifier_diags(source: &str) -> Vec<(u32, u32, String)> {
+    let (parser, _root) = parse_source(source);
+    parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.clone()))
+        .collect()
+}
+
+#[test]
+fn using_declaration_export_modifier_reports_ts1491() {
+    let source = "declare const d: Disposable;\nexport using e = d;\n";
+    let diags = collect_using_modifier_diags(source);
+    let export_pos = source.find("export").unwrap() as u32;
+    assert!(
+        diags.iter().any(|(code, start, msg)| *code
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            && *start == export_pos
+            && msg.contains("'export' modifier cannot appear on a 'using' declaration")),
+        "expected TS1491 'export' at the export modifier, got {diags:?}"
+    );
+}
+
+#[test]
+fn using_declaration_declare_modifier_reports_ts1491() {
+    let source = "declare const d: Disposable;\ndeclare using f = d;\n";
+    let diags = collect_using_modifier_diags(source);
+    let declare_pos = source.rfind("declare").unwrap() as u32;
+    assert!(
+        diags.iter().any(|(code, start, msg)| *code
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            && *start == declare_pos
+            && msg.contains("'declare' modifier cannot appear on a 'using' declaration")),
+        "expected TS1491 'declare' at the declare modifier, got {diags:?}"
+    );
+}
+
+#[test]
+fn await_using_declaration_export_modifier_reports_ts1491() {
+    // The `await using` (async) form is rejected the same way as plain `using`.
+    let source = "export await using e = d;\n";
+    let diags = collect_using_modifier_diags(source);
+    assert!(
+        diags.iter().any(|(code, _start, msg)| *code
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            && msg.contains("'export'")),
+        "expected TS1491 'export' on `export await using`, got {diags:?}"
+    );
+}
+
+#[test]
+fn await_using_declaration_declare_modifier_reports_ts1491() {
+    let source = "declare await using f = d;\n";
+    let diags = collect_using_modifier_diags(source);
+    assert!(
+        diags.iter().any(|(code, _start, msg)| *code
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            && msg.contains("'declare'")),
+        "expected TS1491 'declare' on `declare await using`, got {diags:?}"
+    );
+}
+
+#[test]
+fn using_declaration_modifier_rule_is_structural_not_name_specific() {
+    // Anti-hardcoding: the rule depends on the `using` declaration shape, not on
+    // any particular binder name. A renamed binding must still report TS1491.
+    for name in ["e", "resource", "zzz_handle"] {
+        let source = format!("export using {name} = d;\n");
+        let diags = collect_using_modifier_diags(&source);
+        assert!(
+            diags.iter().any(|(code, _start, _msg)| *code
+                == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+            "expected TS1491 for `export using {name}`, got {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn using_declaration_multiple_modifiers_report_single_ts1491() {
+    // tsc's grammar check returns after the first illegal modifier, so a
+    // statement with several modifiers yields exactly one TS1491 — on the
+    // source-leftmost modifier.
+    let source = "declare export using g = d;\n";
+    let diags = collect_using_modifier_diags(source);
+    let ts1491: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, _)| {
+            *code == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+        })
+        .collect();
+    assert_eq!(
+        ts1491.len(),
+        1,
+        "expected exactly one TS1491 for multiple modifiers, got {diags:?}"
+    );
+    assert!(
+        ts1491[0].2.contains("'declare'"),
+        "expected the leftmost modifier (declare) to be reported, got {:?}",
+        ts1491[0]
+    );
+}
+
+#[test]
+fn bare_using_declaration_does_not_report_ts1491() {
+    // A modifier-free `using` declaration is legal and must not trip TS1491.
+    for source in [
+        "using a = d;\n",
+        "await using b = d;\n",
+        "{ using c = d; }\n",
+        "for (using x of xs) {}\n",
+    ] {
+        let diags = collect_using_modifier_diags(source);
+        assert!(
+            !diags.iter().any(|(code, _, _)| *code
+                == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+            "bare using must not report TS1491 for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn modifiers_on_non_using_variable_statements_do_not_report_ts1491() {
+    // The check is `using`-specific: `let`/`const`/`var` accept these modifiers.
+    for source in [
+        "export const x = 1;\n",
+        "declare let y: number;\n",
+        "export declare var z: string;\n",
+    ] {
+        let diags = collect_using_modifier_diags(source);
+        assert!(
+            !diags.iter().any(|(code, _, _)| *code
+                == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+            "non-using statement must not report TS1491 for {source:?}, got {diags:?}"
+        );
+    }
+}

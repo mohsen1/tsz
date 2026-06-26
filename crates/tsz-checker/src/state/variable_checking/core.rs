@@ -605,9 +605,9 @@ impl<'a> CheckerState<'a> {
         // TSC does not emit TS1039 for variable initializers in .d.ts files.
         if var_decl.initializer.is_some() && self.ctx.arena.is_in_ambient_context(decl_idx) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            let is_const = self.is_const_variable_declaration(decl_idx);
+            let is_const = self.ctx.arena.is_var_const_like_declaration(decl_idx);
             if is_const && var_decl.type_annotation.is_none() {
-                // Ambient const without type annotation: only string/numeric literals allowed
+                // Ambient const-like without type annotation: only string/numeric literals allowed
                 if !self.is_valid_ambient_const_initializer(var_decl.initializer) {
                     self.error_at_node(
                         var_decl.initializer,

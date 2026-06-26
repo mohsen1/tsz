@@ -1080,6 +1080,8 @@ impl ParserState {
     ) -> NodeIndex {
         let start_pos = override_start_pos.unwrap_or_else(|| self.token_pos());
         let declaration_list = self.parse_variable_declaration_list();
+        // TS1491: reject modifiers on a `using`/`await using` declaration.
+        self.check_using_declaration_modifiers(declaration_list, modifiers.as_ref());
         self.parse_semicolon();
         let end_pos = self.token_full_start();
 

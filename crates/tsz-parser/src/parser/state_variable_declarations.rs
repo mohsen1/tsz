@@ -80,6 +80,64 @@ impl ParserState {
         }
     }
 
+    /// TS1491: a `using` / `await using` declaration may not carry any
+    /// modifier (`export`, `declare`, `default`, `abstract`, accessibility,
+    /// `static`, `readonly`, `async`, `override`, `accessor`, `in`, `out`, ...).
+    ///
+    /// This mirrors tsc's `checkGrammarModifiers` using-declaration branch:
+    /// every modifier kind is illegal on a `using` declaration, the *first*
+    /// modifier in source order is reported, and the grammar check then stops —
+    /// so a statement carrying several modifiers yields exactly one TS1491,
+    /// matching `grammarErrorOnNode` returning `true` after the first error.
+    ///
+    /// Block scope reports TS1184 ("Modifiers cannot appear here") for these
+    /// modifiers and tsc does not additionally emit TS1491 there, so the check
+    /// is skipped inside a block (where the modifiers are already syntactically
+    /// rejected upstream).
+    pub(crate) fn check_using_declaration_modifiers(
+        &mut self,
+        declaration_list: NodeIndex,
+        modifiers: Option<&NodeList>,
+    ) {
+        use crate::parser::node_flags;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let Some(modifiers) = modifiers else { return };
+        if modifiers.nodes.is_empty() || self.in_block_context() {
+            return;
+        }
+
+        // The declaration-list node carries the LET/CONST/USING/AWAIT_USING bit
+        // pattern. The USING bit (bit 2) is set for both `using` (4) and
+        // `await using` (6 = CONST | USING) but not for plain `let`/`const`.
+        let is_using = self
+            .arena
+            .get(declaration_list)
+            .is_some_and(|node| node.has_any_node_flags(node_flags::USING));
+        if !is_using {
+            return;
+        }
+
+        // Report on the source-leftmost modifier, matching tsc's iteration of
+        // `node.modifiers` in source order. Modifier lists are built by
+        // consuming tokens left to right, so the first node is the leftmost.
+        let Some(modifier) = modifiers.nodes.first().and_then(|&idx| self.arena.get(idx)) else {
+            return;
+        };
+
+        let modifier_text = SyntaxKind::try_from_u16(modifier.kind)
+            .and_then(tsz_scanner::keyword_to_text_static)
+            .unwrap_or_default();
+        let message = diagnostic_messages::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            .replace("{0}", modifier_text);
+        self.parse_error_at(
+            modifier.pos,
+            modifier.end - modifier.pos,
+            &message,
+            diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION,
+        );
+    }
+
     pub(crate) fn parse_variable_declaration_name(&mut self) -> NodeIndex {
         if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
