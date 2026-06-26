@@ -267,22 +267,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// NOT the instance type (stored in `symbol_instance_types`).
     ///
     /// `resolve_lazy` returns the instance type for class symbols, which is correct
-    /// for `Lazy(DefId)` but wrong for `TypeQuery`. We must use `resolve_ref` first
-    /// (which looks up `symbol_types` → constructor type), and only fall back to
-    /// `resolve_lazy` for non-class symbols (e.g., module namespaces).
+    /// for `Lazy(DefId)` but wrong for `TypeQuery`. Delegate to the resolver's
+    /// dedicated value-space hook so imported classes and merged value/type symbols
+    /// resolve through the same constructor-side path as evaluation.
     pub(crate) fn resolve_type_query_symbol(&self, sym: SymbolRef) -> Option<TypeId> {
-        // First try resolve_ref which returns the value from symbol_types
-        // (constructor type for classes, function type for functions, etc.)
-        let ref_resolved = self.resolver.resolve_ref(sym, self.interner);
-        if ref_resolved.is_some() {
-            return ref_resolved;
-        }
-        // Fall back to DefId-based resolution for symbols without a symbol_types entry
-        if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            None
-        }
+        self.resolver.resolve_type_query(sym, self.interner)
     }
 
     /// Check `TypeQuery` to `TypeQuery` subtype with optional identity shortcut.
