@@ -465,22 +465,22 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let normalized = module_name.trim_matches('"').trim_matches('\'');
 
-        // Try resolve_import_target first (multi-file mode)
+        // Try resolve_import_target first (multi-file mode). Ambient-ness is a
+        // property of the *declaring* file, so evaluate the const enum's
+        // declarations against the target module's arena rather than the
+        // importing file. This recognizes both const enums declared in a `.d.ts`
+        // and `declare const enum` declared in a regular `.ts`.
         if let Some(target_idx) = self.ctx.resolve_import_target(normalized) {
-            // Check if the target file is a .d.ts
-            let is_ambient_file = {
-                let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                arena
-                    .source_files
-                    .first()
-                    .is_some_and(|sf| sf.is_declaration_file)
-            };
-            if is_ambient_file
-                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
                 && let Some(sym_id) = target_binder.file_locals.get(import_name)
                 && let Some(sym) = target_binder.get_symbol(sym_id)
             {
-                return sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM);
+                return sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM)
+                    && crate::types_domain::property_access_type::helpers::declarations_are_ambient(
+                        target_arena,
+                        sym,
+                    );
             }
         }
 
@@ -492,18 +492,16 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) = exports.get(import_name)
                 && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             {
-                // In module_exports mode, check if any declaration is in a .d.ts
-                // We check symbol flags: if it's CONST_ENUM and declared in the current
-                // binder's d.ts file context
-                if sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM) {
-                    // Check declarations to see if they come from ambient context
-                    let all_ambient = sym.declarations.iter().all(|&decl_idx| {
-                        self.ctx.arena.is_in_ambient_context(decl_idx)
-                            || self.ctx.is_declaration_file()
-                    });
-                    if all_ambient {
-                        return true;
-                    }
+                // Single-pass mode keeps a single arena, so the const enum's
+                // declarations are meaningful against `self.ctx.arena`. Share the
+                // same ambient determination used on the multi-file path above.
+                if sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM)
+                    && crate::types_domain::property_access_type::helpers::declarations_are_ambient(
+                        self.ctx.arena,
+                        sym,
+                    )
+                {
+                    return true;
                 }
             }
         }

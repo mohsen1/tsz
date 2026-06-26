@@ -83,7 +83,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|e| e.get(property_name));
             let value_decl = resolved_symbol.value_declaration;
             let first_decl = resolved_symbol.declarations.first().copied();
-            let is_ambient = self.is_const_enum_ambient(resolved_symbol);
+            let is_ambient = self.is_const_enum_ambient(resolved_sym_id, resolved_symbol);
             (own_member, value_decl, first_decl, is_ambient)
         };
         let (member_sym_id, resolved_flags, resolved_is_ambient) = if let Some(id) = member_sym_id {
@@ -98,7 +98,11 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(alias_target)
                     .or_else(|| self.ctx.binder.get_symbol(alias_target))?;
                 let id = alias_sym.exports.as_ref()?.get(property_name)?;
-                (id, alias_sym.flags, self.is_const_enum_ambient(alias_sym))
+                (
+                    id,
+                    alias_sym.flags,
+                    self.is_const_enum_ambient(alias_target, alias_sym),
+                )
             };
             if alias_flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0 {
                 return None;
@@ -175,11 +179,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
-            if self.ctx.isolated_modules()
-                && resolved_flags & symbol_flags::CONST_ENUM != 0
+            // TS2748: Cannot access ambient const enums when isolatedModules /
+            // verbatimModuleSyntax is enabled.
+            //
+            // tsc gates the *access-site* diagnostic on
+            //   rawIsolatedModules || (verbatimModuleSyntax && firstId is not an alias)
+            // (`checkConstEnumAccess`). Under verbatimModuleSyntax alone an
+            // *imported* const enum is reported once at the import statement
+            // instead, so the access site stays silent when the base identifier
+            // resolves to an import alias. A locally-declared const enum (no
+            // alias) is still reported at the access site under
+            // verbatimModuleSyntax. Raw `isolatedModules` always reports here.
+            //
+            // An imported const enum can only be named through an import alias, so
+            // "first identifier is an alias" reduces to "the const enum is declared
+            // in another file". `base_sym_id` is already alias-resolved (the binder
+            // follows imports), so compare the resolved const enum's declaring file
+            // against the current file. The const-enum/ambient guards come first so
+            // the cross-file declaring-file lookup only runs for the rare
+            // verbatim-only ambient const enum access.
+            if resolved_flags & symbol_flags::CONST_ENUM != 0
                 && resolved_is_ambient
                 && !self.is_in_type_only_position(idx)
+                && (self.ctx.raw_isolated_modules()
+                    || (self.ctx.compiler_options.verbatim_module_syntax
+                        && !self.symbol_is_imported(resolved_sym_id)))
             {
                 let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
                     "verbatimModuleSyntax"

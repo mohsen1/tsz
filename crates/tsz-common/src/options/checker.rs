@@ -170,6 +170,17 @@ pub struct CheckerOptions {
     /// When true, do not transform or elide any imports or exports not marked as type-only.
     /// Under this mode, importing a `.d.ts` file without `import type` is an error (TS2846).
     pub verbatim_module_syntax: bool,
+    /// Set by the option fan-out when `isolated_modules` was turned on *only*
+    /// because `verbatim_module_syntax` implies it (tsc's computed
+    /// `isolatedModules = isolatedModules || verbatimModuleSyntax`).
+    ///
+    /// `isolated_modules` therefore stores the computed value (what tsc's
+    /// `getIsolatedModules` returns). A few checks need the *raw*
+    /// `isolatedModules` flag instead — notably `checkConstEnumAccess`, which
+    /// gates the access-site TS2748 on raw `isolatedModules` and reports
+    /// verbatim-only cases at the import statement. Recover the raw flag as
+    /// `isolated_modules && !isolated_modules_from_verbatim`.
+    pub isolated_modules_from_verbatim: bool,
     /// When true, suppress deprecation warnings (e.g., TS2880 for `assert` import assertions).
     /// Set when `ignoreDeprecations` is "5.0" or "6.0".
     pub ignore_deprecations: bool,
@@ -273,6 +284,7 @@ impl Default for CheckerOptions {
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
             verbatim_module_syntax: false,
+            isolated_modules_from_verbatim: false,
             ignore_deprecations: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
