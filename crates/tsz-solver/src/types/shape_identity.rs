@@ -223,9 +223,17 @@ impl std::hash::Hash for ObjectShape {
         hash_index_signature_display(number_index, state);
         hash_index_signature_display(symbol_index, state);
         symbol.hash(state);
-        // Empty for non-lazy-heritage shapes -> contributes nothing -> flag-off
-        // hashes are byte-identical to pre-base_types.
-        base_types.hash(state);
+        // `base_types` is INTENTIONALLY omitted from the hash. `Hash`/`Eq`
+        // consistency only requires `a == b ⟹ hash(a) == hash(b)`; equal shapes
+        // have equal `base_types` (compared in `PartialEq`), so omitting it here
+        // stays consistent. Hashing it would write an empty-`Vec` length for
+        // every flattened-model shape, perturbing the interner's bucket
+        // distribution and TypeId-assignment order vs pre-`base_types` main —
+        // observable to order-sensitive interning/normalization tests. Two shapes
+        // differing only in `base_types` simply share a bucket and are
+        // disambiguated by `PartialEq` (a benign extra collision confined to the
+        // lazy-heritage model).
+        let _ = base_types;
     }
 }
 
