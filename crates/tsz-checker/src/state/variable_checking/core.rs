@@ -762,24 +762,9 @@ impl<'a> CheckerState<'a> {
                             false,
                         )
                         .is_some();
-                // Lazy own-member lowering (`TSZ_LAZY_OWN_MEMBERS`): when the
-                // annotation deferred to a bare `Lazy(DefId)` for an eligible
-                // non-generic lib interface, it CANNOT contain a `typeof` of the
-                // user variable (a lib interface never references a user symbol),
-                // so the transitive-`typeof` semantic check below would force its
-                // full transitive closure (~4400 types for `let h:
-                // HTMLDivElement`) only to find nothing. Skip it for such
-                // annotations — this is the variable-position forcing point that
-                // makes a typed-but-unaccessed lib variable materialize its whole
-                // shape (function params already stay lazy). Inert flag-off.
-                let annotation_is_eligible_lib_lazy =
-                    crate::state_checking::lazy_lib_member::lazy_own_members_enabled()
-                        && crate::query_boundaries::common::lazy_def_id(self.ctx.types, final_type)
-                            .is_some_and(|def_id| self.force_eligible_lib_def(def_id));
-                // Then try semantic check
                 let semantic_circular = !accessor_circular
                     && !ast_circular
-                    && !annotation_is_eligible_lib_lazy
+                    && !self.annotation_is_eligible_lib_lazy(final_type)
                     && query::has_type_query_for_symbol(
                         self.ctx.types,
                         final_type,

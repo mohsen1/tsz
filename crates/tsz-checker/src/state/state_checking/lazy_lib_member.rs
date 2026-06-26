@@ -296,6 +296,18 @@ impl CheckerState<'_> {
         eligible
     }
 
+    /// True when `ty` is a bare `Lazy(DefId)` for a force-eligible non-generic lib
+    /// interface, under `TSZ_LAZY_OWN_MEMBERS`. Such an annotation can never
+    /// reference a user variable via `typeof`, so the variable-declaration
+    /// semantic-`typeof`-circularity check (`variable_checking/core.rs`) may skip
+    /// resolving it — resolving would force the interface's full transitive
+    /// closure (the variable-position materialization tax) only to find nothing.
+    pub(crate) fn annotation_is_eligible_lib_lazy(&self, ty: TypeId) -> bool {
+        lazy_own_members_enabled()
+            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
+                .is_some_and(|def_id| self.force_eligible_lib_def(def_id))
+    }
+
     /// Deferred `Lazy(DefId)` lowering for a bare type reference whose target
     /// symbol is a force-eligible non-generic lib interface (#13933).
     ///
