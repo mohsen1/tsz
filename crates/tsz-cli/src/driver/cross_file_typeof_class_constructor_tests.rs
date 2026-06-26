@@ -5,6 +5,7 @@
 //! Structural rule: `typeof C` is a value-space query and resolves to the
 //! class's CONSTRUCTOR type, regardless of which module declares `C`. #10661
 //! made a cross-file class reference in *type* position resolve to the INSTANCE
+//!
 //! type (published through the shared `class_to_instance` slot). The constructor
 //! (value-space) type, however, is the class def's *body*; a consuming checker's
 //! per-file `symbol_types` cache is empty for a class declared in another file,
@@ -14,6 +15,7 @@
 //! property typed `typeof ImportedClass`:
 //!   * a false TS2322 rejecting the constructor value, and
 //!   * a missing TS2739/TS2741 accepting an instance value.
+//!
 //! The fix resolves a class symbol's constructor from the shared
 //! `DefinitionStore` body when `symbol_types` misses.
 //!
