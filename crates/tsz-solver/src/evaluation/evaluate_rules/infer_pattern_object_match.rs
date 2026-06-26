@@ -186,9 +186,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let initial_binding_len = bindings.len();
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
+                // Lazy heritage: match the infer pattern against the FULL member
+                // surface (own + inherited) so the binding AGREES with the
+                // structural subtype check, which sees flattened members. An
+                // own-only mismatch here vs a flattened match there makes a
+                // conditional `T extends { ..infer.. } ? ..` never converge (the
+                // infer binds own-only, the subtype disagrees, it re-evaluates
+                // forever). Gated on `base_types` -> byte-identical flag-off; the
+                // collection is globally memoized.
+                let source_props_owned;
+                let source_props: &[PropertyInfo] = if source_shape.base_types.is_empty() {
+                    &source_shape.properties
+                } else {
+                    source_props_owned = match crate::objects::collect_properties(
+                        source,
+                        self.interner(),
+                        self.resolver(),
+                    ) {
+                        crate::objects::PropertyCollectionResult::Properties {
+                            properties, ..
+                        } => properties,
+                        _ => source_shape.properties.to_vec(),
+                    };
+                    &source_props_owned
+                };
+                let pattern_props_owned;
+                let pattern_props: &[PropertyInfo] = if pattern_shape.base_types.is_empty() {
+                    &pattern_shape.properties
+                } else {
+                    pattern_props_owned = match crate::objects::collect_properties(
+                        pattern,
+                        self.interner(),
+                        self.resolver(),
+                    ) {
+                        crate::objects::PropertyCollectionResult::Properties {
+                            properties, ..
+                        } => properties,
+                        _ => pattern_shape.properties.to_vec(),
+                    };
+                    &pattern_props_owned
+                };
                 if !self.match_infer_object_properties(
-                    &source_shape.properties,
-                    &pattern_shape.properties,
+                    source_props,
+                    pattern_props,
                     pattern,
                     bindings,
                     visited,
