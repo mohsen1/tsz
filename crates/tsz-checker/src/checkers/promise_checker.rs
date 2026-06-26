@@ -637,10 +637,13 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Get call signatures of `then`
-        let Some(sigs) = query::call_signatures_for_type(self.ctx.types, then_type) else {
-            return ThenableAwaitInfo::default();
-        };
+        // Get call signatures of `then`. A `then` member can be stored either as a
+        // `Callable` (named `interface`/`type` method) or as a bare `Function`
+        // shape (object-literal method, or a property typed `then: (cb) => void`).
+        // tsc's `getAwaitedType` inspects the `then`/`onfulfilled` callback
+        // structurally regardless of how `then` was declared, so we must accept
+        // both forms here.
+        let sigs = self.callable_call_signatures(then_type);
         if sigs.is_empty() {
             return ThenableAwaitInfo::default();
         }
@@ -679,31 +682,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Return the call signatures of a callable value, accepting both the
+    /// `Callable` representation (named `interface`/`type` methods, function
+    /// types with extra properties) and the bare `Function` representation
+    /// (object-literal methods, plain function-typed properties).
+    ///
+    /// The structural query `call_signatures_for_type` only recognizes the
+    /// `Callable` form, so a `then` member stored as a `Function` would
+    /// otherwise look signature-less. Mirroring the judge's `get_call_signatures`,
+    /// a non-constructor `Function` contributes exactly one call signature; a
+    /// constructor `Function` contributes none (its single signature is a
+    /// construct signature, not a call signature).
+    fn callable_call_signatures(&self, type_id: TypeId) -> Vec<tsz_solver::CallSignature> {
+        if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, type_id) {
+            return sigs;
+        }
+        if let Some(shape) = query::function_shape_for_type(self.ctx.types, type_id)
+            && !shape.is_constructor
+        {
+            return vec![tsz_solver::CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate,
+                is_method: shape.is_method,
+            }];
+        }
+        Vec::new()
+    }
+
+    /// First parameter type of a callable value's first call signature, or
+    /// `None` when it has no call signatures. Resolves signatures through the
+    /// shared `Function`/`Callable` accessor.
+    fn first_call_signature_param(&self, type_id: TypeId) -> Option<TypeId> {
+        self.callable_call_signatures(type_id)
+            .first()
+            .and_then(|sig| sig.params.first().map(|p| p.type_id))
+    }
+
     /// Extract the first parameter type from a callable/function type,
     /// handling unions of `(fn | null | undefined)`.
+    ///
+    /// `onfulfilled` is `((value: T) => ...) | null | undefined`; the awaited
+    /// value type `T` is the first parameter of that callback.
     fn extract_first_param_from_callback(&self, type_id: TypeId) -> Option<TypeId> {
-        // Direct Callable
-        if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, type_id) {
-            return sigs.first()?.params.first().map(|p| p.type_id);
+        if let Some(value) = self.first_call_signature_param(type_id) {
+            return Some(value);
         }
-        // Direct Function
-        if let Some(shape) = query::function_shape_for_type(self.ctx.types, type_id) {
-            return shape.params.first().map(|p| p.type_id);
-        }
-        // Union: find first callable/function member
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            for member in &members {
-                if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, *member)
-                    && let Some(first) = sigs.first()
-                {
-                    return first.params.first().map(|p| p.type_id);
-                }
-                if let Some(shape) = query::function_shape_for_type(self.ctx.types, *member) {
-                    return shape.params.first().map(|p| p.type_id);
-                }
-            }
-        }
-        None
+        // Union: find first callable/function member.
+        query::union_members(self.ctx.types, type_id)?
+            .into_iter()
+            .find_map(|member| self.first_call_signature_param(member))
     }
 
     /// Extract type argument from a Promise-like base type.
