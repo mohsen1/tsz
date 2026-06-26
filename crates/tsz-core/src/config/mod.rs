@@ -22,10 +22,10 @@ use extends::{
 use lib_offsets::find_lib_entry_offset;
 
 pub use lib_resolution::{
-    LibReference, core_lib_name_for_target, default_lib_dir, default_lib_name_for_target,
-    extract_lib_references, extract_lib_references_with_positions, is_known_lib_name,
-    resolve_default_lib_files, resolve_default_lib_files_from_dir, resolve_lib_files,
-    resolve_lib_files_from_dir, resolve_lib_files_from_dir_with_options,
+    LibReference, apply_explicit_lib_aliases, core_lib_name_for_target, default_lib_dir,
+    default_lib_name_for_target, extract_lib_references, extract_lib_references_with_positions,
+    is_known_lib_name, resolve_default_lib_files, resolve_default_lib_files_from_dir,
+    resolve_lib_files, resolve_lib_files_from_dir, resolve_lib_files_from_dir_with_options,
     resolve_lib_files_from_embedded, resolve_lib_files_with_options,
     resolve_lib_files_with_options_transitive,
 };
