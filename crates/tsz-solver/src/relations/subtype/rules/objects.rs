@@ -331,6 +331,60 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// 1. **Fast path**: Nominal inheritance check (O(1) for class instances)
     /// 2. Private brand compatibility (for nominal class typing with private fields)
     /// 3. For each target property, source must have a compatible property
+    /// The full apparent member surface of a lazy-heritage shape (own + all
+    /// inherited via `base_types`), for the structural member-comparison rules
+    /// that read `.properties` as the complete member set. Returns
+    /// `Cow::Borrowed(shape)` when `base_types` is empty (the flattened model —
+    /// byte-identical, zero allocation), else an owned `ObjectShape` whose
+    /// `properties` are merged (own / earlier-base win — heritage shadows) AND
+    /// **re-sorted by atom**: `check_object_subtype`'s member loop is an
+    /// atom-sorted merge-join, so inherited props appended out of order would
+    /// corrupt it. Per-base collection is memoized by `collect_properties_cached`.
+    fn apparent_object_shape<'s>(
+        &self,
+        shape: &'s ObjectShape,
+    ) -> std::borrow::Cow<'s, ObjectShape> {
+        if shape.base_types.is_empty() {
+            return std::borrow::Cow::Borrowed(shape);
+        }
+        use crate::objects::{PropertyCollectionResult, collect_properties_cached};
+        let mut properties = shape.properties.clone();
+        let mut seen: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            properties.iter().map(|prop| prop.name).collect();
+        let mut string_index = shape.string_index;
+        let mut number_index = shape.number_index;
+        let mut symbol_index = shape.symbol_index;
+        for &base in &shape.base_types {
+            if let PropertyCollectionResult::Properties {
+                properties: base_props,
+                string_index: bsi,
+                number_index: bni,
+                symbol_index: bsy,
+            } = collect_properties_cached(base, self.interner, self.resolver, self.query_db)
+            {
+                for prop in base_props {
+                    if seen.insert(prop.name) {
+                        properties.push(prop);
+                    }
+                }
+                string_index = string_index.or(bsi);
+                number_index = number_index.or(bni);
+                symbol_index = symbol_index.or(bsy);
+            }
+        }
+        // Atom-sort: the member loops below are an atom-sorted merge-join.
+        properties.sort_by_key(|prop| prop.name);
+        std::borrow::Cow::Owned(ObjectShape {
+            flags: shape.flags,
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+            symbol: shape.symbol,
+            base_types: Vec::new(),
+        })
+    }
+
     pub(crate) fn check_object_subtype(
         &mut self,
         source: &ObjectShape,
@@ -339,6 +393,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
+        // Lazy heritage: resolve each side's full inherited member surface before
+        // the own-only structural comparison below. A flattened (Owned) source
+        // drops its `source_shape_id` — the transient shape is not the interned
+        // own-only shape, so reusing that id would let `lookup_property`'s
+        // per-shape-id member cache serve stale own-only results. Inert flag-off
+        // (`base_types` empty -> `Cow::Borrowed`, no allocation, no re-sort).
+        let source_apparent = self.apparent_object_shape(source);
+        let source_shape_id = if matches!(source_apparent, std::borrow::Cow::Owned(_)) {
+            None
+        } else {
+            source_shape_id
+        };
+        let source = source_apparent.as_ref();
+        let target_apparent = self.apparent_object_shape(target);
+        let target = target_apparent.as_ref();
+
         // Prefer the caller-provided receiver (which preserves type arguments,
         // e.g., Runtype<any>) over the shape-derived DefId reference (which loses
         // them, e.g., bare Runtype). This ensures `this` type substitution in
