@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "instanceof_generic_loop_any_fill_narrowing_tests"
+path = "tests/instanceof_generic_loop_any_fill_narrowing_tests.rs"
+[[test]]
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]

@@ -1046,6 +1046,44 @@ pub(crate) fn instance_type_from_constructor(
     tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
 }
 
+/// tsc narrows a bare `x instanceof GenericCtor` (one written with no explicit
+/// type arguments) to the constructor's instance type instantiated with `any`
+/// for every type parameter — the `prototype`-derived `Map<any, any>` shape — so
+/// member calls such as `m.set(k, v)` accept any argument.
+///
+/// The flow path's fast `node_types` lookup already yields that `any`-filled
+/// shape, because a generic constructor interface declares its `prototype`
+/// member as the fully-`any` instance (`MapConstructor.prototype: Map<any, any>`)
+/// and `instance_type_from_constructor` reads it. But when the constructor *value*
+/// expression is untyped or typed `error` — which happens on the loop back-edge
+/// re-narrowing pass while the flow graph is still reaching its fixed point
+/// (#14945) — that fast path misses and the symbol fallback resolves only the
+/// *bare generic* interface `Lazy(DefId)` with its type parameters still free
+/// (`Map<K, V>`). Member access then rejects arguments against the free `K`/`V`,
+/// a spurious TS2345/TS2322. Filling the N parameters with `any` here recovers
+/// the `Map<any, any>` shape the non-loop path already produces, so both paths
+/// agree and match tsc.
+///
+/// Returns `None` (caller keeps the resolved type unchanged) when `instance_type`
+/// is not a bare `Lazy(DefId)` (it is already concrete or an `Application`, e.g.
+/// the prototype-derived `Map<any, any>` from the fast path), or when the
+/// definition is non-generic (`Date`, `RegExp`; N = 0). Leaving non-generic and
+/// already-instantiated shapes untouched keeps union sources — whose concrete
+/// members (`Set<number>`) are preserved by the relation, independent of the
+/// instance type's arguments — and the unsupported false-branch unaffected.
+pub(crate) fn any_fill_bare_generic_instance(
+    db: &dyn QueryDatabase,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
+    instance_type: TypeId,
+) -> Option<TypeId> {
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(db.as_type_database(), instance_type)?;
+    let param_count = env.get_def_params_owned(def_id)?.len();
+    if param_count == 0 {
+        return None;
+    }
+    Some(db.application(instance_type, vec![TypeId::ANY; param_count]))
+}
+
 /// Return the predicate type from `[Symbol.hasInstance](v: ...): v is T` if present.
 ///
 /// Mirrors the solver's `instance_type_from_symbol_has_instance` so the checker

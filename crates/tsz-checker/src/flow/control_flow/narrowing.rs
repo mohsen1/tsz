@@ -647,17 +647,30 @@ impl<'a> FlowAnalyzer<'a> {
             // Falling back to `reference(SymbolRef)` would create Lazy(DefId(symbol_id)),
             // which can point at an unrelated definition because SymbolId and DefId
             // are independent identity spaces.
-            return self.resolve_symbol_to_lazy(symbol_ref);
+            //
+            // A bare `x instanceof Box` (no type arguments) on a generic class narrows
+            // to `Box<any>` in tsc; `any`-fill the resolved generic so a loop-body
+            // re-narrowing pass (where the fast path below misses) does not leave the
+            // class's type parameters free (#14945).
+            let lazy = self.resolve_symbol_to_lazy(symbol_ref)?;
+            return Some(self.any_fill_bare_generic_instance(lazy));
         }
 
         // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
         // have both INTERFACE and VARIABLE flags. The interface type IS the instance type
         // since interfaces describe instances, not constructors.
         // This handles `x instanceof Array`, `x instanceof Date`, etc.
+        //
+        // For generic global interfaces (`Map`, `Set`, `WeakMap`, `ReadonlyMap`, …) a
+        // bare `instanceof` narrows to the fully-`any` instance (`Map<any, any>`); the
+        // fast `node_types` path reads that off the constructor's `prototype`, but the
+        // loop back-edge re-narrowing pass misses it and resolves the bare generic
+        // `Map<K, V>`, so `any`-fill recovers the `Map<any, any>` shape (#14945).
         if symbol.has_any_flags(symbol_flags::INTERFACE)
             && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
-            return self.resolve_symbol_to_lazy(symbol_ref);
+            let lazy = self.resolve_symbol_to_lazy(symbol_ref)?;
+            return Some(self.any_fill_bare_generic_instance(lazy));
         }
 
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
@@ -700,6 +713,25 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    /// Apply tsc's bare-`instanceof` `any`-fill to a symbol-resolved instance
+    /// type. When `instance_type` is a generic interface/class `Lazy(DefId)` with
+    /// N > 0 type parameters and no supplied arguments, return
+    /// `Application(Lazy(DefId), [any; N])` (`Map<any, any>`); otherwise return it
+    /// unchanged. See `flow_query::any_fill_bare_generic_instance` for the full
+    /// rationale and guardrails (#14945).
+    fn any_fill_bare_generic_instance(&self, instance_type: TypeId) -> TypeId {
+        self.type_environment
+            .as_ref()
+            .and_then(|env| {
+                flow_query::any_fill_bare_generic_instance(
+                    self.interner,
+                    &env.borrow(),
+                    instance_type,
+                )
+            })
+            .unwrap_or(instance_type)
     }
 
     /// For VARIABLE symbols, follow the type annotation on the variable
