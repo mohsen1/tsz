@@ -140,9 +140,21 @@ impl ChildPolicy {
     /// `TypeParameter`/`Infer` is a leaf — structural `infer` patterns inside a
     /// parameter's `constraint`/`default` are definitional, not live inference
     /// variables.
+    ///
+    /// Generic signature bodies are also skipped (`skip_generic_signature_bodies`):
+    /// an `infer V` that appears inside a *generic* signature's body — e.g. the
+    /// conditional return `U extends Promise<infer V> ? X : Y` of a method
+    /// `m<U>(…)` — is bound within that signature's scope, exactly like the
+    /// signature's own `U`. It is a committed, definitional binder, not a live
+    /// transient inference placeholder, so a free-`infer` walk must treat it as
+    /// bound (mirrors [`Self::FREE_TYPE_PARAMS`]). Without this, an object type
+    /// that merely *contains* such a method (e.g. a self-referential class
+    /// `Box<T>` whose branch re-includes `m`) would be classified as carrying a
+    /// live inference placeholder, wrongly suppressing real `TS2322`/`TS2345`.
     pub const FREE_INFER: Self = Self {
         type_param_constraint: false,
         type_param_default: false,
+        skip_generic_signature_bodies: true,
         ..Self::CONTENT_PREDICATE
     };
 
