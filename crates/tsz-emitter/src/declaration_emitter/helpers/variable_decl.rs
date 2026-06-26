@@ -300,7 +300,7 @@ impl<'a> DeclarationEmitter<'a> {
             && !exported_call_initializer
             && const_asserted_enum_member.is_none()
             && !js_has_jsdoc_type)
-            .then(|| self.const_literal_initializer_text_deep(initializer))
+            .then(|| self.const_inline_literal_initializer_text(initializer))
             .flatten();
 
         // Determine if we should emit a literal initializer for const
@@ -1209,7 +1209,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&typeof_text);
             } else if keyword == "const"
                 && has_initializer
-                && let Some(lit_text) = self.const_literal_initializer_text_deep(initializer)
+                && let Some(lit_text) = self.const_inline_literal_initializer_text(initializer)
             {
                 // For const declarations where the type cache missed,
                 // preserve the literal value: `declare const X = 123;`

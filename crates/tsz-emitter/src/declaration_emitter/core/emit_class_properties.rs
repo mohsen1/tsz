@@ -73,6 +73,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Separator for a preserved `readonly` literal value. tsc emits the inline
+    /// `= literal` form only for a *fresh* literal (`readonly x = "a"`); when the
+    /// initializer carries a type assertion (`readonly x = "a" as const`) the
+    /// declared type is asserted / non-fresh and tsc prints the `: T`
+    /// annotation instead. The recovered literal text is reused verbatim as the
+    /// annotation: a `const`-asserted primitive's declared type *is* that
+    /// literal (`"a" as const` -> `: "a"`). Widening casts (`x as number`,
+    /// `x as 1 | 2`) never reach this path — they are emitted from the asserted
+    /// type node earlier via `explicit_asserted_type_text`, so only the
+    /// literal-preserving `as const` case lands here.
+    fn readonly_literal_separator_for(&self, initializer: NodeIndex) -> &'static str {
+        if initializer.is_some() && self.const_initializer_carries_type_assertion(initializer, 0) {
+            ": "
+        } else {
+            self.readonly_literal_value_separator()
+        }
+    }
+
     pub(in crate::declaration_emitter) fn emit_property_declaration(
         &mut self,
         prop_idx: NodeIndex,
@@ -242,7 +260,7 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(interner) = self.type_interner
                     && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(self.readonly_literal_value_separator());
+                    self.write(self.readonly_literal_separator_for(prop.initializer));
                     self.write(&Self::format_literal_initializer(&lit, interner));
                 } else if is_readonly
                     && !is_abstract
@@ -253,7 +271,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     // Type system widened the literal (e.g. `false` → `boolean`);
                     // recover the original from the initializer source text.
-                    self.write(self.readonly_literal_value_separator());
+                    self.write(self.readonly_literal_separator_for(prop.initializer));
                     self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
@@ -382,7 +400,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
                 // Readonly literal preservation via initializer source text.
-                self.write(self.readonly_literal_value_separator());
+                self.write(self.readonly_literal_separator_for(prop.initializer));
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)
