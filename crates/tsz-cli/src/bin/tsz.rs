@@ -50,7 +50,7 @@ fn main() -> Result<()> {
 
     // Run on a larger stack for project-sized and multi-file workflows.
     // Single-file CLI probes avoid this extra thread hop for lower startup overhead.
-    let result = if use_large_stack_thread {
+    if use_large_stack_thread {
         std::thread::Builder::new()
             .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
             .spawn(move || actual_main(args, cwd, batch_residency_budget))
@@ -59,18 +59,7 @@ fn main() -> Result<()> {
             .expect("main thread panicked")
     } else {
         actual_main(args, cwd, batch_residency_budget)
-    };
-
-    // Cross-arena base-decl recognition soundness/reach dump (issue #14344).
-    // Off unless `TSZ_XARENA_BASE_DECL_DUMP=1`; prints one line to stderr.
-    if tsz_solver::computation::xarena_dump_enabled() {
-        eprintln!(
-            "[xarena] {}",
-            tsz_solver::computation::xarena_base_decl_dump_line()
-        );
     }
-
-    result
 }
 
 fn actual_main(

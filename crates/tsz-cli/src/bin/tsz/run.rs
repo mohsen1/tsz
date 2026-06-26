@@ -199,16 +199,6 @@ pub(crate) fn run_compile(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         }
     }
 
-    // Cross-arena base-decl recognition soundness/reach dump (issue #14344).
-    // Off unless `TSZ_XARENA_BASE_DECL_DUMP=1`; one line to stderr. Placed
-    // before the `process::exit` cluster so it always fires for project runs.
-    if tsz_solver::computation::xarena_dump_enabled() {
-        eprintln!(
-            "[xarena] {}",
-            tsz_solver::computation::xarena_base_decl_dump_line()
-        );
-    }
-
     if args.sound_report_only {
         std::process::exit(EXIT_SUCCESS);
     }
