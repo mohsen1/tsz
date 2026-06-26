@@ -1,11 +1,9 @@
 //! Project-mode parity guard for `typeof <imported class>` — kysely tracker
 //! #10663 (`typeof` family), the residual inverse of the #10661 cross-file
 //! instance-resolution fix.
-//!
 //! Structural rule: `typeof C` is a value-space query and resolves to the
 //! class's CONSTRUCTOR type, regardless of which module declares `C`. #10661
 //! made a cross-file class reference in *type* position resolve to the INSTANCE
-//!
 //! type (published through the shared `class_to_instance` slot). The constructor
 //! (value-space) type, however, is the class def's *body*; a consuming checker's
 //! per-file `symbol_types` cache is empty for a class declared in another file,
@@ -18,12 +16,10 @@
 //!
 //! The fix resolves a class symbol's constructor from the shared
 //! `DefinitionStore` body when `symbol_types` misses.
-//!
 //! These cases run the real multi-file driver (shared `DefinitionStore`,
 //! separate per-file arenas, real module resolution) — the faithful path for
 //! cross-module resolution. The single-arena in-crate checker harness conflates
 //! per-file `SymbolId`/`DefId` namespaces and cannot reproduce it.
-//!
 //! The trigger needs the `typeof` to be deferred to a `TypeQuery(SymbolRef)`,
 //! which happens when the property type is part of a NAMED interface/object-type
 //! alias body (resolved lazily) and the class is cross-file. Binder names vary
