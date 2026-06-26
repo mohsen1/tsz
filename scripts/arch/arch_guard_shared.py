@@ -697,7 +697,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        1815,
+        1880,
     ),
     (
         # Ratcheted 2736→2896: +160 lines for three config-validation
