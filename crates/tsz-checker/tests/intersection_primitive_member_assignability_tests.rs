@@ -163,6 +163,92 @@ fn branded_primitive_application_source_displays_structural_intersection_in_ts27
     );
 }
 
+/// `NonNullable<number>` (lib `type NonNullable<T> = T & {}`) applied to a
+/// non-nullable primitive must render as the bare primitive `number`, matching
+/// tsc — not the capitalized/expanded branded spelling `Number & {}`. The
+/// empty `{}` co-member is identity on a non-nullable primitive, so tsc
+/// collapses the application alias to the bare keyword.
+#[test]
+fn nonnullable_primitive_application_collapses_to_bare_primitive() {
+    for (annot, expected) in [
+        ("NonNullable<number>", "number"),
+        ("NonNullable<string>", "string"),
+        ("NonNullable<boolean>", "boolean"),
+    ] {
+        let source = format!("declare const a: {annot};\nconst x: 0 = a;\n");
+        let diags = check_with_lib_strict(&source, true);
+        let ts2322 = messages_for_code(&diags, 2322);
+        assert!(
+            ts2322
+                .iter()
+                .any(|m| m.contains(&format!("Type '{expected}' is not assignable"))),
+            "{annot} source should display bare `{expected}` in TS2322, got: {ts2322:?}"
+        );
+        assert!(
+            ts2322.iter().all(|m| !m.contains("& {}")),
+            "{annot} must not leave a residual `& {{}}` in the display, got: {ts2322:?}"
+        );
+    }
+}
+
+/// A user helper of the form `type Helper<T> = T & {}` exercises the same
+/// application-alias collapse without keying on the lib `NonNullable` name:
+/// the structural shape (generic application + empty-object co-member +
+/// primitive) is what drives the collapse. Renamed type parameters and
+/// helper names must not change the outcome.
+#[test]
+fn user_empty_object_application_helper_collapses_to_bare_primitive() {
+    let source = r#"
+        type MyNN<Wrapped> = Wrapped & {};
+        declare const a: MyNN<string>;
+        const x: 0 = a;
+        declare const b: MyNN<number>;
+        const y: 0 = b;
+    "#;
+    let diags = check_with_lib_strict(source, true);
+    let ts2322 = messages_for_code(&diags, 2322);
+    assert!(
+        ts2322
+            .iter()
+            .any(|m| m.contains("Type 'string' is not assignable")),
+        "user `Wrapped & {{}}` helper over string should display bare `string`, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|m| m.contains("Type 'number' is not assignable")),
+        "user `Wrapped & {{}}` helper over number should display bare `number`, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|m| !m.contains("& {}") && !m.contains("MyNN<")),
+        "collapsed application display must not leak `& {{}}` or the alias name, got: {ts2322:?}"
+    );
+}
+
+/// Control: a *source-written* `number & {}` annotation (no generic
+/// application alias) must keep printing lowercase `number & {}` — the
+/// branded-widening preservation is correct there, and the collapse only
+/// applies to the application-alias path. This is the line-4 control from
+/// the bug report.
+#[test]
+fn source_written_primitive_empty_object_intersection_keeps_lowercase_form() {
+    let source = "declare const b: number & {};\nconst y: 0 = b;\n";
+    let diags = check_with_lib_strict(source, true);
+    let ts2322 = messages_for_code(&diags, 2322);
+    assert!(
+        ts2322
+            .iter()
+            .any(|m| m.contains("Type 'number & {}' is not assignable")),
+        "source-written `number & {{}}` must keep lowercase `number & {{}}` display, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.iter().all(|m| !m.contains("Number & {}")),
+        "source-written control must never capitalize to `Number & {{}}`, got: {ts2322:?}"
+    );
+}
+
 /// `{ __typename?: 'TypeTwo' } & { a: boolean }` is NOT assignable to
 /// `{ __typename?: 'TypeOne' } & { a: boolean }` — the literal property
 /// types differ. Exercises the all-object intersection path (no primitive
