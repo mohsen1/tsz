@@ -56,7 +56,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 let shape = self
                     .interner
                     .object_shape(crate::types::ObjectShapeId(shape_id));
-                all_target_props.extend_from_slice(&shape.properties);
+                // Lazy heritage: include the member's inherited members in the weak
+                // surface (own props only when no `base_types` -> byte-identical).
+                if shape.base_types.is_empty() {
+                    all_target_props.extend_from_slice(&shape.properties);
+                } else if let crate::objects::PropertyCollectionResult::Properties {
+                    properties,
+                    ..
+                } =
+                    crate::objects::collect_properties(member, self.interner, self.subtype.resolver)
+                {
+                    all_target_props.extend(properties);
+                } else {
+                    all_target_props.extend_from_slice(&shape.properties);
+                }
             }
             if all_target_props.is_empty() {
                 return false;
@@ -81,7 +94,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let target_props = target_shape.properties.as_slice();
+        // Lazy heritage: the weak surface (all-optional members) includes
+        // INHERITED optional members. Resolve the full member set when the target
+        // carries `base_types`; empty -> own props (byte-identical flag-off).
+        let heritage_target_props;
+        let target_props: &[crate::types::PropertyInfo] = if target_shape.base_types.is_empty() {
+            target_shape.properties.as_slice()
+        } else {
+            heritage_target_props = match crate::objects::collect_properties(
+                target,
+                self.interner,
+                self.subtype.resolver,
+            ) {
+                crate::objects::PropertyCollectionResult::Properties { properties, .. } => {
+                    properties
+                }
+                _ => target_shape.properties.to_vec(),
+            };
+            &heritage_target_props
+        };
         if target_props.is_empty() || target_props.iter().any(|prop| !prop.optional) {
             return false;
         }

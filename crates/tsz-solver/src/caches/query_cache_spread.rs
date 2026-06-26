@@ -161,7 +161,23 @@ impl QueryCache<'_> {
 
         let props = match key {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                self.interner.object_shape(shape_id).properties.to_vec()
+                let shape = self.interner.object_shape(shape_id);
+                let mut props = shape.properties.to_vec();
+                // Lazy heritage: object spread copies INHERITED members too. Walk
+                // `base_types` (own / earlier-base win — heritage shadows); the
+                // `visited` set guards cycles. Empty -> own props (byte-identical).
+                if !shape.base_types.is_empty() {
+                    let mut seen: rustc_hash::FxHashSet<Atom> =
+                        props.iter().map(|prop| prop.name).collect();
+                    for base in shape.base_types.clone() {
+                        for prop in self.collect_object_spread_properties_inner(base, visited) {
+                            if seen.insert(prop.name) {
+                                props.push(prop);
+                            }
+                        }
+                    }
+                }
+                props
             }
             TypeData::Callable(shape_id) => {
                 self.interner.callable_shape(shape_id).properties.to_vec()

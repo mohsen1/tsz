@@ -806,6 +806,28 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .object_shape(ObjectShapeId(shape_id));
 
+        // Lazy heritage: `O[K]` must resolve inherited members. Resolve the full
+        // member set through the heritage-walking collector when `base_types` is
+        // present; empty -> own props (byte-identical flag-off).
+        let heritage_props;
+        let props: &[PropertyInfo] = if shape.base_types.is_empty() {
+            &shape.properties
+        } else {
+            heritage_props = match crate::objects::collect_properties(
+                self.evaluator
+                    .interner()
+                    .object_type_from_shape(ObjectShapeId(shape_id)),
+                self.evaluator.interner(),
+                self.evaluator.resolver(),
+            ) {
+                crate::objects::PropertyCollectionResult::Properties { properties, .. } => {
+                    properties
+                }
+                _ => shape.properties.to_vec(),
+            };
+            &heritage_props
+        };
+
         // Defer `O[K]` when the index is a bare type parameter `K extends keyof O`
         // (the object currently being indexed) and distributing `K`'s constraint
         // over every key would produce a lossy value-type union. tsc keeps such a
@@ -820,17 +842,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // `{ [P in keyof T]: T[P] }[keyof T]` stays a union. The deferral also
         // sidesteps the quadratic value-union expansion for large interfaces
         // (e.g. `JSX.IntrinsicElements`) independent of property count.
-        if self.keyof_constraint_distribution_is_lossy(&shape.properties) {
+        if self.keyof_constraint_distribution_is_lossy(props) {
             return None;
         }
 
         let result = self
             .evaluator
-            .evaluate_object_index_from_constraint(&shape.properties, self.index_type)
-            .unwrap_or_else(|| {
-                self.evaluator
-                    .evaluate_object_index(&shape.properties, self.index_type)
-            });
+            .evaluate_object_index_from_constraint(props, self.index_type)
+            .unwrap_or_else(|| self.evaluator.evaluate_object_index(props, self.index_type));
 
         // CRITICAL FIX: If we can't find the property, but the index is generic,
         // we must defer evaluation (return None) instead of returning UNDEFINED.

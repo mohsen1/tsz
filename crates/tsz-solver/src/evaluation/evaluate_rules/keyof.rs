@@ -647,8 +647,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // declaration order. Mirroring that here ensures the printer's
                     // alloc-order-based union sort displays keys in source order
                     // (e.g. `"foo" | "bar"` for `{ foo: ...; bar: ... }`).
-                    let mut props: Vec<&PropertyInfo> = shape
-                        .properties
+                    //
+                    // Lazy heritage: when the shape carries `base_types`, keyof must
+                    // include INHERITED keys; resolve the full member set through
+                    // the heritage-walking collector. Empty base_types -> own props
+                    // (byte-identical flag-off).
+                    let heritage_props;
+                    let props_src: &[PropertyInfo] = if shape.base_types.is_empty() {
+                        &shape.properties
+                    } else {
+                        heritage_props = match crate::objects::collect_properties(
+                            self.interner().object_type_from_shape(shape_id),
+                            self.interner(),
+                            self.resolver(),
+                        ) {
+                            PropertyCollectionResult::Properties { properties, .. } => properties,
+                            _ => shape.properties.to_vec(),
+                        };
+                        &heritage_props
+                    };
+                    let mut props: Vec<&PropertyInfo> = props_src
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
                         .collect();
@@ -664,8 +682,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::ObjectWithIndex(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
-                    let mut props: Vec<&PropertyInfo> = shape
-                        .properties
+                    let heritage_props;
+                    let props_src: &[PropertyInfo] = if shape.base_types.is_empty() {
+                        &shape.properties
+                    } else {
+                        heritage_props = match crate::objects::collect_properties(
+                            self.interner().object_with_index_type_from_shape(shape_id),
+                            self.interner(),
+                            self.resolver(),
+                        ) {
+                            PropertyCollectionResult::Properties { properties, .. } => properties,
+                            _ => shape.properties.to_vec(),
+                        };
+                        &heritage_props
+                    };
+                    let mut props: Vec<&PropertyInfo> = props_src
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
                         .collect();
