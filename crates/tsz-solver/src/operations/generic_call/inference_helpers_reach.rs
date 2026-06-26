@@ -10,7 +10,7 @@ use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
     /// Collect the inference placeholder vars that round-1 *direct argument*
     /// inference will actually constrain for `arg_type` against `target_type`.
     ///
