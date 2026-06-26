@@ -462,20 +462,12 @@ impl<'a> CheckerState<'a> {
     // Type Argument Extraction
     // =========================================================================
 
-    /// Extract the type argument from a Promise<T> or Promise-like type.
-    ///
-    /// Returns Some(T) if the type is Promise<T>, None otherwise.
-    /// This handles:
-    /// - Synthetic `PROMISE_BASE` type (when Promise symbol wasn't resolved)
-    /// - Direct Promise<T> applications
-    /// - Type aliases that expand to Promise<T>
-    /// - Classes that extend Promise<T>
-    /// Whether `type_id` is a non-generic class *instance* type — a nominal
-    /// `Lazy(DefId)` whose declaring symbol carries the `CLASS` flag. Used to
-    /// admit class-declared thenables into the structural awaited-type fallback
-    /// without admitting lib `PromiseLike` interfaces, `type` aliases, or bare
-    /// type parameters (which would corrupt return-context inference). Generic
-    /// class instances are `Application` and are handled by the Application
+    /// Whether `type_id` is a non-generic class instance type: a nominal
+    /// `Lazy(DefId)` whose declaring symbol carries the `CLASS` flag. This admits
+    /// class-declared thenables into the structural awaited-type fallback while
+    /// excluding lib `PromiseLike` interfaces, `type` aliases, and bare type
+    /// parameters, which would otherwise corrupt return-context inference.
+    /// Generic class instances are `Application` types handled by the Application
     /// branch's own structural extraction.
     fn awaited_operand_is_class_instance(&self, type_id: TypeId) -> bool {
         let query::PromiseTypeKind::Lazy(def_id) =
@@ -489,6 +481,14 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|(symbol, _)| symbol.has_any_flags(symbol_flags::CLASS))
     }
 
+    /// Extract the type argument from a Promise<T> or Promise-like type.
+    ///
+    /// Returns Some(T) if the type is Promise<T>, None otherwise.
+    /// This handles:
+    /// - Synthetic `PROMISE_BASE` type (when Promise symbol wasn't resolved)
+    /// - Direct Promise<T> applications
+    /// - Type aliases that expand to Promise<T>
+    /// - Classes that extend Promise<T>
     pub fn promise_like_return_type_argument(&mut self, return_type: TypeId) -> Option<TypeId> {
         if let query::PromiseTypeKind::Application { base, args, .. } =
             query::classify_promise_type(self.ctx.types, return_type)
