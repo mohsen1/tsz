@@ -716,6 +716,9 @@ path = "tests/reserved_await_multiple_ts1262_tests.rs"
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
 [[test]]
+name = "interface_extends_generic_deferred_base_ts2312_tests"
+path = "tests/interface_extends_generic_deferred_base_ts2312_tests.rs"
+[[test]]
 name = "ts2430_tests"
 path = "tests/ts2430_tests.rs"
 [[test]]
