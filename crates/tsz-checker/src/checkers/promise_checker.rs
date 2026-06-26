@@ -637,10 +637,15 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Get call signatures of `then`
-        let Some(sigs) = query::call_signatures_for_type(self.ctx.types, then_type) else {
-            return ThenableAwaitInfo::default();
-        };
+        // Call signatures of `then`. A `then` declared as a *method* (the
+        // object-literal and `type`-alias thenable forms) lowers to a bare
+        // `Function` shape rather than a `Callable`, which `get_call_signatures`
+        // alone misses; `member_call_signatures` recovers either form so a
+        // structural thenable unwraps regardless of how `then` was declared —
+        // mirroring tsc's `getAwaitedType`, which inspects `then`/`onfulfilled`
+        // structurally, not by declaration form.
+        let sigs =
+            crate::query_boundaries::class::member_call_signatures(self.ctx.types, then_type);
         if sigs.is_empty() {
             return ThenableAwaitInfo::default();
         }

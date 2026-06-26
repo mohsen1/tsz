@@ -297,6 +297,19 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.allow_synthetic_default_imports
             || self.compiler_options.es_module_interop
     }
+
+    /// The compiler flag tsc names in `export =` default-import diagnostics
+    /// (TS1259, and the TS2497 namespace/named elaboration): `esModuleInterop`
+    /// for `CommonJS`/AMD/UMD output (module < ES2015) and
+    /// `allowSyntheticDefaultImports` for ES2015+ output.
+    pub const fn synthetic_default_import_flag_name(&self) -> &'static str {
+        if (self.compiler_options.module as u32) >= (tsz_common::common::ModuleKind::ES2015 as u32)
+        {
+            "allowSyntheticDefaultImports"
+        } else {
+            "esModuleInterop"
+        }
+    }
 }
 
 #[cfg(test)]

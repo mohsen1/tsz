@@ -428,6 +428,9 @@ path = "tests/await_call_identifier_diagnostics_tests.rs"
 name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
 [[test]]
+name = "await_structural_thenable_object_literal_tests"
+path = "tests/await_structural_thenable_object_literal_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
@@ -844,6 +847,9 @@ path = "tests/ts1203_node_esm_tests.rs"
 [[test]]
 name = "node_esm_default_import_export_equals_callable_tests"
 path = "tests/node_esm_default_import_export_equals_callable_tests.rs"
+[[test]]
+name = "export_equals_default_import_interop_ts1259_tests"
+path = "tests/export_equals_default_import_interop_ts1259_tests.rs"
 [[test]]
 name = "ts1254_ambient_const_tests"
 path = "tests/ts1254_ambient_const_tests.rs"

@@ -10,8 +10,38 @@ use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
-        self.emit_param_binding_prologue(transforms);
-        self.emit_rest_param_prologue(transforms);
+        // `tsc` routes the *entire* parameter prologue through the ES2018
+        // object-rest transform whenever any parameter binding contains an
+        // object rest. That transform runs as an outer pass, so the inner
+        // ES2015 transform inserts the rest-parameter `arguments`-copy loop
+        // *before* the object-rest path's binding/default declarations. Without
+        // an object rest the ES2015 transform owns the whole prologue and emits
+        // the binding/default declarations *before* the copy loop. Mirror that
+        // ordering split so a mixed `{ a, ...rest }, ...args` signature matches.
+        if self.param_plan_contains_object_rest(transforms) {
+            self.emit_rest_param_prologue(transforms);
+            self.emit_param_binding_prologue(transforms);
+        } else {
+            self.emit_param_binding_prologue(transforms);
+            self.emit_rest_param_prologue(transforms);
+        }
+    }
+
+    /// Whether any non-rest parameter destructures through an object rest, which
+    /// moves the whole leading-parameter prologue onto `tsc`'s ES2018 transform
+    /// path (so it lands after the rest-parameter copy loop). The rest
+    /// parameter's *own* binding is excluded: its destructuring is already
+    /// emitted after the copy loop inside `emit_rest_param_prologue`, so an
+    /// object rest there does not reorder the leading parameters (`tsc` keeps
+    /// `[a, b], ...{ c, ...r }` in source order). The decision is purely
+    /// structural — the shape of the binding patterns — with no identifier or
+    /// text inspection.
+    fn param_plan_contains_object_rest(&self, transforms: &ParamTransformPlan) -> bool {
+        transforms
+            .params
+            .iter()
+            .filter_map(|param| param.pattern)
+            .any(|pattern| self.binding_target_contains_object_rest(pattern))
     }
 
     pub(in crate::emitter) fn emit_param_binding_prologue(

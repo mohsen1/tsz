@@ -643,6 +643,9 @@ mod using_binding_pattern_diagnostics_tests;
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]
+#[path = "tests/window_self_globalthis_resolution_tests.rs"]
+mod window_self_globalthis_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/yield_star_return_type_tests.rs"]
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
@@ -990,6 +993,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "../tests/increment_assignment_target_suppression_tests.rs"]
+mod increment_assignment_target_suppression_tests;
 #[cfg(test)]
 #[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
 mod index_signature_check_relation_routing_arch_tests;
