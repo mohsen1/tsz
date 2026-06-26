@@ -9,7 +9,7 @@ use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{TypeData, TypeId};
 
-impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
     /// Whether a higher-order target position is built *entirely* from outer
     /// inference placeholders the current resolution may re-generalize through,
     /// carried only by inert structural wrappers (`Array`/tuple).
