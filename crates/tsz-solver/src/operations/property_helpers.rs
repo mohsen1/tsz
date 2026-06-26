@@ -795,8 +795,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 return PropertyAccessResult::simple(final_type);
             }
 
-            // Check index signatures if property not found
-            if let Some(ref idx) = shape.string_index {
+            // Check index signatures if property not found. A `symbol`-keyed
+            // index signature (which may live in the `string_index` slot under
+            // the legacy encoding) must not satisfy a non-symbol property name —
+            // otherwise `Record<symbol, V>["foo"]` would resolve to `V` instead
+            // of producing a TS7053 implicit-any element access.
+            if let Some(ref idx) = shape.string_index
+                && self.string_index_signature_resolves_property(idx, prop_atom)
+            {
                 return PropertyAccessResult::from_index(
                     self.add_undefined_if_unchecked(idx.value_type),
                 );
@@ -1031,8 +1037,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     };
                 }
 
-                // Property not found in explicit properties - check index signatures
-                if let Some(ref idx) = shape.string_index {
+                // Property not found in explicit properties - check index signatures.
+                // A `symbol`-keyed index must not satisfy a non-symbol property
+                // name (see the sibling branch above for the same rule).
+                if let Some(ref idx) = shape.string_index
+                    && self.string_index_signature_resolves_property(idx, prop_atom)
+                {
                     // Found string index signature - instantiate the value type
                     let instantiated_value = self.instantiate_application_member_type(
                         idx.value_type,

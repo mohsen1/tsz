@@ -234,8 +234,14 @@ fn indexed_object_property_is_readonly(
         return prop.readonly;
     }
 
-    // Check string index signature for ALL property names
-    if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
+    // Check string index signature for ALL property names. A `symbol`-keyed
+    // index (which may live in the `string_index` slot under the legacy
+    // encoding) only covers symbol (`__unique_`-named) keys, not string keys.
+    if shape
+        .string_index
+        .as_ref()
+        .is_some_and(|idx| string_slot_index_covers(idx, prop_name) && idx.readonly)
+    {
         return true;
     }
 
@@ -247,6 +253,15 @@ fn indexed_object_property_is_readonly(
     }
 
     false
+}
+
+/// Whether an index signature stored in the `string_index` slot applies to
+/// `prop_name`. A `symbol`-keyed signature (legacy-encoded into the
+/// `string_index` slot) only covers internal `__unique_`-named symbol keys,
+/// never a string/number-literal key; a genuine `string`/template index covers
+/// every property name.
+fn string_slot_index_covers(idx: &crate::types::IndexSignature, prop_name: &str) -> bool {
+    idx.key_type != TypeId::SYMBOL || prop_name.starts_with("__unique_")
 }
 
 /// Check if a property on a callable type is readonly.
@@ -264,8 +279,13 @@ fn callable_property_is_readonly(
         return prop.readonly;
     }
 
-    // Check string index signature for ALL property names
-    if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
+    // Check string index signature for ALL property names. A `symbol`-keyed
+    // index covers only symbol (`__unique_`-named) keys, not string keys.
+    if shape
+        .string_index
+        .as_ref()
+        .is_some_and(|idx| string_slot_index_covers(idx, prop_name) && idx.readonly)
+    {
         return true;
     }
 
